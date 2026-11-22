@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
-import { act, useState } from "react";
+import { act } from "react";
 import type { Root } from "react-dom/client";
 import {
   hasApiCredential,
@@ -72,7 +72,7 @@ beforeEach(() => {
     const val = k === "IS_REACT_ACT_ENVIRONMENT"
       ? true
       : k === "requestAnimationFrame" || k === "cancelAnimationFrame"
-        ? (win[k] as Function).bind(win)
+        ? (win[k] as (...args: never[]) => unknown).bind(win)
         : Reflect.get(win, k);
     Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: val });
   }

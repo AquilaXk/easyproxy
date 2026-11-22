@@ -190,7 +190,7 @@ jobs:
       - name: Run Windows suite
         if: runner.os == 'Windows'
         shell: bash
-        run: bun test tests/windows/
+        run: bun scripts/test.ts ./tests/windows
 
       - name: Run macOS native and desktop tests
         if: runner.os == 'macOS'
