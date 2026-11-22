@@ -1226,22 +1226,26 @@ pub fn spawn_detached_serve(
     listen_port: u16,
     start_line: &[u8],
 ) -> Result<std::process::Child, String> {
-    let mut cmd = Command::new(exe);
-    cmd.arg("serve")
-        .arg("--foreground")
-        .arg("--lifecycle-start")
-        .arg("--listen-port")
-        .arg(listen_port.to_string())
-        .env("EASYPROXY_HOME", easyproxy_home)
-        .env("CODEX_HOME", codex_home)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    crate::test_hooks::strip_barrier_env(&mut cmd);
+    let build_cmd = || {
+        let mut cmd = Command::new(exe);
+        cmd.arg("serve")
+            .arg("--foreground")
+            .arg("--lifecycle-start")
+            .arg("--listen-port")
+            .arg(listen_port.to_string())
+            .env("EASYPROXY_HOME", easyproxy_home)
+            .env("CODEX_HOME", codex_home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        crate::test_hooks::strip_barrier_env(&mut cmd);
+        cmd
+    };
 
     #[cfg(unix)]
-    {
+    let mut child = {
         use std::os::unix::process::CommandExt;
+        let mut cmd = build_cmd();
         // SAFETY: `setsid()` is async-signal-safe in the forked child before exec.
         unsafe {
             cmd.pre_exec(|| {
@@ -1249,19 +1253,33 @@ pub fn spawn_detached_serve(
                 Ok(())
             });
         }
-    }
+        cmd.spawn()
+            .map_err(|e| format!("failed to spawn detached epx-child serve: {e}"))?
+    };
+
     #[cfg(windows)]
-    {
+    let mut child = {
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        let mut cmd = build_cmd();
         cmd.creation_flags(CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("failed to spawn detached epx-child serve: {e}"))?;
+        match cmd.spawn() {
+            Ok(c) => c,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::PermissionDenied
+                    || e.raw_os_error() == Some(5) =>
+            {
+                let mut fallback = build_cmd();
+                fallback.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+                fallback
+                    .spawn()
+                    .map_err(|e2| format!("failed to spawn detached epx-child serve: {e2}"))?
+            }
+            Err(e) => return Err(format!("failed to spawn detached epx-child serve: {e}")),
+        }
+    };
     let write_result = match child.stdin.as_mut() {
         Some(stdin) => stdin.write_all(start_line).and_then(|()| stdin.flush()),
         None => Err(std::io::Error::other("missing child stdin")),
