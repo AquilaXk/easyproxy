@@ -1,7 +1,8 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { IconAlert } from "../icons";
 import { Trans } from "../i18n/provider";
-import { navigateHash } from "../hash-routing";
+import { DASHBOARD_GUARDRAILS_HASH } from "../app-routing";
+import { navigateHash, normalizeHashPath } from "../hash-routing";
 import { EmptyState, Notice } from "../ui";
 import { DashboardDialogs } from "./dashboard-dialogs";
 import { DashboardModelsSection } from "./dashboard-models-section";
@@ -27,6 +28,29 @@ export default function Dashboard({ apiBase, targetKey, readOnly = false, connec
     providers, models, modelsLoading, modelQuery, setModelQuery,
     filteredGroups, expandedProviders, setExpandedProviders,
   } = d;
+
+  useEffect(() => {
+    if (selectedSection !== "overview") return;
+    let frame = 0;
+    const scrollToGuardrails = () => {
+      if (normalizeHashPath(window.location.hash) !== DASHBOARD_GUARDRAILS_HASH) return;
+      const target = document.getElementById("proxy-guardrails");
+      if (!target || typeof target.scrollIntoView !== "function") return;
+      const reduced = typeof window.matchMedia === "function"
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      frame = window.requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+      });
+    };
+    scrollToGuardrails();
+    window.addEventListener("hashchange", scrollToGuardrails);
+    window.addEventListener("popstate", scrollToGuardrails);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("hashchange", scrollToGuardrails);
+      window.removeEventListener("popstate", scrollToGuardrails);
+    };
+  }, [selectedSection, d.health]);
 
   if (authenticationPending) return null;
   const accessFailure = d.connectionFailure === "auth" || d.connectionFailure === "denied";

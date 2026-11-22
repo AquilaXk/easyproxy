@@ -224,7 +224,19 @@ function useAccountSelectionEvents(
   return useCallback(() => recoverRef.current(), []);
 }
 
-export default function Providers({ apiBase, targetKey, targetLabel }: { apiBase: string; targetKey?: string; targetLabel?: string }) {
+export default function Providers({
+  apiBase,
+  targetKey,
+  targetLabel,
+  openAddRequested = false,
+  onOpenAddConsumed,
+}: {
+  apiBase: string;
+  targetKey?: string;
+  targetLabel?: string;
+  openAddRequested?: boolean;
+  onOpenAddConsumed?: () => void;
+}) {
   const t = useT();
   const draftTargetKey = targetKey ?? apiBase;
   const draftTargetLabel = targetLabel ?? providerDraftTargetLabel(draftTargetKey);
@@ -301,6 +313,17 @@ export default function Providers({ apiBase, targetKey, targetLabel }: { apiBase
     setStatusOk(false);
     setStatusTone("err");
   }, []);
+
+  useEffect(() => {
+    if (!openAddRequested) return;
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      setAdding(true);
+      onOpenAddConsumed?.();
+    });
+    return () => { cancelled = true; };
+  }, [openAddRequested, onOpenAddConsumed]);
 
   useLegacyTargetPreflightNotice(draftTargetKey, () => notify(t("prov.legacyTargetPreflight"), false, "warn"));
 

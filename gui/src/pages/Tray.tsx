@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createBoundedFetch } from '../bounded-fetch';
 import { useI18n } from '../i18n/shared';
+import { uxT } from '../i18n/ux-overhaul-copy';
 import { UsageCompanionChart } from './usage-companion-chart';
 import { companionTimelineQuery, companionTimelineProjection, type CompanionSettings, type CompanionSettingsResponse, type UsageTimeline } from './usage-companion-utils';
 import { accountSwitchRequest, fetchTrayJson, parseTrayUsage, filterUsage, parseAccounts, providerSources, type TrayProvider, type TraySwitchKind, type TrayUsage } from './tray-data';
@@ -13,6 +14,20 @@ declare global { interface Window { __EASYPROXY_TRAY_VISIBLE__?: boolean } }
 
 /** A switch that has not answered by then is reported as failed rather than left spinning. */
 const SWITCH_TIMEOUT_MS = 20_000;
+const TRAY_THEME_KEY = 'epx-theme';
+
+function syncTrayDocumentTheme(): void {
+  try {
+    const stored = window.localStorage.getItem(TRAY_THEME_KEY);
+    if (stored === 'light' || stored === 'dark') {
+      document.documentElement.dataset.theme = stored;
+    } else {
+      delete document.documentElement.dataset.theme;
+    }
+  } catch {
+    /* ignore disabled browser storage */
+  }
+}
 
 export interface TrayProps {
   /** Where tray requests go; the default runs App's discovery and hub-session bootstrap. */
@@ -46,9 +61,15 @@ export default function Tray({ resolveApiBase = resolveTrayApiBase }: TrayProps 
   useEffect(() => {
     mounted.current = true;
     document.documentElement.classList.add('tray-document');
+    syncTrayDocumentTheme();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === TRAY_THEME_KEY) syncTrayDocumentTheme();
+    };
+    window.addEventListener('storage', onStorage);
     return () => {
       mounted.current = false;
       switchController.current?.abort();
+      window.removeEventListener('storage', onStorage);
       document.documentElement.classList.remove('tray-document');
     };
   }, []);
@@ -187,6 +208,7 @@ export default function Tray({ resolveApiBase = resolveTrayApiBase }: TrayProps 
   }, [revision, apiBase, t]);
 
   const hiddenProviders = new Set(settings?.hiddenProviders ?? []);
+  const visibleProviders = providers.filter(provider => !hiddenProviders.has(provider.name));
   // Read off the popover's own requests: the runtime answered, could not be reached, or has not yet.
   const connection: TrayConnection = targetError || (quotaError && settingsError) ? 'down' : updatedAt !== null ? 'up' : 'loading';
   const updated = t('tray.updated', { time: updatedAt === null ? '—' : new Date(updatedAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) });
@@ -198,7 +220,10 @@ export default function Tray({ resolveApiBase = resolveTrayApiBase }: TrayProps 
     {(settings?.showAccounts ?? true) && <section className="tray-providers" aria-label={t('usage.section.providers')}>
       {quotaError && <TrayAlert onRetry={retry} t={t}>{t('startup.tray.unavailable')}</TrayAlert>}
       {switchError && <TrayAlert t={t}>{switchError}</TrayAlert>}
-      {providers.filter(provider => !hiddenProviders.has(provider.name)).map(provider => <TrayProviderCard key={provider.name} provider={provider} switching={switching} onSwitch={(name, kind, id) => void switchAccount(name, kind, id)} locale={locale} t={t} />)}
+      {visibleProviders.length === 0 && !quotaError && updatedAt !== null && (
+        <TrayCard><p className="tray-missing">{uxT(locale, 'tray.noProviders')}</p></TrayCard>
+      )}
+      {visibleProviders.map(provider => <TrayProviderCard key={provider.name} provider={provider} switching={switching} onSwitch={(name, kind, id) => void switchAccount(name, kind, id)} locale={locale} t={t} />)}
     </section>}
     {settings && <TrayTotalsCard usage={usage} settings={settings} locale={locale} t={t} />}
     {usageError && <TrayAlert onRetry={retry} t={t}>{t('usage.loadError')}</TrayAlert>}

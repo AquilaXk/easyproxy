@@ -125,6 +125,12 @@ export function jevAutoCreateDecisionProvider(hash: string): string | null | und
 export const DASHBOARD_UPDATE_HASH = "dashboard/update";
 
 /**
+ * `#dashboard/proxy-guardrails` targets the Guardrails section on Overview and smoothly
+ * scrolls `#proxy-guardrails` into view on load / navigation.
+ */
+export const DASHBOARD_GUARDRAILS_HASH = "dashboard/proxy-guardrails";
+
+/**
  * Integrations uses a wrapping outer tab strip. Claude Desktop is a nested
  * route owned by the Claude family panel, but it still has to be registered
  * here or App normalization strips it before Claude can read it.
@@ -187,7 +193,9 @@ export function hashBelongsToPage(rawHash: string, page: Page): boolean {
       || rawHash === JEV_AUTO_CREATE_HASH
     ))
     || (page === "dashboard"
-      && (rawHash === DASHBOARD_UPDATE_HASH || (DASHBOARD_TAB_HASHES as readonly string[]).includes(rawHash)))
+      && (rawHash === DASHBOARD_UPDATE_HASH
+        || rawHash === DASHBOARD_GUARDRAILS_HASH
+        || (DASHBOARD_TAB_HASHES as readonly string[]).includes(rawHash)))
     || (page === "integrations"
       && (INTEGRATION_TAB_HASHES as readonly string[]).includes(rawHash));
 }

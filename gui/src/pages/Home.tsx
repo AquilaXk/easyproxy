@@ -14,9 +14,10 @@ import { recentFailures, type HomeLogRow } from "./home-failures";
 import { startupChecklistStep } from "../startup-health-ui";
 import { useStartupChecklist } from "../hooks/useStartupChecklist";
 import { TelemetryProfileCard } from "../components/telemetry-profile-card";
-import { readManagementHealth } from "../lib/proxy-health";
+import { managementHealthAuthStatus, readManagementHealth } from "../lib/proxy-health";
 import { isDesktopShell } from "../lib/desktop-shell";
 import { useGettingStartedHidden } from "../getting-started-visibility";
+import { retryApiSessionPrompt } from "../api";
 
 /*
  * Design system v2 landing page. It answers the two questions people open the dashboard
@@ -32,6 +33,17 @@ interface HomeProps {
   onReloadCodex: () => void;
   reloadingCodex: boolean;
   onOpenPlayground?: () => void;
+  sessionReady?: boolean;
+  sessionEpoch?: number;
+  onRequestAuth?: () => void;
+}
+
+class HttpStatusError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`HTTP ${status}`);
+    this.status = status;
+  }
 }
 
 interface UsageDay { requests?: number; totalTokens?: number }
@@ -48,7 +60,17 @@ async function getJson<T>(url: string, signal: AbortSignal): Promise<T | null> {
   return (await res.json()) as T;
 }
 
-export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, reloadingCodex, onOpenPlayground }: HomeProps) {
+export default function Home({
+  apiBase,
+  endpointUrl,
+  navigate,
+  onReloadCodex,
+  reloadingCodex,
+  onOpenPlayground,
+  sessionReady = true,
+  sessionEpoch = 0,
+  onRequestAuth,
+}: HomeProps) {
   const { t, locale } = useI18n();
   const quickstartId = useId();
   const endpointCopy = useCopyFeedback<"endpoint" | "snippet">();
@@ -61,19 +83,20 @@ export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, re
   const compact = cachedNumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 });
 
   // The authenticated management health route: a hub's management ingress denies /healthz (#8506).
-  const health = useKeyedClientResource(`app-health:${apiBase}/api/system/health`, [apiBase],
+  const health = useKeyedClientResource(`app-health:${apiBase}/api/system/health`, [apiBase, sessionEpoch],
     signal => readManagementHealth(apiBase, "/api/system/health", signal), { pollMs: 30_000 });
-  const usage = useKeyedClientResource(`home-usage:${apiBase}`, [apiBase],
+  const usage = useKeyedClientResource(`home-usage:${apiBase}`, [apiBase, sessionEpoch],
     signal => getJson<UsageBody>(`${apiBase}/api/usage?range=7d`, signal), { pollMs: 60_000 });
-  const config = useKeyedClientResource(`home-config:${apiBase}`, [apiBase],
+  const config = useKeyedClientResource(`home-config:${apiBase}`, [apiBase, sessionEpoch],
     signal => getJson<ConfigBody>(`${apiBase}/api/config`, signal));
-  const guardrails = useKeyedClientResource(`home-guardrails:${apiBase}`, [apiBase],
+  const guardrails = useKeyedClientResource(`home-guardrails:${apiBase}`, [apiBase, sessionEpoch],
     signal => getJson<GuardrailsSummaryBody>(`${apiBase}/api/gateway-guardrails`, signal));
   const startup = useStartupChecklist(apiBase);
   // The 24-hour window is cut when the rows arrive, so render never reads the clock.
-  const failureRead = useKeyedClientResource(`home-failures:${apiBase}`, [apiBase],
+  const failureRead = useKeyedClientResource(`home-failures:${apiBase}`, [apiBase, sessionEpoch],
     async signal => {
       const response = await fetch(`${apiBase}/api/logs?limit=100`, { signal });
+      if (response.status === 401 || response.status === 403) throw new HttpStatusError(response.status);
       if (!response.ok) throw new Error("logs unavailable");
       const body: unknown = await response.json();
       if (!body || typeof body !== "object" || !("logs" in body) || !Array.isArray(body.logs)) throw new Error("logs unavailable");
@@ -82,6 +105,9 @@ export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, re
     { pollMs: 30_000 });
   const failuresKnown = failureRead.error == null && failureRead.data !== undefined;
   const failures = failuresKnown ? failureRead.data ?? [] : [];
+  const healthAuthStatus = managementHealthAuthStatus(health.data);
+  const logsAuthError = failureRead.error instanceof HttpStatusError && (failureRead.error.status === 401 || failureRead.error.status === 403);
+  const authBlocked = !sessionReady || healthAuthStatus === 401 || healthAuthStatus === 403 || logsAuthError;
 
   const online = health.data != null;
   const providerCount = Object.keys(config.data?.providers ?? {}).length;
@@ -128,7 +154,8 @@ export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, re
   const doneCount = steps.filter(step => step.done).length;
   const allDone = doneCount === steps.length;
 
-  const headline = !online ? t("shellV2.homeDown")
+  const headline = authBlocked ? uxT(locale, "auth.requiredTitle")
+    : !online ? t("shellV2.homeDown")
     : !failuresKnown ? t("shellV2.homeErrorsUnavailable")
     : failures.length > 0 ? t("shellV2.homeErrorsToday", { count: number.format(failures.length) })
     : t("shellV2.homeOk");
@@ -140,12 +167,20 @@ export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, re
           <span className="text-[12px] font-medium text-fg-subtle">{t("shellV2.navHome")}</span>
           <div className="flex min-w-0 items-center gap-3">
             <span className="relative inline-flex size-3 shrink-0" aria-hidden>
-              <span className={cn("relative size-3 rounded-full", !online ? "bg-danger" : !failuresKnown || failures.length ? "bg-warning" : "bg-success")} />
+              <span className={cn("relative size-3 rounded-full", authBlocked ? "bg-warning" : !online ? "bg-danger" : !failuresKnown || failures.length ? "bg-warning" : "bg-success")} />
             </span>
             <h1 className="m-0 text-title font-semibold tracking-[-0.025em] text-balance">{headline}</h1>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {authBlocked && (
+            <Button
+              variant="primary"
+              onClick={onRequestAuth ?? (() => { void retryApiSessionPrompt("shared"); })}
+            >
+              {uxT(locale, "auth.enterAdminToken")}
+            </Button>
+          )}
           {guardrails.data?.outboundSecretGuard?.mode && (
             <button
               type="button"

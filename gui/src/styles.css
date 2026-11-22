@@ -175,7 +175,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 :focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; border-radius: var(--radius-2xs); }
 
 /* ---- layout shell ---- */
-.app { display: grid; grid-template-columns: 232px 1fr; min-height: 100dvh; }
+.app { display: grid; grid-template-columns: 216px 1fr; min-height: 100dvh; }
 
 .sidebar {
   position: sticky; top: 0; align-self: start; height: 100dvh;
@@ -985,10 +985,11 @@ a.btn, a.btn:hover { text-decoration: none; }
 .model-card .id { font-family: var(--font-code); font-weight: var(--weight-semibold); font-size: var(--text-control); letter-spacing: 0; color: var(--text); }
 
 /* ---- badges / status dot ---- */
-.badge { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-caption); font-weight: var(--weight-semibold); line-height: var(--leading-ui); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid transparent; font-family: var(--font-code); letter-spacing: 0; }
-.badge-accent { background: var(--accent-soft); color: var(--text); }
-.badge-green { background: var(--green-soft); color: var(--green); }
-.badge-amber { background: var(--amber-soft); color: var(--amber); }
+.badge { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-caption); font-weight: var(--weight-semibold); line-height: var(--leading-ui); padding: 2px 8px; border-radius: 6px; border: 1px solid transparent; font-family: var(--font-sans, var(--font-ui)); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.badge-accent { background: var(--epx-accent-soft, var(--accent-soft)); color: var(--text); }
+.badge-green { background: var(--epx-success-soft, var(--green-soft)); color: var(--green); }
+.badge-amber { background: var(--epx-warning-soft, var(--amber-soft)); color: var(--amber); }
+.badge-red { background: var(--epx-danger-soft, var(--red-soft)); color: var(--red); }
 .badge-muted { background: var(--raised); color: var(--muted); border: 1px solid var(--border); }
 .badge-clickable { cursor: pointer; transition: filter var(--motion-fast); appearance: none; }
 .badge-clickable:hover { filter: brightness(1.1); }
@@ -1916,8 +1917,7 @@ dialog.modal-overlay::backdrop {
 
 }
 .modal-desc { font-size: var(--text-control); line-height: var(--leading-body); color: var(--muted); margin-bottom: 14px; max-width: var(--prose-measure); }
-.modal-actions { display: flex; gap: 8px; margin-top: 16px; }
-.modal-actions .btn { flex: 1; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 /* request logs: clamped request id, status + details affordance, detail modal */
 .log-reqid {

@@ -12,6 +12,7 @@ import { uxT } from "../i18n/ux-overhaul-copy";
 import { IconChevron, IconSearch, IconX } from "../icons";
 import { NAV_GROUPS, NAV_TIERS, type NavGroup, type NavGroupId, type NavTier } from "../nav-groups";
 import { buildCommandPaletteEntries, type PaletteQuickCommand, type PaletteSearchEntry } from "../lib/command-palette";
+import type { GatewayAlerts } from "../lib/gateway-alerts";
 import { isEditableTarget, numberModifierHeld, searchShortcutLabel, settingsShortcutLabel, shortcutLabel, shortcutStyle } from "../lib/nav-shortcuts";
 import { topmostOverlayLayer } from "./overlay-layers";
 
@@ -27,7 +28,7 @@ function readAdvancedOpen(): boolean {
   }
 }
 
-export function SidebarNav({ activeGroupId, pageLabel, pageAvailable, onNavigate, onReveal, desktopShell, t, locale, onNavigateHash, quickCommands }: {
+export function SidebarNav({ activeGroupId, pageLabel, pageAvailable, onNavigate, onReveal, desktopShell, t, locale, onNavigateHash, quickCommands, alerts }: {
   activeGroupId: NavGroupId | null;
   pageLabel: (page: Page) => string;
   /** Search offers only pages that can load now (Remote Workspace needs a hub). */
@@ -40,6 +41,7 @@ export function SidebarNav({ activeGroupId, pageLabel, pageAvailable, onNavigate
   locale?: Locale;
   onNavigateHash?: (hash: string) => void;
   quickCommands?: readonly PaletteQuickCommand[];
+  alerts?: GatewayAlerts;
 }) {
   const style = useMemo(() => shortcutStyle(desktopShell), [desktopShell]);
   const [query, setQuery] = useState("");
@@ -80,7 +82,7 @@ export function SidebarNav({ activeGroupId, pageLabel, pageAvailable, onNavigate
   const curatedDefaults = useMemo(
     () => [
       ...entries.filter(entry => entry.section === "actions"),
-      ...entries.filter(entry => entry.key.startsWith("page:")).slice(0, 8),
+      ...entries.filter(entry => entry.key.startsWith("page:")),
     ],
     [entries],
   );
@@ -282,6 +284,21 @@ export function SidebarNav({ activeGroupId, pageLabel, pageAvailable, onNavigate
     const { id, tkey, Icon } = group;
     const active = activeGroupId === id;
     const label = t(tkey);
+    const alertBadge = id === "connect" && alerts && alerts.budgetWarningCount > 0
+      ? {
+          count: alerts.budgetWarningCount,
+          tone: "warn" as const,
+          label: uxT(activeLocale, "alerts.budgetWarning", { count: alerts.budgetWarningCount }),
+          go: () => (onNavigateHash ? onNavigateHash("integrations/keys") : onNavigate("integrations")),
+        }
+      : id === "usage-logs" && alerts && alerts.rateLimitOrBlockCount > 0
+        ? {
+            count: alerts.rateLimitOrBlockCount,
+            tone: "err" as const,
+            label: uxT(activeLocale, "alerts.recentBlocks", { count: alerts.rateLimitOrBlockCount }),
+            go: () => (onNavigateHash ? onNavigateHash("logs") : onNavigate("logs")),
+          }
+        : null;
     return (
       <div key={id} className="nav-entry">
         <button type="button" className={`nav-item${active ? " active" : ""}`}
@@ -297,6 +314,21 @@ export function SidebarNav({ activeGroupId, pageLabel, pageAvailable, onNavigate
           <Icon /> <span className="nav-item-label">{label}</span>
           {shortcut && <kbd className="nav-kbd" aria-hidden="true">{shortcut}</kbd>}
         </button>
+        {alertBadge && (
+          <button
+            type="button"
+            className={`nav-alert-pill nav-alert-pill--${alertBadge.tone}`}
+            data-alert-target={id}
+            title={alertBadge.label}
+            aria-label={alertBadge.label}
+            onClick={() => {
+              searchButtonRef.current?.blur();
+              alertBadge.go();
+            }}
+          >
+            {alertBadge.count > 99 ? "99+" : alertBadge.count}
+          </button>
+        )}
       </div>
     );
   };

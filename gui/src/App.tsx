@@ -21,6 +21,8 @@ import type { PlaygroundSeed } from "./lib/playground-client";
 import { uxT } from "./i18n/ux-overhaul-copy";
 import { navigateHash } from "./hash-routing";
 import type { PaletteQuickCommand } from "./lib/command-palette";
+import { useGatewayAlerts } from "./lib/gateway-alerts";
+import { requestApiKeyCreateFocus } from "./lib/quick-action-signals";
 import { isEditableTarget, shortcutStyle } from "./lib/nav-shortcuts";
 import { topmostOverlayLayer } from "./components/overlay-layers";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -35,8 +37,8 @@ import { SidebarNav } from "./components/sidebar-nav";
 import { SectionSwitcher } from "./components/SectionSwitcher";
 import { useI18n, useT, LOCALES, localeDisplayName, type Locale, type TKey } from "./i18n/shared";
 import { Notice, Select, ToastNotice, type NoticeTone } from "./ui";
-import { bootstrapApiSession, configureApiTargets, DEVICE_PROOF_CHANGED_EVENT, hasApiSession, hasRememberedDashboardDevice, installApiAuthFetch, logoutApiSession, SESSION_CHANGED_EVENT, SESSION_UNAVAILABLE_EVENT, TARGET_CHANGED_EVENT } from "./api";
-import { apiBaseForPlane, apiTargetIdentity, ClientStateChangedError, discoverApiTargets, isConnectedRuntime, runtimeRoleFromDocument, standaloneApiTargets, type ApiTargets } from "./api-targets";
+import { bootstrapApiSession, configureApiTargets, DEVICE_PROOF_CHANGED_EVENT, hasApiCredential, hasApiSession, hasRememberedDashboardDevice, installApiAuthFetch, logoutApiSession, retryApiSessionPrompt, SESSION_CHANGED_EVENT, SESSION_UNAVAILABLE_EVENT, TARGET_CHANGED_EVENT } from "./api";
+import { adminTokenPromptAllowed, apiBaseForPlane, apiTargetIdentity, ClientStateChangedError, discoverApiTargets, isConnectedRuntime, runtimeRoleFromDocument, standaloneApiTargets, type ApiTargets } from "./api-targets";
 import { createTargetDiscovery } from "./api-target-lifecycle";
 import { ConnectPairingForm } from "./connect-pairing";
 import { validateRemoteLinkSession } from "./connect-pairing-transport";
@@ -158,8 +160,12 @@ export default function App() {
   // its own dashboard, for a feature the operator never enabled.
   const [targetsSettled, setTargetsSettled] = useState(() => !isConnectedRuntime());
   const [targetError, setTargetError] = useState<"unavailable" | "client-state-changed" | null>(null);
-  const [sharedSessionReady, setSharedSessionReady] = useState(() => hasApiSession("shared"));
+  const [sharedSessionReady, setSharedSessionReady] = useState(() => hasApiCredential("shared"));
+  const [sessionUnavailable, setSessionUnavailable] = useState(false);
+  const [retryingAuth, setRetryingAuth] = useState(false);
   const [sharedSessionEpoch, setSharedSessionEpoch] = useState(0);
+  const [addProviderRequested, setAddProviderRequested] = useState(false);
+  const consumeAddProviderRequest = useCallback(() => setAddProviderRequested(false), []);
   const [hubPairingOpen, setHubPairingOpen] = useState(false);
   const [playgroundOpen, setPlaygroundOpen] = useState(false);
   const [playgroundSeed, setPlaygroundSeed] = useState<PlaygroundSeed | null>(null);
@@ -180,15 +186,18 @@ export default function App() {
 
   useEffect(() => {
     const unavailable = (event: Event) => {
-      if ((event as CustomEvent<{ plane?: string }>).detail?.plane === "shared" && !hasApiSession("shared")) {
+      if ((event as CustomEvent<{ plane?: string }>).detail?.plane === "shared" && !hasApiCredential("shared")) {
         setSharedSessionReady(false);
+        setSessionUnavailable(true);
       }
     };
     // A change only ever reveals a session (Remember/Forget controls). Target discovery clears the
     // session transiently, and dropping readiness there would cancel the requests that recover it.
     const changed = (event: Event) => {
-      if ((event as CustomEvent<{ plane?: string }>).detail?.plane === "shared" && hasApiSession("shared")) {
+      if ((event as CustomEvent<{ plane?: string }>).detail?.plane === "shared" && hasApiCredential("shared")) {
         setSharedSessionReady(true);
+        setSessionUnavailable(false);
+        setSharedSessionEpoch(epoch => epoch + 1);
       }
     };
     window.addEventListener(SESSION_UNAVAILABLE_EVENT, unavailable);
@@ -206,7 +215,7 @@ export default function App() {
       discover: discoverApiTargets,
       configure: configureApiTargets,
       bootstrap: bootstrapApiSession,
-      hasSession: hasApiSession,
+      hasSession: hasApiCredential,
       onTargets: setTargets,
       onSessionReady: setSharedSessionReady,
       onError: setTargetError,
@@ -256,6 +265,17 @@ export default function App() {
   // RemoteLink authorization result, not the unrelated admin-token prompt policy.
   const hubPairingAvailable = page === "remote" && runtimeRoleFromDocument() === "hub";
   const remotePairingFormOpen = hubPairingAvailable && hubPairingOpen;
+  const standaloneAuthRequired = targetsSettled && !targetError && !targets.connected && !sharedSessionReady
+    && (sessionUnavailable || adminTokenPromptAllowed());
+  const gatewayAlerts = useGatewayAlerts({
+    apiBase: sharedBase,
+    ready: targetsSettled && !targetError && sharedSessionReady && !remotePairingFormOpen,
+  });
+  const handleRetryAdminAuth = () => {
+    if (retryingAuth) return;
+    setRetryingAuth(true);
+    void retryApiSessionPrompt("shared").finally(() => setRetryingAuth(false));
+  };
 
   // Narrow screens: the sidebar becomes an off-canvas drawer behind a hamburger toggle.
   const [navOpen, setNavOpen] = useState(false);
@@ -529,7 +549,14 @@ export default function App() {
       itemName: uxT(locale, "cmd.addProvider"),
       contextName: actionContext,
       keywords: "provider add connect account oauth key",
-      run: () => { navigateToPage("providers"); setNavOpen(false); },
+      run: () => { setAddProviderRequested(true); navigateToPage("providers"); setNavOpen(false); },
+    },
+    {
+      id: "create-api-key",
+      itemName: uxT(locale, "cmd.createApiKey"),
+      contextName: actionContext,
+      keywords: "api key create generate new token",
+      run: () => { requestApiKeyCreateFocus(); navigateHash("integrations/keys"); setNavOpen(false); },
     },
     {
       id: "manage-keys",
@@ -553,10 +580,31 @@ export default function App() {
       run: () => { setNavOpen(false); void handleCodexRestart(); },
     },
     {
+      id: "theme-light",
+      itemName: uxT(locale, "cmd.themeLight"),
+      contextName: actionContext,
+      keywords: "theme light bright day appearance",
+      run: () => { setTheme("light"); setNavOpen(false); },
+    },
+    {
+      id: "theme-dark",
+      itemName: uxT(locale, "cmd.themeDark"),
+      contextName: actionContext,
+      keywords: "theme dark night appearance",
+      run: () => { setTheme("dark"); setNavOpen(false); },
+    },
+    {
+      id: "theme-system",
+      itemName: uxT(locale, "cmd.themeSystem"),
+      contextName: actionContext,
+      keywords: "theme system auto os appearance",
+      run: () => { setTheme("system"); setNavOpen(false); },
+    },
+    {
       id: "cycle-theme",
       itemName: uxT(locale, "cmd.cycleTheme"),
       contextName: actionContext,
-      keywords: "theme dark light system",
+      keywords: "theme dark light system cycle",
       run: () => {
         setTheme(prev => prev === "system" ? "light" : prev === "light" ? "dark" : "system");
         setNavOpen(false);
@@ -655,6 +703,7 @@ export default function App() {
             onNavigate={sidebarNavigate}
             onNavigateHash={sub => { navigateHash(sub); setNavOpen(false); }}
             quickCommands={quickCommands}
+            alerts={gatewayAlerts}
             locale={locale}
             onReveal={revealSidebar}
             desktopShell={desktopShell}
@@ -777,25 +826,64 @@ export default function App() {
                 {targetError && (
                   <div className="alert alert-err" role="alert">{t(targetError === "client-state-changed" ? "connection.clientStateChanged" : "connection.machineUnavailable")}</div>
                 )}
+                {standaloneAuthRequired && (
+                  <Notice tone="warn">
+                    <span>{uxT(locale, "auth.sessionRequiredBanner")}</span>{" "}
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={retryingAuth}
+                      onClick={handleRetryAdminAuth}
+                    >
+                      {uxT(locale, "auth.enterAdminToken")}
+                    </button>
+                  </Notice>
+                )}
+                {sharedSessionReady && (gatewayAlerts.budgetWarningCount > 0 || gatewayAlerts.rateLimitOrBlockCount > 0) && (
+                  <div className="gateway-alert-bar" role="status" aria-live="polite">
+                    {gatewayAlerts.budgetWarningCount > 0 && (
+                      <button
+                        type="button"
+                        className="gateway-alert-pill gateway-alert-pill--warn"
+                        onClick={() => navigateHash("integrations/keys")}
+                      >
+                        {uxT(locale, "alerts.budgetWarning", { count: gatewayAlerts.budgetWarningCount })}
+                      </button>
+                    )}
+                    {gatewayAlerts.rateLimitOrBlockCount > 0 && (
+                      <button
+                        type="button"
+                        className="gateway-alert-pill gateway-alert-pill--err"
+                        onClick={() => navigateHash("logs")}
+                      >
+                        {uxT(locale, "alerts.recentBlocks", { count: gatewayAlerts.rateLimitOrBlockCount })}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {((targets.connected && !sharedSessionReady) || remotePairingFormOpen) && (
                   <ConnectPairingForm key={`${targets.shared.serverOrigin}:${targets.shared.bootstrapPath}`} target={targets.shared} focusOnMount={remotePairingFormOpen} onConnected={async signal => {
                     if (remotePairingFormOpen) await validateRemoteLinkSession(sharedBase, undefined, signal);
                     signal.throwIfAborted();
                     setHubPairingOpen(false);
-                    setSharedSessionReady(hasApiSession("shared"));
+                    setSharedSessionReady(hasApiCredential("shared"));
+                    setSessionUnavailable(false);
                     setSharedSessionEpoch(epoch => epoch + 1);
                   }} />
                 )}
                 <Suspense fallback={<DataSurfaceSkeleton label={t("common.loading")} rows={4} />}>
                 {page === "home" && <Home apiBase={sharedBase} endpointUrl={endpointUrl} navigate={navigateToPage}
                   onReloadCodex={() => { void handleCodexRestart(); }} reloadingCodex={codexRestarting}
-                  onOpenPlayground={() => { setPlaygroundSeed(null); setPlaygroundOpen(true); }} />}
+                  onOpenPlayground={() => { setPlaygroundSeed(null); setPlaygroundOpen(true); }}
+                  sessionReady={!standaloneAuthRequired && !(targets.connected && !sharedSessionReady)}
+                  sessionEpoch={sharedSessionEpoch}
+                  onRequestAuth={handleRetryAdminAuth} />}
                 {page === "setup" && <SetupHub apiBase={sharedBase} navigate={navigateToPage} />}
                 {page === "advanced" && <AdvancedHub navigate={navigateToPage} onSwitchClassic={() => switchDashboardEdition("classic")} />}
                 {page === "dashboard" && <Dashboard apiBase={sharedBase} targetKey={sharedTarget.key} readOnly={targets.link !== undefined} connected={targets.connected}
                   authenticationPending={targets.connected && !sharedSessionReady} refreshEpoch={sharedSessionEpoch} />}
                 {page === "startup" && <Startup apiBase={sharedBase} machineApiBase={machineBase} connected={targets.connected} />}
-                {page === "providers" && <Providers apiBase={sharedBase} targetKey={sharedTarget.key} targetLabel={sharedTarget.label} />}
+                {page === "providers" && <Providers apiBase={sharedBase} targetKey={sharedTarget.key} targetLabel={sharedTarget.label} openAddRequested={addProviderRequested} onOpenAddConsumed={consumeAddProviderRequest} />}
                 {page === "models" && <Models key={sharedBase} apiBase={sharedBase} restartEpoch={codexRestartEpoch} connected={targets.connected} catalogSyncedAt={targets.catalogSyncedAt} reportRestart={report} onOpenPlayground={(seed) => { setPlaygroundSeed(seed ?? null); setPlaygroundOpen(true); }} />}
                 {page === "subagents" && <Subagents key={sharedBase} apiBase={sharedBase} />}
                 {page === "advisor" && <Advisor key={sharedBase} apiBase={sharedBase} />}

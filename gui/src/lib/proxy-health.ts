@@ -9,6 +9,13 @@ export interface ManagementHealth {
   uptime: number | null;
 }
 
+const authStatusByHealth = new WeakMap<ManagementHealth, 401 | 403>();
+
+/** Returns 401 or 403 when readManagementHealth observed an authorization refusal, else null. */
+export function managementHealthAuthStatus(health: ManagementHealth | null | undefined): 401 | 403 | null {
+  return health ? (authStatusByHealth.get(health) ?? null) : null;
+}
+
 /**
  * Which health route answers on the machine plane.
  *
@@ -45,7 +52,11 @@ export async function readManagementHealth(
   fetchImpl: typeof fetch = fetch,
 ): Promise<ManagementHealth | null> {
   const res = await fetchImpl(`${base}${path}`, { signal });
-  if (res.status === 401 || res.status === 403) return { version: null, uptime: null };
+  if (res.status === 401 || res.status === 403) {
+    const out: ManagementHealth = { version: null, uptime: null };
+    authStatusByHealth.set(out, res.status);
+    return out;
+  }
   if (!res.ok) return null;
   const body: unknown = await res.json();
   return { version: readVersion(body), uptime: readUptime(body) };

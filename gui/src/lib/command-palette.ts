@@ -100,16 +100,18 @@ export function buildCommandPaletteEntries(options: {
         });
       }
     }
-    if (pageAvailable("providers")) {
+    if (pageAvailable("dashboard") || pageAvailable("providers")) {
       const guardrailsLabel = t("proxyV2.secGuardrails");
+      const targetDashboard = pageAvailable("dashboard");
+      const guardrailsContext = targetDashboard ? t("nav.dashboard") : t("nav.providers");
       extraEntries.push({
         key: "deep:guardrails",
         section: "pages",
         Icon: IconServer,
         label: guardrailsLabel,
-        context: t("nav.providers"),
-        haystack: `${guardrailsLabel} guardrails dlp secret privacy ${t("nav.providers")}`.toLowerCase(),
-        onSelect: () => onNavigateHash("providers"),
+        context: guardrailsContext,
+        haystack: `${guardrailsLabel} guardrails dlp secret privacy ${guardrailsContext}`.toLowerCase(),
+        onSelect: () => onNavigateHash(targetDashboard ? "dashboard/proxy-guardrails" : "providers"),
       });
     }
     if (pageAvailable("logs")) {

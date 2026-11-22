@@ -159,6 +159,7 @@ function updateSession(state: TargetRuntime, session: ApiSessionState, recovery?
   const changed = state.session.token !== session.token;
   advanceSessionGeneration(state, false);
   state.session = session;
+  if (session.token) state.promptCancelled = false;
   // Advance our own recovery before synchronous session-event listeners can supersede it.
   if (recovery) recovery.generation = state.generation;
   if (state.target.id === "shared") changeUsageSession(!session.token);
@@ -375,6 +376,28 @@ function storeSession(
 
 export function hasApiSession(plane: ApiPlane): boolean {
   return Boolean(runtime(plane).session.token?.startsWith("epx_session_"));
+}
+
+/** True whenever the plane holds either a minted session token or a user-supplied admin token. */
+export function hasApiCredential(plane: ApiPlane): boolean {
+  return Boolean(runtime(plane).session.token);
+}
+
+/**
+ * Reset cancellation after a dismissed token prompt and retry session/admin-token acquisition.
+ * Returns true if the plane ends up holding an active credential.
+ */
+export async function retryApiSessionPrompt(plane: ApiPlane = "shared"): Promise<boolean> {
+  const state = runtime(plane);
+  if (state.logoutBarrier) return false;
+  state.promptCancelled = false;
+  if (hasApiCredential(plane)) return true;
+  const next = await resolveTokenAfter401(plane, null);
+  const ok = Boolean(next?.token && runtime(plane).session.token);
+  if (!ok && !state.logoutBarrier && !hasApiCredential(plane)) {
+    reportSessionEvent(plane, SESSION_UNAVAILABLE_EVENT);
+  }
+  return ok;
 }
 
 export async function logoutApiSession(plane: ApiPlane): Promise<boolean> {

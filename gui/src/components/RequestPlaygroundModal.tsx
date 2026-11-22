@@ -17,6 +17,7 @@ import {
   type PlaygroundTelemetry,
   type PlaygroundTurn,
 } from "../lib/playground-client";
+import { parseCurlToPlaygroundRequest, type CurlImportErrorCode } from "../lib/curl-import";
 import "./request-playground.css";
 
 export type { PlaygroundSeed };
@@ -63,6 +64,12 @@ function parseOptionalTemperature(raw: string): number | undefined {
 function isPointOutsideRect(rect: DOMRect, clientX: number, clientY: number): boolean {
   if (rect.width === 0 && rect.height === 0) return false;
   return clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom;
+}
+
+function curlErrorKey(code: CurlImportErrorCode) {
+  if (code === "empty") return "playground.importCurlErrEmpty" as const;
+  if (code === "too_large") return "playground.importCurlErrTooLarge" as const;
+  return "playground.importCurlErrInvalid" as const;
 }
 
 export default function RequestPlaygroundModal({
@@ -121,7 +128,13 @@ export default function RequestPlaygroundModal({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [laneA, setLaneA] = useState<LaneState>(INITIAL_LANE);
   const [laneB, setLaneB] = useState<LaneState>(INITIAL_LANE);
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const [copyFeedback, setCopyFeedback] = useState<{
+    key: "curlA" | "curlB" | "respA" | "respB" | null;
+    status: "idle" | "copied" | "failed";
+  }>({ key: null, status: "idle" });
+  const [curlImportOpen, setCurlImportOpen] = useState(false);
+  const [curlImportDraft, setCurlImportDraft] = useState("");
+  const [curlImportError, setCurlImportError] = useState<string | null>(null);
   const [trackedSeed, setTrackedSeed] = useState(initialSeed);
 
   if (trackedSeed !== initialSeed) {
@@ -325,12 +338,39 @@ export default function RequestPlaygroundModal({
     }
   };
 
-  const handleCopyCurl = async () => {
+  const writeClipboardWithFeedback = async (
+    key: "curlA" | "curlB" | "respA" | "respB",
+    text: string,
+  ) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyFeedback({ key, status: "copied" });
+    } catch {
+      setCopyFeedback({ key, status: "failed" });
+    }
+    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopyFeedback({ key: null, status: "idle" }), 2_000);
+  };
+
+  const labelForCopy = (
+    key: "curlA" | "curlB" | "respA" | "respB",
+    defaultLabel: string,
+  ): string => {
+    if (copyFeedback.key !== key) return defaultLabel;
+    if (copyFeedback.status === "copied") return uxT(locale, "playground.copied");
+    if (copyFeedback.status === "failed") return uxT(locale, "playground.copyFailed");
+    return defaultLabel;
+  };
+
+  const handleCopyCurl = async (
+    laneModel: string,
+    key: "curlA" | "curlB",
+  ) => {
     const maxTokens = parseOptionalMaxTokens(maxTokensDraft);
     const effectiveUserPrompt = userPrompt.trim() || "...";
     const payload = buildPlaygroundPayload(
       endpoint,
-      modelA.trim() || DEFAULT_PLAYGROUND_MODEL,
+      laneModel.trim() || DEFAULT_PLAYGROUND_MODEL,
       systemPrompt,
       effectiveUserPrompt,
       stream,
@@ -338,17 +378,93 @@ export default function RequestPlaygroundModal({
       buildPayloadOptions(effectiveUserPrompt),
     );
     const cmd = buildPlaygroundCurl(apiBase, endpoint, payload);
-    try {
-      await navigator.clipboard.writeText(cmd);
-      setCopyStatus("copied");
-    } catch {
-      setCopyStatus("failed");
-    }
-    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => setCopyStatus("idle"), 2_000);
+    await writeClipboardWithFeedback(key, cmd);
   };
 
-  const renderTelemetryAndOutput = (lane: LaneState, label?: string) => {
+  const applyImportedCurl = () => {
+    const parsed = parseCurlToPlaygroundRequest(curlImportDraft);
+    if (!parsed.ok) {
+      setCurlImportError(uxT(locale, curlErrorKey(parsed.errorCode)));
+      return;
+    }
+    const { endpoint: nextEndpoint, seed, stream: nextStream } = parsed.value;
+    setEndpoint(nextEndpoint);
+    if (seed.model) {
+      setModelA(seed.model);
+    }
+    setSystemPrompt(seed.systemPrompt ?? "");
+    setPriorTurns(seed.turns ? seed.turns.map(turn => ({ ...turn })) : []);
+    setUserPrompt(seed.userPrompt ?? "");
+    setMaxTokensDraft(seed.maxTokens !== undefined ? String(seed.maxTokens) : "");
+    setTemperatureDraft(seed.temperature !== undefined ? String(seed.temperature) : "");
+    setEffort(seed.effort ?? "");
+    setServiceTier(seed.serviceTier ?? "");
+    if (nextStream !== undefined) setStream(nextStream);
+    setValidationError(null);
+    setCurlImportError(null);
+    setCurlImportOpen(false);
+  };
+
+  const renderCompareDelta = () => {
+    if (mode !== "compare") return null;
+    if (laneA.telemetry.status === null || laneB.telemetry.status === null) return null;
+    const chips: Array<{ key: string; label: string; highlight: boolean }> = [];
+
+    if (laneA.telemetry.ttftMs !== null && laneB.telemetry.ttftMs !== null) {
+      const diff = Math.round(laneA.telemetry.ttftMs - laneB.telemetry.ttftMs);
+      const summary = diff === 0
+        ? uxT(locale, "playground.deltaTie")
+        : diff < 0
+          ? uxT(locale, "playground.deltaWinnerA", { ms: Math.abs(diff) })
+          : uxT(locale, "playground.deltaWinnerB", { ms: diff });
+      chips.push({ key: "ttft", label: `${uxT(locale, "playground.deltaTtft")}: ${summary}`, highlight: diff !== 0 });
+    }
+
+    if (laneA.telemetry.totalMs !== null && laneB.telemetry.totalMs !== null) {
+      const diff = Math.round(laneA.telemetry.totalMs - laneB.telemetry.totalMs);
+      const summary = diff === 0
+        ? uxT(locale, "playground.deltaTie")
+        : diff < 0
+          ? uxT(locale, "playground.deltaWinnerA", { ms: Math.abs(diff) })
+          : uxT(locale, "playground.deltaWinnerB", { ms: diff });
+      chips.push({ key: "total", label: `${uxT(locale, "playground.deltaTotal")}: ${summary}`, highlight: diff !== 0 });
+    }
+
+    if (laneA.telemetry.tokensPerSec !== null && laneB.telemetry.tokensPerSec !== null) {
+      const diff = Math.round((laneA.telemetry.tokensPerSec - laneB.telemetry.tokensPerSec) * 10) / 10;
+      const summary = diff === 0
+        ? uxT(locale, "playground.deltaTie")
+        : diff > 0
+          ? uxT(locale, "playground.deltaHigherA", { value: diff })
+          : uxT(locale, "playground.deltaHigherB", { value: Math.abs(diff) });
+      chips.push({ key: "toksec", label: `${uxT(locale, "playground.deltaTokSec")}: ${summary}`, highlight: diff !== 0 });
+    }
+
+    const tokA = laneA.telemetry.outputTokens ?? laneA.telemetry.tokens;
+    const tokB = laneB.telemetry.outputTokens ?? laneB.telemetry.tokens;
+    if (tokA !== null && tokB !== null) {
+      const diff = Math.round(tokA - tokB);
+      const summary = diff === 0
+        ? uxT(locale, "playground.deltaTie")
+        : diff > 0
+          ? uxT(locale, "playground.deltaHigherA", { value: diff })
+          : uxT(locale, "playground.deltaHigherB", { value: Math.abs(diff) });
+      chips.push({ key: "tokens", label: `${uxT(locale, "playground.deltaTokens")}: ${summary}`, highlight: false });
+    }
+
+    if (chips.length === 0) return null;
+    return (
+      <div className="playground-ab-delta" role="status" aria-live="polite">
+        {chips.map(item => (
+          <span key={item.key} className={`playground-chip${item.highlight ? " playground-delta-win" : ""}`}>
+            {item.label}
+          </span>
+        ))}
+      </div>
+    );
+  };
+
+  const renderTelemetryAndOutput = (lane: LaneState, copyKey: "respA" | "respB", label?: string) => {
     const statusTone = lane.telemetry.status === null
       ? ""
       : lane.telemetry.status >= 200 && lane.telemetry.status < 300
@@ -356,7 +472,20 @@ export default function RequestPlaygroundModal({
         : " playground-chip--err";
     return (
       <div className="playground-lane">
-        {label && <div className="playground-lane-label">{label}</div>}
+        {(label || lane.output) && (
+          <div className="playground-lane-head">
+            {label ? <div className="playground-lane-label">{label}</div> : <span />}
+            {lane.output && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => { void writeClipboardWithFeedback(copyKey, lane.output); }}
+              >
+                {labelForCopy(copyKey, uxT(locale, "playground.copyResponse"))}
+              </button>
+            )}
+          </div>
+        )}
         {lane.errorMsg && <div className="notice notice-err" role="alert">{lane.errorMsg}</div>}
         <div className="playground-telemetry" aria-live="polite">
           {lane.telemetry.status !== null && (
@@ -454,6 +583,18 @@ export default function RequestPlaygroundModal({
                 {uxT(locale, "playground.modeCompare")}
               </button>
             </div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              aria-expanded={curlImportOpen}
+              disabled={sending}
+              onClick={() => {
+                setCurlImportOpen(open => !open);
+                setCurlImportError(null);
+              }}
+            >
+              {uxT(locale, "playground.importCurl")}
+            </button>
           </div>
           <button type="button" className="btn btn-ghost btn-icon" aria-label={t("common.close")} onClick={requestClose}>
             <IconX />
@@ -462,6 +603,38 @@ export default function RequestPlaygroundModal({
         <p className="playground-subtitle">
           {mode === "compare" ? uxT(locale, "playground.compareHint") : uxT(locale, "playground.subtitle")}
         </p>
+
+        {curlImportOpen && (
+          <div className="playground-curl-import">
+            <textarea
+              className="input playground-textarea playground-curl-textarea"
+              aria-label={uxT(locale, "playground.importCurl")}
+              placeholder={uxT(locale, "playground.importCurlPlaceholder")}
+              value={curlImportDraft}
+              onChange={(e) => {
+                setCurlImportDraft(e.target.value);
+                if (curlImportError) setCurlImportError(null);
+              }}
+            />
+            {curlImportError && <div className="notice notice-err" role="alert">{curlImportError}</div>}
+            <div className="playground-curl-actions">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => { setCurlImportOpen(false); setCurlImportError(null); }}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={applyImportedCurl}
+              >
+                {uxT(locale, "playground.importCurlApply")}
+              </button>
+            </div>
+          </div>
+        )}
 
         <form className="playground-form" onSubmit={(e) => { e.preventDefault(); void runRequest(); }}>
           <div className="playground-grid playground-grid--3">
@@ -688,13 +861,14 @@ export default function RequestPlaygroundModal({
               />
               <span>{uxT(locale, "playground.stream")}</span>
             </label>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void handleCopyCurl(); }}>
-              {copyStatus === "copied"
-                ? uxT(locale, "playground.copied")
-                : copyStatus === "failed"
-                  ? uxT(locale, "playground.copyFailed")
-                  : uxT(locale, "playground.copyCurl")}
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void handleCopyCurl(modelA, "curlA"); }}>
+              {labelForCopy("curlA", uxT(locale, "playground.copyCurl"))}
             </button>
+            {mode === "compare" && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void handleCopyCurl(modelB, "curlB"); }}>
+                {labelForCopy("curlB", uxT(locale, "playground.copyCurlB"))}
+              </button>
+            )}
             {sending ? (
               <button type="button" className="btn btn-danger btn-sm" onClick={stopRequest}>
                 {uxT(locale, "playground.stop")}
@@ -709,13 +883,15 @@ export default function RequestPlaygroundModal({
 
         {validationError && <div className="notice notice-err" role="alert">{validationError}</div>}
 
+        {renderCompareDelta()}
+
         {mode === "compare" ? (
           <div className="playground-compare-grid">
-            {renderTelemetryAndOutput(laneA, modelA.trim() || uxT(locale, "playground.modelA"))}
-            {renderTelemetryAndOutput(laneB, modelB.trim() || uxT(locale, "playground.modelB"))}
+            {renderTelemetryAndOutput(laneA, "respA", modelA.trim() || uxT(locale, "playground.modelA"))}
+            {renderTelemetryAndOutput(laneB, "respB", modelB.trim() || uxT(locale, "playground.modelB"))}
           </div>
         ) : (
-          renderTelemetryAndOutput(laneA)
+          renderTelemetryAndOutput(laneA, "respA")
         )}
       </div>
     </dialog>

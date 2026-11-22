@@ -240,7 +240,7 @@ test("the narrow macOS strip and drawer reserve the native controls", () => {
   const mobile = css.slice(css.indexOf("@media (max-width: 760px)"));
   expect(mobile).toContain(".app--macos .mobile-topbar { padding-left: var(--tl-inset, 80px); }");
   expect(mobile).toContain(".app--macos .sidebar.open { padding-top: calc(var(--titlebar-h, 40px) + 18px); }");
-  expect(css).toContain("--sidebar-column: max(232px, calc(var(--tl-inset) + 52px))");
+  expect(css).toContain("--sidebar-column: max(216px, calc(var(--tl-inset) + 52px))");
   expect(css).toContain(".app--macos.app--reduced-zoom { transition: none; }");
   expect(css).toContain(".app--macos .mobile-topbar { flex-wrap: wrap; }");
   expect(lib).toContain(".min_inner_size(360.0, 320.0)");

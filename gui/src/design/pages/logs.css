@@ -43,6 +43,12 @@
 .logs-page col.logs-col-duration { width: 84px; }
 .logs-page col.logs-col-actions { width: 40px; }
 
+.logs-page .logs-status-badge {
+  border-radius: 6px;
+  font-family: var(--font-sans, var(--font-ui));
+  font-variant-numeric: tabular-nums;
+}
+
 @container (max-width: 880px) {
   .logs-page .logs-table { min-width: 0; width: 100%; }
   .logs-page .logs-table th,
@@ -50,18 +56,24 @@
   .logs-page .logs-table th:first-child,
   .logs-page .logs-table td:first-child { padding-inline: 6px; }
   .logs-page col.logs-col-client { width: 44px; }
-  .logs-page col.logs-col-time { width: 104px; }
-  .logs-page col.logs-col-status { width: 76px; }
+  .logs-page col.logs-col-time { width: 96px; }
+  .logs-page col.logs-col-status { width: 72px; }
   .logs-page col.logs-col-model { width: auto !important; }
-  .logs-page col.logs-col-tokens { width: 84px; }
-  .logs-page col.logs-col-cost { width: 80px; }
-  .logs-page col.logs-col-duration { width: 80px; }
-  .logs-page col.logs-col-actions { width: 36px; }
+  .logs-page col.logs-col-tokens { width: 76px; }
+  .logs-page col.logs-col-rate { width: 72px; }
+  .logs-page col.logs-col-cost { width: 72px; }
+  .logs-page col.logs-col-duration { width: 72px; }
+  .logs-page col.logs-col-actions { width: 34px; }
   .logs-page colgroup col.logs-col-effort,
-  .logs-page colgroup col.logs-col-rate,
   .logs-page .logs-table th.log-col-effort,
+  .logs-page .logs-table td.log-reasoning-cell {
+    display: none;
+  }
+}
+
+@container (max-width: 720px) {
+  .logs-page colgroup col.logs-col-rate,
   .logs-page .logs-table th.log-col-rate,
-  .logs-page .logs-table td.log-reasoning-cell,
   .logs-page .logs-table td.log-col-rate {
     display: none;
   }
@@ -122,6 +134,18 @@ dialog.log-detail-drawer > .log-detail-card {
   box-shadow: var(--epx-shadow-lg);
   padding: 20px 24px;
   font-family: var(--font-ui);
+}
+@keyframes epx-drawer-slide-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+dialog.log-detail-drawer[open] > .log-detail-card {
+  animation: epx-drawer-slide-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog.log-detail-drawer[open] > .log-detail-card {
+    animation: none;
+  }
 }
 @media (min-width: 1220px) {
   .logs-page:has(dialog.log-detail-drawer[open]) {

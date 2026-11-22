@@ -1,0 +1,179 @@
+@layer bridge {
+  .log-waterfall {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--epx-inset);
+    box-shadow: inset 0 0 0 1px var(--epx-line);
+  }
+
+  .log-waterfall-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--epx-fg-muted);
+  }
+
+  .log-waterfall-title {
+    font-weight: 600;
+    color: var(--epx-fg);
+  }
+
+  .log-waterfall-legend {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--epx-fg-subtle);
+  }
+
+  .log-waterfall-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .log-waterfall-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .log-waterfall-swatch--ttft {
+    background: var(--epx-highlight);
+    opacity: 0.45;
+  }
+
+  .log-waterfall-swatch--decode {
+    background: var(--epx-success);
+  }
+
+  .log-waterfall-swatch--error {
+    background: var(--epx-danger);
+  }
+
+  .log-waterfall-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .log-waterfall-row {
+    display: grid;
+    grid-template-columns: minmax(110px, 145px) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  .log-waterfall-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .log-waterfall-ordinal {
+    font-family: var(--font-ui);
+    font-variant-numeric: tabular-nums;
+    color: var(--epx-fg-subtle);
+    flex-shrink: 0;
+  }
+
+  .log-waterfall-target {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--epx-fg);
+    font-weight: 500;
+  }
+
+  .log-waterfall-track {
+    position: relative;
+    height: 12px;
+    border-radius: 4px;
+    background: var(--epx-surface);
+    box-shadow: inset 0 0 0 1px var(--epx-line);
+    overflow: hidden;
+  }
+
+  .log-waterfall-bar {
+    position: absolute;
+    top: 1px;
+    bottom: 1px;
+    display: flex;
+    min-width: 4px;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .log-waterfall-seg {
+    height: 100%;
+    min-width: 1px;
+  }
+
+  .log-waterfall-bar--ok .log-waterfall-seg--ttft {
+    background: color-mix(in oklab, var(--epx-highlight) 55%, transparent);
+  }
+
+  .log-waterfall-bar--ok .log-waterfall-seg--decode,
+  .log-waterfall-bar--ok .log-waterfall-seg--full {
+    background: var(--epx-success);
+  }
+
+  .log-waterfall-bar--warn .log-waterfall-seg--ttft,
+  .log-waterfall-bar--warn .log-waterfall-seg--decode,
+  .log-waterfall-bar--warn .log-waterfall-seg--full {
+    background: var(--epx-warning);
+  }
+
+  .log-waterfall-bar--err .log-waterfall-seg--ttft,
+  .log-waterfall-bar--err .log-waterfall-seg--decode,
+  .log-waterfall-bar--err .log-waterfall-seg--full {
+    background: var(--epx-danger);
+  }
+
+  .log-waterfall-timing {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-ui);
+    font-variant-numeric: tabular-nums;
+    color: var(--epx-fg-muted);
+    white-space: nowrap;
+  }
+
+  .log-waterfall-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 5px;
+    height: 18px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .log-waterfall-status--ok {
+    background: var(--epx-success-soft);
+    color: var(--epx-success);
+  }
+
+  .log-waterfall-status--warn {
+    background: var(--epx-warning-soft);
+    color: var(--epx-warning);
+  }
+
+  .log-waterfall-status--err {
+    background: var(--epx-danger-soft);
+    color: var(--epx-danger);
+  }
+}

@@ -33,7 +33,7 @@ function Heading({ label, data, t }: { label: string; data: TrayUsage | null | u
 /** Today and the last 30 days side by side; the headline figure is the token total. */
 export function TrayTotalsCard({ usage, settings, locale, t }: { usage: (TrayUsage | null)[]; settings: CompanionSettings; locale: string; t: TFn }) {
   return <TrayCard className="tray-totals" label={t('usage.section.overview')}>
-    <div className="tray-totals-grid">
+    <div className={settings.showToday ? "tray-totals-grid" : "tray-totals-grid tray-totals-grid--single"}>
       {settings.showToday && <div><Heading label={t('tray.today')} data={usage[0]} t={t} /><Totals raw={usage[0]?.summary} showCost={settings.showCost} locale={locale} t={t} /></div>}
       <div><Heading label={t('usage.range.30d')} data={usage[1]} t={t} /><Totals raw={usage[1]?.summary} showCost={settings.showCost} locale={locale} t={t} /></div>
     </div>

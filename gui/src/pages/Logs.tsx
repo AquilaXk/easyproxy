@@ -32,6 +32,7 @@ import { LogsFilterBar } from "./logs-filter-bar";
 import { LogsClientChip } from "./logs-client-chip";
 import { ProtocolBadge } from "../components/protocols/ProtocolBadge";
 import { ProtocolTracePanel } from "../components/protocols/ProtocolTracePanel";
+import { LogAttemptWaterfall } from "../components/LogAttemptWaterfall";
 import { logsClockAnchor, logsClockNow, type LogsClockAnchor } from "./logs-clock";
 import { startVisibilityPoll } from "../visibility-poll";
 import { DEFAULT_LOG_FILTER_STATE, extractLogFilterOptions, filterLogs, hasActiveLogFilters, type LogFilterState } from "./logs-filter";
@@ -1572,6 +1573,12 @@ function LogDetailDialog({
           <section className="log-detail-section" aria-labelledby="log-detail-attempts">
             <h4 id="log-detail-attempts" className="log-detail-section-title">{t("logs.detail.section.attempts")}</h4>
             <p className="log-detail-notes-line muted">{t("logs.detail.attempt.e2eNote")}</p>
+            <LogAttemptWaterfall
+              attempts={detail.attempts}
+              totalDurationMs={detail.durationMs}
+              locale={localeCode}
+              t={t}
+            />
             <div className="log-detail-attempts-wrap">
               <table className="tbl log-detail-attempts">
                 <thead><tr>

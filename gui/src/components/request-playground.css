@@ -173,22 +173,73 @@
     display: inline-flex;
     align-items: center;
     padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    font-family: var(--font-ui);
+    border-radius: 6px;
+    border: 1px solid var(--epx-line, var(--border));
+    background: var(--epx-surface-2, var(--bg));
+    font-family: var(--font-sans, var(--font-ui));
     font-variant-numeric: tabular-nums;
-    color: var(--muted);
+    color: var(--epx-fg-muted, var(--muted));
   }
 
   .playground-chip--ok {
-    border-color: var(--green);
-    color: var(--green);
+    border-color: transparent;
+    background: var(--epx-success-soft, var(--green-soft));
+    color: var(--epx-success, var(--green));
   }
 
   .playground-chip--err {
-    border-color: var(--red);
-    color: var(--red);
+    border-color: transparent;
+    background: var(--epx-danger-soft, var(--red-soft));
+    color: var(--epx-danger, var(--red));
+  }
+
+  .playground-curl-import {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--epx-line, var(--border));
+    border-radius: var(--radius);
+    background: var(--epx-surface, var(--surface));
+  }
+
+  .playground-curl-textarea {
+    min-height: 68px;
+    font-family: var(--font-code);
+    font-size: var(--text-caption);
+  }
+
+  .playground-curl-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .playground-ab-delta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--epx-line, var(--border));
+    border-radius: var(--radius);
+    background: var(--epx-surface, var(--surface));
+  }
+
+  .playground-delta-win {
+    background: var(--epx-accent-soft, var(--accent-soft));
+    border-color: transparent;
+    color: var(--epx-fg, var(--text));
+    font-weight: var(--weight-semibold);
+  }
+
+  .playground-lane-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 26px;
   }
 
   .playground-output {

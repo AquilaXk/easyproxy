@@ -26,7 +26,7 @@ export function StatusPill({ status, outcome, label, announce = true, className 
     <span
       title={label}
       className={cn(
-        "inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full px-2 font-mono text-[12px] font-semibold tabular-nums",
+        "logs-status-badge inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-[6px] px-2 font-sans text-[12px] font-semibold tabular-nums",
         TONE[outcome],
         className,
       )}

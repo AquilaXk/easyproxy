@@ -33,7 +33,7 @@
   --chrome-clear: 124px;
   /* At reduced page zoom the native lights occupy more CSS pixels. Keep the
      expanded sidebar and its strip wide enough to place main content after them. */
-  --sidebar-column: max(232px, calc(var(--tl-inset) + 52px));
+  --sidebar-column: max(216px, calc(var(--tl-inset) + 52px));
 }
 
 .sidebar-top {
@@ -45,9 +45,9 @@
   z-index: calc(var(--z-overlay, 30) + 1);
   display: flex;
   align-items: center;
-  /* Exactly the sidebar column's width (.app grid: 232px), so its bottom border
+  /* Exactly the sidebar column's width (.app grid: 216px), so its bottom border
      continues the sidebar's edge and the strip reads as part of the rail. */
-  width: 232px;
+  width: 216px;
   height: var(--titlebar-h, 40px);
   padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--border);

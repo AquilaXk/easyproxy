@@ -31,6 +31,11 @@ import type { UsageReadMetadata } from "../../usage-summary-resource";
 import { UsageIncompleteNotice } from "../usage-incomplete-notice";
 import { DictationPanel, LiveVoicePanel } from "./AudioApiPanel";
 import { ProtocolPlanPanel } from "../protocols/ProtocolPlanPanel";
+import {
+  consumeApiKeyCreateFocus,
+  FOCUS_API_KEY_CREATE_EVENT,
+  hasPendingApiKeyCreateFocus,
+} from "../../lib/quick-action-signals";
 
 export interface ApiKeysWorkspaceProps {
   keys: ApiKeyEntry[];
@@ -265,6 +270,39 @@ export default function ApiKeysWorkspace({
     setRenameFailed(false);
     setDeleteFailed(false);
   };
+
+  useEffect(() => {
+    const focusInput = () => {
+      if (!active || !hasPendingApiKeyCreateFocus()) return;
+      if (selected) {
+        setSelectedId(null);
+        return;
+      }
+      const input = document.getElementById("api-key-name") as HTMLInputElement | null;
+      if (!input) return;
+      consumeApiKeyCreateFocus();
+      const reduced = typeof window.matchMedia === "function"
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (typeof input.scrollIntoView === "function") {
+        input.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
+      }
+      input.focus();
+    };
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) focusInput();
+    });
+    const onFocusRequested = () => {
+      void Promise.resolve().then(() => {
+        if (!cancelled) focusInput();
+      });
+    };
+    window.addEventListener(FOCUS_API_KEY_CREATE_EVENT, onFocusRequested);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(FOCUS_API_KEY_CREATE_EVENT, onFocusRequested);
+    };
+  }, [active, selected]);
 
   useEffect(() => {
     // Every path that closes confirmation goes through clearDeleteConfirm(), which
