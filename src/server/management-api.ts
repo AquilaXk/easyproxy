@@ -169,7 +169,7 @@ async function handleQuotaPoolRoutesOnDemand(ctx: ManagementContext): Promise<Re
 
 /** Lazy: gateway secret-guard and tool-compression policy and live stats. */
 async function handleGuardrailsRoutesOnDemand(ctx: ManagementContext): Promise<Response | null> {
-  if (!pathInManagementNamespace(ctx.url.pathname, "/api/gateway-guardrails", false)) return null;
+  if (!pathInManagementNamespace(ctx.url.pathname, "/api/gateway-guardrails")) return null;
   const { handleGuardrailsRoutes } = await import("./management/guardrails-routes");
   return handleGuardrailsRoutes(ctx);
 }

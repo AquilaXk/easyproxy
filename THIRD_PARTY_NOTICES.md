@@ -43,3 +43,10 @@ This file lists direct third-party runtime, UI, and desktop dependencies used by
 | `uuid` | Apache-2.0 OR MIT | https://github.com/uuid-rs/uuid |
 | `windows-sys` | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | `winreg` | MIT | https://github.com/gentoo90/winreg-rs |
+
+## Reference Designs & Attributions (MIT)
+
+| Reference | License | Applied Scope |
+| :--- | :--- | :--- |
+| `anomalyco/opencode` (https://github.com/anomalyco/opencode) | MIT | Model metadata and pricing table conventions (`src/usage/`). |
+| Open-source API gateway reference patterns | MIT | Integer microdollar per-key daily spend budgets (`src/server/api-key-budget.ts`), outbound secret detection/redaction (`src/lib/outbound-secret-guard.ts`), tool-output compression (`src/lib/tool-output-compression.ts`), and read-only guardrail dry-run previews (`src/server/management/guardrails-routes.ts`). |

@@ -373,4 +373,141 @@ describe("outbound-secret-guard", () => {
     expect(payload.input).not.toContain(slackToken);
     expect(payload.input).not.toContain(fineGhToken);
   });
+
+  test("POST /api/gateway-guardrails/dry-run evaluates redaction, blocking, and compression without mutating config or hygieneStats", async () => {
+    const prevHome = process.env.EASYPROXY_HOME;
+    const home = mkdtempSync(join(tmpdir(), "epx-guardrails-dryrun-"));
+    process.env.EASYPROXY_HOME = home;
+    resetOutboundHygieneStatsForTests();
+    try {
+      const cfg = {
+        ...getDefaultConfig(),
+        outboundSecretGuard: { mode: "off" as const },
+        toolOutputCompression: { enabled: false, minChars: 12_000, headChars: 4_000, tailChars: 4_000, stripAnsi: true },
+      };
+      saveConfig(cfg);
+      const beforeStats = { ...getOutboundHygieneStats() };
+
+      const redactSample = `token=${fakeOpenAiKey()} slack=${["xoxb", "123456789012", "abcdefghijklmnop"].join("-")}`;
+      const redactRes = await handleManagementAPI(
+        new ManagementRequest("http://127.0.0.1/api/gateway-guardrails/dry-run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: redactSample, outboundSecretGuard: { mode: "redact" } }),
+        }),
+        new URL("http://127.0.0.1/api/gateway-guardrails/dry-run"),
+        cfg,
+      );
+      expect(redactRes?.status).toBe(200);
+      expect(redactRes?.headers.get("cache-control")).toBe("no-store");
+      const redactBody = await redactRes!.json() as Record<string, unknown>;
+      expect(redactBody).toMatchObject({
+        blocked: false,
+        limitExceeded: false,
+        matches: 2,
+        redactions: 2,
+        compressedItems: 0,
+        originalChars: redactSample.length,
+        savedChars: 0,
+      });
+      expect(redactBody.findings).toEqual(expect.arrayContaining(["openai_key", "slack_token"]));
+      expect(String(redactBody.previewText)).toContain("[REDACTED:openai_key]");
+      expect(String(redactBody.previewText)).not.toContain(fakeOpenAiKey());
+      expect(redactBody.outputChars).toBe(String(redactBody.previewText).length);
+
+      const blockRes = await handleManagementAPI(
+        new ManagementRequest("http://127.0.0.1/api/gateway-guardrails/dry-run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: `secret=${fakeAwsKey()}`,
+            outboundSecretGuard: { mode: "block" },
+            toolOutputCompression: { enabled: true, minChars: 512, headChars: 64, tailChars: 64 },
+          }),
+        }),
+        new URL("http://127.0.0.1/api/gateway-guardrails/dry-run"),
+        cfg,
+      );
+      expect(blockRes?.status).toBe(200);
+      const blockBody = await blockRes!.json() as Record<string, unknown>;
+      expect(blockBody).toEqual({
+        blocked: true,
+        limitExceeded: false,
+        matches: 1,
+        redactions: 0,
+        findings: ["aws_access_key"],
+        compressedItems: 0,
+        originalChars: `secret=${fakeAwsKey()}`.length,
+        outputChars: `secret=${fakeAwsKey()}`.length,
+        savedChars: 0,
+        previewText: `secret=${fakeAwsKey()}`,
+      });
+
+      const ansiLines = Array.from({ length: 120 }, (_, i) => `\x1b[31mline-${i} ${"x".repeat(20)}\x1b[0m`).join("\n");
+      const compRes = await handleManagementAPI(
+        new ManagementRequest("http://127.0.0.1/api/gateway-guardrails/dry-run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: ansiLines,
+            outboundSecretGuard: { mode: "off" },
+            toolOutputCompression: { enabled: true, minChars: 512, headChars: 80, tailChars: 80, stripAnsi: true },
+          }),
+        }),
+        new URL("http://127.0.0.1/api/gateway-guardrails/dry-run"),
+        cfg,
+      );
+      expect(compRes?.status).toBe(200);
+      const compBody = await compRes!.json() as Record<string, unknown>;
+      expect(compBody.blocked).toBe(false);
+      expect(compBody.compressedItems).toBe(1);
+      expect(compBody.originalChars).toBe(ansiLines.length);
+      expect(Number(compBody.savedChars)).toBeGreaterThan(0);
+      expect(Number(compBody.outputChars)).toBeLessThan(ansiLines.length);
+      expect(String(compBody.previewText)).not.toContain("\x1b[");
+
+      // Fail-closed 400 and 413 checks
+      for (const badBody of [
+        null,
+        { text: 123 },
+        { text: "ok", extra: true },
+        { text: "ok", outboundSecretGuard: null },
+        { text: "ok", outboundSecretGuard: { mode: "invalid" } },
+        { text: "ok", toolOutputCompression: null },
+        { text: "ok", toolOutputCompression: { minChars: 10 } },
+      ]) {
+        const badRes = await handleManagementAPI(
+          new ManagementRequest("http://127.0.0.1/api/gateway-guardrails/dry-run", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(badBody),
+          }),
+          new URL("http://127.0.0.1/api/gateway-guardrails/dry-run"),
+          cfg,
+        );
+        expect(badRes?.status).toBe(400);
+      }
+
+      const tooLargeRes = await handleManagementAPI(
+        new ManagementRequest("http://127.0.0.1/api/gateway-guardrails/dry-run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: "a".repeat(65_537) }),
+        }),
+        new URL("http://127.0.0.1/api/gateway-guardrails/dry-run"),
+        cfg,
+      );
+      expect(tooLargeRes?.status).toBe(413);
+
+      // Dry-run leaves live config and hygieneStats completely untouched.
+      expect(cfg.outboundSecretGuard).toEqual({ mode: "off" });
+      expect(cfg.toolOutputCompression?.enabled).toBe(false);
+      expect(getOutboundHygieneStats()).toEqual(beforeStats);
+    } finally {
+      resetOutboundHygieneStatsForTests();
+      if (prevHome === undefined) delete process.env.EASYPROXY_HOME;
+      else process.env.EASYPROXY_HOME = prevHome;
+      removeTreeWithRetry(home);
+    }
+  });
 });

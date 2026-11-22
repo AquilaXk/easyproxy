@@ -230,8 +230,7 @@ Model rows keep stored custom overrides separate from their effective `exportMet
 the [client export contract](clients/integrations.md#owned-catalog-convergence) prevents picker-only
 default preferences from becoming provider defaults and preserves explicitly empty effort ladders.
 
-API-key PATCH validates the entire rename/scope patch on a detached entry before replacing live configuration. A rejected field changes neither the existing name nor either scope, including a later unrelated save.
-
+API-key PATCH validates the entire rename/scope/budget patch (including integer-microdollar `dailyCostLimitUsd`) on a detached entry before replacing live configuration. A rejected field changes neither existing limits nor scopes, including a later unrelated save.
 
 The provider editor admits `googleToolSchemaPolicy` as an editor-safe, non-secret field. Its value
 is validated as `compatible` or `reject-lossy` before live adoption and persistence; an invalid
@@ -318,6 +317,7 @@ after the save, and a non-retryable skip (no managed catalog) is a clean save. C
 | Low-quota history | `src/server/management/low-quota-routes.ts` lazily serves authenticated `GET /api/codex-auth/low-quota-events` from the bounded ledger owned by the server handling the request. The response includes only that server’s account ids and notice/pause-save status; logs omit identifiers. The default notice records `logged`; a notice records `delivered` only after the injected or opted-in OS notifier sink succeeds, `failed` when it fails, and `cancelled` when its episode ends first, while a pause-save records `succeeded` after persistence succeeds. A timed-out in-flight save remains `pending` until it settles. Invalid limits return 400. The route itself emits no OS notification. |
 | Sidebar | `src/server/management/sidebar-routes.ts` — `GET/POST /api/github/star`, `GET /api/update/badge`, and `POST /api/update/desktop-snapshot`. The snapshot POST accepts the raw admin-token principal or the dedicated `local-desktop-snapshot-capability`; GUI sessions and requests carrying `Origin` cannot publish desktop state. A capability's bounded raw body is verified against its authenticated digest before JSON parsing or storage. Badge state is cosmetic and a failed poll degrades silently. |
 | Logs | `src/server/management/logs-usage-routes.ts` — `GET /api/logs`, `GET /api/claude/inbound-debug`, and `GET /api/debug/injection-logs` join the debug streams described above. |
+| Gateway guardrails | `src/server/management/guardrails-routes.ts` — `GET/PUT /api/gateway-guardrails` manage `outboundSecretGuard` and `toolOutputCompression` settings and return live hygiene stats; `POST /api/gateway-guardrails/dry-run` is a read-only synthetic preview (`<= 65536` chars) that evaluates both guards in isolation without mutating live config or `hygieneStats` (`deferred-verb`, `owner: gateway-guardrails-cli`). |
 
 ### OAuth login continuations
 
