@@ -33,15 +33,9 @@ pub fn pick_ephemeral_link_port() -> Result<u16, String> {
     let offset = u32::from_str_radix(&seed_hex, 16).unwrap_or(0) % SPAN;
     for step in 0..64u32 {
         let candidate = (BASE + ((offset + step * 997) % SPAN)) as u16;
-        if is_port_bound(candidate) {
-            continue;
-        }
         if let Ok(listener) = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], candidate))) {
             let p = listener.local_addr().map(|a| a.port()).unwrap_or(candidate);
-            drop(listener);
-            if !is_port_bound(p) {
-                return Ok(p);
-            }
+            return Ok(p);
         }
     }
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))

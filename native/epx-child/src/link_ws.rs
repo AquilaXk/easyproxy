@@ -544,6 +544,8 @@ pub(crate) struct SocketShared {
     codex: TcpStream,
     home: TcpStream,
     closing: AtomicBool,
+    codex_cut: AtomicBool,
+    home_cut: AtomicBool,
     /// Set under Codex's write lock once the local 101 is written: no frame reaches Codex before it.
     upgraded: AtomicBool,
     codex_write: Mutex<()>,
@@ -558,6 +560,8 @@ impl SocketShared {
     /// Shut both connections down (the reaper's action); ends every blocked read or write.
     fn cut(&self) {
         self.closing.store(true, Ordering::SeqCst);
+        self.codex_cut.store(true, Ordering::SeqCst);
+        self.home_cut.store(true, Ordering::SeqCst);
         let _ = self.codex.shutdown(Shutdown::Both);
         let _ = self.home.shutdown(Shutdown::Both);
     }
@@ -576,6 +580,149 @@ fn random_mask() -> [u8; 4] {
     m
 }
 
+#[cfg(windows)]
+const IO_POLL_INTERVAL: Duration = Duration::from_millis(25);
+#[cfg(windows)]
+const WRITE_CHUNK: usize = 64 * KIB;
+
+#[cfg(windows)]
+#[repr(C)]
+struct WsaPollFd {
+    fd: std::os::windows::io::RawSocket,
+    events: i16,
+    revents: i16,
+}
+
+#[cfg(windows)]
+#[link(name = "ws2_32")]
+unsafe extern "system" {
+    fn WSAPoll(fdarray: *mut WsaPollFd, fds: u32, timeout: i32) -> i32;
+}
+
+#[cfg(windows)]
+fn wait_socket_ready(stream: &TcpStream, write: bool, timeout: Duration) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawSocket;
+    const POLLRDNORM: i16 = 0x0100;
+    const POLLWRNORM: i16 = 0x0010;
+    let mut pfd = WsaPollFd {
+        fd: stream.as_raw_socket(),
+        events: if write { POLLWRNORM } else { POLLRDNORM },
+        revents: 0,
+    };
+    let ms = timeout.as_millis().clamp(1, i32::MAX as u128) as i32;
+    // SAFETY: `pfd` is a valid single-element WSAPOLLFD for a live `TcpStream`.
+    let rc = unsafe { WSAPoll(&mut pfd, 1, ms) };
+    if rc < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+fn write_leg_all(
+    shared: &Arc<SocketShared>,
+    leg: Leg,
+    bytes: &[u8],
+    deadline: Instant,
+) -> std::io::Result<()> {
+    let mut stream = match leg {
+        Leg::Codex => &shared.codex,
+        Leg::Home => &shared.home,
+    };
+    #[cfg(not(windows))]
+    {
+        let _ = deadline;
+        stream.write_all(bytes)
+    }
+    #[cfg(windows)]
+    {
+        let leg_cut = match leg {
+            Leg::Codex => &shared.codex_cut,
+            Leg::Home => &shared.home_cut,
+        };
+        let stall = shared.limits.stall;
+        let mut rest = bytes;
+        let mut last_progress = Instant::now();
+        while !rest.is_empty() {
+            if leg_cut.load(Ordering::SeqCst) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "link websocket cut",
+                ));
+            }
+            let chunk = &rest[..rest.len().min(WRITE_CHUNK)];
+            match stream.write(chunk) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "link websocket write zero",
+                    ));
+                }
+                Ok(n) => {
+                    rest = &rest[n..];
+                    last_progress = Instant::now();
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if leg_cut.load(Ordering::SeqCst) {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "link websocket cut",
+                        ));
+                    }
+                    let now = Instant::now();
+                    let stop_at = deadline.min(last_progress + stall);
+                    if now >= stop_at {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "link websocket write timed out",
+                        ));
+                    }
+                    wait_socket_ready(stream, true, (stop_at - now).min(IO_POLL_INTERVAL))?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn read_leg<R: Read>(
+    shared: &Arc<SocketShared>,
+    from: Leg,
+    source: &mut R,
+    buf: &mut [u8],
+) -> std::io::Result<usize> {
+    #[cfg(not(windows))]
+    {
+        let _ = (shared, from);
+        source.read(buf)
+    }
+    #[cfg(windows)]
+    {
+        let (stream, leg_cut) = match from {
+            Leg::Codex => (&shared.codex, &shared.codex_cut),
+            Leg::Home => (&shared.home, &shared.home_cut),
+        };
+        loop {
+            if leg_cut.load(Ordering::SeqCst) {
+                return Ok(0);
+            }
+            match source.read(buf) {
+                Ok(n) => return Ok(n),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if leg_cut.load(Ordering::SeqCst) {
+                        return Ok(0);
+                    }
+                    wait_socket_ready(stream, false, IO_POLL_INTERVAL)?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+
 /// One bounded frame write: the deadline is registered before the lock.
 fn write_frame(
     shared: &Arc<SocketShared>,
@@ -589,7 +736,8 @@ fn write_frame(
     } else {
         shared.limits.control_operation
     };
-    let token = register_deadline(Instant::now() + bound, shared);
+    let deadline = Instant::now() + bound;
+    let token = register_deadline(deadline, shared);
     let result = (|| {
         let (lock_m, mut stream) = match leg {
             Leg::Codex => (&shared.codex_write, &shared.codex),
@@ -620,13 +768,14 @@ fn write_frame(
             None
         };
         if opcode >= 8 {
-            stream.write_all(&control_frame(opcode, &payload, mask))?;
+            write_leg_all(shared, leg, &control_frame(opcode, &payload, mask), deadline)?;
         } else {
-            stream.write_all(&frame_header(opcode, payload.len(), mask))?;
+            let header = frame_header(opcode, payload.len(), mask);
+            write_leg_all(shared, leg, &header, deadline)?;
             if let Some(m) = mask {
                 mask_in_place(&mut payload, m);
             }
-            stream.write_all(&payload)?;
+            write_leg_all(shared, leg, &payload, deadline)?;
         }
         stream.flush()
     })();
@@ -646,7 +795,8 @@ fn close_bytes(action: &CloseAction) -> Option<Vec<u8>> {
 /// operation deadline, so a close frame can only follow it. Ok(false) when closing began first (a stop
 /// between registration and the 101): nothing is written and the caller answers today's 426.
 fn write_101(shared: &Arc<SocketShared>, reply: &[u8], fail: bool) -> std::io::Result<bool> {
-    let token = register_deadline(Instant::now() + shared.limits.control_operation, shared);
+    let deadline = Instant::now() + shared.limits.control_operation;
+    let token = register_deadline(deadline, shared);
     let result = (|| {
         let _guard = lock(&shared.codex_write);
         if shared.closing.load(Ordering::SeqCst) {
@@ -656,7 +806,7 @@ fn write_101(shared: &Arc<SocketShared>, reply: &[u8], fail: bool) -> std::io::R
             return Err(std::io::Error::other("101 write refused by test"));
         }
         let mut stream = &shared.codex;
-        stream.write_all(reply)?;
+        write_leg_all(shared, Leg::Codex, reply, deadline)?;
         stream.flush()?;
         shared.upgraded.store(true, Ordering::SeqCst);
         Ok(true)
@@ -699,11 +849,12 @@ fn terminate(shared: &Arc<SocketShared>, codex: CloseAction, home: CloseAction) 
             }
             None if matches!(action, CloseAction::Leave) => {}
             None => {
-                let stream = if leg == Leg::Codex {
-                    &shared.codex
+                let (stream, leg_cut) = if leg == Leg::Codex {
+                    (&shared.codex, &shared.codex_cut)
                 } else {
-                    &shared.home
+                    (&shared.home, &shared.home_cut)
                 };
+                leg_cut.store(true, Ordering::SeqCst);
                 let _ = stream.shutdown(Shutdown::Both);
             }
         }
@@ -737,7 +888,7 @@ fn pump<R: Read>(shared: &Arc<SocketShared>, from: Leg, mut source: R) {
     let mut reader = FrameReader::new(role, limit, shared.limits.max_fragments);
     let mut buf = vec![0u8; 8 * KIB];
     loop {
-        let n = match source.read(&mut buf) {
+        let n = match read_leg(shared, from, &mut source, &mut buf) {
             Ok(0) | Err(_) => {
                 // The leg ended without a close frame.
                 match from {
@@ -953,6 +1104,8 @@ fn open(
             codex: codex_clone,
             home: home_clone,
             closing: AtomicBool::new(false),
+            codex_cut: AtomicBool::new(false),
+            home_cut: AtomicBool::new(false),
             upgraded: AtomicBool::new(false),
             codex_write: Mutex::new(()),
             home_write: Mutex::new(()),
@@ -976,6 +1129,12 @@ fn open(
     };
     // A panic from here on still unregisters the socket and frees its slot (every normal return calls finish).
     let _unwind = UnwindCleanup(Arc::clone(&shared));
+    #[cfg(all(test, windows))]
+    {
+        tests::cap_loopback_buffers(&shared.codex);
+        tests::cap_loopback_buffers(&shared.home);
+    }
+    #[cfg(not(windows))]
     // Open-socket timeouts: no read timeout, 300 s of no write progress.
     for s in [&shared.codex, &shared.home] {
         let _ = s.set_read_timeout(None);
@@ -1029,6 +1188,15 @@ fn open(
             return Err(Fallback::Unavailable);
         }
     };
+    #[cfg(windows)]
+    {
+        for s in [&shared.codex, &shared.home, codex_reader.get_ref().get_ref()] {
+            let _ = s.set_read_timeout(None);
+            let _ = s.set_write_timeout(None);
+        }
+        let _ = shared.codex.set_nonblocking(true);
+        let _ = shared.home.set_nonblocking(true);
+    }
     // The local 101, with the message limit Codex reads (x-codex-websocket-max-message-bytes).
     let accept = websocket_accept(&codex_key);
     let reply = format!(
@@ -1045,6 +1213,8 @@ fn open(
         Ok(true) => {}
         Ok(false) => {
             // A stop claimed this socket first: no 101, today's 426 from the caller.
+            #[cfg(windows)]
+            let _ = shared.codex.set_nonblocking(false);
             finish(&shared, Some(handle));
             return Err(Fallback::Stopping);
         }
@@ -1080,6 +1250,7 @@ fn open(
         return Ok(());
     }
     // The worker reads Codex; the bytes its reader already buffered come first.
+    #[cfg(not(windows))]
     let _ = codex_reader.get_ref().get_ref().set_read_timeout(None);
     pump(&shared, Leg::Codex, &mut *codex_reader);
     finish(&shared, Some(handle));
@@ -1697,6 +1868,7 @@ mod tests {
         thread::spawn(move || {
             for conn in listener.incoming() {
                 let Ok(stream) = conn else { return };
+                cap_loopback_buffers(&stream);
                 let tx = tx.clone();
                 thread::spawn(move || home_connection(stream, mode, tx));
             }
@@ -1835,6 +2007,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let worker = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
+            cap_loopback_buffers(&stream);
             let mut writer = stream.try_clone().unwrap();
             let mut reader =
                 BufReader::new(DeadlineStream::new(stream, None, Duration::from_secs(1)));
@@ -1846,6 +2019,7 @@ mod tests {
             result
         });
         let mut codex = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], port))).unwrap();
+        cap_loopback_buffers(&codex);
         let head = format!(
             "GET /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {KEY}\r\nAuthorization: Bearer codex-own\r\nthread-id: thread-1\r\n{extra}\r\n"
         );
@@ -2583,6 +2757,36 @@ mod tests {
         wait_all_released();
         reset_registry();
     }
+
+    #[cfg(windows)]
+    pub(super) fn cap_loopback_buffers(stream: &TcpStream) {
+        use std::os::windows::io::AsRawSocket;
+        #[link(name = "ws2_32")]
+        unsafe extern "system" {
+            fn setsockopt(
+                s: std::os::windows::io::RawSocket,
+                level: i32,
+                optname: i32,
+                optval: *const u8,
+                optlen: i32,
+            ) -> i32;
+        }
+        const SOL_SOCKET: i32 = 0xffff;
+        const SO_SNDBUF: i32 = 0x1001;
+        const SO_RCVBUF: i32 = 0x1002;
+        let bytes: i32 = (64 * KIB) as i32;
+        let ptr = std::ptr::from_ref(&bytes).cast::<u8>();
+        let len = std::mem::size_of::<i32>() as i32;
+        let raw = stream.as_raw_socket();
+        // SAFETY: `raw` is a live `TcpStream` socket and `ptr` points to a valid `i32`.
+        unsafe {
+            let _ = setsockopt(raw, SOL_SOCKET, SO_SNDBUF, ptr, len);
+            let _ = setsockopt(raw, SOL_SOCKET, SO_RCVBUF, ptr, len);
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn cap_loopback_buffers(_stream: &TcpStream) {}
 
     #[test]
     fn a_failed_thread_spawn_answers_426_and_closes_the_home_connection() {
