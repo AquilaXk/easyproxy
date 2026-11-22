@@ -292,6 +292,27 @@ unsafe extern "system" {
     ) -> *mut std::ffi::c_void;
     fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32;
     fn CloseHandle(object: *mut std::ffi::c_void) -> i32;
+    fn GetStdHandle(std_handle: u32) -> *mut std::ffi::c_void;
+    fn SetHandleInformation(object: *mut std::ffi::c_void, mask: u32, flags: u32) -> i32;
+}
+
+#[cfg(windows)]
+fn clear_parent_stdio_inheritance() {
+    const STD_INPUT_HANDLE: u32 = (-10i32) as u32;
+    const STD_OUTPUT_HANDLE: u32 = (-11i32) as u32;
+    const STD_ERROR_HANDLE: u32 = (-12i32) as u32;
+    const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
+    let invalid = (-1isize) as *mut std::ffi::c_void;
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: Clearing `HANDLE_FLAG_INHERIT` on valid standard handles prevents
+        // detached grandchildren from keeping caller stdout/stderr pipes open after exit.
+        unsafe {
+            let h = GetStdHandle(which);
+            if !h.is_null() && h != invalid {
+                let _ = SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1263,6 +1284,7 @@ pub fn spawn_detached_serve(
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        clear_parent_stdio_inheritance();
         let mut cmd = build_cmd();
         cmd.creation_flags(CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
         match cmd.spawn() {
@@ -1499,6 +1521,7 @@ pub fn purge_managed_executable(
         let _ = fs::remove_file(&trashed);
         fs::rename(exe_path, &trashed)
             .map_err(|e| format!("failed renaming planted epx-child for purge: {e}"))?;
+        clear_parent_stdio_inheritance();
         let _ = Command::new("cmd.exe")
             .args([
                 "/d",
