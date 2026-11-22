@@ -36,6 +36,7 @@ import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { decodeServerSentEvents } from "../lib/sse-decoder";
 import { isLikelyRealAnthropicThinkingSignature } from "../responses/reasoning-envelope";
 import { isTranslatorBudgetExceededError, retainTranslatedEventBatch, type TranslatorBudget } from "../lib/translator-budget";
+import { readBoundedUpstreamJson, upstreamJsonErrorEvent } from "./bounded-json-response";
 import { isReasoningEffortOmitted, modelRecordValue } from "../reasoning-effort";
 import { resolveThinkingEnabled } from "../clients/reasoning-controls";
 import { resolveReasoningCapabilities } from "../providers/reasoning-capabilities";
@@ -1707,7 +1708,14 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
       budget: TranslatorBudget,
       tierMetadata?: AdapterTierMetadata,
     ): Promise<AdapterEvent[]> {
-      const parsed: unknown = await response.json();
+      let parsed: unknown;
+      let responseBytes: number;
+      try {
+        ({ parsed, byteLength: responseBytes } = await readBoundedUpstreamJson(response));
+      } catch (error) {
+        tierMetadata?.markResponseUnparseable();
+        return [upstreamJsonErrorEvent(error, "anthropic response was not valid JSON")];
+      }
       // `response.json()` resolves a body of `null` to `null` without throwing, so the cast below
       // used to reach `json.content` on it — the #1219 defect at the buffered body root. The
       // streaming parser has skipped a non-record frame since #1240, but a buffered body has no
@@ -1721,7 +1729,6 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
         }];
       }
       const json = parsed;
-      const responseBytes = Buffer.byteLength(JSON.stringify(json), "utf8");
       budget.chargeRetained(responseBytes, { kind: "retained_collectors" });
       try {
       const events: AdapterEvent[] = [];

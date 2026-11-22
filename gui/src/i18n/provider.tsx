@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { I18nContext, LOCALES, detectInitial, interpolate, setActiveLocale, type Locale, type TFn, type TKey, type Vars } from "./shared";
-import { getLoadedDict, isLocaleLoaded, preloadLocaleCatalog } from "./runtime-catalogs";
+import {
+  getCatalogLoadVersion,
+  getLoadedDict,
+  hasAnyLoadedCatalog,
+  isLocaleLoaded,
+  preloadLocaleCatalog,
+  subscribeCatalogLoads,
+} from "./runtime-catalogs";
 import { useI18n } from "./shared";
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
@@ -10,19 +17,35 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     return initial;
   });
 
-  const [loadedDicts, setLoadedDicts] = useState<Partial<Record<Locale, Record<TKey, string>>>>({});
+  // Subscribe to async catalog loads so a chunk settling between initial render
+  // and effect execution still triggers a render in production builds.
+  const catalogVersion = useSyncExternalStore(
+    subscribeCatalogLoads,
+    getCatalogLoadVersion,
+    getCatalogLoadVersion,
+  );
+  const [catalogFailed, setCatalogFailed] = useState(false);
 
   useEffect(() => {
     if (isLocaleLoaded(locale)) return;
     let cancelled = false;
     void preloadLocaleCatalog(locale)
-      .then((loaded) => {
-        if (!cancelled) {
-          setLoadedDicts((prev) => ({ ...prev, [locale]: loaded }));
-        }
+      .then(() => {
+        if (!cancelled) setCatalogFailed(false);
       })
       .catch(() => {
-        // Fallback to already-loaded en catalog if the async chunk fails to load.
+        if (cancelled) return;
+        if (locale === "en" || isLocaleLoaded("en")) {
+          setCatalogFailed(true);
+          return;
+        }
+        void preloadLocaleCatalog("en")
+          .then(() => {
+            if (!cancelled) setCatalogFailed(false);
+          })
+          .catch(() => {
+            if (!cancelled) setCatalogFailed(true);
+          });
       });
     return () => { cancelled = true; };
   }, [locale]);
@@ -38,14 +61,14 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     try { localStorage.setItem("epx-lang", locale); } catch { /* ignore */ }
   }, [locale]);
 
-  const ready = isLocaleLoaded(locale) || isLocaleLoaded("en") || Boolean(loadedDicts[locale]);
-  const [hasRenderedCatalog, setHasRenderedCatalog] = useState(ready);
-  useEffect(() => {
-    if (ready && !hasRenderedCatalog) setHasRenderedCatalog(true);
-  }, [ready, hasRenderedCatalog]);
+  const ready = isLocaleLoaded(locale, catalogVersion)
+    || isLocaleLoaded("en", catalogVersion)
+    || hasAnyLoadedCatalog();
 
-  const dict = loadedDicts[locale] ?? getLoadedDict(locale);
-  const enFallback = loadedDicts.en ?? (isLocaleLoaded("en") ? getLoadedDict("en") : undefined);
+  const dict = getLoadedDict(locale, catalogVersion);
+  const enFallback = isLocaleLoaded("en", catalogVersion)
+    ? getLoadedDict("en", catalogVersion)
+    : undefined;
 
   const t: TFn = useCallback(
     (key, vars) => interpolate(dict[key] ?? enFallback?.[key] ?? key, vars),
@@ -53,7 +76,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   );
   const value = useMemo(() => ({ locale, setLocale, t }), [locale, setLocale, t]);
 
-  if (!hasRenderedCatalog && !ready) return null;
+  if (!ready && !catalogFailed) return null;
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

@@ -93,7 +93,7 @@ import { fetchAllModels } from "./management/shared";
 import { CatalogGatherBusyError } from "../codex/catalog/provider-fetch";
 import type { CatalogDisposition, ConvergeCodex } from "../codex/convergence-types";
 import { normalizeCatalogDisposition } from "../codex/catalog-refresh-status";
-import { managementBodyTooLargeResponse } from "./management/body";
+import { MANAGEMENT_JSON_BODY_MAX_BYTES, managementBodyTooLargeResponse } from "./management/body";
 import { JsonNestingDepthExceededError } from "../lib/json-depth-guard";
 import { handleSessionRoutes, SESSION_REMEMBER_PATH } from "./management/session-routes";
 import { siblingRefusesManagementRequest } from "./management/sibling-guard";
@@ -288,7 +288,7 @@ export async function handleManagementAPI(
   // payloads before any handler buffers them — the data plane has its own decompression cap.
   if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
     const contentLength = Number(req.headers.get("content-length") ?? "0");
-    if (Number.isFinite(contentLength) && contentLength > 2 * 1024 * 1024) {
+    if (Number.isFinite(contentLength) && contentLength > MANAGEMENT_JSON_BODY_MAX_BYTES) {
       return jsonResponse({ error: "request body too large" }, 413, req, config);
     }
   }

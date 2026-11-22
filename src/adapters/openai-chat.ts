@@ -39,7 +39,7 @@ import {
   unnamedToolCallEvent,
   usageFromOpenAIChat,
 } from "./openai-chat/response-events";
-import { serializedJsonByteLength } from "../server/json-serialized-bytes";
+import { readBoundedUpstreamJson, upstreamJsonErrorEvent } from "./bounded-json-response";
 import { formatOpenAIChatErrorBody, OpenAIChatError, unwrapChatCompletionPayload, upstreamErrorEvent } from "./openai-chat/errors";
 import { messagesToChatFormat } from "./openai-chat/messages";
 import { withOpenAIChatToolNames } from "./openai-chat/tool-name-registry";
@@ -686,21 +686,21 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
       tierMetadata?: AdapterTierMetadata,
     ): Promise<AdapterEvent[]> {
       let parsed: unknown;
+      let responseBytes: number;
       try {
-        parsed = await response.json();
+        ({ parsed, byteLength: responseBytes } = await readBoundedUpstreamJson(response));
       } catch (error) {
         tierMetadata?.markResponseUnparseable();
-        throw error;
+        return [upstreamJsonErrorEvent(error, "upstream response was not valid JSON")];
       }
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
         tierMetadata?.markResponseUnparseable();
-        throw new Error("upstream response was not a JSON object");
+        return [upstreamJsonErrorEvent(null, "upstream response was not a JSON object")];
       }
       const json = parsed as Record<string, unknown>;
       if (Object.hasOwn(json, "service_tier")) {
         tierMetadata?.observeResponseServiceTier(json.service_tier);
       }
-      const responseBytes = serializedJsonByteLength(json);
       budget.chargeRetained(responseBytes, { kind: "retained_collectors" });
       try {
         const payload = unwrapChatCompletionPayload(json);

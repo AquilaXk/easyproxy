@@ -8,6 +8,7 @@
 import { isUnattendedAgyAcpHttpTurn } from "../adapters/agy-acp/policy";
 import { parseRetryAfterMs } from "../combos";
 import type { AdmissionLease } from "../lib/admission";
+import { TRANSLATOR_MAX_SSE_EVENT_BYTES } from "../lib/translator-budget";
 import { WORKFLOW_LOCAL_REFUSAL_HEADER } from "../lib/workflow-budget";
 import type { EpxConfig } from "../types";
 import type { CapturedAdmissionPolicy } from "../types/admission-policy";
@@ -235,6 +236,11 @@ export function streamNativeFromChat(translator: NativeStreamTranslator, body: R
             return;
           }
           pending += decoder.decode(value, { stream: true });
+          if (pending.length > Math.floor(TRANSLATOR_MAX_SSE_EVENT_BYTES / 4)
+            && Buffer.byteLength(pending, "utf8") > TRANSLATOR_MAX_SSE_EVENT_BYTES) {
+            pending = "";
+            throw new Error("upstream SSE frame exceeded byte limit");
+          }
           const boundary = pending.lastIndexOf("\n");
           if (boundary < 0) continue;
           const complete = pending.slice(0, boundary);

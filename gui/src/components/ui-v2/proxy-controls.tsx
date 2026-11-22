@@ -93,7 +93,7 @@ export function ProxyControls({
           disabled={restarting || stopping}
           label={restarting ? restartingLabel : restartLabel}
           title={restarting ? restartingLabel : restartLabel}
-          iconClassName={restarting ? "animate-spin" : undefined}
+          spinIcon={restarting}
         >
           <IconRefresh />
         </TrayButton>
@@ -118,7 +118,7 @@ function TrayButton({
   label,
   title,
   tone = "default",
-  iconClassName,
+  spinIcon = false,
   children,
 }: {
   onClick: () => void;
@@ -126,7 +126,7 @@ function TrayButton({
   label: string;
   title: string;
   tone?: "default" | "danger";
-  iconClassName?: string | undefined;
+  spinIcon?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -144,7 +144,7 @@ function TrayButton({
         tone === "danger"
           ? "hover:bg-danger-soft hover:text-danger"
           : "hover:bg-accent-soft hover:text-fg",
-        iconClassName && `[&_svg]:${iconClassName}`,
+        spinIcon && "[&_svg]:animate-spin",
       )}
     >
       {children}

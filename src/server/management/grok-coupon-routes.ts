@@ -10,6 +10,7 @@
  */
 
 import { jsonResponse } from "../auth-cors";
+import { managementBodyTooLargeResponse, readManagementJsonBody } from "./body";
 import type { ManagementContext } from "./context";
 import { ConfigMutationLockError } from "../../config/mutation-lock";
 import { isCodexResetCreditOperationId } from "../../codex/reset-credit-recovery";
@@ -135,12 +136,26 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
 
     let body: GrokConsumeCouponRequestBody;
     try {
-      body = (await req.json()) as GrokConsumeCouponRequestBody;
-    } catch {
+      const parsed = await readManagementJsonBody<unknown>(req);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return jsonResponse({ error: { code: "invalid_json", message: "Invalid JSON body" } }, 400, req, config);
+      }
+      body = parsed as GrokConsumeCouponRequestBody;
+    } catch (error) {
+      const tooLarge = managementBodyTooLargeResponse(error, req, config);
+      if (tooLarge) return tooLarge;
       return jsonResponse({ error: { code: "invalid_json", message: "Invalid JSON body" } }, 400, req, config);
     }
 
     const { accountId: rawAccountId, tokenId: requestedTokenId, operationId } = body;
+    if (rawAccountId !== undefined && typeof rawAccountId !== "string") {
+      return jsonResponse(
+        { error: { code: "invalid_account_id", message: "accountId must be a string" } },
+        400,
+        req,
+        config,
+      );
+    }
 
     if (operationId !== undefined && !isCodexResetCreditOperationId(operationId)) {
       return jsonResponse(

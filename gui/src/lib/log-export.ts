@@ -199,6 +199,9 @@ export function triggerTextDownload(filename: string, mimeType: string, content:
     anchor.click();
   } finally {
     anchor.remove();
-    URL.revokeObjectURL(href);
+    const timer = setTimeout(() => URL.revokeObjectURL(href), 1_000);
+    if (typeof timer === "object" && timer !== null && "unref" in timer && typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref: () => void }).unref();
+    }
   }
 }

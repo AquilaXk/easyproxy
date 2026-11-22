@@ -365,14 +365,17 @@ pub fn response_framing(
         return Ok(BodyFraming::None);
     }
     let mut cl: Option<u64> = None;
-    let mut chunked = false;
+    let mut transfer_encodings: Vec<String> = Vec::new();
     for (name, value) in headers {
         if name.eq_ignore_ascii_case("transfer-encoding") {
-            if value.to_ascii_lowercase().contains("chunked") {
-                chunked = true;
-            } else {
+            let tokens: Vec<String> = value
+                .split(',')
+                .map(|t| t.trim().to_ascii_lowercase())
+                .collect();
+            if tokens.is_empty() || tokens.iter().any(|t| t != "chunked") {
                 return Err(FramingError::Smuggling);
             }
+            transfer_encodings.extend(tokens);
         } else if name.eq_ignore_ascii_case("content-length") {
             let trimmed = value.trim();
             if trimmed.is_empty() || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
@@ -385,13 +388,40 @@ pub fn response_framing(
             cl = Some(parsed);
         }
     }
-    if chunked {
+    if !transfer_encodings.is_empty() {
+        if cl.is_some() || transfer_encodings.len() != 1 || transfer_encodings[0] != "chunked" {
+            return Err(FramingError::Smuggling);
+        }
         Ok(BodyFraming::Chunked)
     } else if let Some(len) = cl {
         Ok(BodyFraming::ContentLength(len))
     } else {
         Ok(BodyFraming::None)
     }
+}
+
+fn read_exact_incremental<R: BufRead>(reader: &mut R, len: u64, out: &mut Vec<u8>) -> io::Result<()> {
+    let initial = (len as usize).min(64 * 1024);
+    out.reserve(initial);
+    let mut remaining = len;
+    let mut buf = [0u8; 8192];
+    while remaining > 0 {
+        let want = (remaining as usize).min(buf.len());
+        let n = match reader.read(&mut buf[..want]) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        if n == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected body eof",
+            ));
+        }
+        out.extend_from_slice(&buf[..n]);
+        remaining -= n as u64;
+    }
+    Ok(())
 }
 
 pub fn read_bounded_body<R: BufRead>(
@@ -405,8 +435,8 @@ pub fn read_bounded_body<R: BufRead>(
             if len > max_bytes {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "body_too_large"));
             }
-            let mut out = vec![0u8; len as usize];
-            reader.read_exact(&mut out)?;
+            let mut out = Vec::new();
+            read_exact_incremental(reader, len, &mut out)?;
             Ok(out)
         }
         BodyFraming::Chunked => {
@@ -452,9 +482,7 @@ pub fn read_bounded_body<R: BufRead>(
                 if (out.len() as u64).saturating_add(chunk_len) > max_bytes {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "body_too_large"));
                 }
-                let prev = out.len();
-                out.resize(prev + chunk_len as usize, 0);
-                reader.read_exact(&mut out[prev..])?;
+                read_exact_incremental(reader, chunk_len, &mut out)?;
                 let mut crlf = [0u8; 2];
                 reader.read_exact(&mut crlf)?;
                 if &crlf != b"\r\n" {
@@ -616,4 +644,65 @@ pub fn write_json_response<W: Write>(
     writer.write_all(b"\r\n")?;
     writer.write_all(body)?;
     writer.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn response_framing_rejects_te_cl_and_non_chunked_smuggling() {
+        let te_cl = vec![
+            ("Transfer-Encoding".to_string(), "chunked".to_string()),
+            ("Content-Length".to_string(), "5".to_string()),
+        ];
+        assert_eq!(response_framing(200, "POST", &te_cl), Err(FramingError::Smuggling));
+
+        let not_chunked = vec![("Transfer-Encoding".to_string(), "notchunked".to_string())];
+        assert_eq!(
+            response_framing(200, "POST", &not_chunked),
+            Err(FramingError::Smuggling)
+        );
+
+        let multi_te = vec![("Transfer-Encoding".to_string(), "gzip, chunked".to_string())];
+        assert_eq!(
+            response_framing(200, "POST", &multi_te),
+            Err(FramingError::Smuggling)
+        );
+
+        let leading_comma = vec![("Transfer-Encoding".to_string(), ", chunked".to_string())];
+        assert_eq!(
+            response_framing(200, "POST", &leading_comma),
+            Err(FramingError::Smuggling)
+        );
+
+        let valid_chunked = vec![("Transfer-Encoding".to_string(), " CHUNKED ".to_string())];
+        assert_eq!(
+            response_framing(200, "POST", &valid_chunked),
+            Ok(BodyFraming::Chunked)
+        );
+    }
+
+    #[test]
+    fn read_bounded_body_incremental_avoids_large_prealloc_and_reads_exact() {
+        let mut empty = Cursor::new(Vec::<u8>::new());
+        let err = read_bounded_body(
+            &mut empty,
+            BodyFraming::ContentLength(200 * 1024 * 1024),
+            LINK_RELAY_BODY_MAX_BYTES,
+        )
+        .expect_err("truncated 200 MiB body must fail without waiting");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+
+        let payload = b"hello-incremental-body";
+        let mut full = Cursor::new(payload.to_vec());
+        let read = read_bounded_body(
+            &mut full,
+            BodyFraming::ContentLength(payload.len() as u64),
+            LINK_RELAY_BODY_MAX_BYTES,
+        )
+        .expect("exact body should read cleanly");
+        assert_eq!(read, payload);
+    }
 }

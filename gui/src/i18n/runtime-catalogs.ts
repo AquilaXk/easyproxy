@@ -6,6 +6,27 @@ const EMPTY_DICT = {} as Dict;
 const LOADED_CATALOGS: Partial<Record<Locale, Dict>> = {};
 const IN_FLIGHT_CATALOGS = new Map<Locale, Promise<Dict>>();
 let lastLoadedDict: Dict | null = null;
+let catalogLoadVersion = 0;
+const catalogListeners = new Set<() => void>();
+let catalogImporterOverrideForTests: ((locale: Locale) => Promise<Dict>) | null = null;
+
+function notifyCatalogListeners(): void {
+  catalogLoadVersion += 1;
+  for (const listener of catalogListeners) listener();
+}
+
+export function subscribeCatalogLoads(listener: () => void): () => void {
+  catalogListeners.add(listener);
+  return () => { catalogListeners.delete(listener); };
+}
+
+export function getCatalogLoadVersion(): number {
+  return catalogLoadVersion;
+}
+
+export function hasAnyLoadedCatalog(): boolean {
+  return lastLoadedDict !== null || LOADED_CATALOGS.en !== undefined || Object.keys(LOADED_CATALOGS).length > 0;
+}
 
 declare const require: ((id: string) => unknown) | undefined;
 
@@ -41,11 +62,11 @@ async function importCatalogChunk(locale: Locale): Promise<Dict> {
   return { ...dict, ...LAB_CATALOG_OVERRIDES[locale] };
 }
 
-export function isLocaleLoaded(locale: Locale): boolean {
+export function isLocaleLoaded(locale: Locale, _version?: number): boolean {
   return LOADED_CATALOGS[locale] !== undefined;
 }
 
-export function getLoadedDict(locale: Locale): Dict {
+export function getLoadedDict(locale: Locale, _version?: number): Dict {
   return LOADED_CATALOGS[locale] ?? LOADED_CATALOGS.en ?? lastLoadedDict ?? EMPTY_DICT;
 }
 
@@ -58,11 +79,13 @@ export function preloadLocaleCatalog(locale: Locale): Promise<Dict> {
   if (existing) return Promise.resolve(existing);
   const pending = IN_FLIGHT_CATALOGS.get(locale);
   if (pending) return pending;
-  const task = importCatalogChunk(locale)
+  const loader = catalogImporterOverrideForTests ?? importCatalogChunk;
+  const task = loader(locale)
     .then((dict) => {
       LOADED_CATALOGS[locale] = dict;
       lastLoadedDict = dict;
       IN_FLIGHT_CATALOGS.delete(locale);
+      notifyCatalogListeners();
       return dict;
     })
     .catch((err) => {
@@ -71,4 +94,18 @@ export function preloadLocaleCatalog(locale: Locale): Promise<Dict> {
     });
   IN_FLIGHT_CATALOGS.set(locale, task);
   return task;
+}
+
+export function resetRuntimeCatalogsForTests(loader: ((locale: Locale) => Promise<Dict>) | null = null): void {
+  for (const key of Object.keys(LOADED_CATALOGS) as Locale[]) {
+    delete LOADED_CATALOGS[key];
+  }
+  IN_FLIGHT_CATALOGS.clear();
+  lastLoadedDict = null;
+  catalogImporterOverrideForTests = loader;
+  if (!loader && !import.meta.env.PROD && typeof require === "function") {
+    const mod = require("./catalogs") as { DICTS: Record<Locale, Dict> };
+    Object.assign(LOADED_CATALOGS, mod.DICTS);
+  }
+  notifyCatalogListeners();
 }

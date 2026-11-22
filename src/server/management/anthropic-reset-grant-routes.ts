@@ -13,6 +13,7 @@ import { hasHumanDashboardSession } from "./consent-session";
  * management-api.ts so the core request path never imports it.
  */
 import { jsonResponse } from "../auth-cors";
+import { managementBodyTooLargeResponse, readManagementJsonBody } from "./body";
 import type { ManagementContext } from "./context";
 import { getValidAccessSnapshotForAccount } from "../../oauth";
 import { configuredAnthropicInstance, isAnthropicInstanceId, type AnthropicInstanceId } from "../../providers/anthropic-instance";
@@ -186,10 +187,12 @@ async function handleConsume(ctx: ManagementContext, injected?: AnthropicResetGr
   if (!hasHumanDashboardSession(ctx)) return fail(ctx, 403, "session_required");
   let body: Record<string, unknown>;
   try {
-    const parsed = await ctx.req.json() as unknown;
+    const parsed = await readManagementJsonBody<unknown>(ctx.req);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fail(ctx, 400, "invalid_json");
     body = parsed as Record<string, unknown>;
-  } catch {
+  } catch (error) {
+    const tooLarge = managementBodyTooLargeResponse(error, ctx.req, ctx.config);
+    if (tooLarge) return tooLarge;
     return fail(ctx, 400, "invalid_json");
   }
   const deps = selectDeps(ctx, body.provider, injected);
