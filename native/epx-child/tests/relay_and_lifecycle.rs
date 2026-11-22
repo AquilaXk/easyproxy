@@ -685,7 +685,7 @@ fn full_lifecycle_sse_relay_spoof_rejection_sync_rollover_and_offline_1798_detac
     )
     .unwrap();
 
-    let listen_port = pick_ephemeral_link_port().unwrap();
+    let mut listen_port = pick_ephemeral_link_port().unwrap();
     let raw_token = format!("epx_data_{}", "a".repeat(40));
     let key_id = "link:rust-test";
     let link_id = "lnk_0123456789abcdef";
@@ -720,22 +720,36 @@ fn full_lifecycle_sse_relay_spoof_rejection_sync_rollover_and_offline_1798_detac
     );
     fs::remove_file(epx_home.join("runtime-port.json")).unwrap();
 
-    // 3. Clean enrollment: connect + restart
-    let (rc_conn, _, err_conn) = run_bin(
-        &epx_home,
-        &codex_home,
-        listen_port,
-        &[
-            "connect",
-            "--link",
-            "--key-stdin",
-            "--tunnel-port",
-            &home.port.to_string(),
-            "--link-id",
-            link_id,
-        ],
-        Some(cred_json.as_bytes()),
-    );
+    // 3. Clean enrollment: connect + restart (retry ephemeral port if another parallel test grabbed it)
+    let mut rc_conn = 1;
+    let mut err_conn = String::new();
+    for attempt in 0..5 {
+        let (rc, _, stderr) = run_bin(
+            &epx_home,
+            &codex_home,
+            listen_port,
+            &[
+                "connect",
+                "--link",
+                "--key-stdin",
+                "--tunnel-port",
+                &home.port.to_string(),
+                "--link-id",
+                link_id,
+            ],
+            Some(cred_json.as_bytes()),
+        );
+        rc_conn = rc;
+        err_conn = stderr;
+        if rc_conn == 0 {
+            break;
+        }
+        if err_conn.contains("epx-child-conflict:child_port_busy:") && attempt < 4 {
+            listen_port = pick_ephemeral_link_port().unwrap();
+            continue;
+        }
+        break;
+    }
     assert_eq!(rc_conn, 0, "connect stderr: {err_conn}");
     assert_home_modes_kept(&epx_home, &codex_home, "attach");
     assert!(codex_home.join("models_cache.json").exists());
@@ -1183,15 +1197,15 @@ fn detach_purge_removes_only_managed_binary_refuses_symlinks_and_emits_conflict_
         "epx-child"
     };
     let foreign_exe = foreign_dir.join(exe_name);
-    fs::copy(bin, &foreign_exe).unwrap();
-    let out_foreign = Command::new(&foreign_exe)
+    copy_executable_atomic(Path::new(bin), &foreign_exe);
+    let mut foreign_cmd = Command::new(&foreign_exe);
+    foreign_cmd
         .args(["detach", "--purge", "--json"])
         .env("HOME", &fake_home)
         .env("USERPROFILE", &fake_home)
         .env("EASYPROXY_HOME", &epx_home)
-        .env("CODEX_HOME", &codex_home)
-        .output()
-        .unwrap();
+        .env("CODEX_HOME", &codex_home);
+    let out_foreign = output_retry_etxtbsy(&mut foreign_cmd);
     assert_eq!(out_foreign.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out_foreign.stdout).contains("\"purged\":false"));
     assert!(
@@ -1203,15 +1217,15 @@ fn detach_purge_removes_only_managed_binary_refuses_symlinks_and_emits_conflict_
     let managed_bin_dir = fake_home.join(".cache").join("easyproxy").join("bin");
     fs::create_dir_all(&managed_bin_dir).unwrap();
     let planted_exe = managed_bin_dir.join(exe_name);
-    fs::copy(bin, &planted_exe).unwrap();
-    let out_managed = Command::new(&planted_exe)
+    copy_executable_atomic(Path::new(bin), &planted_exe);
+    let mut managed_cmd = Command::new(&planted_exe);
+    managed_cmd
         .args(["disconnect", "--purge", "--json"])
         .env("HOME", &fake_home)
         .env("USERPROFILE", &fake_home)
         .env("EASYPROXY_HOME", &epx_home)
-        .env("CODEX_HOME", &codex_home)
-        .output()
-        .unwrap();
+        .env("CODEX_HOME", &codex_home);
+    let out_managed = output_retry_etxtbsy(&mut managed_cmd);
     assert_eq!(out_managed.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out_managed.stdout).contains("\"purged\":true"));
     #[cfg(unix)]
@@ -1233,7 +1247,7 @@ fn detach_purge_removes_only_managed_binary_refuses_symlinks_and_emits_conflict_
         let target_root = scratch.join("real-target");
         fs::create_dir_all(target_root.join("bin")).unwrap();
         let target_exe = target_root.join("bin").join("epx-child");
-        fs::copy(bin, &target_exe).unwrap();
+        copy_executable_atomic(Path::new(bin), &target_exe);
         symlink(&target_root, sym_home.join(".cache").join("easyproxy")).unwrap();
         let via_sym = sym_home
             .join(".cache")

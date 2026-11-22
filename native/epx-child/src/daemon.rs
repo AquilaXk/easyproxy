@@ -27,14 +27,21 @@ pub struct LocalHealthz {
 }
 
 pub fn pick_ephemeral_link_port() -> Result<u16, String> {
-    let seed_hex = random_hex(2).unwrap_or_else(|_| "0000".to_owned());
-    let offset = u16::from_str_radix(&seed_hex, 16).unwrap_or(0) % 10_000;
-    for step in 0..64u16 {
-        let candidate = 20_000 + ((offset.wrapping_add(step.wrapping_mul(137))) % 10_000);
+    const BASE: u32 = 20_000;
+    const SPAN: u32 = 35_000;
+    let seed_hex = random_hex(4).unwrap_or_else(|_| "00000000".to_owned());
+    let offset = u32::from_str_radix(&seed_hex, 16).unwrap_or(0) % SPAN;
+    for step in 0..64u32 {
+        let candidate = (BASE + ((offset + step * 997) % SPAN)) as u16;
+        if is_port_bound(candidate) {
+            continue;
+        }
         if let Ok(listener) = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], candidate))) {
             let p = listener.local_addr().map(|a| a.port()).unwrap_or(candidate);
             drop(listener);
-            return Ok(p);
+            if !is_port_bound(p) {
+                return Ok(p);
+            }
         }
     }
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
@@ -361,4 +368,25 @@ pub fn start_or_rollover_daemon(
         "epx-child serve failed to answer /healthz on 127.0.0.1:{}",
         state.listen_port
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pick_ephemeral_link_port_returns_unbound_port_in_expected_range() {
+        let port = pick_ephemeral_link_port().expect("ephemeral port should succeed");
+        assert!(port >= 1024);
+        assert!(!is_port_bound(port));
+    }
+
+    #[test]
+    fn is_port_bound_detects_active_listener_and_closed_port() {
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(is_port_bound(port));
+        drop(listener);
+        assert!(!is_port_bound(port));
+    }
 }

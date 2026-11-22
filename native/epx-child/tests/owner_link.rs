@@ -136,7 +136,7 @@ fn collect(dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
 
 fn spawn_with_creds(mut cmd: std::process::Command) -> Child {
     cmd.stdin(Stdio::piped());
-    let mut child = cmd.spawn().unwrap();
+    let mut child = spawn_retry_etxtbsy(&mut cmd);
     child
         .stdin
         .take()
@@ -633,7 +633,7 @@ fn purge_removes_the_planted_binary_while_the_lifecycle_lock_is_held() {
     let bin_dir = fake_home.join(".cache").join("easyproxy").join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
     let planted = bin_dir.join("epx-child");
-    fs::copy(env!("CARGO_BIN_EXE_epx-child"), &planted).unwrap();
+    copy_executable_atomic(Path::new(env!("CARGO_BIN_EXE_epx-child")), &planted);
     let _home = homes.attach(LINK_A);
     let barrier = Barrier::new(&homes.scratch.0, "purge");
     let mut cmd = std::process::Command::new(&planted);
@@ -646,7 +646,7 @@ fn purge_removes_the_planted_binary_while_the_lifecycle_lock_is_held() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     barrier.apply(&mut cmd, "purge-before-remove");
-    let child = cmd.spawn().unwrap();
+    let child = spawn_retry_etxtbsy(&mut cmd);
     assert!(
         barrier.wait_reached("purge-before-remove", Duration::from_secs(20)),
         "detach never reached the purge"
@@ -770,7 +770,7 @@ fn a_relay_of_another_home_keeps_the_planted_binary_from_being_purged() {
     let bin_dir = fake_home.join(".cache").join("easyproxy").join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
     let planted = bin_dir.join("epx-child");
-    fs::copy(env!("CARGO_BIN_EXE_epx-child"), &planted).unwrap();
+    copy_executable_atomic(Path::new(env!("CARGO_BIN_EXE_epx-child")), &planted);
 
     let home = MockHomeServer::start(&raw_token(), KEY_ID, LINK_A);
     let tunnel = home.port.to_string();
@@ -786,16 +786,15 @@ fn a_relay_of_another_home_keeps_the_planted_binary_from_being_purged() {
     );
 
     let purge = |label: &str| {
-        let out = planted_command(
+        let mut cmd = planted_command(
             &planted,
             &fake_home,
             &y.epx,
             &y.codex,
             y.port,
             &["detach", "--purge", "--json", "--expect-link", LINK_B],
-        )
-        .output()
-        .unwrap();
+        );
+        let out = output_retry_etxtbsy(&mut cmd);
         assert!(
             out.status.success(),
             "{label}: {}",
@@ -810,9 +809,8 @@ fn a_relay_of_another_home_keeps_the_planted_binary_from_being_purged() {
         "the purge removed a binary another home's relay runs from"
     );
 
-    let out = planted_command(&planted, &fake_home, &x.epx, &x.codex, x.port, &["detach"])
-        .output()
-        .unwrap();
+    let mut detach_cmd = planted_command(&planted, &fake_home, &x.epx, &x.codex, x.port, &["detach"]);
+    let out = output_retry_etxtbsy(&mut detach_cmd);
     assert!(
         out.status.success(),
         "X detach failed: {}",
@@ -831,7 +829,7 @@ fn the_in_use_lock_file_stays_so_no_relay_can_lock_a_fresh_one_during_a_purge() 
     let bin_dir = fake_home.join(".cache").join("easyproxy").join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
     let planted = bin_dir.join("epx-child");
-    fs::copy(env!("CARGO_BIN_EXE_epx-child"), &planted).unwrap();
+    copy_executable_atomic(Path::new(env!("CARGO_BIN_EXE_epx-child")), &planted);
     let lock_path = bin_dir.join(".epx-child-in-use.lock");
     let barrier = Barrier::new(&homes.scratch.0, "stable");
     let mut cmd = planted_command(
@@ -843,7 +841,7 @@ fn the_in_use_lock_file_stays_so_no_relay_can_lock_a_fresh_one_during_a_purge() 
         &["detach", "--purge", "--json", "--expect-link", LINK_A],
     );
     barrier.apply(&mut cmd, "purge-holding-in-use");
-    let child = cmd.spawn().unwrap();
+    let child = spawn_retry_etxtbsy(&mut cmd);
     assert!(
         barrier.wait_reached("purge-holding-in-use", Duration::from_secs(20)),
         "the purge never took the in-use lock"

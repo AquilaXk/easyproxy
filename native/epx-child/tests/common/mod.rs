@@ -303,6 +303,63 @@ fn handle_mock_home_socket(
     let _ = writer.flush();
 }
 
+fn is_etxtbsy(err: &std::io::Error) -> bool {
+    cfg!(unix) && err.raw_os_error() == Some(26)
+}
+
+/// Another test thread may briefly inherit an open write descriptor across `fork()` while a
+/// planted test binary is being written, causing Linux `execve` to fail with `ETXTBSY`.
+pub fn spawn_retry_etxtbsy(cmd: &mut Command) -> std::process::Child {
+    for attempt in 0..60 {
+        match cmd.spawn() {
+            Ok(child) => return child,
+            Err(err) if is_etxtbsy(&err) && attempt < 59 => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(err) => panic!("failed to spawn test command: {err}"),
+        }
+    }
+    unreachable!()
+}
+
+pub fn output_retry_etxtbsy(cmd: &mut Command) -> std::process::Output {
+    for attempt in 0..60 {
+        match cmd.output() {
+            Ok(output) => return output,
+            Err(err) if is_etxtbsy(&err) && attempt < 59 => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(err) => panic!("failed to run test command: {err}"),
+        }
+    }
+    unreachable!()
+}
+
+/// Stage an executable via a temp file + rename so the final path is never opened for writing.
+pub fn copy_executable_atomic(src: &Path, dst: &Path) {
+    let parent = dst.parent().expect("planted binary path must have a parent");
+    let suffix = epx_child::platform::random_hex(6).unwrap();
+    let tmp = parent.join(format!(".epx-child-stage-{}-{suffix}", std::process::id()));
+    let result = (|| -> std::io::Result<()> {
+        let mut reader = fs::File::open(src)?;
+        let mut writer = fs::File::create(&tmp)?;
+        std::io::copy(&mut reader, &mut writer)?;
+        writer.sync_all()?;
+        drop(writer);
+        let perms = fs::metadata(src)?.permissions();
+        fs::set_permissions(&tmp, perms)?;
+        fs::rename(&tmp, dst)
+    })();
+    if let Err(err) = result {
+        let _ = fs::remove_file(&tmp);
+        panic!(
+            "failed to stage executable {} -> {}: {err}",
+            src.display(),
+            dst.display()
+        );
+    }
+}
+
 pub fn run_bin(
     epx_home: &Path,
     codex_home: &Path,
@@ -323,7 +380,7 @@ pub fn run_bin(
     } else {
         cmd.stdin(Stdio::null());
     }
-    let mut child = cmd.spawn().unwrap();
+    let mut child = spawn_retry_etxtbsy(&mut cmd);
     if let Some(input) = stdin_bytes {
         child.stdin.take().unwrap().write_all(input).unwrap();
     }
