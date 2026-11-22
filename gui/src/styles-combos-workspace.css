@@ -599,7 +599,7 @@
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 32px;
+  height: var(--epx-control-h-sm, 28px);
   padding: 0;
   border: none;
   border-radius: var(--radius);
@@ -751,7 +751,7 @@
 }
 
 .cwi-attention-row:hover {
-  color: var(--accent);
+  color: var(--epx-highlight, var(--accent));
 }
 
 .cwi-modal-form {
@@ -768,6 +768,22 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+}
+
+@media (max-width: 1180px) {
+  .combos-workspace-root {
+    grid-template-columns: minmax(256px, 31vw) minmax(0, 1fr);
+  }
+
+  .cwi-target-row,
+  .cwi-target-row--failover {
+    grid-template-columns: 28px auto minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+
+  .cwi-target-row > .cwi-quota-badge {
+    grid-column: 3;
+    justify-self: start;
+  }
 }
 
 @media (max-width: 939px) {

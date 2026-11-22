@@ -99,6 +99,13 @@
   }
 }
 
+@media (min-width: 960px) and (max-width: 1220px) {
+  .connect-split-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 16px;
+  }
+}
+
 /* ---- overview: stat tiles ------------------------------------------------------- */
 .integrations-overview .integration-summary {
   display: grid;

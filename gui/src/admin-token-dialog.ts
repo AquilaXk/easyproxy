@@ -89,7 +89,7 @@ export function promptForAdminToken(
     docsLink.href = ADMIN_TOKEN_DOCS_URL;
     docsLink.target = "_blank";
     docsLink.rel = "noreferrer";
-    docsLink.style.color = "var(--accent)";
+    docsLink.style.color = "var(--epx-highlight, var(--accent))";
     docsLink.textContent = messages["auth.adminTokenDocsLink"];
     help.append(" ", docsLink);
     tokenField.append(help);

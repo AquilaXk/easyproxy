@@ -1,5 +1,13 @@
 export type PlaygroundEndpoint = "/v1/chat/completions" | "/v1/responses" | "/v1/messages";
 
+export interface PlaygroundSeed {
+  endpoint?: PlaygroundEndpoint;
+  model?: string;
+  systemPrompt?: string;
+  userPrompt?: string;
+  maxTokens?: number;
+}
+
 export interface PlaygroundTelemetry {
   status: number | null;
   ttftMs: number | null;

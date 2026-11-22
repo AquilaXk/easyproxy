@@ -1,9 +1,11 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { useKeyedClientResource } from "../client-resource";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
+import { cachedNumberFormat } from "../intl-formatters";
+import { buildQuickstartSnippet, type EndpointProtocol, type QuickstartLang } from "../lib/home-quickstart";
 import type { Page } from "../app-routing";
-import { IconCheck, IconCopy, IconRefresh } from "../icons";
+import { IconCheck, IconChevron, IconCopy, IconRefresh } from "../icons";
 import { formatProviderDisplayName } from "../provider-icons";
 import { useCopyFeedback } from "../components/use-copy-feedback";
 import { Button } from "@/components/ui-v2/button";
@@ -48,10 +50,15 @@ async function getJson<T>(url: string, signal: AbortSignal): Promise<T | null> {
 
 export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, reloadingCodex, onOpenPlayground }: HomeProps) {
   const { t, locale } = useI18n();
-  const endpointCopy = useCopyFeedback<"endpoint">();
+  const quickstartId = useId();
+  const endpointCopy = useCopyFeedback<"endpoint" | "snippet">();
   const copyOutcome = endpointCopy.outcomeFor("endpoint");
-  const number = new Intl.NumberFormat(locale);
-  const compact = new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 });
+  const snippetCopyOutcome = endpointCopy.outcomeFor("snippet");
+  const [protocolMode, setProtocolMode] = useState<EndpointProtocol>("openai");
+  const [quickstartOpen, setQuickstartOpen] = useState(false);
+  const [snippetLang, setSnippetLang] = useState<QuickstartLang>("curl");
+  const number = cachedNumberFormat(locale);
+  const compact = cachedNumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 });
 
   // The authenticated management health route: a hub's management ingress denies /healthz (#8506).
   const health = useKeyedClientResource(`app-health:${apiBase}/api/system/health`, [apiBase],
@@ -79,7 +86,11 @@ export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, re
   const online = health.data != null;
   const providerCount = Object.keys(config.data?.providers ?? {}).length;
   const defaultProvider = config.data?.defaultProvider?.trim() || "";
-  const endpoint = endpointUrl?.trim() || "";
+  const rawEndpoint = endpointUrl?.trim() || "";
+  const baseOrigin = rawEndpoint.replace(/\/v1\/?$/, "").replace(/\/+$/, "");
+  const endpoint = baseOrigin ? (protocolMode === "openai" ? `${baseOrigin}/v1` : baseOrigin) : "";
+  const snippetEndpoint = endpoint || (protocolMode === "openai" ? "http://127.0.0.1:8787/v1" : "http://127.0.0.1:8787");
+  const snippetCode = buildQuickstartSnippet(protocolMode, snippetLang, snippetEndpoint);
   const requests7d = usage.data?.summary?.requests ?? 0;
   const tokens7d = usage.data?.summary?.totalTokens ?? 0;
   const uptime = health.data?.uptime ?? null;
@@ -166,45 +177,125 @@ export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, re
         </div>
       </header>
 
-      <section aria-label={uxT(locale, "playground.endpoint")} className="endpoint-strip flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-card border border-line bg-surface px-4 py-2.5">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-          {endpoint && (
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-xs font-medium text-fg-subtle">{uxT(locale, "playground.endpoint")}</span>
-              <code className="truncate font-mono text-[13px] text-fg">{endpoint}</code>
-              <button
-                type="button"
-                aria-label={uxT(locale, "cmd.copyEndpoint")}
-                aria-pressed={copyOutcome === "copied"}
-                data-copied={copyOutcome === "copied" ? "true" : undefined}
-                onClick={() => endpointCopy.copy(endpoint, "endpoint")}
-                className={cn(
-                  "inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-[6px] text-fg-muted transition-colors hover:bg-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-highlight",
-                  copyOutcome === "copied" && "text-success hover:text-success",
-                )}
-              >
-                {copyOutcome === "copied" ? <IconCheck size={14} strokeWidth={1.8} aria-hidden="true" /> : <IconCopy size={14} strokeWidth={1.8} aria-hidden="true" />}
-              </button>
-              <span role="status" aria-live="polite" className={cn("text-xs font-medium", copyOutcome === "unavailable" ? "text-warning" : "text-success")}>
-                {copyOutcome === "copied" ? uxT(locale, "playground.copied") : copyOutcome === "unavailable" ? uxT(locale, "playground.copyFailed") : ""}
-              </span>
-            </div>
-          )}
-          {defaultProvider && (
+      <section aria-label={uxT(locale, "playground.endpoint")} className="endpoint-strip flex flex-col gap-2.5 rounded-card border border-line bg-surface px-4 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+            {endpoint && (
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="shrink-0 text-xs font-medium text-fg-subtle">{uxT(locale, "playground.endpoint")}</span>
+                <div
+                  role="group"
+                  aria-label={uxT(locale, "home.protocolToggleAria")}
+                  className="inline-flex items-center gap-0.5 rounded-[7px] bg-inset p-0.5 ring-1 ring-inset ring-line"
+                >
+                  {(["openai", "anthropic"] as const).map(mode => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={protocolMode === mode}
+                      onClick={() => setProtocolMode(mode)}
+                      className={cn(
+                        "cursor-pointer rounded-[5px] px-2 py-0.5 text-xs font-medium transition-colors",
+                        protocolMode === mode ? "bg-raised text-fg shadow-sm ring-1 ring-inset ring-line" : "text-fg-subtle hover:text-fg",
+                      )}
+                    >
+                      {uxT(locale, mode === "openai" ? "home.protocolOpenAI" : "home.protocolAnthropic")}
+                    </button>
+                  ))}
+                </div>
+                <code className="truncate font-mono text-[13px] text-fg">{endpoint}</code>
+                <button
+                  type="button"
+                  aria-label={uxT(locale, "cmd.copyEndpoint")}
+                  aria-pressed={copyOutcome === "copied"}
+                  data-copied={copyOutcome === "copied" ? "true" : undefined}
+                  onClick={() => endpointCopy.copy(endpoint, "endpoint")}
+                  className={cn(
+                    "inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-[6px] text-fg-muted transition-colors hover:bg-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-highlight",
+                    copyOutcome === "copied" && "text-success hover:text-success",
+                  )}
+                >
+                  {copyOutcome === "copied" ? <IconCheck size={14} strokeWidth={1.8} aria-hidden="true" /> : <IconCopy size={14} strokeWidth={1.8} aria-hidden="true" />}
+                </button>
+                <span role="status" aria-live="polite" className={cn("text-xs font-medium", copyOutcome === "unavailable" ? "text-warning" : "text-success")}>
+                  {copyOutcome === "copied" ? uxT(locale, "playground.copied") : copyOutcome === "unavailable" ? uxT(locale, "playground.copyFailed") : ""}
+                </span>
+              </div>
+            )}
             <button
               type="button"
-              onClick={() => navigate("providers")}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-raised px-2.5 py-0.5 text-xs text-fg-muted ring-1 ring-inset ring-line transition-colors hover:text-fg"
+              aria-expanded={quickstartOpen}
+              aria-controls={quickstartId}
+              onClick={() => setQuickstartOpen(open => !open)}
+              className={cn(
+                "inline-flex h-[var(--epx-control-h-sm)] cursor-pointer items-center gap-1 rounded-control border border-line bg-inset px-2.5 text-xs font-medium text-fg-muted transition-colors hover:border-line-strong hover:text-fg",
+                quickstartOpen && "border-line-strong bg-raised text-fg",
+              )}
             >
-              <span>{uxT(locale, "home.defaultRoute", { provider: formatProviderDisplayName(defaultProvider, t) })}</span>
+              <span>{uxT(locale, "home.quickstart")}</span>
+              <span className={cn("inline-flex transition-transform", quickstartOpen ? "rotate-90" : "")} aria-hidden>
+                <IconChevron size={12} />
+              </span>
             </button>
-          )}
+            {defaultProvider && (
+              <button
+                type="button"
+                onClick={() => navigate("providers")}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-raised px-2.5 py-0.5 text-xs text-fg-muted ring-1 ring-inset ring-line transition-colors hover:text-fg"
+              >
+                <span>{uxT(locale, "home.defaultRoute", { provider: formatProviderDisplayName(defaultProvider, t) })}</span>
+              </button>
+            )}
+          </div>
+          <div className="ml-auto flex items-center gap-3 text-xs text-fg-muted">
+            <span>{t("shellV2.tileVersion")} <b className="font-semibold text-fg tabular-nums">{health.data?.version ? `v${health.data.version}` : "—"}</b></span>
+            <button type="button" onClick={() => navigate("dashboard", "update")}
+              className="cursor-pointer font-medium text-highlight hover:underline">{t("shellV2.checkUpdate")}</button>
+          </div>
         </div>
-        <div className="ml-auto flex items-center gap-3 text-xs text-fg-muted">
-          <span>{t("shellV2.tileVersion")} <b className="font-semibold text-fg tabular-nums">{health.data?.version ? `v${health.data.version}` : "—"}</b></span>
-          <button type="button" onClick={() => navigate("dashboard", "update")}
-            className="cursor-pointer font-medium text-highlight hover:underline">{t("shellV2.checkUpdate")}</button>
-        </div>
+        {quickstartOpen && (
+          <div id={quickstartId} className="flex flex-col gap-2 border-t border-line pt-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div
+                role="group"
+                aria-label={uxT(locale, "home.quickstartLangAria")}
+                className="inline-flex items-center gap-0.5 rounded-[7px] bg-inset p-0.5 ring-1 ring-inset ring-line"
+              >
+                {([
+                  ["curl", "home.langCurl"],
+                  ["python", "home.langPython"],
+                  ["ts", "home.langTypeScript"],
+                ] as const).map(([lang, key]) => (
+                  <button
+                    key={lang}
+                    type="button"
+                    aria-pressed={snippetLang === lang}
+                    onClick={() => setSnippetLang(lang)}
+                    className={cn(
+                      "cursor-pointer rounded-[5px] px-2.5 py-0.5 text-xs font-medium transition-colors",
+                      snippetLang === lang ? "bg-raised text-fg shadow-sm ring-1 ring-inset ring-line" : "text-fg-subtle hover:text-fg",
+                    )}
+                  >
+                    {uxT(locale, key)}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => endpointCopy.copy(snippetCode, "snippet")}
+                  className="inline-flex h-[var(--epx-control-h-sm)] cursor-pointer items-center gap-1.5 rounded-control border border-line bg-inset px-2.5 text-xs font-medium text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
+                >
+                  {snippetCopyOutcome === "copied" ? <IconCheck size={13} aria-hidden="true" /> : <IconCopy size={13} aria-hidden="true" />}
+                  <span>{uxT(locale, snippetCopyOutcome === "copied" ? "playground.copied" : "home.copySnippet")}</span>
+                </button>
+              </div>
+            </div>
+            <pre className="m-0 overflow-x-auto rounded-control border border-line bg-inset p-3 font-mono text-xs leading-5 text-fg">
+              <code>{snippetCode}</code>
+            </pre>
+          </div>
+        )}
       </section>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">

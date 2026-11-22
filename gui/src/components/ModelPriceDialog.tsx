@@ -5,6 +5,7 @@ import { readJsonOrThrow } from "../fetch-json";
 import { useT, type TKey } from "../i18n/shared";
 import type { ModelRow } from "../pages/models-shared";
 import { Select } from "../ui";
+import { ModalDialog } from "./ui-v2/modal-dialog";
 import {
   CUSTOM_FIELD, EMPTY_CUSTOM, EMPTY_RATES, INVALID, RATE_FIELDS, buildDraftCost, isRecord, loadDraft, parseModelCost, receiptMatches,
   type CustomDraft, type InvalidField, type ModelCost, type PricingMode, type RateDraft, type RateField,
@@ -31,7 +32,6 @@ export default function ModelPriceDialog({ model, apiBase, onRefresh, onClose }:
   const id = useId();
   const helpId = useId();
   const errorId = useId();
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const customFieldRefs = useRef<Partial<Record<InvalidField, HTMLInputElement>>>({});
   const submitRef = useRef<HTMLButtonElement>(null);
@@ -85,14 +85,11 @@ export default function ModelPriceDialog({ model, apiBase, onRefresh, onClose }:
   }, [endpoint, model.id, model.provider, setCustomDraft, setErrorKey, setInvalidField, setPricingMode]);
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
     void readOverride();
     return () => {
       requestRef.current?.controller.abort();
       requestRef.current?.clear();
       requestRef.current = null;
-      if (dialog?.open) dialog.close();
     };
   }, [readOverride]);
 
@@ -149,14 +146,18 @@ export default function ModelPriceDialog({ model, apiBase, onRefresh, onClose }:
   };
 
   return (
-    <dialog ref={dialogRef} className="modal-overlay" aria-labelledby={`${id}-title`}
-      onCancel={event => { event.preventDefault(); requestClose(); }}>
-      <button type="button" className="modal-backdrop-dismiss" tabIndex={-1}
-        aria-label={t("pricing.override.close")} disabled={mutating} onClick={requestClose} />
-      <form className="modal-card model-display-name-dialog model-price-dialog" role="document" noValidate
-        aria-busy={phase === "loading" || mutating}
-        onClick={event => event.stopPropagation()}
-        onSubmit={event => {
+    <ModalDialog
+      aria-labelledby={`${id}-title`}
+      dismissDisabled={mutating}
+      closeLabel={t("pricing.override.close")}
+      surfaceTag="form"
+      cardClassName="model-display-name-dialog model-price-dialog"
+      cardRole="document"
+      noValidate
+      ariaBusy={phase === "loading" || mutating}
+      restoreFocus={false}
+      onClose={requestClose}
+      onSubmit={event => {
           event.preventDefault();
           if (requestRef.current) return;
           if (phase === "unknown" || phase === "loadFailed") {
@@ -280,7 +281,6 @@ export default function ModelPriceDialog({ model, apiBase, onRefresh, onClose }:
               ? "pricing.override.reload" : phase === "refreshFailed" ? "pricing.override.refresh" : "pricing.override.save")}
           </button>
         </div>
-      </form>
-    </dialog>
+    </ModalDialog>
   );
 }

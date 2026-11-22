@@ -5,6 +5,7 @@ import { readJsonOrThrow } from "../fetch-json";
 import { useT, type TKey } from "../i18n/shared";
 import { Notice, Select } from "../ui";
 import { CUSTOM_OPTION, REASONING_EFFORT_LEVELS, type ModelRow } from "../pages/models-shared";
+import { ModalDialog } from "./ui-v2/modal-dialog";
 
 /**
  * The per-model overrides on ONE routed row, in the shape the row already reports them.
@@ -83,7 +84,6 @@ interface ModelSettingsDialogProps {
 export default function ModelSettingsDialog({ row, apiBase, onRefresh, onFeedback, onClose }: ModelSettingsDialogProps) {
   const t = useT();
   const id = useId();
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const reloadRef = useRef<HTMLButtonElement>(null);
   const requestRef = useRef<BoundedFetch | null>(null);
   // State rather than a ref: the form's start values are read during render to seed the fields,
@@ -101,13 +101,6 @@ export default function ModelSettingsDialog({ row, apiBase, onRefresh, onFeedbac
   const [errorKey, setErrorKey] = useState<TKey | null>(null);
   const busy = phase === "saving" || phase === "restoring";
   const terminal = phase === "unknown" || phase === "saved-stale";
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    const opener = document.activeElement as HTMLElement | null;
-    if (dialog && !dialog.open) dialog.showModal();
-    return () => { if (dialog?.open) dialog.close(); if (opener?.isConnected && typeof opener.focus === "function") opener.focus(); };
-  }, []);
 
   useEffect(() => {
     if (terminal) reloadRef.current?.focus();
@@ -260,33 +253,17 @@ export default function ModelSettingsDialog({ row, apiBase, onRefresh, onFeedbac
     : [];
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="modal-overlay"
+    <ModalDialog
       aria-labelledby={id + "-title"}
-      onCancel={event => { event.preventDefault(); requestClose(); }}
+      dismissDisabled={busy}
+      surfaceTag="form"
+      cardClassName="model-display-name-dialog"
+      cardRole="document"
+      noValidate
+      ariaBusy={busy}
+      onClose={requestClose}
+      onSubmit={event => { event.preventDefault(); submit(); }}
     >
-      <button
-        type="button"
-        className="modal-backdrop-dismiss"
-        aria-label={t("common.close")}
-        tabIndex={-1}
-        disabled={busy}
-        onClick={requestClose}
-      />
-      {/*
-        `model-display-name-dialog` is reused rather than a new modifier: it is the shared narrow
-        dialog shell (460px, stacked actions on a small viewport), and gui/src/styles.css is at its
-        file-size cap, so a second class with the same rules could not be added.
-      */}
-      <form
-        className="modal-card model-display-name-dialog"
-        role="document"
-        noValidate
-        aria-busy={busy}
-        onClick={event => event.stopPropagation()}
-        onSubmit={event => { event.preventDefault(); submit(); }}
-      >
         <div className="modal-head">
           <h3 id={id + "-title"}>{t("models.settingsTitle", { model: row.namespaced })}</h3>
           <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={requestClose}>
@@ -454,7 +431,6 @@ export default function ModelSettingsDialog({ row, apiBase, onRefresh, onFeedbac
             {busy ? t("models.customSaving") : t("models.customApply")}
           </button>
         </div>
-      </form>
-    </dialog>
+    </ModalDialog>
   );
 }

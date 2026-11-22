@@ -3,7 +3,7 @@ import type { DeliveryMode } from "../../../src/protocols/contract";
 import { parseProtocolTraceV1 } from "../../../src/protocols/dto";
 
 export type LogTimeWindow = "all" | "15m" | "1h" | "24h";
-export type LogStatusFilter = "all" | "success" | "errors";
+export type LogStatusFilter = "all" | "success" | "errors" | "429" | "auth" | "5xx";
 /** Final protocol delivery mode, or `none` for rows without an observed path (PF-02). */
 export type LogProtocolModeFilter = "all" | DeliveryMode | "none";
 export const LOG_PROTOCOL_MODE_FILTERS: readonly LogProtocolModeFilter[] = [
@@ -17,6 +17,8 @@ export interface LogFilterState {
   timeWindow: LogTimeWindow;
   minTokPerSec?: number;
   maxTokPerSec?: number;
+  minDurationMs?: number;
+  apiKeyId?: string;
   interceptedOnly: boolean;
   conversationId: string;
   conversationQueryHash?: readonly string[];
@@ -45,6 +47,8 @@ export interface FilterableLogEntry {
   servedModel?: unknown;
   provider?: unknown;
   status?: unknown;
+  durationMs?: unknown;
+  apiKeyId?: unknown;
   conversationId?: string;
   shadowCallRewrittenFrom?: unknown;
   attempts?: unknown;
@@ -62,6 +66,8 @@ export function hasActiveLogFilters(filters: LogFilterState): boolean {
     || filters.timeWindow !== "all"
     || filters.minTokPerSec !== undefined
     || filters.maxTokPerSec !== undefined
+    || (typeof filters.minDurationMs === "number" && Number.isFinite(filters.minDurationMs) && filters.minDurationMs > 0)
+    || (filters.apiKeyId ?? "").trim() !== ""
     || filters.interceptedOnly
     || filters.conversationId.trim() !== ""
     || (filters.protocolMode ?? "all") !== "all";
@@ -98,6 +104,10 @@ export function filterLogs<T extends FilterableLogEntry>(
 ): T[] {
   const modelQuery = filters.model.trim().toLowerCase();
   const providerQuery = filters.provider.trim().toLowerCase();
+  const apiKeyQuery = (filters.apiKeyId ?? "").trim();
+  const minDurationMs = typeof filters.minDurationMs === "number" && Number.isFinite(filters.minDurationMs) && filters.minDurationMs > 0
+    ? filters.minDurationMs
+    : undefined;
   const conversationQuery = filters.conversationId.trim();
   const since = timeThreshold(filters.timeWindow, now);
   const protocolMode = filters.protocolMode ?? "all";
@@ -116,16 +126,16 @@ export function filterLogs<T extends FilterableLogEntry>(
       filters.conversationQueryHash,
     )) return false;
 
-    if (filters.status === "success"
-      && (typeof log.status !== "number"
-        || !Number.isInteger(log.status)
-        || log.status < 200
-        || log.status >= 300)) return false;
-    if (filters.status === "errors"
-      && (typeof log.status !== "number"
-        || !Number.isInteger(log.status)
-        || log.status < 400
-        || log.status > 599)) return false;
+    const statusNum = typeof log.status === "number" && Number.isInteger(log.status) ? log.status : undefined;
+    if (filters.status === "success" && (statusNum === undefined || statusNum < 200 || statusNum >= 300)) return false;
+    if (filters.status === "errors" && (statusNum === undefined || statusNum < 400 || statusNum > 599)) return false;
+    if (filters.status === "429" && statusNum !== 429) return false;
+    if (filters.status === "auth" && statusNum !== 401 && statusNum !== 403) return false;
+    if (filters.status === "5xx" && (statusNum === undefined || statusNum < 500 || statusNum > 599)) return false;
+
+    if (apiKeyQuery && (typeof log.apiKeyId !== "string" || log.apiKeyId.trim() !== apiKeyQuery)) return false;
+    if (minDurationMs !== undefined
+      && (typeof log.durationMs !== "number" || !Number.isFinite(log.durationMs) || log.durationMs < minDurationMs)) return false;
 
     const logAttempts = attempts(log);
     // Model options represent complete identities from the current log snapshot. Match
@@ -173,9 +183,11 @@ function addOption(options: Map<string, string>, value: unknown): void {
 export function extractLogFilterOptions(logs: readonly FilterableLogEntry[]): {
   models: string[];
   providers: string[];
+  apiKeys?: string[];
 } {
   const models = new Map<string, string>();
   const providers = new Map<string, string>();
+  const apiKeys = new Set<string>();
   for (const log of logs) {
     for (const value of [log.model, log.resolvedModel, log.servedModel, ...attempts(log).map(attempt => attempt.model)]) {
       addOption(models, value);
@@ -183,9 +195,14 @@ export function extractLogFilterOptions(logs: readonly FilterableLogEntry[]): {
     for (const value of [log.provider, ...attempts(log).map(attempt => attempt.provider)]) {
       addOption(providers, value);
     }
+    if (typeof log.apiKeyId === "string") {
+      const trimmed = log.apiKeyId.trim();
+      if (trimmed) apiKeys.add(trimmed);
+    }
   }
   return {
     models: [...models.values()].sort(),
     providers: [...providers.values()].sort(),
+    ...(apiKeys.size > 0 ? { apiKeys: [...apiKeys].sort() } : {}),
   };
 }

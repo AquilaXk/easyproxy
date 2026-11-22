@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useI18n, LOCALES, type TFn } from "../i18n/shared";
+import { useI18n, LOCALES, type Locale, type TFn } from "../i18n/shared";
+import { uxT } from "../i18n/ux-overhaul-copy";
 import { formatProviderDisplayName } from "../provider-icons";
 import { formatTokens } from "../format-tokens";
 import { hashLogConversationQuery } from "../log-conversation-id";
 import { statusCodeInfo } from "../status-codes";
-import { IconArrowDown, IconArrowUp, IconChevron, IconX } from "../icons";
+import { IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconCopy, IconX } from "../icons";
+import { useCopyFeedback } from "../components/use-copy-feedback";
+import { parseProtocolTraceV1 } from "../../../src/protocols/dto";
+import type { PlaygroundEndpoint, PlaygroundSeed } from "../lib/playground-client";
 import { modelLabel } from "../model-display";
 import { cn } from "@/lib/utils";
 import { panel, panelBody } from "../components/v2-logs/classes";
@@ -172,6 +176,8 @@ export interface LogEntry extends LogFailureAttribution {
   provider: string;
   /** Closed client classification from the proxy; validate API and cached values before display. */
   client?: unknown;
+  apiKeyId?: string;
+  inboundProtocol?: string;
   conversationId?: string;
   /**
    * The original helper model, when Shadow Call Intercept rewrote this request.
@@ -472,7 +478,13 @@ function tabClass(selected: boolean): string {
   );
 }
 
-export default function Logs({ apiBase }: { apiBase: string }) {
+export default function Logs({
+  apiBase,
+  onReplayInPlayground,
+}: {
+  apiBase: string;
+  onReplayInPlayground?: (seed: PlaygroundSeed) => void;
+}) {
   const { t, locale } = useI18n();
   const resourceKey = logsCacheKey(apiBase);
   const cachedLogs = validCachedLogs(readSessionListCache<LogEntry[]>(resourceKey));
@@ -1033,7 +1045,16 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                     {formatEstimatedUsd(log.displayMetrics?.cost, t, localeTag)}
                   </td>
                   )}
-                  {columns.duration && <td className="log-col-duration text-right font-mono whitespace-nowrap text-fg-muted tabular-nums">{log.durationMs}ms</td>}
+                  {columns.duration && (
+                    <td className="log-col-duration text-right font-mono whitespace-nowrap text-fg-muted tabular-nums">
+                      <span>{log.durationMs}ms</span>
+                      {typeof log.firstOutputMs === "number" && Number.isFinite(log.firstOutputMs) && log.firstOutputMs >= 0 && (
+                        <span className="block text-xs leading-tight text-fg-subtle tabular-nums">
+                          {uxT(locale, "logs.ttftCompact", { ms: Math.round(log.firstOutputMs) })}
+                        </span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-1!">
                     <button
                       type="button"
@@ -1086,6 +1107,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
               setFilters(prev => ({ ...prev, conversationId: id }));
               setDetail(null);
             }}
+            onReplayInPlayground={onReplayInPlayground}
           />
         );
       })()}
@@ -1094,15 +1116,22 @@ export default function Logs({ apiBase }: { apiBase: string }) {
   );
 }
 
+function playgroundEndpointForLog(detail: LogEntry): PlaygroundEndpoint {
+  const inbound = parseProtocolTraceV1(detail.protocolTrace)?.inbound;
+  if (inbound === "messages" || detail.inboundProtocol === "anthropic-messages") return "/v1/messages";
+  if (inbound === "responses" || detail.inboundProtocol === "openai-responses") return "/v1/responses";
+  return "/v1/chat/completions";
+}
+
 function useDesktopAuxPane(): boolean {
   const [desktop, setDesktop] = useState(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
-      ? window.matchMedia("(min-width: 1024px)").matches
+      ? window.matchMedia("(min-width: 1220px)").matches
       : false,
   );
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
-    const mq = window.matchMedia("(min-width: 1024px)");
+    const mq = window.matchMedia("(min-width: 1220px)");
     const onChange = () => setDesktop(mq.matches);
     mq.addEventListener?.("change", onChange);
     return () => mq.removeEventListener?.("change", onChange);
@@ -1145,11 +1174,11 @@ function useModalDialog(open: boolean, modal: boolean, switchingRef: { current: 
 }
 
 function LogDetailDialog({
-  detail, detailInfo, localeCode, localeTag, serverTimeZone, t, hasPrev, hasNext, onStep, onClose, onFilterConversation,
+  detail, detailInfo, localeCode, localeTag, serverTimeZone, t, hasPrev, hasNext, onStep, onClose, onFilterConversation, onReplayInPlayground,
 }: {
   detail: LogEntry;
   detailInfo: ReturnType<typeof statusCodeInfo> | null;
-  localeCode: string;
+  localeCode: Locale;
   localeTag?: string;
   serverTimeZone?: string;
   t: TFn;
@@ -1158,12 +1187,15 @@ function LogDetailDialog({
   onStep?: (delta: -1 | 1) => void;
   onClose: () => void;
   onFilterConversation?: (conversationId: string) => void;
+  onReplayInPlayground?: (seed: PlaygroundSeed) => void;
 }) {
   const desktopAuxPane = useDesktopAuxPane();
   const modal = !desktopAuxPane;
   const switchingRef = useRef(false);
   const dialogRef = useModalDialog(true, modal, switchingRef);
   const [copied, setCopied] = useState(false);
+  const jsonCopy = useCopyFeedback<"json">();
+  const jsonCopyOutcome = jsonCopy.outcomeFor("json");
 
   useEffect(() => {
     const onWindowKey = (e: KeyboardEvent) => {
@@ -1221,6 +1253,18 @@ function LogDetailDialog({
             {summary.label && <span className="logs-detail-info m-0">{summary.label}</span>}
           </h3>
           <div className="flex shrink-0 items-center gap-1">
+            {onReplayInPlayground && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => onReplayInPlayground({
+                  endpoint: playgroundEndpointForLog(detail),
+                  model: detail.model || detail.resolvedModel || detail.servedModel || "",
+                })}
+              >
+                {uxT(localeCode, "logs.replayPlayground")}
+              </button>
+            )}
             {onStep && (
               <>
                 <button type="button" className="btn btn-ghost btn-sm" disabled={!hasPrev} onClick={() => onStep(-1)} aria-label={t("logs.detail.prevRequest")} title={`${t("logs.detail.prevRequest")} ([)`}>
@@ -1572,6 +1616,16 @@ function LogDetailDialog({
 
         <details className="log-detail-raw">
           <summary>{t("logs.detailRaw")}</summary>
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => jsonCopy.copy(JSON.stringify(detail, null, 2), "json")}
+            >
+              {jsonCopyOutcome === "copied" ? <IconCheck size={14} aria-hidden="true" /> : <IconCopy size={14} aria-hidden="true" />}
+              <span>{uxT(localeCode, jsonCopyOutcome === "copied" ? "playground.copied" : "logs.copyJson")}</span>
+            </button>
+          </div>
           <pre className="log-detail-json">{JSON.stringify(detail, null, 2)}</pre>
         </details>
       </div>

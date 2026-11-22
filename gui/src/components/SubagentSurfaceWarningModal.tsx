@@ -5,10 +5,11 @@
  * an install that predates the v1 default raises after an update. They say different things
  * and offer the same two answers, so keeping them apart would only let the wording drift.
  */
-import { useCallback, useEffect, useId, useRef } from "react";
+import { useId } from "react";
 import { useT } from "../i18n/shared";
 import { IconAlert } from "../icons";
 import { type SubagentSurfaceMode, subagentSurfaceLabel } from "../subagent-surface";
+import { ModalDialog } from "./ui-v2/modal-dialog";
 
 export default function SubagentSurfaceWarningModal({
   reason,
@@ -34,36 +35,19 @@ export default function SubagentSurfaceWarningModal({
   const t = useT();
   const titleId = useId();
   const bodyId = useId();
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  // Open as a native modal dialog — focus trapping and the backdrop come from the platform.
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
-
-  const handleCancel = useCallback((e: React.SyntheticEvent) => {
-    e.preventDefault();
-    // The dashboard keeps this mounted until its write settles, so Escape or the backdrop
-    // could otherwise close the dialog over a request that then lands anyway.
-    if (busy) return;
-    onDismiss();
-  }, [busy, onDismiss]);
 
   const label = subagentSurfaceLabel(mode);
   const advisory = reason === "advisory";
 
   return (
-    <dialog
-      ref={dialogRef}
+    <ModalDialog
       aria-labelledby={titleId}
       aria-describedby={bodyId}
-      className="modal-overlay"
       data-subagent-surface-reason={reason}
-      onCancel={handleCancel}
+      dismissDisabled={busy}
+      cardStyle={{ maxWidth: 480 }}
+      onClose={onDismiss}
     >
-      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} disabled={busy} onClick={() => { if (!busy) onDismiss(); }} />
-      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
         <h3 id={titleId}>{t(advisory ? "subagentSurface.advisoryTitle" : "subagentSurface.selectionTitle", { mode: label })}</h3>
         <div
           id={bodyId}
@@ -76,7 +60,7 @@ export default function SubagentSurfaceWarningModal({
           </p>
         </div>
         <p className="text-label" style={{ marginTop: 12 }}>
-          <a href={docsUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+          <a href={docsUrl} target="_blank" rel="noreferrer" style={{ color: "var(--epx-highlight, var(--blue, var(--accent)))" }}>
             {t("subagentSurface.learnMore")}
           </a>
         </p>
@@ -88,7 +72,6 @@ export default function SubagentSurfaceWarningModal({
             {t("subagentSurface.switchToV1")}
           </button>
         </div>
-      </div>
-    </dialog>
+    </ModalDialog>
   );
 }

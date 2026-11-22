@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useI18n } from "../i18n/shared";
 import { hostOs } from "../lib/desktop-shell";
+import { startVisibilityPoll } from "../visibility-poll";
 import { Button } from "@/components/ui-v2/button";
 import { cn } from "@/lib/utils";
 import { UsageCompanionChart } from "./usage-companion-chart";
@@ -110,13 +111,11 @@ export default function UsageCompanionPanel({
 
   useEffect(() => {
     if (!visible) return;
-    const interval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    return startVisibilityPoll(() => {
       if (saveStateRef.current === "saving") return;
       if (settingsRef.current && saveBaseline.current !== settingsRef.current) return;
       void loadSettings();
     }, 60_000);
-    return () => clearInterval(interval);
   }, [loadSettings, visible]);
 
   const chartQuery = useMemo(() => {
@@ -156,13 +155,10 @@ export default function UsageCompanionPanel({
   useEffect(() => {
     if (!visible || !chartQuery) return;
     const timer = setTimeout(() => void loadTimeline(), 250);
-    const interval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void loadTimeline();
-    }, 60_000);
+    const stopPoll = startVisibilityPoll(() => void loadTimeline(), 60_000);
     return () => {
       clearTimeout(timer);
-      clearInterval(interval);
+      stopPoll();
       timelineRequest.current?.abort();
     };
   }, [chartQuery, loadTimeline, visible]);

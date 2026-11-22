@@ -1,5 +1,6 @@
 import { useId, useRef, useState, type ReactNode } from "react";
-import type { TFn, TKey } from "../i18n/shared";
+import { useI18n, type TFn, type TKey } from "../i18n/shared";
+import { uxT } from "../i18n/ux-overhaul-copy";
 import { IconFilter, IconSearch, IconX } from "../icons";
 import { formatProviderDisplayName } from "../provider-icons";
 import { PROTOCOL_MODE_KEYS } from "../components/protocols/protocol-labels";
@@ -10,7 +11,7 @@ import { LOG_PROTOCOL_MODE_FILTERS, type LogFilterState, type LogProtocolModeFil
 
 interface LogsFilterBarProps {
   filters: LogFilterState;
-  options: { models: string[]; providers: string[] };
+  options: { models: string[]; providers: string[]; apiKeys?: string[] };
   hasActiveFilters: boolean;
   filteredCount: number;
   totalCount: number;
@@ -50,6 +51,7 @@ function speedBounds(value: string): Pick<LogFilterState, "minTokPerSec" | "maxT
 export function LogsFilterBar({
   filters, options, hasActiveFilters, filteredCount, totalCount, t, onFilterChange, onResetFilters, trailing,
 }: LogsFilterBarProps) {
+  const { locale } = useI18n();
   const panelId = useId();
   const [open, setOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -60,6 +62,23 @@ export function LogsFilterBar({
   const set = (patch: Partial<LogFilterState>) => onFilterChange({ ...filters, ...patch });
   const currentSpeed = speedChoice(filters);
   const protocolMode = filters.protocolMode ?? "all";
+  const apiKeys = options.apiKeys ?? [];
+  const activeApiKey = (filters.apiKeyId ?? "").trim();
+  const activeDurationMs = typeof filters.minDurationMs === "number" && Number.isFinite(filters.minDurationMs) && filters.minDurationMs > 0
+    ? filters.minDurationMs
+    : undefined;
+
+  const statusLabel = (status: LogStatusFilter): string => {
+    if (status === "429") return uxT(locale, "logs.status429");
+    if (status === "auth") return uxT(locale, "logs.statusAuth");
+    if (status === "5xx") return uxT(locale, "logs.status5xx");
+    return t(`logs.filter.status.${status}`);
+  };
+  const durationLabel = (ms: number): string => {
+    if (ms >= 30_000) return uxT(locale, "logs.duration30s");
+    if (ms >= 5_000) return uxT(locale, "logs.duration5s");
+    return uxT(locale, "logs.duration1s");
+  };
 
   // Everything the folded panel holds, as chips that each clear one filter.
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
@@ -68,8 +87,10 @@ export function LogsFilterBar({
   if (filters.model) chips.push({ key: "model", label: `${t("logs.filter.model.label")}: ${filters.model}`, clear: () => set({ model: "" }) });
   if (filters.timeWindow !== "all") chips.push({ key: "time", label: `${t("logs.filter.time.label")}: ${t(`logs.filter.time.${filters.timeWindow}`)}`, clear: () => set({ timeWindow: "all" }) });
   if (currentSpeed !== "all") chips.push({ key: "speed", label: `${t("logs.filter.speed.label")}: ${t(`logs.filter.speed.${currentSpeed}`)}`, clear: () => set(speedBounds("all")) });
-  if (filters.status !== "all") chips.push({ key: "status", label: `${t("logs.filter.status.label")}: ${t(`logs.filter.status.${filters.status}`)}`, clear: () => set({ status: "all" }) });
+  if (filters.status !== "all") chips.push({ key: "status", label: `${t("logs.filter.status.label")}: ${statusLabel(filters.status)}`, clear: () => set({ status: "all" }) });
   if (protocolMode !== "all") chips.push({ key: "protocol", label: `${t("logs.filter.protocol.label")}: ${t(protocolModeFilterKey(protocolMode))}`, clear: () => set({ protocolMode: "all" }) });
+  if (activeApiKey) chips.push({ key: "apiKey", label: `${uxT(locale, "logs.apiKeyLabel")}: ${activeApiKey}`, clear: () => set({ apiKeyId: undefined }) });
+  if (activeDurationMs !== undefined) chips.push({ key: "duration", label: `${uxT(locale, "logs.durationLabel")}: ${durationLabel(activeDurationMs)}`, clear: () => set({ minDurationMs: undefined }) });
 
   return (
     <div className="logs-filter-container flex min-w-0 flex-col gap-2">
@@ -163,6 +184,9 @@ export function LogsFilterBar({
               { value: "all", label: t("logs.filter.status.all") },
               { value: "success", label: t("logs.filter.status.success") },
               { value: "errors", label: t("logs.filter.status.errors") },
+              { value: "429", label: uxT(locale, "logs.status429") },
+              { value: "auth", label: uxT(locale, "logs.statusAuth") },
+              { value: "5xx", label: uxT(locale, "logs.status5xx") },
             ]} />
         </label>
 
@@ -172,6 +196,55 @@ export function LogsFilterBar({
             onChange={mode => set({ protocolMode: mode as LogProtocolModeFilter })}
             options={LOG_PROTOCOL_MODE_FILTERS.map(mode => ({ value: mode, label: t(protocolModeFilterKey(mode)) }))} />
         </label>
+
+        <div className={fieldLabel}>
+          <span>{uxT(locale, "logs.durationLabel")}</span>
+          <div
+            role="group"
+            aria-label={uxT(locale, "logs.durationLabel")}
+            className="inline-flex h-[var(--epx-control-h)] items-center gap-0.5 rounded-control border border-line bg-inset p-0.5"
+          >
+            {([
+              { value: undefined, labelKey: "logs.durationAll" },
+              { value: 1000, labelKey: "logs.duration1s" },
+              { value: 5000, labelKey: "logs.duration5s" },
+              { value: 30000, labelKey: "logs.duration30s" },
+            ] as const).map(opt => {
+              const pressed = activeDurationMs === opt.value;
+              return (
+                <button
+                  key={opt.labelKey}
+                  type="button"
+                  aria-pressed={pressed}
+                  onClick={() => set({ minDurationMs: opt.value })}
+                  className={cn(
+                    "cursor-pointer rounded-[5px] px-2 py-1 text-xs font-medium transition-colors",
+                    pressed ? "bg-raised text-fg shadow-sm ring-1 ring-inset ring-line" : "text-fg-muted hover:text-fg",
+                  )}
+                >
+                  {uxT(locale, opt.labelKey)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {(apiKeys.length > 0 || activeApiKey) && (
+          <label className={fieldLabel}>
+            {uxT(locale, "logs.apiKeyLabel")}
+            <Select
+              {...FILTER_SELECT}
+              value={activeApiKey}
+              label={uxT(locale, "logs.apiKeyLabel")}
+              onChange={apiKeyId => set({ apiKeyId: apiKeyId || undefined })}
+              options={[
+                { value: "", label: uxT(locale, "logs.apiKeyAll") },
+                ...apiKeys.map(id => ({ value: id, label: id })),
+                ...(activeApiKey && !apiKeys.includes(activeApiKey) ? [{ value: activeApiKey, label: activeApiKey }] : []),
+              ]}
+            />
+          </label>
+        )}
 
         <label className="col-span-full inline-flex w-fit cursor-pointer items-center gap-2 text-[13px] text-fg-muted hover:text-fg">
           <input

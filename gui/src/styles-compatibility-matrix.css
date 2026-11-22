@@ -286,7 +286,7 @@ button.lab-verdict-badge:focus-visible { outline: 2px solid var(--epx-highlight)
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
+  height: var(--epx-control-h);
   padding: 0 12px;
   border: 1px solid var(--epx-line-strong);
   border-radius: 10px;

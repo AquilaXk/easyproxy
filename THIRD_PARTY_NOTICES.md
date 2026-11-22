@@ -20,12 +20,8 @@ This file lists direct third-party runtime, UI, and desktop dependencies used by
 | :--- | :--- | :--- |
 | `@fontsource-variable/geist` | OFL-1.1 / MIT | https://github.com/fontsource/font-files |
 | `@fontsource-variable/geist-mono` | OFL-1.1 / MIT | https://github.com/fontsource/font-files |
-| `@hugeicons/core-free-icons` | MIT | https://github.com/hugeicons/hugeicons-react |
-| `@hugeicons/react` | MIT | https://github.com/hugeicons/hugeicons-react |
-| `@tabler/icons-react` | MIT | https://github.com/tabler/tabler-icons |
 | `@tanstack/react-virtual` | MIT | https://github.com/TanStack/virtual |
 | `clsx` | MIT | https://github.com/lukeed/clsx |
-| `motion` | MIT | https://github.com/motiondivision/motion |
 | `react` / `react-dom` | MIT | https://github.com/facebook/react |
 | `tailwind-merge` | MIT | https://github.com/dcastil/tailwind-merge |
 | `wanted-sans` | OFL-1.1 | https://github.com/wanteddev/wanted-sans |

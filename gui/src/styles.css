@@ -31,39 +31,7 @@
   /* default: follow the OS; [data-theme] below pins color-scheme so light-dark() obeys it */
   color-scheme: light dark;
 
-  --bg:           light-dark(#ffffff, #212121);
-  --rail:         light-dark(#f9f9f9, #171717);
-  --surface:      light-dark(#ffffff, #262626);
-  --raised:       light-dark(#f4f4f4, #303030);
-  --raised-hover: light-dark(#ececec, #3a3a3a);
-  --border:       light-dark(#e6e6e6, #3d3d3d);
-  --border-soft:  light-dark(#f0f0f0, #333333);
-  --hover:        light-dark(rgba(13, 13, 13, 0.03), rgba(255, 255, 255, 0.03));
-
-  --text:  light-dark(#0d0d0d, #ececec);
-  --muted: light-dark(#6e6e6e, #a6a6a6);
-  --faint: light-dark(#707070, #9a9a9a);
-
-  /* monochrome primary: black actions on light, white actions on dark */
-  --accent:       light-dark(#0d0d0d, #ececec);
-  --accent-hover: light-dark(#3d3d3d, #ffffff);
-  --accent-ink:   light-dark(#ffffff, #0d0d0d);
-  --accent-soft:  light-dark(rgba(13, 13, 13, 0.06), rgba(255, 255, 255, 0.09));
-  --accent-ring:  light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.38));
-
-  --green:      light-dark(#0a7d5c, #4ecb9d);
-  --green-soft: light-dark(rgba(16, 163, 127, 0.10), rgba(78, 203, 157, 0.13));
-  --red:        light-dark(#b91c1c, #f87171);
-  --red-soft:   light-dark(rgba(185, 28, 28, 0.09), rgba(248, 113, 113, 0.13));
-  --amber:      light-dark(#9a4a08, #fbbf24);
-  --amber-soft: light-dark(rgba(180, 83, 9, 0.10), rgba(251, 191, 36, 0.13));
-  /* Reserved for "something new is waiting" affordances (sidebar update orb). The base
-     palette is monochrome, so blue is the one hue that reads as an offer rather than a
-     warning (amber) or a failure (red). */
-  --blue:       light-dark(#1d4ed8, #7aa2ff);
-  --blue-soft:  light-dark(rgba(29, 78, 216, 0.10), rgba(122, 162, 255, 0.16));
-
-  /* geometry: 4px base grid, three surface radii, and one pill radius */
+  /* geometry: 4px base grid and remaining radii not overridden by design/bridge.css */
   --space-0-5: 2px;
   --space-1: 4px;
   --space-1-5: 6px;
@@ -81,10 +49,6 @@
   --prose-measure: 70ch;
 
   --radius-2xs: 4px;
-  --radius: 12px;
-  --radius-sm: 8px;
-  --radius-xs: 6px;
-  --radius-lg: 16px;
   --radius-round: 50%;
   --radius-pill: 999px;
 
@@ -127,32 +91,16 @@
   /* stacking: sticky chrome < overlay hosts < popovers/drawers < modals */
   --z-sticky: 20; --z-overlay: 30; --z-popover: 40; --z-modal: 50;
 
-  --shadow: 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.5)), 0 10px 28px light-dark(rgba(16, 24, 40, 0.07), rgba(0, 0, 0, 0.30));
-  --shadow-sm: 0 1px 2px light-dark(rgba(16, 24, 40, 0.06), rgba(0, 0, 0, 0.4));
-
-  /* toggle switch */
+  /* toggle switch geometry */
   --toggle-w: 36px;
   --toggle-h: 20px;
   --toggle-dot: 14px;
-  --toggle-off-bg: light-dark(#d4d4d4, #4a4a4a);
-  --toggle-on-bg: light-dark(#0d0d0d, #4ecb9d);
-  --toggle-dot-color: light-dark(#ffffff, #0d0d0d);
-
-  /* glass material tokens: rail/nav layer only — content cards stay opaque */
-  --glass-rail:  light-dark(rgba(249, 249, 249, 0.66), rgba(23, 23, 23, 0.62));
-  --glass-panel: light-dark(rgba(255, 255, 255, 0.78), rgba(38, 38, 38, 0.82));
-  --glass-blur:  saturate(1.6) blur(22px);
+  --glass-blur: saturate(1.6) blur(22px);
 }
 
 /* explicit user choice pins the scheme; "system" removes the attribute and falls back to the OS */
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"]  { color-scheme: dark; }
-
-/* language-aware font stacks: prioritize native system sans-serif per locale */
-:root:lang(zh), :root:lang(zh-CN), [lang="zh"], [lang="zh-CN"] { --font-ui: "OpenAI Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans SC", system-ui, sans-serif; --font-code: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", Menlo, Consolas, monospace; }
-:root:lang(zh-TW), :root:lang(zh-HK), [lang="zh-TW"], [lang="zh-HK"] { --font-ui: "OpenAI Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", system-ui, sans-serif; --font-code: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK TC", Menlo, Consolas, monospace; }
-:root:lang(ja), [lang="ja"] { --font-ui: "OpenAI Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", "Yu Gothic UI", Meiryo, "Noto Sans JP", system-ui, sans-serif; --font-code: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK JP", Menlo, Consolas, monospace; }
-:root:lang(ko), [lang="ko"] { --font-ui: "OpenAI Sans", "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; --font-code: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK KR", Menlo, Consolas, monospace; }
 
 * { box-sizing: border-box; }
 
@@ -1182,7 +1130,7 @@ textarea.input { resize: vertical; font-family: var(--font-code); line-height: v
 /* Pointer hover alone — softer than keyboard focus so the two cues stay distinct. */
 .select-option:hover:not(.select-option-active) { background: var(--hover); }
 /* Selected value (committed). */
-.select-option.active { background: var(--accent-soft); color: var(--accent); font-weight: var(--weight-semibold); }
+.select-option.active { background: var(--accent-soft); color: var(--epx-highlight, var(--accent)); font-weight: var(--weight-semibold); }
 /* Keyboard / aria-activedescendant focus — visible without relying on :hover. */
 .select-option-active {
   background: var(--hover);
@@ -1667,7 +1615,7 @@ dialog.modal-overlay::backdrop {
   align-items: center;
   justify-content: flex-end;
   /* Same box model as the input compound: 1px border + padding-driven line box. */
-  min-height: 36px;
+  min-height: var(--epx-control-h, 34px);
   margin-left: auto;
   flex: 0 0 auto;
 }
@@ -1681,7 +1629,7 @@ dialog.modal-overlay::backdrop {
   /* Stay compact inside grid/flex parents (grid blockifies inline-flex and would stretch). */
   width: max-content;
   max-width: 100%;
-  min-height: 32px;
+  min-height: var(--epx-control-h, 34px);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -2234,7 +2182,7 @@ table.logs-table {
 .prov-accounts-list { border-top: 1px solid var(--border-soft); padding: 6px 16px 10px; display: flex; flex-direction: column; gap: 2px; }
 .prov-account-row {
   display: flex; align-items: center; gap: 8px; width: 100%;
-  border-radius: var(--radius-xs); padding: 6px 8px; min-height: 32px;
+  border-radius: var(--radius-xs); padding: 6px 8px; min-height: var(--epx-control-h, 34px);
 }
 button.prov-account-row {
   text-align: left; background: none; border: none; color: var(--text); font: inherit;
@@ -2251,7 +2199,7 @@ button.prov-account-row.active { cursor: default; }
 .prov-account-row .prov-account-email { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prov-account-row .badge { flex: 0 0 auto; }
 .prov-account-reauth {
-  flex: 0 0 auto; background: none; border: none; color: var(--accent); cursor: pointer;
+  flex: 0 0 auto; background: none; border: none; color: var(--epx-highlight, var(--accent)); cursor: pointer;
   font: inherit; font-size: var(--text-label); padding: 4px 6px; border-radius: var(--radius-xs);
 }
 .prov-account-reauth:hover:not(:disabled) { color: var(--accent-hover); background: var(--raised); }
@@ -2266,7 +2214,7 @@ button.prov-account-row.active { cursor: default; }
 
 /* account login grid (Providers page): shared name | status | action columns across rows */
 .oauth-grid { display: grid; grid-template-columns: minmax(140px, max-content) minmax(0, 1fr) max-content; column-gap: 16px; row-gap: 10px; align-items: center; }
-.oauth-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; min-height: 30px; }
+.oauth-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; min-height: var(--epx-control-h, 34px); }
 .oauth-name { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-control); font-weight: var(--weight-semibold); min-width: 0; }
 .oauth-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .provider-icon-sm { width: 24px; height: 24px; border-radius: var(--radius-xs); }
@@ -2281,6 +2229,10 @@ button.prov-account-row.active { cursor: default; }
 .oauth-device-code { font-size: 20px; font-weight: 800; letter-spacing: .14em; color: var(--text); user-select: all; }
 .oauth-login-paste { display: flex; gap: 8px; align-items: center; width: 100%; }
 .oauth-login-paste .input { flex: 1; min-width: 0; font-size: var(--text-label); padding: 6px 10px; }
+
+@media (min-width: 761px) and (max-width: 1220px) {
+  .main-inner:not(.main-inner--combos) { padding: 24px 24px 56px; }
+}
 
 /* responsive: compact sticky top bar (menu + brand + stop) with the desktop sidebar
    reused as an off-canvas drawer — 10 destinations no longer fit an always-visible
@@ -2765,7 +2717,7 @@ button.prov-account-row.active { cursor: default; }
 .claude-lane-models { display: flex; flex-direction: column; gap: 9px; min-height: 104px; padding: 10px; }
 /* Lane density controls: a filter that only appears once a lane is long enough to need one,
    and a pager for the tail. Same idiom as the Models page so the two dense surfaces match. */
-.claude-lane-search { width: calc(100% - 20px); margin: 10px 10px 0; min-height: 32px; font-size: 13px; }
+.claude-lane-search { width: calc(100% - 20px); margin: 10px 10px 0; min-height: var(--epx-control-h, 34px); font-size: 13px; }
 .claude-lane-more { align-self: stretch; justify-content: center; }
 
 /* Grok page: read-only status for the managed fence in ~/.grok/config.toml. */
@@ -2804,7 +2756,7 @@ button.prov-account-row.active { cursor: default; }
 .claude-row-default { flex-shrink: 0; color: var(--green); font-size: 12px; font-weight: 600; }
 .claude-1m-chip {
   flex-shrink: 0; padding: 1px 6px; border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--epx-highlight, var(--accent));
   font-size: 12px; font-weight: 700; letter-spacing: 0.02em;
 }
 .claude-model-body { padding: 10px 12px 12px; border-top: 1px solid var(--border-soft); }

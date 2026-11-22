@@ -187,6 +187,12 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   "integrations.tab.t3code",
   // Antigravity is a product name, identical in every locale.
   "gatewayClients.tab",
+  // Protocol & SDK names (OpenAI, Anthropic, cURL, Python, TypeScript) stay verbatim across locales.
+  "ux.home.protocolOpenAI",
+  "ux.home.protocolAnthropic",
+  "ux.home.langCurl",
+  "ux.home.langPython",
+  "ux.home.langTypeScript",
   "api.clientConfig.clientT3code",
   "models.reasoningEffort.minimal",
   "models.reasoningEffort.max",

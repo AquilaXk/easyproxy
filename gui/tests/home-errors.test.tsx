@@ -148,3 +148,59 @@ test("Home renders Gateway Endpoint Strip, default route pill, unit-split uptime
   expect(copyBtn!.getAttribute("aria-pressed")).toBe("true");
   expect(statusEl?.textContent).toBe("Copied");
 });
+
+test("Home toggles OpenAI (/v1) vs Anthropic root URL and updates Quickstart SDK snippets", async () => {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/logs")) return Response.json({ logs: [] });
+    if (url.includes("/api/system/health")) return Response.json({ status: "ok", version: "2.1.0", uptime: 60 });
+    return Response.json({});
+  }) as typeof fetch;
+
+  const host = document.createElement("div");
+  document.body.append(host);
+  const { createRoot } = await import("react-dom/client");
+  await act(async () => {
+    root = createRoot(host);
+    root.render(
+      <LanguageProvider>
+        <Home
+          apiBase="http://home-quickstart-test"
+          endpointUrl="http://127.0.0.1:19191/v1"
+          navigate={() => {}}
+          onReloadCodex={() => {}}
+          reloadingCodex={false}
+        />
+      </LanguageProvider>,
+    );
+    await new Promise(resolve => setTimeout(resolve, 25));
+  });
+
+  const protocolGroup = host.querySelector('[role="group"][aria-label="Endpoint format"]')!;
+  const [openAiBtn, anthropicBtn] = [...protocolGroup.querySelectorAll<HTMLButtonElement>("button")];
+  expect(openAiBtn?.getAttribute("aria-pressed")).toBe("true");
+  expect(host.textContent).toContain("http://127.0.0.1:19191/v1");
+
+  await act(async () => { anthropicBtn!.click(); });
+  expect(anthropicBtn?.getAttribute("aria-pressed")).toBe("true");
+  expect(host.querySelector(".endpoint-strip code")?.textContent).toBe("http://127.0.0.1:19191");
+
+  const quickstartBtn = host.querySelector<HTMLButtonElement>('button[aria-expanded][aria-controls]')!;
+  expect(quickstartBtn.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => { quickstartBtn.click(); });
+  expect(quickstartBtn.getAttribute("aria-expanded")).toBe("true");
+
+  const snippetPre = host.querySelector(".endpoint-strip pre");
+  expect(snippetPre?.textContent).toContain("http://127.0.0.1:19191/v1/messages");
+
+  const langGroup = host.querySelector('[role="group"][aria-label="SDK language"]')!;
+  const [, pythonBtn, tsBtn] = [...langGroup.querySelectorAll<HTMLButtonElement>("button")];
+  await act(async () => {
+    openAiBtn!.click();
+    pythonBtn!.click();
+  });
+  expect(snippetPre?.textContent).toContain('base_url="http://127.0.0.1:19191/v1"');
+
+  await act(async () => { tsBtn!.click(); });
+  expect(snippetPre?.textContent).toContain('baseURL: "http://127.0.0.1:19191/v1"');
+});

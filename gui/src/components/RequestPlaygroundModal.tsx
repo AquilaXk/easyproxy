@@ -10,9 +10,12 @@ import {
   executePlaygroundRequest,
   fetchPlaygroundModelIds,
   type PlaygroundEndpoint,
+  type PlaygroundSeed,
   type PlaygroundTelemetry,
 } from "../lib/playground-client";
 import "./request-playground.css";
+
+export type { PlaygroundSeed };
 
 const MAX_MODEL_SUGGESTIONS = 256;
 
@@ -51,9 +54,11 @@ function isPointOutsideRect(rect: DOMRect, clientX: number, clientY: number): bo
 
 export default function RequestPlaygroundModal({
   apiBase,
+  initialSeed,
   onClose,
 }: {
   apiBase: string;
+  initialSeed?: PlaygroundSeed | null;
   onClose: () => void;
 }) {
   const { t, locale } = useI18n();
@@ -75,13 +80,17 @@ export default function RequestPlaygroundModal({
   const pointerDownOutsideRef = useRef(false);
 
   const [mode, setMode] = useState<"single" | "compare">("single");
-  const [endpoint, setEndpoint] = useState<PlaygroundEndpoint>("/v1/chat/completions");
-  const [modelA, setModelA] = useState(DEFAULT_PLAYGROUND_MODEL);
-  const [modelB, setModelB] = useState(DEFAULT_PLAYGROUND_MODEL);
+  const [endpoint, setEndpoint] = useState<PlaygroundEndpoint>(() => initialSeed?.endpoint ?? "/v1/chat/completions");
+  const [modelA, setModelA] = useState(() => initialSeed?.model?.trim() || DEFAULT_PLAYGROUND_MODEL);
+  const [modelB, setModelB] = useState(() => initialSeed?.model?.trim() || DEFAULT_PLAYGROUND_MODEL);
   const [models, setModels] = useState<string[]>([]);
-  const [maxTokensDraft, setMaxTokensDraft] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [userPrompt, setUserPrompt] = useState("");
+  const [maxTokensDraft, setMaxTokensDraft] = useState(() => (
+    typeof initialSeed?.maxTokens === "number" && Number.isSafeInteger(initialSeed.maxTokens) && initialSeed.maxTokens > 0
+      ? String(initialSeed.maxTokens)
+      : ""
+  ));
+  const [systemPrompt, setSystemPrompt] = useState(() => initialSeed?.systemPrompt ?? "");
+  const [userPrompt, setUserPrompt] = useState(() => initialSeed?.userPrompt ?? "");
   const [stream, setStream] = useState(true);
 
   const [sending, setSending] = useState(false);

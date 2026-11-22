@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   type ComboItem,
   type ProviderQuotaStates,
@@ -11,6 +11,7 @@ import {
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { Notice } from "../ui";
+import { ModalDialog } from "./ui-v2/modal-dialog";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { ComboCapabilities, EffortSelect, StrategySeg, TargetEditor } from "./combo-workspace-controls";
 import { ComboJevDecisionSection } from "./combo-workspace-jev-decision";
@@ -50,7 +51,6 @@ export function AddComboModal({
   onSubmit: (item: ComboItem) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const t = useT();
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [draft, setDraft] = useState<ComboItem>(() => initialDraft
     ? { ...initialDraft, targets: initialDraft.targets.map(target => ({ ...target })) }
     : emptyDraft());
@@ -74,19 +74,9 @@ export function AddComboModal({
     || (!!draft.alias?.trim() && existingAliases.includes(draft.alias.trim()))
   );
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
-
   const requestClose = useCallback(() => {
     if (!busy) onClose();
   }, [busy, onClose]);
-
-  const handleCancel = useCallback((e: React.SyntheticEvent) => {
-    e.preventDefault();
-    requestClose();
-  }, [requestClose]);
 
   const submit = async () => {
     const code = validateComboDraft(draft, {
@@ -116,15 +106,14 @@ export function AddComboModal({
   };
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="modal-overlay"
+    <ModalDialog
       data-combo-preset={isJevPreset ? "jev-auto" : undefined}
       aria-labelledby="cwi-add-title"
-      onCancel={handleCancel}
+      dismissDisabled={busy}
+      cardStyle={{ width: "min(560px, 94vw)" }}
+      cardRole={undefined}
+      onClose={requestClose}
     >
-      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={requestClose} />
-      <div className="modal-card" style={{ width: "min(560px, 94vw)" }} onClick={(e) => e.stopPropagation()}>
         <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
           <h3 id="cwi-add-title" style={{ margin: 0 }}>{t("cws.addTitle")}</h3>
           <button type="button" className="btn btn-ghost btn-sm" onClick={requestClose} disabled={busy} aria-label={t("common.close")}>
@@ -274,7 +263,6 @@ export function AddComboModal({
             {busy ? t("common.saving") : t("cws.create")}
           </button>
         </div>
-      </div>
-    </dialog>
+    </ModalDialog>
   );
 }

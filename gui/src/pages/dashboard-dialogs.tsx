@@ -164,7 +164,7 @@ export function DashboardDialogs(d: Dash) {
             {t("models.v2Help")}
           </div>
           <div style={{ marginTop: 12 }}>
-            <a className="text-control" href="https://easyproxy.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+            <a className="text-control" href="https://easyproxy.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--epx-highlight, var(--accent))" }}>
               {t("models.v2DocsLink")}
             </a>
           </div>

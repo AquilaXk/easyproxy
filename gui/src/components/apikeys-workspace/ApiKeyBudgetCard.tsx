@@ -89,6 +89,10 @@ export function ApiKeyBudgetCard({
   };
 
   const busy = Boolean(disabled) || saving;
+  const dirty =
+    rpmDraft !== toDraft(entry.rpmLimit)
+    || dailyReqDraft !== toDraft(entry.maxDailyRequests)
+    || dailyTokDraft !== toDraft(entry.dailyTokenLimit);
   const rows = [
     {
       id: "awi-budget-rpm",
@@ -118,7 +122,10 @@ export function ApiKeyBudgetCard({
 
   return (
     <div className="awi-section">
-      <h3 className="awi-section-title">{uxT(locale, "budget.title")}</h3>
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="awi-section-title">{uxT(locale, "budget.title")}</h3>
+        {dirty && <span className="badge badge-amber">{uxT(locale, "budget.unsaved")}</span>}
+      </div>
       <p className="muted mb-3 text-[13px]">{uxT(locale, "budget.subtitle")}</p>
       <div className="grid gap-3 sm:grid-cols-3">
         {rows.map(row => {

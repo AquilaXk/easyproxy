@@ -105,11 +105,6 @@
   --epx-chart-5: light-dark(#e11d48, #fb7185);
   --epx-chart-6: light-dark(#0284c7, #38bdf8);
 
-  /* React Bits App UI blocks read these; keep them on the Antigravity palette */
-  --rb-accent: var(--epx-accent);
-  --rb-accent-fg: var(--epx-on-accent);
-  --rb-radius: 10px;
-
   /* control heights: every button, field, select and segmented track is one of these two,
      so controls that sit side by side line up (foundations.md, "Control sizes") */
   --epx-control-h: 34px;

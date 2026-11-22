@@ -41,8 +41,8 @@
 .acc-icon-btn {
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: var(--epx-control-h-sm);
+  height: var(--epx-control-h-sm);
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -115,7 +115,7 @@
 }
 .acc-row.card.is-active { background: light-dark(rgb(15 23 42 / 0.025), rgb(148 163 184 / 0.04)); }
 .acc-row.has-more > .acc-row__head { padding-right: 38px; }
-.acc-row .acc-row__actions .btn { height: 30px; }
+.acc-row .acc-row__actions .btn { height: var(--epx-control-h-sm); }
 .acc-row__notes,
 .acc-row__meters { margin: 10px 0 0 20px; }
 .acc-row__notes { display: flex; flex-direction: column; gap: 4px; }
@@ -162,8 +162,8 @@
   right: 10px;
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: var(--epx-control-h-sm);
+  height: var(--epx-control-h-sm);
   min-width: 0;
   border-radius: 8px;
   color: var(--epx-fg-subtle);
@@ -302,7 +302,7 @@
 .acc-v2 .account-pool-strategy-controls .setting-label .title { font-size: 14px; font-weight: 600; color: var(--epx-fg); }
 .acc-v2 .account-pool-strategy-controls .acc-help .desc { display: block; margin: 0; font-size: 13px; line-height: 19px; color: var(--epx-fg-muted); }
 .acc-v2 .account-pool-strategy-controls .setting-row { align-items: flex-start; }
-.acc-v2 .account-pool-strategy-controls .acc-strategy-title { min-height: 32px; }
+.acc-v2 .account-pool-strategy-controls .acc-strategy-title { min-height: var(--epx-control-h); }
 .acc-v2 .account-pool-strategy-controls .setting-label { flex: 1 1 320px; min-width: 0; }
 .acc-v2 .account-pool-strategy-controls .setting-controls { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .acc-v2 .account-pool-strategy-controls .account-pool-threshold-badge { order: -1; }
@@ -702,7 +702,7 @@
   box-shadow: inset 0 0 0 1px var(--epx-line);
 }
 .pws-detail-tab {
-  height: 30px;
+  height: calc(var(--epx-control-h) - 4px);
   padding: 0 14px;
   border: 0;
   border-radius: 8px;

@@ -241,4 +241,52 @@ describe("RequestPlaygroundModal", () => {
     });
     expect(closed).toBe(1);
   });
+
+  test("hydrates initialSeed endpoint, model, maxTokens, and prompt fields for log replay", async () => {
+    let copiedText = "";
+    Object.defineProperty(win.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => { copiedText = text; } },
+    });
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "Content-Type": "application/json" } })
+    ) as unknown as typeof fetch;
+
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <RequestPlaygroundModal
+            apiBase="http://127.0.0.1:8787"
+            initialSeed={{
+              endpoint: "/v1/messages",
+              model: "claude-sonnet-4-5",
+              systemPrompt: "Be brief",
+              userPrompt: "Ping",
+              maxTokens: 128,
+            }}
+            onClose={() => {}}
+          />
+        </LanguageProvider>,
+      );
+      await new Promise((r) => setTimeout(r, 15));
+    });
+
+    const inputs = Array.from(host.querySelectorAll<HTMLInputElement>("input")).map(i => i.value);
+    const textareas = Array.from(host.querySelectorAll<HTMLTextAreaElement>("textarea")).map(t => t.value);
+    expect(inputs).toContain("claude-sonnet-4-5");
+    expect(inputs).toContain("128");
+    expect(inputs).toContain("Be brief");
+    expect(textareas).toContain("Ping");
+
+    const copyBtn = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(b => b.textContent?.includes("Copy cURL"))!;
+    await act(async () => {
+      copyBtn.click();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+    expect(copiedText).toContain("/v1/messages");
+    expect(copiedText).toContain("claude-sonnet-4-5");
+    expect(copiedText).toContain("Ping");
+  });
 });

@@ -10,10 +10,11 @@ import { confirmAction } from "../action-dialogs";
 import { editModelAlias, editProviderAlias } from "./models-alias-editing";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Switch, Notice, EmptyState, Select, Tooltip, type NoticeTone } from "../ui";
-import { IconChevron, IconBoxes, IconInfo, IconCheck, IconAlert, IconRefresh, IconPencil } from "../icons";
+import { IconChevron, IconBoxes, IconInfo, IconCheck, IconAlert, IconRefresh, IconPencil, IconX } from "../icons";
+import { ModalDialog } from "../components/ui-v2/modal-dialog";
 import { useT } from "../i18n/shared";
 import type { TFn, TKey } from "../i18n/shared";
-import { modelLabel } from "../model-display";
+import { ModelsCatalogRow } from "./models-catalog-row";
 import { formatProviderDisplayName, providerDisplaySlug } from "../provider-icons";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
 import { ownRecordValue } from "../own-record-value";
@@ -466,16 +467,10 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
   const [contextDefaultTouched, setContextDefaultTouched] = useState(false);
   const [contextSaving, setContextSaving] = useState(false);
   const [contextError, setContextError] = useState("");
-  const [hoveredModel, setHoveredModel] = useState<{ namespaced: string; rect: DOMRect } | null>(null);
-  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { shadowCall, shadowCallSaving, loadShadowCall, saveShadowCall } = useShadowCallSettings({ apiBase, publishFeedback, t });
 
   // App owns the in-session view mode; fallback to persisted mode for isolated renders/tests.
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
-
-  useEffect(() => () => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-  }, []);
 
   const shadowModelOptions = useMemo(
     () => activeModelOptions(models, disabled, selectedModels ?? {}, t),
@@ -1276,27 +1271,6 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
     void putV2Threads(Number(raw));
   };
 
-  const onRowEnter = (namespaced: string, el: HTMLElement) => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    hoverTimerRef.current = setTimeout(() => {
-      setHoveredModel({ namespaced, rect: el.getBoundingClientRect() });
-    }, 300);
-  };
-
-  const onRowFocus = (namespaced: string, el: HTMLElement) => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    setHoveredModel({ namespaced, rect: el.getBoundingClientRect() });
-  };
-
-  const onRowLeave = () => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    hoverTimerRef.current = setTimeout(() => setHoveredModel(null), 120);
-  };
-
-  const keepRowTipOpen = () => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-  };
-
   const addCustomModel = async (
     provider: string,
     modelId: string,
@@ -1686,169 +1660,49 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
               <p className="muted text-label" role="status">{t("models.noFreeMatch")}</p>
             )}
              {visible.map(m => {
-               // The row reflects the same final-visibility answer as the count and the picker.
                const off = !isVisible(m);
                return (
-                 <div
+                 <ModelsCatalogRow
                    key={m.namespaced}
-                   className="model-row-wrap"
-                   onMouseEnter={(e) => onRowEnter(m.namespaced, e.currentTarget)}
-                   onMouseLeave={onRowLeave}
-                   onFocus={(e) => onRowFocus(m.namespaced, e.currentTarget)}
-                   onBlur={(e) => {
-                     if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHoveredModel(null);
+                   m={m}
+                   off={off}
+                   visibilityDisabled={busy && !visibility.pending}
+                   aliasEntry={aliases.models[provider]?.[m.id]}
+                   isRecent={recentIds.has(m.id)}
+                   contextCapValue={contextCapValue}
+                   onToggleVisibility={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)}
+                   onEditAlias={() => void saveModelAlias(provider, m.id)}
+                   onOpenDisplayName={trigger => {
+                     displayNameTriggerRef.current = trigger;
+                     setDisplayNameRequestError(null);
+                     setDisplayNameRecovery(null);
+                     setDisplayNameCurrentPending(false);
+                     setDisplayNameModel(m);
                    }}
-                 >
-                   <div className="row models-model-row">
-                     <Switch on={!off} onClick={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={(busy && !visibility.pending) || m.initialSelectionPending} label={m.native ? m.id : m.namespaced} />
-                    <span className="models-model-main">
-                    {aliases.models[provider]?.[m.id] && <strong className="mono text-control">{aliases.models[provider][m.id].alias}</strong>}
-                    <span className="models-model-identity">
-                      <code className="mono text-control" style={{ color: off ? "var(--faint)" : "var(--text)", textDecoration: off ? "line-through" : "none" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
-                      {!m.native && m.displayName?.trim() && m.displayName.trim() !== m.namespaced && (
-                        <span className="models-model-friendly text-caption">{m.displayName.trim()}</span>
-                      )}
-                    </span>
-                    {m.initialSelectionPending && <span className="models-chip muted" role="status">{t("models.initialSelectionPending")}</span>}
-                    {/* #1711: listed and selectable, but every usable target is out of credit.
-                        Not a visibility change and not the operator's disable flag — the row is
-                        still offered, which is what the issue asks for. */}
-                    {m.quotaInactiveReason === "no_credit" && (
-                      <span className="models-chip muted" role="status" title={t("models.inactiveNoCreditHint")}>
-                        {t("models.inactiveNoCredit")}
-                      </span>
-                    )}
-                    {aliases.models[provider]?.[m.id]?.source === "builtin" && <span className="models-chip muted text-caption">{t("models.aliasAuto")}</span>}
-                    {m.custom && <span className="models-chip muted text-caption">{t("models.customBadge")}</span>}
-                    {!m.native && m.provider !== "combo" && m.manualPricing === true && <span className="models-chip muted text-caption">{t("pricing.override.badge")}</span>}
-                    {!m.custom && recentIds.has(m.id) && <span className="badge badge-amber">{t("models.newBadge")}</span>}
-                    {m.contextCapped && <span className="models-chip muted text-caption tabular-nums">{t("models.contextCappedValue", { value: fmtK(m.contextCap ?? contextCapValue) })}</span>}
-                    </span>
-                    {/* Per-model edits, right-aligned like a table's action column. */}
-                    <span className="models-model-actions" role="group" aria-label={t("modelsV2.modelActions")}>
-                     <button type="button" className="btn btn-ghost btn-sm" aria-label={t("models.editModelAlias")} title={t("models.editModelAlias")} onClick={() => void saveModelAlias(provider, m.id)}><IconPencil style={{ width: 13, height: 13 }} /></button>
-                     {!m.native && !m.custom && (
-                       <button
-                         type="button"
-                         className="btn btn-ghost btn-sm text-caption models-display-name-trigger"
-                         aria-haspopup="dialog"
-                         aria-label={t("models.displayNameActionLabel", { model: m.namespaced })}
-                         onClick={event => {
-                           displayNameTriggerRef.current = event.currentTarget;
-                           setDisplayNameRequestError(null);
-                           setDisplayNameRecovery(null);
-                           setDisplayNameCurrentPending(false);
-                           setDisplayNameModel(m);
-                         }}
-                       >
-                         {t("models.displayNameAction")}
-                       </button>
-                     )}
-                     {!m.native && m.provider !== "combo" && (
-                       <button
-                         type="button"
-                         className="btn btn-ghost btn-sm text-caption models-display-name-trigger"
-                         aria-haspopup="dialog"
-                         aria-label={t("pricing.override.actionLabel", { model: m.namespaced })}
-                         onClick={event => {
-                           priceTriggerRef.current = event.currentTarget;
-                           setPriceModel(m);
-                         }}
-                       >
-                         {t("pricing.override.action")}
-                       </button>
-                     )}
-                     {!m.native && !m.custom && m.provider !== "combo" && <button type="button" className="btn btn-ghost btn-sm text-caption models-display-name-trigger" aria-haspopup="dialog" aria-label={t("models.settingsTitle", { model: m.namespaced })} onClick={() => setSettingsModel(m)}>{t("models.customEdit")}</button>}
-                    </span>
-                   </div>
-                   {hoveredModel?.namespaced === m.namespaced && (() => {
-                     const r = hoveredModel.rect;
-                     const tipTop = r.bottom + 4;
-                     const flipUp = tipTop + 360 > window.innerHeight;
-                     return (
-                       <div
-                         className={`model-tip${m.custom ? " has-actions" : ""}${flipUp ? " flip-up" : ""}`}
-                         role="tooltip"
-                         style={{
-                           position: "fixed",
-                           left: r.left + 24,
-                           ...(flipUp
-                             ? { bottom: window.innerHeight - r.top + 4 }
-                             : { top: tipTop }),
-                         }}
-                         onMouseEnter={keepRowTipOpen}
-                         onMouseLeave={onRowLeave}
-                       >
-                          <div className="model-tip-id">{m.native ? m.id : m.namespaced}</div>
-                         {m.displayName && <div className="model-tip-display">{m.displayName}</div>}
-                         {m.custom && (
-                           <span className="models-chip models-chip--tip muted mono text-caption">
-                             {t("models.customBadge")}
-                           </span>
-                         )}
-                         <div className="model-tip-grid">
-                           <span className="model-tip-key">{t("models.tipProvider")}</span>
-                           <span className="model-tip-val">{formatProviderDisplayName(m.provider, t)}</span>
-                           {(m.contextWindow || m.contextCap) && (
-                             <>
-                               <span className="model-tip-key">{t("models.tipContext")}</span>
-                               <span className="model-tip-val">{fmtK(m.contextWindow ?? m.contextCap ?? 0)}</span>
-                             </>
-                           )}
-                           {m.inputModalities && m.inputModalities.length > 0 && (
-                             <>
-                               <span className="model-tip-key">{t("models.tipModalities")}</span>
-                               <span className="model-tip-val">{m.inputModalities.join(", ")}</span>
-                             </>
-                           )}
-                           <span className="model-tip-key">{t("models.tipStatus")}</span>
-                           <span className="model-tip-val">{off ? t("models.tipDisabled") : t("models.tipActive")}</span>
-                         </div>
-                         {m.custom && m.customId && (
-                           <div className="model-tip-actions">
-                             <button
-                               type="button"
-                               className="btn btn-ghost btn-sm text-caption"
-                               onClick={() => {
-                                 setCustomModalMode("edit");
-                                 setCustomModalProvider(m.provider);
-                                 setCustomModalId(m.customId!);
-                                 setCustomFormModelId(m.id);
-                                 setCustomFormDisplayName(m.displayName ?? "");
-                                 setCustomFormContextWindow(m.contextWindow ? String(m.contextWindow) : "");
-                                 setCustomFormShowCustomCtx(false);
-                                 setCustomFormModalities(m.inputModalities ?? ["text"]);
-                                 // Only a STORED ladder counts as "configured": an inherited one
-                                 // would show a phantom override that saves "inherit" over the
-                                 // provider row's current metadata.
-                                 setCustomFormReasoning(Array.isArray(m.reasoningEfforts));
-                                 setCustomFormReasoningEfforts(m.reasoningEfforts ?? []);
-                                 // A stored ladder — even an explicit empty one — is a real
-                                 // configuration: re-enabling must preserve it, not reseed.
-                                 customFormReasoningInitializedRef.current = Array.isArray(m.reasoningEfforts);
-                                 setCustomError("");
-                                 setCustomModalOpen(true);
-                                 setHoveredModel(null);
-                               }}
-                             >{t("models.customEdit")}</button>
-                             <button
-                               type="button"
-                               className="btn btn-ghost btn-sm text-caption"
-                               style={{ color: "var(--red)" }}
-                              onClick={() => {
-                                // Hover is cleared AFTER the dialog closes, not before it
-                                // opens: dropping it first unmounts this button, and the
-                                // dialog then has nothing to return focus to.
-                                void deleteCustomModel(m.customId!, m.displayName ?? m.id)
-                                  .finally(() => setHoveredModel(null));
-                              }}
-                             >{t("models.customDelete")}</button>
-                           </div>
-                         )}
-                       </div>
-                     );
-                   })()}
-                 </div>
+                   onOpenPrice={trigger => {
+                     priceTriggerRef.current = trigger;
+                     setPriceModel(m);
+                   }}
+                   onOpenSettings={() => setSettingsModel(m)}
+                   onEditCustom={() => {
+                     setCustomModalMode("edit");
+                     setCustomModalProvider(m.provider);
+                     setCustomModalId(m.customId!);
+                     setCustomFormModelId(m.id);
+                     setCustomFormDisplayName(m.displayName ?? "");
+                     setCustomFormContextWindow(m.contextWindow ? String(m.contextWindow) : "");
+                     setCustomFormShowCustomCtx(false);
+                     setCustomFormModalities(m.inputModalities ?? ["text"]);
+                     // Only a STORED ladder counts as "configured" so re-enabling preserves explicit empty arrays.
+                     setCustomFormReasoning(Array.isArray(m.reasoningEfforts));
+                     setCustomFormReasoningEfforts(m.reasoningEfforts ?? []);
+                     customFormReasoningInitializedRef.current = Array.isArray(m.reasoningEfforts);
+                     setCustomError("");
+                     setCustomModalOpen(true);
+                   }}
+                   onDeleteCustom={() => deleteCustomModel(m.customId!, m.displayName ?? m.id)}
+                   t={t}
+                 />
                );
              })}
              {remaining > 0 && (
@@ -2173,39 +2027,31 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
   const modalsBlock = (
     <>
       {v2HelpOpen && (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("models.v2Label")} onClick={() => setV2HelpOpen(false)} onKeyDown={e => { if (e.key === "Escape") setV2HelpOpen(false); }}>
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <ModalDialog aria-label={t("models.v2Label")} onClose={() => setV2HelpOpen(false)}>
             <div className="modal-head">
               <h3>{t("models.v2Label")}</h3>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setV2HelpOpen(false)} aria-label={t("common.close")}>&times;</button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setV2HelpOpen(false)} aria-label={t("common.close")}><IconX /></button>
             </div>
             <div className="modal-desc leading-relaxed" style={{ whiteSpace: "pre-line" }}>
               {t("models.v2Help")}
             </div>
             <div className="models-help-link">
-              <a className="text-control" href="https://easyproxy.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+              <a className="text-control" href="https://easyproxy.me/guides/sub-agent-surface/" target="_blank" rel="noreferrer" style={{ color: "var(--epx-highlight, var(--accent))" }}>
                 {t("models.v2DocsLink")}
               </a>
             </div>
             <div className="modal-actions">
               <button type="button" className="btn btn-primary" onClick={() => setV2HelpOpen(false)}>{t("common.ok")}</button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       )}
 
       {contextModalProvider && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
+        <ModalDialog
           aria-label={t("models.contextSettings")}
-          onClick={() => { if (!contextSaving) setContextModalProvider(null); }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && !contextSaving) setContextModalProvider(null);
-          }}
+          dismissDisabled={contextSaving}
+          onClose={() => setContextModalProvider(null)}
         >
-          <div className="modal-card" onClick={event => event.stopPropagation()}>
             <div className="modal-head">
               <h3>{t("models.contextSettingsTitle", {
                 provider: formatProviderDisplayName(contextModalProvider, t),
@@ -2216,7 +2062,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                 onClick={() => setContextModalProvider(null)}
                 disabled={contextSaving}
                 aria-label={t("common.close")}
-              >&times;</button>
+              ><IconX /></button>
             </div>
 
             {contextError && <Notice tone="err">{contextError}</Notice>}
@@ -2288,22 +2134,15 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                 {contextSaving ? t("models.customSaving") : t("models.customApply")}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       )}
 
       {customModalOpen && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
+        <ModalDialog
           aria-label={t("models.customAdd")}
-          onClick={() => { if (!customSaving) setCustomModalOpen(false); }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && !customSaving) setCustomModalOpen(false);
-          }}
+          dismissDisabled={customSaving}
+          onClose={() => setCustomModalOpen(false)}
         >
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
             <div className="modal-head">
               <h3>
                 {customModalMode === "add"
@@ -2316,7 +2155,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                 onClick={() => setCustomModalOpen(false)}
                 disabled={customSaving}
                 aria-label={t("common.close")}
-              >&times;</button>
+              ><IconX /></button>
             </div>
 
             {customError && <Notice tone="err">{customError}</Notice>}
@@ -2500,8 +2339,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                   : (customModalMode === "add" ? t("models.customAddBtn") : t("models.customEditBtn"))}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       )}
     </>
   );

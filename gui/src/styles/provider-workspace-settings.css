@@ -91,7 +91,7 @@
 .pwi-auth-row-remove:hover { color: var(--red); background: var(--red-soft); }
 
 .pwi-auth-add-key {
-  font-size: var(--text-label); color: var(--accent); background: none; border: none;
+  font-size: var(--text-label); color: var(--epx-highlight, var(--accent)); background: none; border: none;
   cursor: pointer; padding: 4px 0; text-align: left;
 }
 .pwi-auth-add-key:hover { text-decoration: underline; }

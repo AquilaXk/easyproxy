@@ -104,7 +104,30 @@ export type UxExtraKey =
   | "cmd.addProvider"
   | "cmd.manageKeys"
   | "cmd.openLogs"
-  | "home.defaultRoute";
+  | "home.defaultRoute"
+  | "home.protocolToggleAria"
+  | "home.protocolOpenAI"
+  | "home.protocolAnthropic"
+  | "home.quickstart"
+  | "home.quickstartLangAria"
+  | "home.langCurl"
+  | "home.langPython"
+  | "home.langTypeScript"
+  | "home.copySnippet"
+  | "logs.status429"
+  | "logs.statusAuth"
+  | "logs.status5xx"
+  | "logs.apiKeyLabel"
+  | "logs.apiKeyAll"
+  | "logs.durationLabel"
+  | "logs.durationAll"
+  | "logs.duration1s"
+  | "logs.duration5s"
+  | "logs.duration30s"
+  | "logs.ttftCompact"
+  | "logs.copyJson"
+  | "logs.replayPlayground"
+  | "budget.unsaved";
 
 export function uxT(locale: Locale, key: UxCopyKey, vars?: Record<string, string | number>): string {
   const sliceKey = `ux.${key}` as TKey;

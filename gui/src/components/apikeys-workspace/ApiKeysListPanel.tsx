@@ -25,6 +25,16 @@ import { isStandaloneRuntime, standaloneApiTargets } from "../../api-targets";
 import { ConnectPairingForm } from "../../connect-pairing";
 import { useKeyDisclosure, type DisclosureResetReason } from "../../use-key-disclosure";
 
+function peakBudgetPercent(k: ApiKeyEntry): number | null {
+  const usage = k.budgetUsage;
+  const ratios: number[] = [];
+  if (k.rpmLimit && k.rpmLimit > 0) ratios.push(((usage?.rpmCurrent ?? 0) / k.rpmLimit) * 100);
+  if (k.maxDailyRequests && k.maxDailyRequests > 0) ratios.push(((usage?.dailyRequestsUsed ?? 0) / k.maxDailyRequests) * 100);
+  if (k.dailyTokenLimit && k.dailyTokenLimit > 0) ratios.push(((usage?.dailyTokensUsed ?? 0) / k.dailyTokenLimit) * 100);
+  if (ratios.length === 0) return null;
+  return Math.max(0, Math.min(100, Math.round(Math.max(...ratios))));
+}
+
 export default function ApiKeysListPanel({
   keys,
   keysLoading,
@@ -253,6 +263,8 @@ export default function ApiKeysListPanel({
               {keys.map(k => {
                 const full = currentReveal(k);
                 const confirming = confirmId === k.id;
+                const limitCount = (k.rpmLimit !== undefined ? 1 : 0) + (k.maxDailyRequests !== undefined ? 1 : 0) + (k.dailyTokenLimit !== undefined ? 1 : 0);
+                const quotaPct = peakBudgetPercent(k);
                 return (
                   <tr key={k.id} className={confirming ? "awi-keylist-row is-confirming" : "awi-keylist-row"}>
                     <td>
@@ -266,12 +278,20 @@ export default function ApiKeysListPanel({
                       >
                         {k.name}
                       </button>
-                      {((k.rpmLimit !== undefined ? 1 : 0) + (k.maxDailyRequests !== undefined ? 1 : 0) + (k.dailyTokenLimit !== undefined ? 1 : 0)) > 0 && (
-                        <span className="badge badge-muted ml-2">
-                          {uxT(locale, "budget.badgeCompact", {
-                            count: (k.rpmLimit !== undefined ? 1 : 0) + (k.maxDailyRequests !== undefined ? 1 : 0) + (k.dailyTokenLimit !== undefined ? 1 : 0),
-                          })}
-                        </span>
+                      {limitCount > 0 && (
+                        <>
+                          <span className="badge badge-muted ml-2">
+                            {uxT(locale, "budget.badgeCompact", { count: limitCount })}
+                          </span>
+                          {quotaPct !== null && (
+                            <div className="mt-1 h-1 w-24 max-w-full overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
+                              <div
+                                className={quotaPct >= 90 ? "h-full rounded-full bg-danger" : "h-full rounded-full bg-accent"}
+                                style={{ width: `${quotaPct}%` }}
+                              />
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="awi-keylist-keycell">

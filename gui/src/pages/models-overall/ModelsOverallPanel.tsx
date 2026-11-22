@@ -11,7 +11,8 @@
  * Rows keep the catalog's order and do not move when switched, so a row never jumps out from
  * under the pointer; the On/Off filter is the explicit way to narrow by state.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { IconSearch } from "../../icons";
 import { useT } from "../../i18n/shared";
 import { Notice } from "../../ui";
@@ -48,6 +49,7 @@ export function ModelsOverallPanel({ rows, isOn, switchDisabled, onToggle, failu
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<StateFilter>("all");
   const [limit, setLimit] = useState(OVERALL_PAGE);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -61,6 +63,25 @@ export function ModelsOverallPanel({ rows, isOn, switchDisabled, onToggle, failu
     [filter, isOn, searched],
   );
   const onCount = useMemo(() => rows.filter(isOn).length, [isOn, rows]);
+
+  // TanStack Virtual returns unstable function identities; React Compiler skips this call.
+  // eslint-disable-next-line react-hooks/incompatible-library -- known useVirtualizer limitation
+  const rowVirtualizer = useVirtualizer({
+    count: shown.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 48,
+    overscan: 12,
+    getItemKey: index => {
+      const row = shown[index]!;
+      return row.namespaced + (row.native ? "\0native" : "");
+    },
+  });
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const useVirtualized = virtualItems.length > 0;
+  const paddingTop = useVirtualized ? virtualItems[0]!.start : 0;
+  const paddingBottom = useVirtualized
+    ? Math.max(0, rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1]!.end)
+    : 0;
 
   if (loading) return <DataSurfaceSkeleton label={t("models.loading")} rows={5} />;
   if (error !== null) {
@@ -103,30 +124,45 @@ export function ModelsOverallPanel({ rows, isOn, switchDisabled, onToggle, failu
           </label>
         </>}
       >
-        <FrameBody as="ul" className="max-h-[min(40rem,70vh)] overflow-y-auto">
-          {rows.length === 0 ? (
-            <li className="px-4 py-6 text-center text-[13px] text-fg-muted">{t("modelsOverall.empty")}</li>
-          ) : shown.length === 0 ? (
-            <li className="px-4 py-6 text-center text-[13px] text-fg-muted" role="status">{t("modelsOverall.noMatch")}</li>
-          ) : shown.slice(0, limit).map(row => {
-            const on = isOn(row);
-            const friendly = !row.native && row.displayName?.trim() && row.displayName.trim() !== row.namespaced ? row.displayName.trim() : null;
-            return (
-              <li key={row.namespaced + (row.native ? "\0native" : "")} className="flex min-h-11 min-w-0 items-center gap-3 py-1.5 pr-3 pl-3.5">
-                <ProviderMark name={row.provider} />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className={cn("truncate font-mono text-[13px]", on ? "text-fg" : "text-fg-subtle line-through")}>
-                    {row.native ? modelLabel(row.id) : row.namespaced}
-                  </span>
-                  {friendly && <span className="truncate text-[12px] text-fg-muted">{friendly}</span>}
-                </span>
-                <span className="shrink-0 text-[12px] text-fg-subtle max-sm:hidden">{providerDisplaySlug(row.provider)}</span>
-                <ModelVisibilitySwitch row={row} on={on} disabled={switchDisabled(row)} onToggle={enable => onToggle(row, enable)} />
-              </li>
-            );
-          })}
+        <FrameBody>
+          <div ref={scrollRef} className="max-h-[min(40rem,70vh)] overflow-y-auto">
+            <ul
+              className="m-0 flex min-w-0 list-none flex-col divide-y divide-line p-0"
+              style={useVirtualized ? { paddingTop, paddingBottom } : undefined}
+            >
+              {rows.length === 0 ? (
+                <li className="px-4 py-6 text-center text-[13px] text-fg-muted">{t("modelsOverall.empty")}</li>
+              ) : shown.length === 0 ? (
+                <li className="px-4 py-6 text-center text-[13px] text-fg-muted" role="status">{t("modelsOverall.noMatch")}</li>
+              ) : (useVirtualized
+                ? virtualItems.map(item => ({ row: shown[item.index]!, index: item.index }))
+                : shown.slice(0, limit).map((row, index) => ({ row, index }))
+              ).map(({ row, index }) => {
+                const on = isOn(row);
+                const friendly = !row.native && row.displayName?.trim() && row.displayName.trim() !== row.namespaced ? row.displayName.trim() : null;
+                return (
+                  <li
+                    key={row.namespaced + (row.native ? "\0native" : "")}
+                    data-index={index}
+                    ref={useVirtualized ? rowVirtualizer.measureElement : undefined}
+                    className="flex min-h-11 min-w-0 items-center gap-3 py-1.5 pr-3 pl-3.5"
+                  >
+                    <ProviderMark name={row.provider} />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className={cn("truncate font-mono text-[13px]", on ? "text-fg" : "text-fg-subtle line-through")}>
+                        {row.native ? modelLabel(row.id) : row.namespaced}
+                      </span>
+                      {friendly && <span className="truncate text-[12px] text-fg-muted">{friendly}</span>}
+                    </span>
+                    <span className="shrink-0 text-[12px] text-fg-subtle max-sm:hidden">{providerDisplaySlug(row.provider)}</span>
+                    <ModelVisibilitySwitch row={row} on={on} disabled={switchDisabled(row)} onToggle={enable => onToggle(row, enable)} />
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         </FrameBody>
-        {shown.length > limit && (
+        {!useVirtualized && shown.length > limit && (
           <div className="px-4 py-2.5">
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLimit(value => value + OVERALL_PAGE)}>
               {t("models.showMore", { n: Math.min(OVERALL_PAGE, shown.length - limit) })}

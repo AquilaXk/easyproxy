@@ -8,9 +8,10 @@
  * mode, so one confirmation covers the experimental/plaintext notice and the usual
  * "v1 is the reliable default" guidance instead of asking twice in a row.
  */
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { useT } from "../i18n/shared";
 import { IconAlert } from "../icons";
+import { ModalDialog } from "./ui-v2/modal-dialog";
 
 export default function PlaintextV2ConsentModal({
   busy = false,
@@ -26,34 +27,18 @@ export default function PlaintextV2ConsentModal({
   const t = useT();
   const titleId = useId();
   const bodyId = useId();
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [acknowledged, setAcknowledged] = useState(false);
 
-  // Open as a native modal dialog — focus trapping and the backdrop come from the platform.
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
-
-  const handleCancel = useCallback((e: React.SyntheticEvent) => {
-    e.preventDefault();
-    // Escape could otherwise close the dialog over a request that then lands anyway.
-    if (busy) return;
-    onDismiss();
-  }, [busy, onDismiss]);
-
   return (
-    <dialog
-      ref={dialogRef}
+    <ModalDialog
       aria-labelledby={titleId}
       aria-describedby={bodyId}
-      className="modal-overlay"
-      data-plaintext-v2-consent
-      onCancel={handleCancel}
+      data-plaintext-v2-consent=""
+      dismissDisabled={busy}
+      cardStyle={{ maxWidth: 480 }}
+      onClose={onDismiss}
     >
-      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} disabled={busy} onClick={() => { if (!busy) onDismiss(); }} />
-      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
-        <h3 id={titleId}>{t("plaintextV2.title")}</h3>
+      <h3 id={titleId}>{t("plaintextV2.title")}</h3>
         <div
           id={bodyId}
           className="notice-warn"
@@ -84,7 +69,6 @@ export default function PlaintextV2ConsentModal({
             {t("plaintextV2.confirm")}
           </button>
         </div>
-      </div>
-    </dialog>
+    </ModalDialog>
   );
 }

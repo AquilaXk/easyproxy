@@ -6,6 +6,7 @@ import {
   type ChildJobView, type ChildOp, type ChildOperationBody, type ChildOpsRowView, type ChildPolicyReadView, type ChildPolicyView,
 } from "../remote-link-child-ops-api";
 import { type TKey, useT } from "../i18n/shared";
+import { hostDocumentHidden, onHostVisibilityChange } from "../host-visibility";
 import { Select } from "../ui";
 import { Button } from "@/components/ui-v2/button";
 import { Banner, StateBadge } from "../components/v2-startup/primitives";
@@ -303,7 +304,7 @@ function useChildJob(apiBase: string, job: ChildJobView, onSnapshot?: (job: Chil
     // The interval ticks skip while a request is pending, so a slow Home cannot pile them up; the visibility
     // listener is user-driven and may overlap one, which the sequence tag then orders.
     const tick = async (fromListener = false) => {
-      if (document.visibilityState === "hidden" || (inFlight && !fromListener)) return;
+      if (hostDocumentHidden() || (inFlight && !fromListener)) return;
       inFlight = true;
       const mine = ++sequence;
       // Each poll gets its own deadline: a GET that never settles would keep inFlight set, every interval tick
@@ -331,9 +332,17 @@ function useChildJob(apiBase: string, job: ChildJobView, onSnapshot?: (job: Chil
       }
     };
     const timer = window.setInterval(() => void tick(), CHILD_JOB_POLL_MS);
-    const onVisibility = () => { if (document.visibilityState !== "hidden") void tick(true); };
+    const onVisibility = () => { if (!hostDocumentHidden()) void tick(true); };
+    const stopHostVisibility = onHostVisibilityChange(() => { if (!hostDocumentHidden()) void tick(true); });
     document.addEventListener("visibilitychange", onVisibility);
-    return () => { stopped = true; inFlight = false; controller.abort(); window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility); };
+    return () => {
+      stopped = true;
+      inFlight = false;
+      controller.abort();
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      stopHostVisibility();
+    };
   }, [apiBase, job.jobId, job.state]);
   return { job: snapshot, missing };
 }

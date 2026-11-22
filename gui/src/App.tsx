@@ -17,6 +17,7 @@ const Startup = lazy(() => import("./pages/Startup"));
 const RemoteWorkspace = lazy(() => import("./pages/RemoteWorkspace"));
 const RemoteLink = lazy(() => import("./pages/RemoteLink"));
 const RequestPlaygroundModal = lazy(() => import("./components/RequestPlaygroundModal"));
+import type { PlaygroundSeed } from "./lib/playground-client";
 import { uxT } from "./i18n/ux-overhaul-copy";
 import { navigateHash } from "./hash-routing";
 import type { PaletteQuickCommand } from "./lib/command-palette";
@@ -161,6 +162,7 @@ export default function App() {
   const [sharedSessionEpoch, setSharedSessionEpoch] = useState(0);
   const [hubPairingOpen, setHubPairingOpen] = useState(false);
   const [playgroundOpen, setPlaygroundOpen] = useState(false);
+  const [playgroundSeed, setPlaygroundSeed] = useState<PlaygroundSeed | null>(null);
   const [remoteWorkspaceAvailableState, setRemoteWorkspaceAvailable] = useState(false);
   const [sessionLoggingOut, setSessionLoggingOut] = useState(false);
   /*
@@ -573,7 +575,11 @@ export default function App() {
     <div ref={appRef} className={`app${desktopShell ? " app--desktop" : ""}${desktopMac ? " app--macos" : ""}${navCollapsed ? " app--nav-collapsed" : ""}`}>
       {playgroundOpen && (
         <Suspense fallback={null}>
-          <RequestPlaygroundModal apiBase={sharedBase} onClose={() => setPlaygroundOpen(false)} />
+          <RequestPlaygroundModal
+            apiBase={sharedBase}
+            initialSeed={playgroundSeed}
+            onClose={() => { setPlaygroundOpen(false); setPlaygroundSeed(null); }}
+          />
         </Suspense>
       )}
       <TelemetryConsentCard
@@ -793,7 +799,15 @@ export default function App() {
                 {page === "models" && <Models key={sharedBase} apiBase={sharedBase} restartEpoch={codexRestartEpoch} connected={targets.connected} catalogSyncedAt={targets.catalogSyncedAt} reportRestart={report} onOpenPlayground={() => setPlaygroundOpen(true)} />}
                 {page === "subagents" && <Subagents key={sharedBase} apiBase={sharedBase} />}
                 {page === "advisor" && <Advisor key={sharedBase} apiBase={sharedBase} />}
-                {page === "logs" && <Logs apiBase={sharedBase} />}
+                {page === "logs" && (
+                  <Logs
+                    apiBase={sharedBase}
+                    onReplayInPlayground={(seed) => {
+                      setPlaygroundSeed(seed);
+                      setPlaygroundOpen(true);
+                    }}
+                  />
+                )}
                 {page === "usage" && <Usage apiBase={sharedBase} connected={targets.connected || isConnectedRuntime()} apiKeyId={targets.apiKeyId} topology={targetError || (isConnectedRuntime() && !targets.connected) ? "unknown" : targets.usageTopology} />}
                 {page === "storage" && <Storage apiBase={sharedBase} />}
                 {page === "remote" && !remotePairingFormOpen && <RemoteLink key={`${sharedBase}:${sharedSessionEpoch}`} apiBase={sharedBase} diagnosticsApiBase={targets.link ? machineBase : sharedBase} sessionReady={sharedSessionReady}

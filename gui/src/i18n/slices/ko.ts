@@ -27,7 +27,7 @@ export const shellV2CopyKo = {
   "shellV2.badgeOptional": "선택", "shellV2.advancedTitle": "고급 설정", "shellV2.advancedIntro": "대부분의 환경에서는 기본값으로 충분한 세부 설정입니다. 각 카드에서 기능과 조정 시점을 확인할 수 있습니다.",
   "shellV2.advancedSearch": "설정 검색…", "shellV2.advancedEmpty": "검색어와 일치하는 설정이 없습니다.", "shellV2.advancedWhen": "변경 기준",
   "shellV2.proxyUptime": "가동 시간 {time}", "shellV2.themeCycle": "테마: {mode} · 누르면 {next}", "shellV2.advSubagents": "서브에이전트",
-  "shellV2.advSubagentsWhen": "작업 일부를 더 빠르거나 비용이 낮은 모델에 위임하고 싶을 때.", "shellV2.advAdvisor": "전문가 상담", "shellV2.advAdvisorWhen": "어려운 단계에서 더 강한 모델에게 물어보게 하고 싶을 때.",
+  "shellV2.advSubagentsWhen": "작업 일부를 더 빠르거나 비용이 낮은 모델에 위임하고 싶을 때.", "shellV2.advAdvisor": "어드바이저", "shellV2.advAdvisorWhen": "어려운 단계에서 더 강한 모델에게 물어보게 하고 싶을 때.",
   "shellV2.advProxy": "프록시 설정", "shellV2.advProxyWhen": "웹 검색·이미지 도우미, 긴 대화 요약, 메모리, 업데이트 등.", "shellV2.advRouting": "자동 모델 선택",
   "shellV2.advRoutingWhen": "요청마다 가장 잘 맞는 모델을 시험 결과를 근거로 고르게 하고 싶을 때.", "shellV2.advPrompt": "Codex 프롬프트 구성", "shellV2.advPromptWhen": "Codex가 매번 보내는 지시문을 추가하거나 끄고 싶을 때.",
   "shellV2.advClaude": "Claude Code 세부 설정", "shellV2.advClaudeWhen": "등급별 기본 모델을 정하거나 규칙대로 모델을 바꾸고 싶을 때.", "shellV2.advProviders": "프로바이더 세부 설정",
@@ -104,8 +104,8 @@ export const remoteLinkDiagnosticsCopyKo = {
   "remoteLinkDiagnostics.unreadable": "진단 파일이 있지만 읽지 못했습니다.",
 } as const;
 export const remoteLinkChildCopyKo = {
-  "remoteLinkChild.title": "이 컴퓨터 연결 끊기", "remoteLinkChild.body": "이 컴퓨터는 {home}의 Child입니다. 대시보드에서 Child 연결을 끊을 수 없으므로, 이 컴퓨터의 터미널에서 아래 명령을 실행하세요.", "remoteLinkChild.bodyUnnamed": "이 컴퓨터는 Remote Link Child입니다. 대시보드에서 Child 연결을 끊을 수 없으므로, 이 컴퓨터의 터미널에서 아래 명령을 실행하세요.",
-  "remoteLinkChild.stepDisconnect": "이 링크 끊기 (이 컴퓨터가 다른 링크로 옮겨졌다면 거부됨)", "remoteLinkChild.stepRestart": "EasyProxy를 독립 실행형으로 다시 시작", "remoteLinkChild.homeAlternative": "Home의 Remote Link 페이지에서 이 Child를 제거할 수도 있습니다.",
+  "remoteLinkChild.title": "이 컴퓨터 연결 끊기", "remoteLinkChild.body": "이 컴퓨터는 {home}의 Child입니다. 대시보드에서 Child 연결을 끊을 수 없으므로, 이 컴퓨터의 터미널에서 아래 명령을 실행하세요.", "remoteLinkChild.bodyUnnamed": "이 컴퓨터는 원격 연결 Child입니다. 대시보드에서 Child 연결을 끊을 수 없으므로, 이 컴퓨터의 터미널에서 아래 명령을 실행하세요.",
+  "remoteLinkChild.stepDisconnect": "이 링크 끊기 (이 컴퓨터가 다른 링크로 옮겨졌다면 거부됨)", "remoteLinkChild.stepRestart": "EasyProxy를 독립 실행형으로 다시 시작", "remoteLinkChild.homeAlternative": "Home의 원격 연결 페이지에서 이 Child를 제거할 수도 있습니다.",
 } as const;
 export const gatewayClientsCopyKo = {
   "gatewayClients.tab": "Antigravity", "gatewayClients.title": "Antigravity 및 agy", "gatewayClients.intro": "Google의 Antigravity 데스크톱 앱과 agy CLI가 이 프록시를 거치도록 설정합니다. 연결하면 게이트웨이 설정을 기록하고 기존 내용을 보관하며 연결을 해제하면 되돌립니다.",
@@ -155,7 +155,7 @@ export const subagentsV2CopyKo = {
 export const usageV2CopyKo = {
   "usageV2.otherApps": "기타 Chat API 앱", "usageV2.otherDetail": "Chat API", "usageV2.codexDetail": "CLI · Desktop · IDE",
   "usageV2.codexUnclassified": "미분류 {count}건", "usageV2.classificationHelp": "앱 건수는 식별된 클라이언트 기준이며 나머지는 미분류로 남습니다.", "usageV2.clientUnverified": "이 앱은 아직 자동으로 식별하지 못해 요청이 미분류로 표시될 수 있습니다.",
-  "usageV2.remoteLink": "Remote Link", "usageV2.unknownLinkedDevice": "알 수 없는 연결 기기 {number}", "usageV2.unknownDeviceNumber": "알 수 없는 기기 {number}",
+  "usageV2.remoteLink": "원격 연결", "usageV2.unknownLinkedDevice": "알 수 없는 연결 기기 {number}", "usageV2.unknownDeviceNumber": "알 수 없는 기기 {number}",
   "usageV2.thisMac": "이 Mac", "usageV2.thisDevice": "이 기기", "usageV2.homeDevice": "Home 기기",
   "usageV2.source": "사용 출처", "usageV2.searchSources": "앱과 기기 검색", "usageV2.apps": "앱",
   "usageV2.app": "앱", "usageV2.unclassified": "미분류", "usageV2.appsUnavailable": "이 프록시에서는 앱별 내역을 제공하지 않습니다.",
@@ -266,4 +266,14 @@ export const uxOverhaulCopyKo = {
   "ux.cmd.copyEndpoint": "프록시 엔드포인트 URL 복사", "ux.cmd.endpointCopied": "프록시 엔드포인트 URL을 복사했습니다.", "ux.cmd.addProvider": "프로바이더 추가",
   "ux.cmd.manageKeys": "API 키 관리", "ux.cmd.openLogs": "요청 기록 열기",
   "ux.home.defaultRoute": "기본 경로: {provider}",
+  "ux.home.protocolToggleAria": "엔드포인트 형식", "ux.home.protocolOpenAI": "OpenAI (/v1)", "ux.home.protocolAnthropic": "Anthropic",
+  "ux.home.quickstart": "빠른 연동", "ux.home.quickstartLangAria": "SDK 언어",
+  "ux.home.langCurl": "cURL", "ux.home.langPython": "Python", "ux.home.langTypeScript": "TypeScript",
+  "ux.home.copySnippet": "코드 복사",
+  "ux.logs.status429": "429 요청 제한", "ux.logs.statusAuth": "401 / 403 인증 오류", "ux.logs.status5xx": "5xx 서버 오류",
+  "ux.logs.apiKeyLabel": "API 키", "ux.logs.apiKeyAll": "전체 키",
+  "ux.logs.durationLabel": "최소 지연 시간", "ux.logs.durationAll": "전체 지연 시간",
+  "ux.logs.duration1s": "1초 이상", "ux.logs.duration5s": "5초 이상", "ux.logs.duration30s": "30초 이상",
+  "ux.logs.ttftCompact": "TTFT {ms}ms", "ux.logs.copyJson": "JSON 복사", "ux.logs.replayPlayground": "플레이그라운드에서 재실행",
+  "ux.budget.unsaved": "저장 안 됨",
 } as const;

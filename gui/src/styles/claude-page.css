@@ -194,7 +194,7 @@
   font-size: 12px;
 }
 .claude-row-quick {
-  color: var(--accent);
+  color: var(--epx-highlight, var(--accent));
 }
 .claude-desktop-advanced {
   margin-bottom: var(--space-4);

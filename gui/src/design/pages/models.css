@@ -35,7 +35,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
+  height: calc(var(--epx-control-h) - 4px);
   padding: 0 12px;
   border-radius: 9px;
   color: var(--epx-fg-subtle);
@@ -222,9 +222,9 @@
 .models-workspace-rail-row--selected .models-rail-meter > span { opacity: 0.9; }
 
 .models-workspace-shell .models-workspace-main { gap: 12px; }
-.models-collapse-controls { min-height: 32px; margin: 0; }
+.models-collapse-controls { min-height: var(--epx-control-h); margin: 0; }
 .models-collapse-controls > .btn {
-  height: 28px;
+  height: var(--epx-control-h-sm);
   padding: 0 10px;
   border: 0;
   background: transparent;
@@ -250,7 +250,7 @@
   border: 0;
   background: transparent;
 }
-.models-provider-toggle { gap: 10px; min-height: 32px; border-radius: 8px; }
+.models-provider-toggle { gap: 10px; min-height: var(--epx-control-h); border-radius: 8px; }
 .models-provider-toggle:focus-visible { outline: 2px solid var(--epx-highlight); outline-offset: 2px; }
 .models-provider-toggle > span.text-body { color: var(--epx-fg); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
 .models-provider-count { color: var(--epx-fg-subtle); font-family: var(--font-ui); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -354,7 +354,7 @@
 .models-provider-filters > .input {
   flex: 1 1 220px;
   max-width: 320px;
-  height: 30px;
+  height: var(--epx-control-h);
   min-height: 0;
   font-size: 13px;
 }
@@ -396,7 +396,7 @@
   display: flex;
   width: 100%;
   justify-content: center;
-  height: 36px;
+  height: var(--epx-control-h);
   margin: 0;
   border: 0;
   border-top: 1px solid var(--epx-line);
@@ -436,7 +436,7 @@
 #models-panel-combos .cwi-jev-quick-action { padding: 0 12px 8px 36px; }
 #models-panel-combos .combos-workspace-rail-empty { padding-left: 36px; }
 #models-panel-combos .cwi-search-row { padding: 4px 12px 10px; border-bottom: 0; }
-#models-panel-combos .cwi-search-input { height: 32px; min-height: 0; font-size: 13px; }
+#models-panel-combos .cwi-search-input { height: var(--epx-control-h); min-height: 0; font-size: 13px; }
 #models-panel-combos .combos-workspace-rail-group + .combos-workspace-rail-group { margin-top: 6px; }
 #models-panel-combos .combos-workspace-rail-group-head { padding: 8px 20px 4px; color: var(--epx-fg-subtle); font-size: 12px; font-weight: 500; }
 #models-panel-combos .combos-workspace-rail-group-head .pwi-dot { display: none; }

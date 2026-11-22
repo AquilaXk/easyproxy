@@ -268,3 +268,36 @@ describe("codex://threads paste in the conversation filter", () => {
     }, NOW).map(row => row.id)).toEqual(["raw"]);
   });
 });
+
+describe("granular status, apiKeyId, and minDurationMs filters", () => {
+  const SAMPLE_ROWS = [
+    { id: "r200", status: 200, durationMs: 420, apiKeyId: "key_prod", timestamp: "2026-06-01T12:00:00Z" },
+    { id: "r401", status: 401, durationMs: 1200, apiKeyId: "key_prod", timestamp: "2026-06-01T12:00:00Z" },
+    { id: "r403", status: 403, durationMs: 5400, apiKeyId: "key_dev", timestamp: "2026-06-01T12:00:00Z" },
+    { id: "r429", status: 429, durationMs: 950, apiKeyId: "key_dev", timestamp: "2026-06-01T12:00:00Z" },
+    { id: "r503", status: 503, durationMs: 31000, timestamp: "2026-06-01T12:00:00Z" },
+  ];
+
+  test("429, auth, and 5xx status buckets select exact HTTP statuses", () => {
+    expect(filterLogs(SAMPLE_ROWS, { ...DEFAULT_LOG_FILTER_STATE, status: "429" }, NOW).map(r => r.id)).toEqual(["r429"]);
+    expect(filterLogs(SAMPLE_ROWS, { ...DEFAULT_LOG_FILTER_STATE, status: "auth" }, NOW).map(r => r.id)).toEqual(["r401", "r403"]);
+    expect(filterLogs(SAMPLE_ROWS, { ...DEFAULT_LOG_FILTER_STATE, status: "5xx" }, NOW).map(r => r.id)).toEqual(["r503"]);
+  });
+
+  test("apiKeyId extraction omits empty catalogs and matches exact trimmed ids", () => {
+    expect(extractLogFilterOptions([{ id: "no-key", status: 200 }]).apiKeys).toBeUndefined();
+    expect(extractLogFilterOptions(SAMPLE_ROWS).apiKeys).toEqual(["key_dev", "key_prod"]);
+    expect(filterLogs(SAMPLE_ROWS, { ...DEFAULT_LOG_FILTER_STATE, apiKeyId: " key_dev " }, NOW).map(r => r.id))
+      .toEqual(["r403", "r429"]);
+  });
+
+  test("minDurationMs enforces threshold and hasActiveLogFilters reports every new field", () => {
+    expect(filterLogs(SAMPLE_ROWS, { ...DEFAULT_LOG_FILTER_STATE, minDurationMs: 5000 }, NOW).map(r => r.id))
+      .toEqual(["r403", "r503"]);
+    expect(hasActiveLogFilters({ ...DEFAULT_LOG_FILTER_STATE, status: "429" })).toBe(true);
+    expect(hasActiveLogFilters({ ...DEFAULT_LOG_FILTER_STATE, status: "auth" })).toBe(true);
+    expect(hasActiveLogFilters({ ...DEFAULT_LOG_FILTER_STATE, status: "5xx" })).toBe(true);
+    expect(hasActiveLogFilters({ ...DEFAULT_LOG_FILTER_STATE, apiKeyId: "key_dev" })).toBe(true);
+    expect(hasActiveLogFilters({ ...DEFAULT_LOG_FILTER_STATE, minDurationMs: 1000 })).toBe(true);
+  });
+});

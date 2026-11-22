@@ -428,7 +428,7 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  min-height: 32px;
+  min-height: var(--epx-control-h, 34px);
 }
 
 .storage-policy-trigger-hint {
@@ -452,7 +452,7 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  min-height: 32px;
+  min-height: var(--epx-control-h, 34px);
 }
 
 .storage-policy-target-label {

@@ -103,8 +103,8 @@
 .audio-api-field { font-size: var(--text-label); align-content: start; }
 .audio-api-field .input { width: 100%; min-width: 0; box-sizing: border-box; }
 .audio-api-field input[type="file"] { padding: 7px; }
-.audio-api-actions { grid-column: 1 / -1; min-height: 36px; }
-.audio-api-actions .btn { min-height: 36px; white-space: nowrap; }
+.audio-api-actions { grid-column: 1 / -1; min-height: var(--epx-control-h, 34px); }
+.audio-api-actions .btn { min-height: var(--epx-control-h, 34px); white-space: nowrap; }
 .audio-api-status { font-size: var(--text-label); }
 .audio-api-error { margin: 0; color: var(--danger); font-size: var(--text-label); }
 .audio-api-section .api-endpoint-url-btn {
@@ -234,8 +234,8 @@
   appearance: none;
   display: inline-grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: var(--epx-control-h-sm, 28px);
+  height: var(--epx-control-h-sm, 28px);
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);

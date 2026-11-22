@@ -9,36 +9,36 @@
 
 /* ---- tokens: dark ------------------------------------------------------- */
 :root {
-  --sl-color-white: #ffffff;
-  --sl-color-gray-1: #ececec;
-  --sl-color-gray-2: #c9c9c9;
-  --sl-color-gray-3: #a6a6a6;
-  --sl-color-gray-4: #6e6e6e;
-  --sl-color-gray-5: #3d3d3d;
-  --sl-color-gray-6: #2b2b2b;
-  --sl-color-black: #212121;
+  --sl-color-white: #f8fafc;
+  --sl-color-gray-1: #e2e8f0;
+  --sl-color-gray-2: #cbd5e1;
+  --sl-color-gray-3: #a6b3c6;
+  --sl-color-gray-4: #8b99af;
+  --sl-color-gray-5: #283347;
+  --sl-color-gray-6: #161d2a;
+  --sl-color-black: #0b0e14;
 
-  /* monochrome accent: white actions on dark */
-  --sl-color-accent-low: #303030;
-  --sl-color-accent: #a6a6a6;
-  --sl-color-accent-high: #ffffff;
-  --sl-color-text-accent: #ffffff;
-  --sl-color-text-invert: #0d0d0d;
+  /* Antigravity cobalt accent on obsidian-slate */
+  --sl-color-accent-low: #172554;
+  --sl-color-accent: #2563eb;
+  --sl-color-accent-high: #60a5fa;
+  --sl-color-text-accent: #60a5fa;
+  --sl-color-text-invert: #ffffff;
 
   --sl-color-bg-nav: transparent;
   --sl-color-bg-sidebar: transparent;
-  --sl-color-bg-inline-code: #303030;
-  --sl-color-hairline-light: #333333;
-  --sl-color-hairline: #2e2e2e;
-  --sl-color-backdrop-overlay: rgba(23, 23, 23, 0.55);
+  --sl-color-bg-inline-code: #161d2a;
+  --sl-color-hairline-light: rgb(148 163 184 / 0.25);
+  --sl-color-hairline: rgb(148 163 184 / 0.14);
+  --sl-color-backdrop-overlay: rgba(4, 7, 13, 0.64);
 
   /* glass material (chrome layers only) */
-  --epx-glass-rail: rgba(23, 23, 23, 0.55);
-  --epx-glass-panel: rgba(38, 38, 38, 0.96);
+  --epx-glass-rail: rgba(8, 11, 16, 0.72);
+  --epx-glass-panel: rgba(17, 22, 32, 0.96);
   --epx-glass-blur: saturate(1.5) blur(40px);
-  --epx-surface: #262626;
-  --epx-raised: #303030;
-  --epx-hover: rgba(255, 255, 255, 0.05);
+  --epx-surface: #111620;
+  --epx-raised: #1b2333;
+  --epx-hover: rgba(148, 163, 184, 0.08);
   --epx-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.3);
 
   --epx-radius: 12px;
@@ -55,33 +55,33 @@
 /* ---- tokens: light ------------------------------------------------------ */
 :root[data-theme='light'],
 [data-theme='light'] ::backdrop {
-  --sl-color-white: #0d0d0d;
-  --sl-color-gray-1: #1a1a1a;
-  --sl-color-gray-2: #2e2e2e;
-  --sl-color-gray-3: #6e6e6e;
-  --sl-color-gray-4: #8f8f8f;
-  --sl-color-gray-5: #e6e6e6;
-  --sl-color-gray-6: #f4f4f4;
-  --sl-color-gray-7: #f9f9f9;
-  --sl-color-black: #ffffff;
+  --sl-color-white: #0f172a;
+  --sl-color-gray-1: #1e293b;
+  --sl-color-gray-2: #334155;
+  --sl-color-gray-3: #475569;
+  --sl-color-gray-4: #5b687b;
+  --sl-color-gray-5: #cbd5e1;
+  --sl-color-gray-6: #f1f5f9;
+  --sl-color-gray-7: #f8fafc;
+  --sl-color-black: #f8fafc;
 
-  /* monochrome accent: black actions on light */
-  --sl-color-accent-low: #ececec;
-  --sl-color-accent: #6e6e6e;
-  --sl-color-accent-high: #0d0d0d;
-  --sl-color-text-accent: #0d0d0d;
+  /* Antigravity cobalt accent on crisp slate */
+  --sl-color-accent-low: #dbeafe;
+  --sl-color-accent: #1d4ed8;
+  --sl-color-accent-high: #1e40af;
+  --sl-color-text-accent: #2563eb;
   --sl-color-text-invert: #ffffff;
 
-  --sl-color-bg-inline-code: #f0f0f0;
-  --sl-color-hairline-light: #ececec;
-  --sl-color-hairline: #f0f0f0;
-  --sl-color-backdrop-overlay: rgba(249, 249, 249, 0.5);
+  --sl-color-bg-inline-code: #f1f5f9;
+  --sl-color-hairline-light: rgb(15 23 42 / 0.20);
+  --sl-color-hairline: rgb(15 23 42 / 0.12);
+  --sl-color-backdrop-overlay: rgba(15, 23, 42, 0.34);
 
-  --epx-glass-rail: rgba(249, 249, 249, 0.55);
+  --epx-glass-rail: rgba(241, 245, 249, 0.72);
   --epx-glass-panel: rgba(255, 255, 255, 0.96);
   --epx-surface: #ffffff;
-  --epx-raised: #f4f4f4;
-  --epx-hover: rgba(13, 13, 13, 0.04);
+  --epx-raised: #ffffff;
+  --epx-hover: rgba(15, 23, 42, 0.04);
   --epx-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 10px 28px rgba(16, 24, 40, 0.07);
 }
 

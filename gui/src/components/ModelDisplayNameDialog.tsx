@@ -4,6 +4,7 @@ import {
   modelDisplayNameValidationKey,
   type ModelRow,
 } from "../pages/models-shared";
+import { ModalDialog } from "./ui-v2/modal-dialog";
 
 interface ModelDisplayNameDialogProps {
   model: ModelRow;
@@ -37,7 +38,6 @@ export default function ModelDisplayNameDialog({
   onClose,
 }: ModelDisplayNameDialogProps) {
   const t = useT();
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const submitRef = useRef<HTMLButtonElement>(null);
   const wasSavingRef = useRef(saving);
@@ -47,13 +47,6 @@ export default function ModelDisplayNameDialog({
   const [draftSnapshot, setDraftSnapshot] = useState(model);
   const [draft, setDraft] = useState(model.displayNameOverride ?? "");
   const [validationKey, setValidationKey] = useState<TKey | null>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-    inputRef.current?.focus();
-    return () => { if (dialog?.open) dialog.close(); };
-  }, []);
 
   useEffect(() => {
     const saveFailed = wasSavingRef.current && !saving && Boolean(requestError);
@@ -83,37 +76,25 @@ export default function ModelDisplayNameDialog({
   };
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="modal-overlay"
+    <ModalDialog
       aria-labelledby={titleId}
-      onCancel={event => {
+      dismissDisabled={saving}
+      surfaceTag="form"
+      cardClassName="model-display-name-dialog"
+      cardRole="document"
+      initialFocusRef={inputRef}
+      restoreFocus={false}
+      onClose={requestClose}
+      onSubmit={event => {
         event.preventDefault();
-        requestClose();
+        if (saving) return;
+        if (onRetry) { onRetry(); return; }
+        if (mutationOutcomeUnknown) return;
+        const nextValidationKey = modelDisplayNameValidationKey(draft);
+        setValidationKey(nextValidationKey);
+        if (!nextValidationKey) onSave(draft.trim());
       }}
     >
-      <button
-        type="button"
-        className="modal-backdrop-dismiss"
-        aria-label={t("common.close")}
-        tabIndex={-1}
-        disabled={saving}
-        onClick={requestClose}
-      />
-      <form
-        className="modal-card model-display-name-dialog"
-        role="document"
-        onClick={event => event.stopPropagation()}
-        onSubmit={event => {
-          event.preventDefault();
-          if (saving) return;
-          if (onRetry) { onRetry(); return; }
-          if (mutationOutcomeUnknown) return;
-          const nextValidationKey = modelDisplayNameValidationKey(draft);
-          setValidationKey(nextValidationKey);
-          if (!nextValidationKey) onSave(draft.trim());
-        }}
-      >
         <div className="modal-head">
           <h3 id={titleId}>{t("models.displayNameTitle")}</h3>
           <button type="button" className="btn btn-ghost btn-sm" disabled={saving} onClick={requestClose}>
@@ -177,7 +158,6 @@ export default function ModelDisplayNameDialog({
             {saving ? t("common.saving") : onRetry ? t("common.retry") : t("common.save")}
           </button>
         </div>
-      </form>
-    </dialog>
+    </ModalDialog>
   );
 }

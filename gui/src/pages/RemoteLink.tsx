@@ -6,6 +6,8 @@ import {
 import { IconPlus, IconRefresh, IconTrash } from "../icons";
 import { type TKey, useT } from "../i18n/shared";
 import { isStandaloneRuntime, standaloneApiTargets } from "../api-targets";
+import { hostDocumentHidden, onHostVisibilityChange } from "../host-visibility";
+import { startVisibilityPoll } from "../visibility-poll";
 import { ConnectPairingForm } from "../connect-pairing";
 import FallbackPanel from "../components/FallbackPanel";
 import { Button } from "@/components/ui-v2/button";
@@ -308,11 +310,16 @@ export default function RemoteLink({ apiBase, diagnosticsApiBase = apiBase, sess
 
   useEffect(() => {
     if (!statusSessionReady) return;
-    void Promise.resolve().then(refreshStatusOnEffect);
-    const poll = window.setInterval(refreshStatusOnEffect, 5_000);
-    const onVisibility = () => { if (document.visibilityState === "visible") refreshStatusOnEffect(); else abortStatusRequest(); };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => { window.clearInterval(poll); document.removeEventListener("visibilitychange", onVisibility); abortStatusRequest(); };
+    if (!hostDocumentHidden()) void Promise.resolve().then(refreshStatusOnEffect);
+    const stopPoll = startVisibilityPoll(refreshStatusOnEffect, 5_000);
+    const stopVisibility = onHostVisibilityChange(() => {
+      if (hostDocumentHidden()) abortStatusRequest();
+    });
+    return () => {
+      stopPoll();
+      stopVisibility();
+      abortStatusRequest();
+    };
   }, [abortStatusRequest, statusSessionReady]);
 
   useEffect(() => {

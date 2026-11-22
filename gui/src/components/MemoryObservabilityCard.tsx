@@ -4,6 +4,7 @@ import { IconActivity } from "../icons";
 import { useI18n, type Locale, type TFn } from "../i18n/shared";
 import { createBoundedFetch, type BoundedFetch } from "../bounded-fetch";
 import { confirmAction } from "../action-dialogs";
+import { hostDocumentHidden, onHostVisibilityChange } from "../host-visibility";
 import { startVisibilityPoll } from "../visibility-poll";
 
 /**
@@ -296,7 +297,7 @@ export default function MemoryObservabilityCard({ apiBase }: { apiBase: string }
     let active: BoundedFetch | null = null;
     const started = Date.now();
     const tick = () => {
-      if (inFlight || cancelled) return;
+      if (hostDocumentHidden() || inFlight || cancelled) return;
       inFlight = true;
       const bounded = createBoundedFetch(5_000);
       active = bounded;
@@ -348,11 +349,15 @@ export default function MemoryObservabilityCard({ apiBase }: { apiBase: string }
     };
     tick();
     const interval = setInterval(tick, RECONNECT_POLL_MS);
+    const stopVisibility = onHostVisibilityChange(() => {
+      if (!hostDocumentHidden()) tick();
+    });
     return () => {
       cancelled = true;
       active?.controller.abort();
       active?.clear();
       clearInterval(interval);
+      stopVisibility();
     };
   }, [apiBase, restartPhase, restartFromPid, t]);
 

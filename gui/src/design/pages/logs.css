@@ -123,7 +123,7 @@ dialog.log-detail-drawer > .log-detail-card {
   padding: 20px 24px;
   font-family: var(--font-ui);
 }
-@media (min-width: 1024px) {
+@media (min-width: 1220px) {
   .logs-page:has(dialog.log-detail-drawer[open]) {
     padding-right: min(404px, 38vw);
   }

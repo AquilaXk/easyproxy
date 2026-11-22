@@ -17,8 +17,10 @@ const translate: TFn = (key, vars) => key === "logs.filter.showingCount"
 async function withFilterBar(
   initial: LogFilterState,
   exercise: (ui: { container: HTMLElement; win: Window; filters: () => LogFilterState }) => Promise<void>,
+  extraOptions?: { apiKeys?: string[] },
 ): Promise<void> {
   const win = new Window({ url: "http://localhost/#logs" });
+  win.localStorage.setItem("epx-lang", "en");
   const values = {
     document: win.document, window: win, navigator: win.navigator,
     localStorage: win.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
@@ -36,7 +38,8 @@ async function withFilterBar(
       const [filters, setFilters] = useState(initial);
       useEffect(() => { current = filters; }, [filters]);
       return createElement(LogsFilterBar, {
-        filters, options: { models: ["model-a", "model-a-plus"], providers: ["openai", "xai"] },
+        filters,
+        options: { models: ["model-a", "model-a-plus"], providers: ["openai", "xai"], ...extraOptions },
         hasActiveFilters: hasActiveLogFilters(filters), filteredCount: 1, totalCount: 2,
         t: translate, onFilterChange: setFilters,
         onResetFilters: () => setFilters({ ...DEFAULT_LOG_FILTER_STATE }),
@@ -166,4 +169,37 @@ test("LogsFilterBar shows each folded filter as a chip that clears only itself",
     expect(ui.filters()).toMatchObject({ status: "all", provider: "xai", minTokPerSec: 50, conversationId: "conversation-a" });
     expect(chips()).toHaveLength(2);
   });
+});
+
+test("LogsFilterBar exposes granular 429/auth/5xx statuses, minDurationMs threshold, and optional apiKeyId filter with removable chips", async () => {
+  await withFilterBar(
+    { ...DEFAULT_LOG_FILTER_STATE },
+    async ui => {
+      await chooseOption(selectTrigger(ui.container, filterSelect("status")), "429");
+      const durationGroup = ui.container.querySelector('[role="group"][aria-label="Min latency"]')!;
+      expect(durationGroup).not.toBeNull();
+      const btn5s = [...durationGroup.querySelectorAll<HTMLButtonElement>("button")]
+        .find(button => button.textContent?.includes("5s"))!;
+      await act(async () => { btn5s.click(); });
+      expect(btn5s.getAttribute("aria-pressed")).toBe("true");
+      const keyTrigger = [...ui.container.querySelectorAll<HTMLButtonElement>('[role="combobox"]')]
+        .find(el => ![
+          "provider", "model", "time", "speed", "status", "protocol",
+        ].map(f => `logs.filter.${f}.label`).includes(el.getAttribute("aria-label") ?? ""))!;
+      expect(keyTrigger).toBeDefined();
+      await chooseOption(keyTrigger, "key_prod");
+
+      expect(ui.filters()).toMatchObject({
+        status: "429",
+        minDurationMs: 5000,
+        apiKeyId: "key_prod",
+      });
+      const chips = [...ui.container.querySelectorAll<HTMLButtonElement>('button[aria-label^="logsV2.removeFilter"]')];
+      expect(chips).toHaveLength(3);
+      const durationChip = chips.find(chip => chip.textContent?.includes("5s"))!;
+      await act(async () => { durationChip.click(); });
+      expect(ui.filters()).toMatchObject({ status: "429", minDurationMs: undefined, apiKeyId: "key_prod" });
+    },
+    { apiKeys: ["key_prod", "key_dev"] },
+  );
 });
