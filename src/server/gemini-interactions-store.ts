@@ -33,7 +33,7 @@ export interface StoredInteraction {
 }
 
 const entries = new Map<string, StoredInteraction>();
-const ownerTotals = new Map<string, { count: number; bytes: number }>();
+const ownerTotals = new Map<string, { bytes: number; ids: Set<string> }>();
 let totalBytes = 0;
 
 function drop(id: string): void {
@@ -43,9 +43,9 @@ function drop(id: string): void {
   totalBytes -= entry.bytes;
   const totals = ownerTotals.get(entry.owner);
   if (totals) {
-    totals.count -= 1;
+    totals.ids.delete(id);
     totals.bytes -= entry.bytes;
-    if (totals.count <= 0) ownerTotals.delete(entry.owner);
+    if (totals.ids.size === 0) ownerTotals.delete(entry.owner);
   }
 }
 
@@ -57,8 +57,7 @@ function sweep(now: number): void {
 }
 
 function oldestOf(owner: string): string | undefined {
-  for (const [id, entry] of entries) if (entry.owner === owner) return id;
-  return undefined;
+  return ownerTotals.get(owner)?.ids.values().next().value;
 }
 
 export function interactionEntryBytes(entry: Pick<StoredInteraction, "history" | "resource">): number {
@@ -75,8 +74,8 @@ export function rememberInteraction(
   if (bytes > Math.min(maxBytes, MAX_INTERACTION_BYTES)) return false;
   drop(entry.id);
   sweep(now);
-  const owned = () => ownerTotals.get(entry.owner) ?? { count: 0, bytes: 0 };
-  while (owned().count + 1 > MAX_OWNER_INTERACTIONS || owned().bytes + bytes > MAX_OWNER_INTERACTION_BYTES) {
+  const owned = () => ownerTotals.get(entry.owner);
+  while (((owned()?.ids.size ?? 0) + 1 > MAX_OWNER_INTERACTIONS) || ((owned()?.bytes ?? 0) + bytes > MAX_OWNER_INTERACTION_BYTES)) {
     const oldest = oldestOf(entry.owner);
     if (oldest === undefined) break;
     drop(oldest);
@@ -90,8 +89,13 @@ export function rememberInteraction(
   }
   entries.set(entry.id, { ...entry, bytes, writtenAt: now });
   totalBytes += bytes;
-  const totals = owned();
-  ownerTotals.set(entry.owner, { count: totals.count + 1, bytes: totals.bytes + bytes });
+  let totals = ownerTotals.get(entry.owner);
+  if (!totals) {
+    totals = { bytes: 0, ids: new Set() };
+    ownerTotals.set(entry.owner, totals);
+  }
+  totals.bytes += bytes;
+  totals.ids.add(entry.id);
   return true;
 }
 

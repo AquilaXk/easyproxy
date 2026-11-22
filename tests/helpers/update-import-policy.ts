@@ -168,10 +168,20 @@ const baseStaticImports: Readonly<Record<string, readonly string[]>> = {
   "src/update/job-update-tray.ts": [
     "import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from \"./tray-update-plan.mjs\";"
   ],
+  "src/update/job-output-sanitize.ts": [],
+  "src/update/job-restart-verify.ts": [
+    "import { isProcessAlive } from \"../lib/process-control\";",
+    "import { proxyIdentityAt } from \"../server/proxy-liveness\";"
+  ],
+  "src/update/job-types.ts": [],
   "src/update/job-windows-restart.ts": [
     "import { guardedStopWindowsChecked } from \"./guarded-runtime-ops\";"
   ],
   "src/update/job.ts": [
+    "import { RELEASE_NOTES_URL, sanitizePersistedUpdateJob, summarizeCommandOutput, withheldSummary } from \"./job-output-sanitize\";",
+    "export { summarizeCommandOutput } from \"./job-output-sanitize\";",
+    "import { awaitRestartedProxyHealthy, confirmPackageManagerExplicitRestart, confirmRestartedProxy, formatPortHolders, packageManagerSelfUpdateRestartEvidence, SERVICE_RECOVERY_HEALTH_MS } from \"./job-restart-verify\";",
+    "export { npmSelfUpdateRestartEvidence, packageManagerSelfUpdateRestartEvidence, SERVICE_RECOVERY_HEALTH_MS } from \"./job-restart-verify\";",
     "import { guardedRun, guardedSpawnSync, materializeMutationData } from \"./mutation-guard.mjs\";",
     "import { probeSpawn, probeSpawnSync } from \"./mutation-guard.mjs\";",
     "import { existsSync, mkdirSync, readFileSync } from \"node:fs\";",

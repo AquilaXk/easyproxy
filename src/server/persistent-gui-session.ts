@@ -6,7 +6,7 @@ import { withConfigMutationLockSync } from "../config/mutation-lock";
 import { atomicWriteFileNoFollowStreamed } from "../config/atomic-write";
 import type { EpxConfig } from "../types";
 import { dashboardProxyOrigin, isLoopbackHostname, isTrustedHubManagementRequest, managementRequestOrigin } from "./auth-cors";
-import { mintSession, type GuiSessionRecord, type GuiSessionState } from "./gui-session";
+import { deleteGuiSessionToken, mintSession, type GuiSessionRecord, type GuiSessionState } from "./gui-session";
 
 export const REMEMBERED_GUI_TTL_MS = 30 * 86400_000;
 const RECORD_LIMIT = 128;
@@ -152,7 +152,7 @@ export function forgetGuiDevice(req: Request, config: EpxConfig, state: State): 
     const found = rows.find(row => row.digest === digest && row.serverOrigin === origin
       && row.credential === hash(state.token));
     if (found) atomicWriteFileNoFollowStreamed(storePath(), fd => writeFileSync(fd, JSON.stringify(rows.filter(row => row !== found))));
-    for (const [token, session] of state.sessions) if (session.persistentDigest === digest) state.sessions.delete(token);
+    for (const [token, session] of state.sessions) if (session.persistentDigest === digest) deleteGuiSessionToken(state, token);
   });
   return cookie(origin, "", 0);
 }

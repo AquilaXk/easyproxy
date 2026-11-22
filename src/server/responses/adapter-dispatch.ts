@@ -15,7 +15,6 @@ import { deferPhysicalSendReporter } from "./deferred-send-reporter";
 import { usesApiKeyAccount } from "../../providers/label";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { classifyAnthropic429 } from "../../oauth/anthropic-rate-limit-policy";
-import { anthropicRefusalCredentialChanged, rotateAnthropicAccountOnResponseForInstance } from "../../oauth/anthropic-account-refusal";
 import { authorizeResendForRecovery } from "../../lib/request-resend-gate";
 import { ambiguousResendAllowanceFor, selfContainedResponsesBody } from "./reset-replay";
 import { transientSendCapFor, type ResponsesSendBudget } from "./request-send-budget";
@@ -28,9 +27,7 @@ import type { ResponsesTransport } from "./request-transport";
 import type { ResponsesEffects } from "./response-effects";
 import { linkAbortSignal } from "./core-lifetime";
 import type { AdapterRequest } from "../../adapters/base";
-import type { AdapterEvent } from "../../types";
-import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse, formatUpstreamFailureResponse } from "../../bridge";
-import { trackStreamLifetime } from "../lifecycle";
+import { formatErrorResponse } from "../../bridge";
 import {
   recordAdapterReasoning,
   recordAdapterTier,
@@ -42,19 +39,15 @@ import { anthropicPoolCooldownResponse, clientCancelledResponse, readDisplaySafe
 import { isTranslatorBudgetExceededError } from "../../lib/translator-budget";
 import { redactSecretString } from "../../lib/redact";
 import { rewriteUpstreamPolicyRefusal } from "./policy-refusal";
-import { carryPolicyCandidateRefusal, HostedAdvisorSpendRefusal } from "./policy-request-scope";
+import { HostedAdvisorSpendRefusal } from "./policy-request-scope";
 import { withProviderRequestSlot } from "../../providers/request-pacing";
 import { providerFetch, fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
-import { isAnthropicBillingKeyPool, rotateAnthropicBillingKeyOnResponse } from "../../providers/anthropic-billing-recovery";
+import { isAnthropicBillingKeyPool } from "../../providers/anthropic-billing-recovery";
 import {
   transientRetryPolicyFor,
   resetReplayPolicyFor,
   rateLimitRetryPolicyFor,
-  hasKeyPoolFailover,
-  rotateProviderTransportOn401,
   rateLimitRetryDelayMs,
-  readQuotaResetAt,
-  rotateProviderTransportOn429,
 } from "../../providers/key-failover";
 import {
   fetchWithTransientRetry,
@@ -70,24 +63,17 @@ import { describeUpstreamConnectFailure } from "./upstream-error";
 import { createProviderOfflineResendWait } from "../../lib/offline-resend";
 import type { OpaqueBlobRecoveryGuard } from "./core-opaque-recovery";
 import type { AttemptRecoveryKind } from "../../usage/log";
-import type { OAuthAccessSnapshot } from "../../oauth";
-import { publicOAuthErrorPresentation, OAuthAccountPausedError, OAuthLoginRequiredError, OAuthTokenRefreshBusyError, publicOAuthAuthenticationErrorMessage } from "../../oauth";
-import { getAccountSet, markAccountNeedsReauthIfGeneration } from "../../oauth/store";
-import { tryKiroAlternateAfterTerminalRefresh } from "../../oauth/kiro-terminal-failover";
+import { publicOAuthErrorPresentation, OAuthAccountPausedError, OAuthLoginRequiredError, publicOAuthAuthenticationErrorMessage } from "../../oauth";
+import { markAccountNeedsReauthIfGeneration } from "../../oauth/store";
 import { classifyKiroRefusal } from "../../adapters/kiro-refusal";
 import { normalizeFinalKiroHttpError } from "../../adapters/kiro-retry";
 import { noteKiroMonthlyRefusal } from "../../providers/kiro-usage";
 import { persistKiroAccountState } from "../../providers/kiro-account-state-disk";
 import { isXaiGrokOAuth, isXaiLegacyPrivacyError, xaiPrivacyModeRefusal } from "../../providers/xai-privacy-mode";
 import { isXaiResponsesDestination, resolveProviderTransport } from "../../providers/xai-transport";
-import { resolveCopilotApiBaseUrl } from "../../oauth/github-copilot";
 import { resolveWireProtocolOverride } from "../adapter-resolve";
 import { bindRouteReasoningReplayScope } from "./core-replay";
-import {
-  AnthropicAccountCooldownError,
-  anthropicRoutingFor,
-  formatAnthropicProviderForLog,
-} from "../../oauth/anthropic-routing";
+import { AnthropicAccountCooldownError } from "../../oauth/anthropic-routing";
 import {
   isGenericOAuthFailoverEnabled,
   rotateGenericOAuthAccountOn429,
@@ -99,22 +85,12 @@ import {
 } from "../../oauth/generic-account-failover";
 import {
   attemptOpaqueBlobRecovery,
-  consoleGoUploadRejectionBody,
-  CONSOLE_GO_UPLOAD_RETRY_DELAY_MS,
-  refusedReasoningEffortDowngrade,
   anthropicFastRefused,
 } from "./core-opaque-recovery";
 import { createAnthropicThinkingRecovery } from "./anthropic-thinking-recovery";
-import { shouldAttemptImageTierRetry } from "../image-retry";
-import { isTransientConsoleGoUploadRejection } from "../../providers/opencode-zen-rate-limit";
-import { formatAdapterUpstreamFailure } from "./adapter-failure-message";
 import { consumeComboFailure } from "./core-combo-failure";
 import { streamingContextOverflowResponse, jsonContextOverflowResponse, lateAttributionLimitResponse } from "./context-overflow";
 import { OllamaLateAttributionBudgetError } from "../../adapters/ollama-native";
-import { isFixedCodexAccount } from "./core-codex-account";
-import { recordSubagentQuotaFailureForThreadSpawn } from "../../codex/subagent-model-fallback";
-import { CYBER_POLICY_ERROR_CODE } from "../../lib/errors";
-import { resolveClientRetryAfter } from "../../lib/retry-after";
 import { cancelBodyOnAbort } from "../../lib/abort";
 import { createCodexAuthDispatchGuard, releaseCodexAuthContextProbeLease, unwrapUpstreamRetryEvidenceError } from "../../codex/auth-context";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
@@ -127,6 +103,24 @@ import { isAntigravityFaultRotatable } from "./antigravity-fault-rotation";
 import { adapterSendBudgetRefusal } from "../workflow-refusal";
 import { AdmissionModelDeniedError, admissionModelDeniedResponse, projectAdmissionModelDeniedLog } from "../admission-model-scope";
 import { rejectAnthropicPerMessageEffort } from "../../adapters/anthropic/per-message-effort";
+import {
+  recoverAnthropicBillingKeyPool,
+  recoverApiKeyPool401,
+  recoverApiKeyPool429,
+  type KeyPoolRecoveryContext,
+} from "./adapter-key-pool-recovery";
+import {
+  recoverAnthropicOAuthPool,
+  recoverOAuth401Replay,
+  type OAuthRecoveryContext,
+} from "./adapter-oauth-recovery";
+import {
+  buildAdapterLocalTerminalResponse,
+  formatAdapterTerminalUpstreamErrorResponse,
+  retryAdapterImageTier,
+  retryConsoleGoUploadRejection,
+  retryReasoningEffortDowngrade,
+} from "./adapter-terminal-recovery";
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function prepareAdapterExchange(
   requestContext: Pick<ResponsesRequestContext, "options" | "config" | "logCtx" | "req">,
@@ -289,54 +283,7 @@ export async function prepareAdapterExchange(
   // ordinary event path would therefore reinstate the loop it exists to end.
   const localTerminal = transportState.activeAdapter.localTerminal?.(parsed);
   if (localTerminal) {
-    logCtx.localTerminalReason = localTerminal.reason;
-    // Mark the physical attempt too, not just the parent row. `finishRequestAttempt` finalizes the
-    // attempt through the same estimated-provider path, so without this the row reads exact while
-    // its own attempt still claims an estimate — the detailed accounting a maintainer actually
-    // reads for a zero-send turn.
-    if (logCtx.activeAttempt) logCtx.activeAttempt.locallyAnswered = true;
-    cleanupUpstreamAbort();
-    upstream.abort();
-    const terminalEvents: AdapterEvent[] = [{
-      type: "done",
-      endTurn: true,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-    }];
-    if (parsed.stream) {
-      const localSse = bridgeToResponsesSSE(
-        (async function* () { yield* terminalEvents; })(),
-        parsed._responseModelId ?? parsed.modelId,
-        toolBridgeMaps.toolNsMap,
-        toolBridgeMaps.freeformToolNames,
-        toolBridgeMaps.toolSearchToolNames,
-        cancelResponseCompletion,
-        2_000,
-        {
-          translatorBudget,
-          onCompletedResponse: notifyResponseComplete,
-          ...(options.forceEmptyResponseId ? { responseId: "" } : {}),
-          ...(options.onFirstOutput ? { onFirstOutput: options.onFirstOutput } : {}),
-        },
-      );
-      // Same lifetime tracking as every other streaming return in this function: the turn
-      // admission lease is released when the body finishes or the client disconnects. Returning
-      // the raw stream would hold a lease for a turn that already has all of its output.
-      const localTurnAc = new AbortController();
-      return new Response(
-        trackStreamLifetime(localSse, localTurnAc, undefined, options.turnAdmissionLease),
-        {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-          },
-        },
-      );
-    }
-    const json = buildResponseJSON(terminalEvents, parsed._responseModelId ?? parsed.modelId, { translatorBudget });
-    notifyResponseComplete(json);
-    return new Response(JSON.stringify(json), { headers: { "Content-Type": "application/json" } });
+    return buildAdapterLocalTerminalResponse(localTerminal.reason, requestContext, requestState, responseEffects, upstream, cleanupUpstreamAbort);
   }
   try {
     initialRequest = await transportState.activeAdapter.buildRequest(parsed, {
@@ -399,12 +346,16 @@ export async function prepareAdapterExchange(
   const shouldDeferGenericSend = (request: AdapterRequest) => billingPoolRequest
     || (route.providerName === "github-copilot" && route.provider.authMode !== "forward")
     || hostedAdvisorCredentials.has(request);
-  let billingRecoveryActive = false;
+  const recoveryFlags = {
+    billingRecoveryActive: false,
+    oauth401ReplayAttempted: transportState.oauth401ReplayAttempted,
+    antigravityAuthRotationAttempted: false,
+  };
   const reserveCompactRetrySpend = () => sendBudgetState.compactHandoffSendCeiling !== undefined
     && sendBudgetState.adapterSendBudget?.spendEnforced === true;
   const genericRefetchCountsSends = () => !!sendBudgetState.workflowRootId || options.comboAttempt === true || sendBudgetState.adapterSendBudget?.spendEnforced === true
     || transientRetryPolicyFor(route.provider) !== null || resetReplayPolicyFor(route.provider) !== null
-    || !!anthropicInstance || billingPoolRequest || billingRecoveryActive || autoPauseEnabled || imageRecovery !== undefined;
+    || !!anthropicInstance || billingPoolRequest || recoveryFlags.billingRecoveryActive || autoPauseEnabled || imageRecovery !== undefined;
   let handoffPermit: ResponsesSendBudget["pendingHopPermit"];
   try {
     if (transportState.activeAdapter.fetchResponse) {
@@ -618,7 +569,7 @@ export async function prepareAdapterExchange(
     // both paths so a 429→413 sequence never rebuilds against a stale pre-rotation
     // adapter, and imageTierBias — once armed — rides EVERY subsequent rebuild so a
     // 413→429 rotation cannot silently undo the tightening.
-    let imageRetryAttempted = false;
+    const imageRetryState = { imageRetryAttempted: false };
     const opaqueBlobRecoveryGuard: OpaqueBlobRecoveryGuard = { attempted: false };
     const thinkingSignatureRecovery = createAnthropicThinkingRecovery(
       parsed, upstream.signal, opaqueBlobRecoveryGuard, () => !sendBudgetExhausted(), logCtx,
@@ -626,8 +577,6 @@ export async function prepareAdapterExchange(
     // Console Go answers a transient 400 "Invalid upload request." for bodies it accepts
     // moments later; at most one byte-identical replay is allowed per request.
     const consoleGoUploadRetryGuard: { attempted: boolean } = { attempted: false };
-    let oauth401ReplayAttempted = transportState.oauth401ReplayAttempted;
-    let antigravityAuthRotationAttempted = false;
     let antigravityFaultRotationAttempted = false;
     const antigravityFaultRotatable = (response: Response) => isAntigravityFaultRotatable(route.providerName, response,
       transportState, antigravityPoolActivated, antigravityFaultRotationAttempted);
@@ -927,6 +876,32 @@ export async function prepareAdapterExchange(
         },
       });
     };
+    const keyPoolRecoveryCtx: KeyPoolRecoveryContext = {
+      requestContext,
+      requestState,
+      transportState,
+      sendBudgetState,
+      upstream,
+      cleanupUpstreamAbort,
+      billingPoolRequest,
+      recoveryFlags,
+      resolveRotatedCopilotSelection,
+      rebuildAndRefetch,
+    };
+    const oauthRecoveryCtx: OAuthRecoveryContext = {
+      requestContext,
+      admissionState,
+      requestState,
+      transportState,
+      sendBudgetState,
+      upstream,
+      cleanupUpstreamAbort,
+      recoveryFlags,
+      genericRefetchCountsSends,
+      rotateAntigravityAuth,
+      resolveRotatedCopilotSelection,
+      rebuildAndRefetch,
+    };
    // Keep recovery kinds in sync with the native Responses `passthroughRecovery:` loop above.
    recovery: for (;;) {
       const modelRotation = await antigravityDenial.recover(upstreamResponse,
@@ -966,126 +941,15 @@ export async function prepareAdapterExchange(
         upstreamResponse = result;
         continue recovery;
       }
-     if (
-       upstreamResponse.status === 401 && !wasPermanentAccountRefusal(upstreamResponse)
-       && isOAuth401ReplayProvider
-        && transportState.sentOAuthSnapshot
-        && !oauth401ReplayAttempted
-        && !sendBudgetExhausted()
-      ) {
-        oauth401ReplayAttempted = transportState.oauth401ReplayAttempted = true;
-        const replay = transportState.createCredentialReplayAttempt(upstreamResponse.status, "oauth-401");
-        let refreshed: OAuthAccessSnapshot;
-        try {
-          refreshed = await refreshResolvedOAuthSelection(transportState.sentOAuthSnapshot);
-        } catch (err) {
-          const cancelled = options.abortSignal?.aborted || req.signal.aborted;
-          if (cancelled || err instanceof OAuthTokenRefreshBusyError) {
-            cleanupUpstreamAbort();
-            upstream.abort();
-            try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already closed */ }
-            releaseCodexAuthContextProbeLease(admissionState.authCtx);
-            return cancelled ? clientCancelledResponse()
-              : markProxyError(formatErrorResponse(503, "server_error", publicOAuthAuthenticationErrorMessage(err), { retryAfter: "1" }), publicOAuthErrorPresentation(err));
-          }
-          const failed = transportState.sentOAuthSnapshot;
-          if (route.providerName === "google-antigravity" && !antigravityAuthRotationAttempted
-            && err instanceof OAuthLoginRequiredError && failed
-            && getAccountSet(route.providerName)?.accounts.some(row =>
-              row.id === failed.accountId && row.needsReauth === true)) {
-            antigravityAuthRotationAttempted = true;
-            const rotated = await rotateAntigravityAuth(upstreamResponse, "oauth-401");
-            if (rotated) { upstreamResponse = rotated; continue recovery; }
-          }
-          if (route.providerName === "kiro" && err instanceof OAuthLoginRequiredError && failed
-            && transportState.genericFailovers < transportState.genericFailoverLimit) {
-            const alternate = await tryKiroAlternateAfterTerminalRefresh(config, failed.accountId, failed.generation);
-            if (alternate) {
-              const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
-              const hop = reserveCredentialHop("auth-recovery",
-                `${route.providerName}|${route.modelId}|terminal-refresh-account`,
-                !adapterOwnsDispatch && genericRefetchCountsSends());
-              if (hop.allowed) {
-                try {
-                  const admitted = await applyFailoverSnapshot(alternate);
-                  if (admitted?.accountId === alternate.accountId) {
-                    transportState.genericFailovers += 1;
-                    invalidateSameTargetRequest();
-                    transportState.activeAdapter = resolveSelectionAdapter(
-                      resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),
-                      config.cacheRetention);
-                    bindRouteReasoningReplayScope({
-                      parsed, providerName: route.providerName, provider: route.provider,
-                      adapterName: transportState.activeAdapter.name,
-                      oauthCredentialSnapshot: transportState.replayOAuthCredentialSnapshot,
-                    });
-                    sendBudgetState.pendingHopPermit = hop.permit;
-                    const result = await rebuildAndRefetch("oauth-account-429", () => {
-                      if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError();
-                    });
-                    if ("failed" in result) return result.failed;
-                    upstreamResponse = result;
-                    continue recovery;
-                  }
-                } catch { /* Keep the original public authentication error. */ }
-                finally { sendBudgetState.pendingHopPermit = undefined; hop.permit?.release(); }
-              }
-            }
-          }
-          cleanupUpstreamAbort();
-          if (err instanceof OAuthAccountPausedError) {
-            return markProxyError(formatErrorResponse(403, "permission_error", publicOAuthAuthenticationErrorMessage(err)), publicOAuthErrorPresentation(err));
-          }
-          return markProxyError(formatErrorResponse(401, "authentication_error", publicOAuthAuthenticationErrorMessage(err)), publicOAuthErrorPresentation(err));
-        }
-        if (route.provider.googleMode === "cloud-code-assist" && !refreshed.projectId) {
-          cleanupUpstreamAbort();
-          return markProxyError(formatErrorResponse(401, "authentication_error", publicOAuthAuthenticationErrorMessage(new Error("Cloud Code Assist project is required"))));
-        }
-        if (route.providerName === "kiro") {
-          parsed._kiroAuthContext = { ...(refreshed.kiro ?? {}) };
-        }
-        let refreshedProvider = resolveProviderTransport(
-          route.providerName,
-          {
-            ...route.provider,
-            apiKey: refreshed.accessToken,
-            ...(refreshed.projectId ? { project: refreshed.projectId } : {}),
-          },
-          parsed.options.promptCacheKey,
-          route.providerName === "github-copilot"
-            ? resolveCopilotApiBaseUrl(refreshed.apiBaseUrl)
-            : undefined,
-        );
-        const copilotRefusal = await resolveRotatedCopilotSelection(refreshedProvider);
-        if (copilotRefusal) return copilotRefusal;
-        refreshedProvider = route.provider;
-        if (route.providerName !== "github-copilot") {
-          transportState.sentOAuthSnapshot = refreshed;
-          transportState.replayOAuthCredentialSnapshot = { accountId: refreshed.accountId, generation: refreshed.generation };
-        }
-        invalidateSameTargetRequest();
-        transportState.activeAdapter = resolveSelectionAdapter(
-          resolveWireProtocolOverride(route.providerName, route.modelId, refreshedProvider, inboundWire, route.staticPolicy),
-          config.cacheRetention,
-        );
-        bindRouteReasoningReplayScope({
-          parsed,
-          providerName: route.providerName,
-          provider: refreshedProvider,
-          adapterName: transportState.activeAdapter.name,
-          oauthCredentialSnapshot: transportState.replayOAuthCredentialSnapshot,
-        });
-        const result = await rebuildAndRefetch("oauth-401", undefined, undefined, replay);
-        if ("failed" in result) return result.failed;
-        upstreamResponse = result;
-        continue recovery;
-      }
+      const oauth401Outcome = await recoverOAuth401Replay(oauthRecoveryCtx, upstreamResponse);
+      if (oauth401Outcome.kind === "return") return oauth401Outcome.response;
+      upstreamResponse = oauth401Outcome.response;
+      if (oauth401Outcome.kind === "continue") continue recovery;
 
       if (route.providerName === "google-antigravity" && upstreamResponse.status === 401 && !wasPermanentAccountRefusal(upstreamResponse)
-        && oauth401ReplayAttempted && !antigravityAuthRotationAttempted
+        && recoveryFlags.oauth401ReplayAttempted && !recoveryFlags.antigravityAuthRotationAttempted
         && !isNonReplayableResponse(upstreamResponse)) {
-        antigravityAuthRotationAttempted = true;
+        recoveryFlags.antigravityAuthRotationAttempted = true;
         const rotated = await rotateAntigravityAuth(upstreamResponse, "oauth-401");
         if (rotated) { upstreamResponse = rotated; continue recovery; }
       }
@@ -1095,11 +959,11 @@ export async function prepareAdapterExchange(
         && antigravityPoolActivated
         && !isNonReplayableResponse(upstreamResponse)
         && transportState.genericFailovers < transportState.genericFailoverLimit
-        && (!antigravityAuthRotationAttempted && await isAntigravityValidationRefusal(upstreamResponse, options.abortSignal)
+        && (!recoveryFlags.antigravityAuthRotationAttempted && await isAntigravityValidationRefusal(upstreamResponse, options.abortSignal)
           // A plain access-denied 403 keeps rotating while siblings remain: each refused account is
           // cooled before the hop, so the ring advances and `genericFailoverLimit` bounds the sends.
           || await isAntigravityAccessDeniedRefusal(upstreamResponse, options.abortSignal))) {
-        antigravityAuthRotationAttempted = true;
+        recoveryFlags.antigravityAuthRotationAttempted = true;
         const rotated = await rotateAntigravityAuth(upstreamResponse, "oauth-account-403");
         if (rotated) { upstreamResponse = rotated; continue recovery; }
       }
@@ -1112,94 +976,15 @@ export async function prepareAdapterExchange(
         if (rotated) { upstreamResponse = rotated; continue recovery; }
       }
 
-      // Static API-key pools can recover a credential-scoped 401 without abandoning the
-      // provider: one revoked or mistyped key says nothing about its siblings. OAuth providers
-      // refresh above and never enter here — `hasKeyPoolFailover` rejects oauth/forward modes.
-      // Runs after the OAuth replay so a refreshable token is never treated as a dead key.
-      while (upstreamResponse.status === 401 && hasKeyPoolFailover(route.provider)) {
-        const rotated = rotateProviderTransportOn401(config, route.providerName, route.provider, {
-          now: Date.now(),
-          attemptedKey: route.provider.apiKey,
-          promptCacheKey: parsed.options.promptCacheKey,
-        });
-        if (!rotated) break;
-        if (billingRecoveryActive && (options.abortSignal?.aborted || upstream.signal.aborted)) {
-          cleanupUpstreamAbort(); upstream.abort(); return clientCancelledResponse();
-        }
-        const billingHop = (billingPoolRequest || billingRecoveryActive)
-          ? reserveCredentialHop("auth-recovery", `${route.providerName}|${route.modelId}|key-401`,
-            transportState.activeAdapter.fetchResponse === undefined)
-          : undefined;
-        if (billingHop && !billingHop.allowed) break;
-        const failedResponse = billingPoolRequest || billingRecoveryActive ? await retainFailureResponse() : undefined;
-        try {
-          // Release the failed response's socket before retrying; unread bodies otherwise linger
-          // until runtime cleanup (one per rotated key).
-          if (!failedResponse) try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-          route.provider = rotated;
-          const selectionFailure = await resolveRotatedCopilotSelection();
-          if (selectionFailure) return selectionFailure;
-          invalidateSameTargetRequest();
-          transportState.activeAdapter = resolveSelectionAdapter(
-            resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),
-            config.cacheRetention,
-          );
-          bindRouteReasoningReplayScope({
-            parsed,
-            providerName: route.providerName,
-            provider: route.provider,
-            adapterName: transportState.activeAdapter.name,
-          });
-          if (billingHop) sendBudgetState.pendingHopPermit = billingHop.permit;
-          const result = await rebuildAndRefetch("key-401",
-            billingHop ? () => { if (billingHop.permit?.use() === false) throw new SendBudgetExhaustedError(); } : undefined, failedResponse);
-          if ("failed" in result) {
-            if (result.failed !== failedResponse) return result.failed;
-            break;
-          }
-          if (failedResponse) {
-            try { void failedResponse.body?.cancel().catch(() => {}); } catch { /* closed */ }
-          }
-          upstreamResponse = result;
-          // A recovery refetch can itself die on an ambiguous pre-header reset, and the refusal
-          // that answers it is a 429. Every arm below keys on 429, so letting it fall through
-          // hands the marked refusal to the next waiting arm and replays the send it exists to
-          // stop. Re-enter the loop guard instead, which returns it unchanged.
-          if (isNonReplayableResponse(upstreamResponse)) continue recovery;
-        } finally {
-          if (billingHop) { sendBudgetState.pendingHopPermit = undefined; billingHop.permit?.release(); }
-        }
-      }
+      const key401Outcome = await recoverApiKeyPool401(keyPoolRecoveryCtx, upstreamResponse);
+      if (key401Outcome.kind === "return") return key401Outcome.response;
+      upstreamResponse = key401Outcome.response;
+      if (key401Outcome.kind === "continue") continue recovery;
 
-      while ((upstreamResponse.status === 400 || upstreamResponse.status === 402) && hasKeyPoolFailover(route.provider)) {
-        const rotated = await rotateAnthropicBillingKeyOnResponse(upstreamResponse, config, route.providerName, route.provider,
-          { signal: upstream.signal, promptCacheKey: parsed.options.promptCacheKey });
-        if (upstream.signal.aborted || options.abortSignal?.aborted) {
-          cleanupUpstreamAbort(); upstream.abort(); return clientCancelledResponse();
-        }
-        if (!rotated) break;
-        billingRecoveryActive = true;
-        const hop = reserveCredentialHop("auth-recovery", `${route.providerName}|${route.modelId}|key-401`,
-          transportState.activeAdapter.fetchResponse === undefined);
-        if (!hop.allowed) break;
-        const failedResponse = await retainFailureResponse();
-        try {
-          route.provider = rotated;
-          invalidateSameTargetRequest();
-          transportState.activeAdapter = resolveSelectionAdapter(
-            resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy), config.cacheRetention);
-          bindRouteReasoningReplayScope({ parsed, providerName: route.providerName, provider: route.provider, adapterName: transportState.activeAdapter.name });
-          sendBudgetState.pendingHopPermit = hop.permit;
-          const result = await rebuildAndRefetch("key-401", () => { if (hop.permit?.use() === false) throw new SendBudgetExhaustedError(); }, failedResponse);
-          if ("failed" in result) {
-            if (result.failed !== failedResponse) return result.failed;
-            break;
-          }
-          try { void failedResponse.body?.cancel().catch(() => {}); } catch { /* closed */ }
-          upstreamResponse = result;
-          continue recovery;
-        } finally { sendBudgetState.pendingHopPermit = undefined; hop.permit?.release(); }
-      }
+      const billingKeyOutcome = await recoverAnthropicBillingKeyPool(keyPoolRecoveryCtx, upstreamResponse);
+      if (billingKeyOutcome.kind === "return") return billingKeyOutcome.response;
+      upstreamResponse = billingKeyOutcome.response;
+      if (billingKeyOutcome.kind === "continue") continue recovery;
 
       // Anthropic fast mode refused (no usage credits, organization not enabled, model outside
       // the lane, fast pool empty): resend once at standard speed, as Claude Code does. This
@@ -1287,162 +1072,16 @@ export async function prepareAdapterExchange(
             && [400, 402].includes(upstreamResponse.status))) continue recovery;
      }
 
-      // Multi-key 429 failover: rotate to the next pool key (cooldown-aware) and retry the
-      // SAME request once per remaining key. OAuth/forward providers and single-key pools
-      // return null immediately, so this stays a no-op for them (src/providers/key-failover.ts).
-      while (upstreamResponse.status === 429 && hasKeyPoolFailover(route.provider)) {
-        // A quota exhaustion is dated in the BODY, not in `Retry-After` — OpenRouter
-        // sends no header for it (#4024). Read a bounded prefix before the socket is
-        // released below; a failed or slow read just leaves the header path in charge.
-        // Peeks a bounded prefix and hands back a Response still carrying the whole
-        // body, so the cancel below still releases the socket.
-        let peeked: Awaited<ReturnType<typeof readQuotaResetAt>>;
-        try {
-          peeked = await readQuotaResetAt(upstreamResponse, { signal: options.abortSignal });
-        } catch {
-          cleanupUpstreamAbort();
-          upstream.abort();
-          return clientCancelledResponse();
-        }
-        if (options.abortSignal?.aborted) {
-          cleanupUpstreamAbort();
-          upstream.abort();
-          return clientCancelledResponse();
-        }
-        upstreamResponse = peeked.response;
-        const quotaResetAt = peeked.at;
-        const rotated = rotateProviderTransportOn429(config, route.providerName, route.provider, {
-          retryAfter: upstreamResponse.headers.get("retry-after"),
-          now: Date.now(),
-          attemptedKey: route.provider.apiKey,
-          promptCacheKey: parsed.options.promptCacheKey,
-          quotaResetAt,
-        });
-        if (!rotated) break;
-        if (billingRecoveryActive && (options.abortSignal?.aborted || upstream.signal.aborted)) {
-          cleanupUpstreamAbort(); upstream.abort(); return clientCancelledResponse();
-        }
-        const billingHop = (billingPoolRequest || billingRecoveryActive)
-          ? reserveCredentialHop("auth-recovery", `${route.providerName}|${route.modelId}|key-429`,
-            transportState.activeAdapter.fetchResponse === undefined)
-          : undefined;
-        if (billingHop && !billingHop.allowed) break;
-        const failedResponse = billingPoolRequest || billingRecoveryActive ? await retainFailureResponse() : undefined;
-        try {
-          // Release the failed response's socket before retrying; unread bodies otherwise linger
-          // until runtime cleanup (one per rotated key under a rate-limit storm).
-          if (!failedResponse) try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-          route.provider = rotated;
-          const selectionFailure = await resolveRotatedCopilotSelection();
-          if (selectionFailure) return selectionFailure;
-          invalidateSameTargetRequest();
-          transportState.activeAdapter = resolveSelectionAdapter(
-            resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),
-            config.cacheRetention,
-          );
-          bindRouteReasoningReplayScope({
-            parsed,
-            providerName: route.providerName,
-            provider: route.provider,
-            adapterName: transportState.activeAdapter.name,
-          });
-          if (billingHop) sendBudgetState.pendingHopPermit = billingHop.permit;
-          const result = await rebuildAndRefetch("key-429",
-            billingHop ? () => { if (billingHop.permit?.use() === false) throw new SendBudgetExhaustedError(); } : undefined, failedResponse);
-          if ("failed" in result) {
-            if (result.failed !== failedResponse) return result.failed;
-            break;
-          }
-          if (failedResponse) {
-            try { void failedResponse.body?.cancel().catch(() => {}); } catch { /* closed */ }
-          }
-          upstreamResponse = result;
-          // Rotating on the refusal would also write a cooldown against a key that rate-limited
-          // nothing, which outlives the request.
-          if (isNonReplayableResponse(upstreamResponse)
-            || (billingRecoveryActive && upstreamResponse.status === 401)
-            || (route.provider.adapter === "anthropic" && [400, 402].includes(upstreamResponse.status))) continue recovery;
-        } finally {
-          if (billingHop) { sendBudgetState.pendingHopPermit = undefined; billingHop.permit?.release(); }
-        }
-      }
+      const key429Outcome = await recoverApiKeyPool429(keyPoolRecoveryCtx, upstreamResponse);
+      if (key429Outcome.kind === "return") return key429Outcome.response;
+      upstreamResponse = key429Outcome.response;
+      if (key429Outcome.kind === "continue") continue recovery;
 
-      // Anthropic OAuth: recover a rate limit or proven account entitlement refusal
-      // before output, within the shared request and account rotation limits.
-      while (
-        (upstreamResponse.status === 429 || upstreamResponse.status === 403 || upstreamResponse.status === 401)
-        && anthropicInstance
-        && transportState.anthropicPoolAccountId
-      ) {
-        // Same admission as the other rotation ladders: the roster cap cannot see the shared
-        // send budget. A canRetry term, not a break -- the call also records the refusal.
-        const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
-        const hop = reserveCredentialHop(
-          "auth-recovery",
-          `${route.providerName}|${route.modelId}|anthropic-pool-rotation`,
-          !adapterOwnsDispatch && genericRefetchCountsSends(),
-        );
-        let nextAccountId: string | null;
-        try {
-          nextAccountId = await rotateAnthropicAccountOnResponseForInstance(anthropicInstance, upstreamResponse, {
-            config, accountId: transportState.anthropicPoolAccountId, sessionKey: anthropicSessionKey,
-            model: route.modelId, requestKey: transportState, decision: transportState.anthropicRouteDecision, currentDecision: currentAnthropicRouteDecision, signal: upstream.signal,
-            // A denied reservation must not rotate on base headroom its bounds cannot see.
-            canRetry: hop.allowed && (hop.permit !== undefined || !sendBudgetExhausted())
-              && transportState.anthropicPoolFailovers < transportState.anthropicFailoverLimit,
-          });
-        } catch (rotationError) {
-          hop.permit?.release();
-          throw rotationError;
-        }
-        if (!nextAccountId) {
-          hop.permit?.release();
-          break;
-        }
-        try {
-          const admitted = await commitResolvedOAuthSelection(await anthropicRoutingFor(anthropicInstance).getAnthropicPoolAccessSnapshot(nextAccountId));
-          if (!admitted) throw new Error("OAuth selection changed during recovery");
-          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-          transportState.anthropicPoolAccountId = admitted.accountId;
-          transportState.anthropicPoolFailovers += 1;
-          route.provider = { ...route.provider, apiKey: admitted.accessToken };
-          invalidateSameTargetRequest();
-          logCtx.provider = formatAnthropicProviderForLog(anthropicInstance, admitted.accountId, config);
-          transportState.activeAdapter = resolveSelectionAdapter(
-            resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),
-            config.cacheRetention,
-          );
-          bindRouteReasoningReplayScope({
-            parsed,
-            providerName: route.providerName,
-            provider: route.provider,
-            adapterName: transportState.activeAdapter.name,
-            oauthCredentialSnapshot: transportState.replayOAuthCredentialSnapshot,
-          });
-          // The replay IS this hop's send; the dispatching layer settles the reservation.
-          sendBudgetState.pendingHopPermit = hop.permit;
-          let result: Response | { failed: Response };
-          try {
-            result = await rebuildAndRefetch(!anthropicRefusalCredentialChanged(upstreamResponse, admitted) ? "rate-limit-429"
-              : upstreamResponse.status === 401 ? "oauth-401"
-              : upstreamResponse.status === 403 ? "oauth-account-403" : "anthropic-oauth-429",
-              () => { if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError(); });
-          } finally {
-            sendBudgetState.pendingHopPermit = undefined;
-          }
-          if ("failed" in result) {
-            // A no-op once the boundary was reached; a refund when the rebuild died first.
-            hop.permit?.release();
-            return result.failed;
-          }
-          upstreamResponse = result;
-          if (isNonReplayableResponse(upstreamResponse)) continue recovery;
-        } catch {
-          // release() refunds a pre-send hop and is a no-op once the send settled it.
-          hop.permit?.release();
-          break;
-        }
-      }
+      const anthropicPoolOutcome = await recoverAnthropicOAuthPool(oauthRecoveryCtx, upstreamResponse);
+      if (anthropicPoolOutcome.kind === "return") return anthropicPoolOutcome.response;
+      upstreamResponse = anthropicPoolOutcome.response;
+      if (anthropicPoolOutcome.kind === "continue") continue recovery;
+
       // Generic OAuth account failover (#2568) rotates reactively after a refusal when
       // two accounts are stored. Kiro additionally classifies bounded 400/403 refusals;
       // all other providers retain the original 429 loop below.
@@ -1462,25 +1101,10 @@ export async function prepareAdapterExchange(
           quarantineKiroSuspendedAccount(transportState.genericFailoverAccountId, sent?.generation);
         if (transportState.genericFailovers >= transportState.genericFailoverLimit
           || !isGenericOAuthFailoverEnabled(config, "kiro")) break;
-        // Intersection with the shared request budget. This arm re-sends through
-        // rebuildAndRefetch, so the roster cap alone would let one request walk the roster on
-        // an allowance the rest of the request cannot see. A refusal ends the ladder with the
-        // original HTTP response already in hand.
-        //
-        // Who settles this reservation depends on who dispatches the replay (#4709). An
-        // adapter that owns its ladder -- Kiro's reset loop, Cursor's transport loop --
-        // reserves once per physical send and would charge the same replay again; the helper
-        // path reports it again through `onSendsConsumed`. Both turned one physical send into
-        // two charges, and once the allowance was spent, into a synthetic error in place of
-        // the refusal this hop was recovering from. The wire protocol is resolved from the
-        // provider and model, not from the account, so an account rotation cannot move the
-        // replay between these two shapes.
         const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
         const hop = reserveCredentialHop(
           "auth-recovery",
           `${route.providerName}|${route.modelId}|adapter-recovery-oauth-429`,
-          // Counted generic helpers report physical sends; an adapter-owned
-          // ladder settles its own booking.
           !adapterOwnsDispatch && genericRefetchCountsSends(),
         );
         if (!hop.allowed) break;
@@ -1500,9 +1124,6 @@ export async function prepareAdapterExchange(
         }
         const replay = transportState.createCredentialReplayAttempt(upstreamResponse.status, "oauth-account-429");
         try {
-          // The FULL snapshot, not just the bearer: Antigravity pairs an account-matched
-          // projectId with its token and Kiro carries routing metadata, so a token-only swap
-          // would mix one account's credential with another's routing data.
           const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
           if (!await applyFailoverSnapshot(snapshot)) {
             hop.permit?.release();
@@ -1519,18 +1140,9 @@ export async function prepareAdapterExchange(
             adapterName: transportState.activeAdapter.name,
             oauthCredentialSnapshot: transportState.replayOAuthCredentialSnapshot,
           });
-          // The replay IS this hop's send, so hand the reservation down and let the layer that
-          // dispatches settle it: `adapterDispatchBudget` spends it on the adapter's first
-          // reservation, and the retry helper's reporter settles the external booking.
           sendBudgetState.pendingHopPermit = hop.permit;
           let result: Response | { failed: Response };
           try {
-            // Confirm at the dispatch boundary, not here: a rebuild can fail while shaping the
-            // request and return `{ failed }` without reaching the wire, and a permit confirmed
-            // before that would hold the charge for a send that never happened. An
-            // adapter-owned ladder is the exception -- its own reservation is the confirmation,
-            // and settling here first would hand it a dead permit, which it reads as an
-            // exhausted request and stops sending on.
             result = await rebuildAndRefetch("oauth-account-429", () => {
               if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError();
             }, upstreamResponse, replay);
@@ -1538,22 +1150,14 @@ export async function prepareAdapterExchange(
             sendBudgetState.pendingHopPermit = undefined;
           }
           if ("failed" in result) {
-            // A no-op if the boundary was reached; a refund if the rebuild died before it.
             hop.permit?.release();
             if (result.failed !== upstreamResponse) return result.failed;
             break;
           }
           try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-         upstreamResponse = result;
-          // The hop's permit is already settled by the dispatch boundary above; continuing
-          // only skips the remaining arms, it does not abandon a reservation.
+          upstreamResponse = result;
           if (isNonReplayableResponse(upstreamResponse)) continue recovery;
-       } catch {
-         // A throw before the send — snapshot fetch, credential application, adapter
-          // resolution — must hand the reservation back. Without this the ladder charges the
-          // request for a send it never made, and a later recovery in the same request is
-          // refused on an allowance nothing spent. release() is idempotent and a no-op once
-          // used, so a throw from the rebuild keeps its charge.
+        } catch {
           hop.permit?.release();
           break;
         }
@@ -1670,6 +1274,8 @@ export async function prepareAdapterExchange(
           break;
         }
       }
+      // Antigravity verify-account quarantine: a 403 demanding account verification
+      // is terminal for THAT account — its grant still refreshes, so only a manual
       // Antigravity verify-account quarantine: a 403 demanding account verification
       // is terminal for THAT account — its grant still refreshes, so only a manual
       // verification followed by a re-login clears it. Mark it needsReauth (durable,
@@ -1793,75 +1399,47 @@ export async function prepareAdapterExchange(
         upstreamResponse = recovered;
         break recovery;
       }
-      if (shouldAttemptImageTierRetry({
-        status: upstreamResponse.status,
-        adapterName: transportState.activeAdapter.name,
+      const imageTierOutcome = await retryAdapterImageTier(
+        upstreamResponse,
         parsed,
-        alreadyAttempted: imageRetryAttempted,
-      })) {
-        imageRetryAttempted = true;
-        transportState.imageTierBias = 1;
-        invalidateSameTargetRequest();
-        const failedResponse = await retainFailureResponse();
-        const result = await rebuildAndRefetch("image-413", undefined, failedResponse);
-        if ("failed" in result) {
-          if (result.failed !== failedResponse) return result.failed;
-          break recovery;
-        }
-        try { void failedResponse.body?.cancel().catch(() => {}); } catch { /* closed */ }
-        upstreamResponse = result;
+        transportState,
+        imageRetryState,
+        retainFailureResponse,
+        rebuildAndRefetch,
+      );
+      if (imageTierOutcome.kind === "return") return imageTierOutcome.response;
+      upstreamResponse = imageTierOutcome.response;
+      if (imageTierOutcome.kind === "break") break recovery;
+      if (imageTierOutcome.kind === "continue") continue recovery;
+
+      const consoleGoOutcome = await retryConsoleGoUploadRejection(
+        upstreamResponse,
+        transportState,
+        upstream,
+        cleanupUpstreamAbort,
+        consoleGoUploadRetryGuard,
+        rebuildAndRefetch,
+      );
+      if (consoleGoOutcome.kind === "return") return consoleGoOutcome.response;
+      if (consoleGoOutcome.kind === "continue") {
+        upstreamResponse = consoleGoOutcome.response;
         continue recovery;
       }
-      // Console Go (opencode-zen / opencode-go) intermittently rejects a body it accepts seconds
-      // later with 400 invalid_request_error / "Invalid upload request." Replay the
-      // byte-identical request once after the exact gateway rejection.
-      if (!consoleGoUploadRetryGuard.attempted) {
-        const uploadRejectionBody = await consoleGoUploadRejectionBody(
-          upstreamResponse,
-          consoleGoUploadRetryGuard.attempted,
-          upstream.signal,
-        );
-        if (uploadRejectionBody !== undefined
-          && isTransientConsoleGoUploadRejection({
-            status: upstreamResponse.status,
-            errorBody: uploadRejectionBody,
-            outboundUrl: transportState.sameTargetRequest?.url,
-          })) {
-          consoleGoUploadRetryGuard.attempted = true;
-          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-          if (!upstream.signal.aborted) {
-            try {
-              await sleepWithAbort(CONSOLE_GO_UPLOAD_RETRY_DELAY_MS, upstream.signal);
-            } catch { cleanupUpstreamAbort(); return clientCancelledResponse(); }
-          }
-          if (upstream.signal.aborted) { cleanupUpstreamAbort(); return clientCancelledResponse(); }
-          const result = await rebuildAndRefetch("console-go-upload-retry");
-          if ("failed" in result) return result.failed;
-          upstreamResponse = result;
-          continue recovery;
-        }
-      }
-      // Learn a refused rung and retry at the next published one. Direct requests are limited
-      // to one repair; combo candidates may continue down the finite ladder within the send budget.
-      const downgrade = await refusedReasoningEffortDowngrade(upstreamResponse, upstream.signal, reasoningEffortDowngradeGuard,
-        options.comboAttempt, { provider: route.provider, modelId: parsed.modelId, requested: parsed.options.reasoning });
-      if (downgrade) {
-        reasoningEffortDowngradeGuard.attempted = true;
-        parsed.options.reasoning = downgrade.effort;
-        // The same-target cache keys on parsed identity, so a mutated effort needs a token bump.
-        invalidateSameTargetRequest();
-        // A combo keeps the refusal, so an unfunded rung still reaches combo failover as the original 400.
-        const refusal = options.comboAttempt ? await retainFailureResponse() : undefined;
-        if (!refusal) try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-        const result = await rebuildAndRefetch("reasoning-effort-downgrade", undefined, refusal);
-        if ("failed" in result) {
-          if (result.failed !== refusal) return result.failed;
-          break recovery;
-        }
-        if (refusal) try { void refusal.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-        upstreamResponse = result;
-        continue recovery;
-      }
+
+      const effortDowngradeOutcome = await retryReasoningEffortDowngrade(
+        upstreamResponse,
+        requestContext,
+        requestState,
+        transportState,
+        upstream,
+        reasoningEffortDowngradeGuard,
+        retainFailureResponse,
+        rebuildAndRefetch,
+      );
+      if (effortDowngradeOutcome.kind === "return") return effortDowngradeOutcome.response;
+      upstreamResponse = effortDowngradeOutcome.response;
+      if (effortDowngradeOutcome.kind === "break") break recovery;
+      if (effortDowngradeOutcome.kind === "continue") continue recovery;
       break;
     }
     if (!upstreamResponse.ok) {
@@ -1912,58 +1490,15 @@ export async function prepareAdapterExchange(
         // uses the same helper after its 413 block.
         return policyRefusal;
       }
-      if (!isFixedCodexAccount(admissionState.authCtx)) {
-        recordSubagentQuotaFailureForThreadSpawn(
-          req.headers,
-          subagentQuotaFailureModel,
-          upstreamResponse.status === 429 || upstreamResponse.status === 402
-            ? upstreamResponse.status
-            : `Provider error ${upstreamResponse.status}: ${redactSecretString(errorText.slice(0, 500))}`,
-          config,
-          requestState.subagentFallbackAccountId,
-        );
-      }
-      // The last pool account just refused on spent quota and recovery found no replacement:
-      // answer the usage limit now (#6991), so Codex stops instead of retrying into the local
-      // refusal that every later attempt meets until the first window reopens.
-      const poolUsageLimit = upstreamResponse.status === 429 && anthropicInstance && route.provider.authMode === "oauth"
-        ? anthropicRoutingFor(anthropicInstance).anthropicPoolUsageLimitAfterRefusal(Date.now(), transportState.anthropicRouteDecision, route.modelId)
-        : null;
-      // Combo children returned above; the flag is passed anyway so this site states the same rule.
-      if (poolUsageLimit) return anthropicPoolCooldownResponse(poolUsageLimit, { comboAttempt: options.comboAttempt, logCtx });
-      // Upstreams occasionally echo request details in error bodies — scrub token-shaped
-      // material before it reaches the client-facing error surface.
-      const upstreamRetryAfter = upstreamResponse.headers.get("retry-after");
-      const { normalized, message } = formatAdapterUpstreamFailure({
-        status: upstreamResponse.status,
+      return formatAdapterTerminalUpstreamErrorResponse(
+        upstreamResponse,
         errorText,
-        route,
-        upstreamRetryAfter,
-        denialMessage: fallback => antigravityDenial.message(route.modelId, fallback),
-        logCtx,
-      });
-      options.onCompactionRecoveryAdapterEvent?.({
-        type: "error", status: upstreamResponse.status,
-        errorType: normalized.type, code: normalized.code,
-        message: "Structured upstream failure observed before client formatting",
-      });
-      const retryAfter = normalized.cyberPolicy
-        ? undefined
-        : resolveClientRetryAfter({
-          status: upstreamResponse.status,
-          message,
-          upstreamRetryAfter,
-          includeDefault: !(transportState.anthropicPoolAccountId && classifyAnthropic429(upstreamResponse.headers) === "request-scoped-unknown"),
-        });
-      return carryPolicyCandidateRefusal(upstreamResponse, formatUpstreamFailureResponse(upstreamResponse, normalized.code,
-        upstreamResponse.status,
-        normalized.cyberPolicy ? (normalized.type ?? CYBER_POLICY_ERROR_CODE) : "upstream_error",
-        message,
-        {
-          ...(normalized.cyberPolicy ? { code: CYBER_POLICY_ERROR_CODE } : {}),
-          ...(retryAfter !== undefined ? { retryAfter } : {}),
-        },
-      ));
+        requestContext,
+        admissionState,
+        requestState,
+        transportState,
+        fallback => antigravityDenial.message(route.modelId, fallback),
+      );
     }
   }
 

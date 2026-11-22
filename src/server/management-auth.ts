@@ -67,6 +67,7 @@ import {
 import {
   authorizeGuiSessionRequest,
   issueGuiSession as issueGuiSessionFromState,
+  revokeGuiSessionByCredential,
   type GuiPairingGrantRecord,
   type GuiSessionBootstrap,
   type GuiSessionRecord,
@@ -338,10 +339,7 @@ export function createManagementSessionControl(state: ManagementAuthState): Mana
       if (!state.available) return false;
       const credential = requestManagementCredential(req);
       if (!credential) return false;
-      for (const token of state.sessions.keys()) {
-        if (equalSecret(credential, token)) return state.sessions.delete(token);
-      }
-      return false;
+      return revokeGuiSessionByCredential(state, credential);
     },
   };
 }

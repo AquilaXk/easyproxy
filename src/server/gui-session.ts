@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { EpxConfig } from "../types";
 import { canonicalGuiBrowserOrigin, standaloneGuiPairingOrigin } from "../lib/gui-pair-capability";
 import { authorizationCredential } from "../lib/authorization-scheme";
@@ -81,6 +81,7 @@ export const GUI_PAIRING_GRANT_RATE_WINDOW_MS = 60_000;
 const pairingGrantCreations = new WeakMap<GuiSessionState, number[]>();
 const pairingSourceAttempts = new WeakMap<GuiSessionState, Map<string, { failures: number; windowStartedAt: number }>>();
 const sessionDigestIndexes = new WeakMap<GuiSessionState, Map<string, string>>();
+const SESSION_INDEX_KEY = randomBytes(32);
 const PAIRING_SOURCE_WINDOW_MS = 10 * 60_000;
 const PAIRING_SOURCE_FAILURE_LIMIT = 10;
 const PAIRING_SOURCE_LIMIT = 1_024;
@@ -121,7 +122,7 @@ export function isRemoteGuiBrowserOriginAllowed(browserOrigin: string, config: E
 }
 
 function tokenDigest(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
+  return createHmac("sha256", SESSION_INDEX_KEY).update(token).digest("hex");
 }
 
 function getSessionDigestIndex(state: GuiSessionState): Map<string, string> {
@@ -136,14 +137,16 @@ function getSessionDigestIndex(state: GuiSessionState): Map<string, string> {
   return index;
 }
 
-function deleteSessionToken(state: GuiSessionState, token: string): void {
-  state.sessions.delete(token);
+/** Deletes a GUI session token and keeps its per-state digest index synchronized. */
+export function deleteGuiSessionToken(state: GuiSessionState, token: string): boolean {
+  const deleted = state.sessions.delete(token);
   sessionDigestIndexes.get(state)?.delete(tokenDigest(token));
+  return deleted;
 }
 
 function pruneExpired(state: GuiSessionState, now: number): void {
   for (const [token, session] of state.sessions) {
-    if (session.expiresAt <= now) deleteSessionToken(state, token);
+    if (session.expiresAt <= now) deleteGuiSessionToken(state, token);
   }
   for (const [digest, grant] of state.pairingGrants) {
     if (grant.expiresAt <= now) state.pairingGrants.delete(digest);
@@ -154,7 +157,7 @@ function evictOldestSession(state: GuiSessionState): void {
   while (state.sessions.size >= GUI_SESSION_LIMIT) {
     const oldest = state.sessions.keys().next().value as string | undefined;
     if (!oldest) return;
-    deleteSessionToken(state, oldest);
+    deleteGuiSessionToken(state, oldest);
   }
 }
 
@@ -472,6 +475,13 @@ function findSession(
   return equalSecret(credential, token) ? [token, session] : null;
 }
 
+/** Revokes a GUI session by presented credential using O(1) indexed lookup + constant-time verification. */
+export function revokeGuiSessionByCredential(state: GuiSessionState, credential: string): boolean {
+  const found = findSession(credential, state);
+  if (!found) return false;
+  return deleteGuiSessionToken(state, found[0]);
+}
+
 export function authorizeGuiSessionRequest(
   req: Request,
   config: EpxConfig,
@@ -484,11 +494,11 @@ export function authorizeGuiSessionRequest(
   if (!found) return { ok: false, reason: "missing" };
   const [token, session] = found;
   if (session.expiresAt <= now) {
-    deleteSessionToken(state, token);
+    deleteGuiSessionToken(state, token);
     return { ok: false, reason: "expired" };
   }
   if (session.localPairing && standaloneGuiPairingOrigin(config) !== session.serverOrigin) {
-    deleteSessionToken(state, token);
+    deleteGuiSessionToken(state, token);
     return { ok: false, reason: "server-origin" };
   }
   if (managementRequestOrigin(req, config) !== session.serverOrigin) {

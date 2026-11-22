@@ -63,7 +63,13 @@ import { spawnBindProbe, strictBindProbeScript } from "./bind-probe";
 import { withoutUpdateTeardownHandover, withUpdateTeardownHandover } from "./teardown-handover";
 import type { WorkerLaunchContext } from "./worker-launch";
 
-const RELEASE_NOTES_URL = "https://github.com/AquilaXk/easyproxy/releases/latest";
+import { RELEASE_NOTES_URL, sanitizePersistedUpdateJob, summarizeCommandOutput, withheldSummary } from "./job-output-sanitize";
+export { summarizeCommandOutput } from "./job-output-sanitize";
+import { awaitRestartedProxyHealthy, confirmPackageManagerExplicitRestart, confirmRestartedProxy, formatPortHolders, packageManagerSelfUpdateRestartEvidence, SERVICE_RECOVERY_HEALTH_MS } from "./job-restart-verify";
+export { npmSelfUpdateRestartEvidence, packageManagerSelfUpdateRestartEvidence, SERVICE_RECOVERY_HEALTH_MS } from "./job-restart-verify";
+import type { GuiUpdateWorkerIo, RestartIo, RestartProxyIdentity, StartUpdateJobDeps, UpdateCheckResult, UpdateJobState, UpdateJobStatus, UpdateWorkerProcess } from "./job-types";
+export type { GuiUpdateWorkerIo, RestartIo, RestartProxyIdentity, StartUpdateJobDeps, UpdateCheckResult, UpdateJobState, UpdateJobStatus } from "./job-types";
+
 const UPDATE_JOB_FILENAME = "update-job.json";
 const UPDATE_TIMEOUT_MS = 180_000;
 const RESTART_TIMEOUT_MS = 60_000;
@@ -72,64 +78,15 @@ const RESTART_TIMEOUT_MS = 60_000;
 // and launch a competing foreground proxy. Keep this below the update worker's 180s
 // ceiling while covering the measured probe plus bounded Windows setup work.
 const WINDOWS_SERVICE_REPAIR_TIMEOUT_MS = 150_000;
-const RESTART_HEALTH_TIMEOUT_MS = 30_000;
-const RESTART_STABILITY_WINDOW_MS = 15_000;
 /** Legacy active records did not persist a worker PID, so age is their only safe recovery signal. */
 export const UPDATE_JOB_LEGACY_STALE_MS = 10 * 60_000;
 /** How long update restart waits for the captured port to become bindable after stop. */
 export const RESTART_PORT_RECLAIM_MS = 30_000;
 
-export type UpdateJobStatus = "running" | "restarting" | "succeeded" | "failed";
-
-export interface UpdateCheckResult {
-  currentVersion: string;
-  latestVersion: string | null;
-  channel: Channel;
-  installer: Installer;
-  updateAvailable: boolean;
-  canUpdate: boolean;
-  command: string;
-  releaseNotesUrl: string;
-  reason?: string;
-}
-
-export interface UpdateJobState {
-  id: string;
-  status: UpdateJobStatus;
-  startedAt: string;
-  updatedAt: string;
-  currentVersion: string;
-  latestVersion: string | null;
-  channel: Channel;
-  installer: Installer;
-  restart: boolean;
-  command: string;
-  releaseNotesUrl: string;
-  log: string[];
-  pid?: number;
-  error?: string;
-  exitCode?: number | null;
-  signal?: string | null;
-  restarted?: boolean;
-}
-
 export class UpdateJobError extends Error {
   constructor(message: string, readonly status = 400, readonly code = "update_error") {
     super(message);
   }
-}
-
-interface UpdateWorkerProcess {
-  pid?: number;
-  unref(): void;
-  once(event: "error", listener: (error: Error) => void): unknown;
-}
-
-export interface StartUpdateJobDeps {
-  checkForUpdateFn: (channel: Channel) => UpdateCheckResult;
-  spawnWorkerFn: (jobId: string, channel: Channel, restart: boolean) => UpdateWorkerProcess;
-  isProcessAliveFn: (pid: number) => boolean;
-  nowMs: () => number;
 }
 
 const defaultCheckDeps: UpdateCheckDeps = {
@@ -236,136 +193,6 @@ export function updateJobPath(): string {
 function ensureJobDir(): void {
   const dir = getConfigDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-}
-
-/**
- * Describe external text without reproducing it.
- *
- * Use this wherever an `Error.message`, a vendor stream, or any string this module did not
- * compose would otherwise be interpolated into a persisted field. The result names the error's
- * TYPE and size — enough to tell a reader what class of failure occurred — and never its text,
- * which is where the paths and account names live.
- */
-function withheldSummary(error: unknown): string {
-  // `error.name` is writable, so it is external text like the message. A fixed classification
-  // is the only part of an unknown error we can state without repeating something we were
-  // handed: `new Error(...)` with `error.name = "Jane Doe"` was persisting the name verbatim.
-  const name = error instanceof Error ? "Error" : typeof error;
-  // NO MESSAGE TEXT, ever. An earlier version kept messages that carried no path, which sounds
-  // reasonable and is wrong: `spawn denied for Jane Doe` has no path in it and still names a
-  // person. There is no test on message CONTENT that separates a diagnostic from an identity,
-  // so the message does not cross this boundary at all.
-  const code = (error as { code?: unknown } | null)?.code;
-  // Only recognized codes — an arbitrary uppercase `error.code` can be attacker-shaped too.
-  const codeNote = typeof code === "string" && NPM_ERROR_CODES.has(code) ? ` ${code}` : "";
-  const text = error instanceof Error ? error.message : String(error ?? "");
-  // Node's own errors are structured the same way npm's output is: `syscall` and `errno` are
-  // named properties, not prose. Reading those gives a user the actual cause —
-  // `Error EACCES · syscall: mkdir · errno: -13` — without repeating a message that could name
-  // a person or a path. Both are shape-validated: a syscall is a short lowercase identifier and
-  // an errno is an integer, so neither can carry arbitrary text.
-  const parts = [`${name}${codeNote}`];
-  const syscall = (error as { syscall?: unknown } | null)?.syscall;
-  // Same explicit vocabulary as the npm field: a shape check accepts `janedoe`.
-  if (typeof syscall === "string" && POSIX_SYSCALLS.has(syscall)) parts.push(`syscall: ${syscall}`);
-  const errno = (error as { errno?: unknown } | null)?.errno;
-  if (typeof errno === "number" && Number.isInteger(errno)) parts.push(`errno: ${errno}`);
-  parts.push(`${Buffer.byteLength(text, "utf8")} bytes withheld`);
-  return parts.join(" · ");
-}
-
-/**
- * Decide, per field, whether the value is ours to keep.
- *
- * `log` and `error` are composed from this module's own templates; every place that would have
- * interpolated external text now calls `withheldSummary()` first, so the strings arriving here
- * are ours by construction. `releaseNotesUrl` is compared against the module constant rather
- * than pattern-matched, which is what stops a URL-shaped value from smuggling a path.
- * `command` is rendered from validated parts.
- */
-function brandOwnComposedText(key: string, value: unknown): unknown {
-  if (key === "releaseNotesUrl") {
-    return value === RELEASE_NOTES_URL ? value : "";
-  }
-  if (key === "command") {
-    // Render the command shape first, then apply the same path test as every other field. The
-    // renderer only understands space-separated arguments; anything else reaching this field is
-    // not a command we built and must not be trusted because of where it was stored.
-    return typeof value === "string" ? withholdIfPathBearing(renderSafeCommand(value)) : value;
-  }
-  // `log` and `error` are ours by construction, but a caller can still slip external text in by
-  // interpolating it. Withhold any value that carries an absolute path of any form — that is a
-  // narrow, unambiguous test on strings we already control, not the free-text classification
-  // that failed nine times.
-  if (typeof value === "string") return withholdIfPathBearing(value);
-  if (Array.isArray(value)) return value.map(item => (typeof item === "string" ? withholdIfPathBearing(item) : item));
-  return value;
-}
-
-/** Absolute paths cannot appear in text this module composed; if one does, it came from outside. */
-function withholdIfPathBearing(value: string): string {
-  const pathBearing = /[A-Za-z]:[\\/]/.test(value)          // C:\ or C:/
-    || /\\\\/.test(value)                                    // \\server\share
-    || /\\/.test(value)                                      // any backslash
-    || /~[\w.-]*\//.test(value)                              // ~/ or ~user/ anywhere
-    || /[%$][A-Za-z_]/.test(value)                           // %APPDATA%, $HOME
-    || /\/[\w.\-~%]+\//.test(value)                          // any two-segment path run
-    || /\b(?:Users|home|Documents and Settings|AppData|Profiles)\b/i.test(value)
-    || /\r?\n/.test(value);                                  // multi-line vendor output
-  if (!pathBearing) return value;
-  return `<withheld: ${Buffer.byteLength(value, "utf8")} bytes, may contain local paths>`;
-}
-
-/**
- * Keep a command readable without persisting the launcher path it contains.
- *
- * The real npm worker command is `node /Users/<name>/.../bin/epx.mjs update --tag latest`, so
- * the account name is inside it by construction. Absolute path arguments are replaced with a
- * placeholder and everything else — the binary name, the flags, the tag — is kept, which is the
- * part a reader actually needs.
- */
-function renderSafeCommand(value: string): string {
-  if (!value) return value;
-  // Rebuild from a recognized shape rather than filtering the string we were handed. Content
-  // cannot distinguish `npm install Mary-Jane` — an account name — from a legitimate package
-  // argument, so anything that is not this exact shape is withheld by the caller's path test.
-  const parts = value.trim().split(/\s+/);
-  const tool = parts[0] === "$" ? parts[1] : parts[0];
-  if (tool !== undefined && /^(?:npm|bun|pnpm|yarn|node)$/.test(tool)) {
-    const rendered = parts.map(part =>
-      /^(?:[A-Za-z]:[\\/]|[\\/]|~|\\\\)/.test(part) ? "<path>" : part);
-    // Only fixed flags, our own package spec, and placeholders survive; a bare word that is not
-    // one of those is treated as unknown input and the whole value is withheld.
-    const allowed = rendered.every(part =>
-      part === "$" || part === "<path>"
-      || /^(?:npm|bun|pnpm|yarn|node)$/.test(part)
-      || /^-{1,2}[\w-]+$/.test(part)
-      || /^(?:install|add|update|i)$/.test(part)
-      || /^easyproxy(?:@[\w.\-]+)?$/.test(part)
-      || /^(?:latest|preview|next|beta)$/.test(part)
-      || /^\d[\w.\-]*$/.test(part));
-    if (allowed) return rendered.join(" ");
-  }
-  return `<withheld: ${Buffer.byteLength(value, "utf8")} bytes, unrecognized command shape>`;
-}
-
-/**
- * Fields that can carry free-form text and therefore need checking at the write boundary.
- *
- * The rest of the record is a closed vocabulary — statuses, channels, installers, versions, an
- * id, timestamps — so checking it only risks mangling values that were never a disclosure
- * route. Naming the risky fields keeps the boundary narrow and auditable.
- */
-const FREE_TEXT_JOB_FIELDS = new Set(["command", "error", "log", "releaseNotesUrl"]);
-
-/** Apply the per-field rule at the single point where a job reaches disk. */
-function sanitizePersistedUpdateJob(job: UpdateJobState): UpdateJobState {
-  return Object.fromEntries(
-    Object.entries(job).map(([key, item]) => [
-      key,
-      FREE_TEXT_JOB_FIELDS.has(key) ? brandOwnComposedText(key, item) : item,
-    ]),
-  ) as UpdateJobState;
 }
 
 function writeJob(job: UpdateJobState, authorizeMutation: UpdateMutationAuthorizer = () => false,
@@ -735,165 +562,6 @@ function runLoggedCommand(
   };
 }
 
-/**
- * Recognized npm/libc error codes, as an explicit set.
- *
- * A shape pattern like `E[A-Z]{3,}` is NOT a vocabulary: `C:\Users\ERROR\.npm` matches it, and
- * the summary then re-emits the username the withheld output was protecting. Only codes on this
- * list are surfaced, and only when they appear in npm's canonical `code <CODE>` position.
- */
-const NPM_ERROR_CODES = new Set([
-  "EACCES", "EPERM", "ENOENT", "EEXIST", "ENOTDIR", "EISDIR", "EMFILE", "ENFILE",
-  "ENOSPC", "EROFS", "EXDEV", "ELOOP", "ENAMETOOLONG", "ENOTEMPTY", "EBUSY",
-  "EAGAIN", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN",
-  "EPROTO", "ECONNABORTED", "EHOSTUNREACH", "ENETUNREACH", "EPIPE",
-  "E401", "E403", "E404", "E409", "E429", "E500", "E503",
-  "EINTEGRITY", "ERESOLVE", "ETARGET", "EPUBLISHCONFLICT", "ENEEDAUTH",
-  "EUSAGE", "EJSONPARSE", "EOTP", "EINVALIDTYPE", "ELIFECYCLE",
-  "ERR_SOCKET_TIMEOUT", "ERR_INVALID_ARG_TYPE", "ERR_MODULE_NOT_FOUND",
-]);
-
-/** npm prints `npm ERR! code EACCES`; anchor on that position rather than scanning free text. */
-const NPM_CODE_RECORD = /^\s*npm\s+ERR!\s+code\s+([A-Z][A-Z0-9_]{2,})\s*$/gm;
-
-/**
- * npm's failure output is STRUCTURED, not prose: `npm error <field> <value>`, one field per
- * line (`npm ERR!` on npm 9 and earlier). That is what makes a useful summary possible without
- * reproducing text — we can read named fields and keep the ones whose value cannot be a path.
- *
- * Fields kept, with a real example of each:
- *   code     E404, EACCES, ETARGET      the single most useful line for diagnosis
- *   syscall  mkdir, open, getaddrinfo   what npm was doing
- *   errno    -13                        the OS errno
- *   notarget No matching version ...    version-resolution explanation, no path
- *   404      404 Not Found - GET <url>  registry URL, no local path
- *
- * Deliberately NOT kept: `path`, `dest`, `file`, `stack`, and the bare `Error: ...` line —
- * every one of those is a filesystem path by definition. `A complete log of this run can be
- * found in: <path>` is dropped for the same reason.
- */
-const NPM_FIELD_LINE = /^\s*npm\s+(?:error|ERR!)\s+([a-z0-9]+)\s+(.*)$/gim;
-
-/**
- * POSIX syscall names npm actually reports. An explicit vocabulary, not a shape.
- *
- * `^[a-z][a-z0-9_]{1,20}$` accepts `janedoe`, which is the whole problem: allowlisting the
- * FIELD NAME while leaving its VALUE free-form just moves the leak one level in.
- */
-const POSIX_SYSCALLS = new Set([
-  "open", "openat", "close", "read", "write", "stat", "lstat", "fstat", "mkdir", "rmdir",
-  "unlink", "rename", "symlink", "readlink", "link", "chmod", "chown", "utimes", "access",
-  "scandir", "readdir", "copyfile", "realpath", "futime", "ftruncate", "fchmod", "fchown",
-  "connect", "getaddrinfo", "getnameinfo", "socket", "bind", "listen", "accept", "send",
-  "recv", "shutdown", "spawn", "spawnSync", "kill", "watch", "lchown", "lutimes", "mkdtemp",
-]);
-
-/** Per-field value contracts. A field is only kept when its value satisfies its own rule. */
-const KNOWN_REGISTRY_HOSTS = new Set([
-  "registry.npmjs.org",
-  "registry.yarnpkg.com",
-  "registry.npmmirror.com",
-  "npm.pkg.github.com",
-]);
-
-const NPM_FIELD_VALIDATORS: Record<string, (value: string) => string | null> = {
-  // A recognized code, nothing else.
-  code: value => (NPM_ERROR_CODES.has(value) ? value : null),
-  // A known syscall name, nothing else.
-  syscall: value => (POSIX_SYSCALLS.has(value) ? value : null),
-  // An integer, rendered from the parsed number so the original string never passes through.
-  errno: value => (/^-?\d{1,10}$/.test(value) ? String(Number(value)) : null),
-  // Version resolution: the FACT only.
-  //
-  // Two narrowing attempts failed here and the second is the instructive one. Extracting any
-  // `name@version` also matched `jane.doe@example.com`. Pinning the NAME to our own package
-  // still left the VERSION free: `easyproxy@99.99.99-JaneDoe` is a valid-looking
-  // spec, and a semver prerelease identifier can encode anything — the same lesson the
-  // `/healthz` version taught in round 13.
-  //
-  // There is no trusted resolved version available at this call site, so the spec is not
-  // rendered at all. `code: ETARGET` plus this fact already tells a user their requested
-  // version does not exist, which is the diagnostic that matters.
-  notarget: () => "no matching version",
-};
-
-/**
- * HTTP status lines carry a registry URL. Render it from parsed parts rather than echoing the
- * line: a URL can embed userinfo (`https://Jane:pw@host/`) or a path, and the raw text also
- * defeats the path test because `https:/` looks like a drive letter.
- */
-function npmHttpStatusValue(field: string, value: string): string | null {
-  const url = /\bhttps?:\/\/[^\s]+/.exec(value)?.[0];
-  if (!url) return `HTTP ${field}`;
-  let parsed: URL;
-  try { parsed = new URL(url); } catch { return `HTTP ${field}`; }
-  // Only hosts we can name in advance. A shape check (`^[\w.-]+$`) accepts
-  // `janedoe.example`, a numeric host, or a punycode host — an arbitrary hostname is a
-  // disclosure channel, not a diagnostic. Knowing it was the public registry versus "some
-  // other host" is the part that helps, and that fits in an allowlist.
-  return KNOWN_REGISTRY_HOSTS.has(parsed.hostname.toLowerCase()) && !parsed.username && !parsed.password
-    ? `HTTP ${field} from ${parsed.hostname.toLowerCase()}`
-    : `HTTP ${field}`;
-}
-
-/**
- * Extract the diagnostic fields npm names explicitly.
- *
- * Each kept value still passes `withholdIfPathBearing` before it is used: a registry URL is
- * fine, but `syscall` and friends are only safe by convention, and a convention is not a
- * guarantee. Values are length-capped so a hostile responder cannot pad the record.
- */
-function npmDiagnosticFields(text: string): string[] {
-  const seen = new Map<string, string>();
-  for (const match of text.matchAll(NPM_FIELD_LINE)) {
-    const field = match[1]!.toLowerCase();
-    const value = match[2]!.trim();
-    if (seen.has(field) || !value || value.length > 160) continue;
-    // Every kept field is RENDERED from a validated value, never echoed. Allowlisting the field
-    // name alone left the value free-form, so `npm error syscall janedoe` walked straight
-    // through — the field was recognized and the value was never checked against anything.
-    const validate = NPM_FIELD_VALIDATORS[field];
-    const rendered = validate
-      ? validate(value)
-      : (/^(?:404|401|403|409|429)$/.test(field) ? npmHttpStatusValue(field, value) : null);
-    if (rendered === null) continue;
-    seen.set(field, rendered);
-  }
-  return [...seen].map(([field, value]) => `${field}: ${value}`);
-}
-
-/**
- * Build a structured, path-free summary of a command's result.
- *
- * Only three things cross the boundary: how the process ended, how much it printed, and any
- * recognized error codes. None of those can carry a filesystem path or an account name.
- */
-export function summarizeCommandOutput(
-  stdout: string,
-  stderr: string,
-  status: number | null,
-  signal: NodeJS.Signals | null,
-): string | null {
-  if (!stdout && !stderr && status === 0) return null;
-
-  const parts: string[] = [];
-  parts.push(signal ? `terminated by ${signal}` : `exit ${status ?? "null"}`);
-
-  // Read npm's own named fields rather than reproducing its text — `code: E404 ·
-  // 404: ...` tells a user exactly what happened and none of it can be a local path.
-  const fields = npmDiagnosticFields(`${stderr}\n${stdout}`);
-  if (fields.length > 0) parts.push(...fields);
-
-  const bytes = Buffer.byteLength(stdout, "utf8") + Buffer.byteLength(stderr, "utf8");
-  if (bytes > 0) {
-    parts.push(fields.length > 0
-      ? `${bytes} bytes of full output withheld`
-      : `${bytes} bytes of output withheld (no recognized diagnostic fields)`);
-  }
-
-  return parts.join(" · ");
-}
-
 /** Clear wrappers, stale state and verified epx listeners before a pinned spawn. */
 function preparePortForPinnedStart(
   job: UpdateJobState, port: number,
@@ -943,108 +611,8 @@ function spawnDetachedStart(job: UpdateJobState, installer: Installer, port: num
     line => updateJob(job, {}, line), withheldSummary);
 }
 
-/** Identity snapshot used to prove a package-manager self-update replaced the pre-update process. */
-export interface RestartProxyIdentity {
-  pid: number | null;
-  version?: string;
-}
-
-/** Test seam: the wait/spawn pair is injectable so the restart path is verifiable. */
-export interface RestartIo {
-  waitForPort?: typeof reclaimListenPort;
-  spawnStart?: (job: UpdateJobState, installer: Installer, port?: number, launcher?: string) => void;
-  /** The package launcher verified after a pnpm group switch or rollback. */
-  packageLauncherPathFn?: () => string;
-  /** Exercise pinned-start retries without spawning, reclaiming, or killing real processes. */
-  spawnDetachedStartFn?: typeof spawnDetachedStart;
-  preparePortForPinnedStartFn?: typeof preparePortForPinnedStart;
-  waitForGhostListenClearFn?: typeof waitForGhostListenClear;
-  killProxyFn?: KillProxy;
-  serviceInstalledFn?: () => boolean;
-  serviceHomeAuthorityFn?: UpdateServiceHomeInspector;
-  serviceHomeBaseline?: ReturnType<UpdateServiceHomeInspector>; // Worker delegation pins its original authority.
-  /** Windows service stop before a restart; an explicit false aborts the restart (#7771). */
-  stopServiceWrappersFn?: (authorizeMutation: UpdateMutationAuthorizer) => boolean | void | Promise<boolean | void>;
-  readPidFn?: typeof readPid;
-  /**
-   * After a service reinstall exits 0, only trust the service path when this is true.
-   * Defaults to {@link isServiceViable} — installed-but-stale assets must fall through
-   * to a direct proxy start so dashboard updates never leave /healthz dead.
-   */
-  serviceViableFn?: () => boolean;
-  /**
-   * Free the ownership-mutation lease before a service-manager-mediated start that
-   * cannot join it (#5760); wired by runUpdateRestartWithOwnershipLease.
-   */
-  releaseForServiceManagerFn?: () => void;
-  /** Re-acquire the lease for the direct-start fallthrough, then re-run the veto; a notice stops the restart. */
-  reacquireForDirectStartFn?: () => { readonly notice: string; readonly failed: boolean } | null;
-  restartServiceManagerFn?: ManagerRestartFn; // launchd/systemd restart before a managed direct fallback (#7043)
-  probeProxy?: (port: number, hostname?: string) => Promise<boolean>;
-  /** Richer /healthz read for update-correlated restart evidence (pid + version). */
-  probeProxyIdentity?: (port: number, hostname?: string) => Promise<RestartProxyIdentity | null>;
-  /** Override the /healthz appearance window (default {@link RESTART_HEALTH_TIMEOUT_MS}). */
-  healthTimeoutMs?: number;
-  /**
-   * Override the window for deciding whether a service-managed restart actually
-   * served (default {@link SERVICE_RECOVERY_HEALTH_MS}). Distinct from
-   * {@link healthTimeoutMs}, which is the FINAL /healthz appearance window consumed
-   * by awaitRestartedProxyHealthy: this one only chooses whether to ALSO attempt a
-   * direct start, so coupling them would let a test tightening one silently retune
-   * the other.
-   */
-  serviceHealthTimeoutMs?: number;
-  sleepMs?: (ms: number) => Promise<void>;
-  now?: () => number;
-  /** Test seam — defaults to process.platform so the Windows-only branch is reachable off Windows. */
-  platform?: NodeJS.Platform;
-  /** Service-mode install/reinstall command (defaults to spawnSync via runLoggedCommand). */
-  runService?: (
-    job: UpdateJobState,
-    bin: string,
-    args: string[],
-    timeoutMs: number,
-  ) => { status: number | null; signal?: NodeJS.Signals | null; timedOut?: boolean };
-  /** Override the explicit restart path (used by finishGuiUpdateRestart tests). */
-  restartAfterUpdateFn?: (
-    job: UpdateJobState,
-    captured?: { port: number; hostname: string; oldPid?: number },
-    io?: RestartIo,
-  ) => Promise<false | void | "unsupervised">;
-  /**
-   * PIDs currently LISTENing on the captured port. Used to widen the post-update
-   * kill allowlist beyond the pre-update PID (Windows often leaves a respawned
-   * epx child that would otherwise be treated as a protected listener).
-   */
-  listListenPidsFn?: (port: number) => number[];
-  /**
-   * Full listen-PID scan (ok/fail). When omitted, {@link scanListenPids} is used
-   * so a probe failure is not mistaken for "no listeners".
-   */
-  scanListenPidsFn?: (port: number) => ListenPidScan;
-  /** Identity check for listeners discovered via {@link listListenPidsFn}. */
-  verifyEpxFn?: (pid: number) => number | null;
-  /** Liveness check when deciding whether a reclaim timeout still has live holders. */
-  isAliveFn?: (pid: number) => boolean;
-}
-
-/**
- * Health window for deciding whether a service-managed restart served, before
- * falling back to a direct start. Deliberately shorter than the final verdict
- * window: being wrong here costs one extra start attempt; being wrong the other way
- * leaves the user with no proxy at all.
- *
- * It runs AFTER the child's own 20s install probe, so a reinstall that exits 0 but
- * never serves spends up to 45s before the fallback — inside the 60s restart budget.
- */
-export const SERVICE_RECOVERY_HEALTH_MS = 25_000;
-
 /**
  * Whether the reinstalled service actually produced a listener on the captured target.
- *
- * Not a duplicate of the child's own check: since WP2 the child asserts the port on
- * macOS/Linux, but Windows still reports success from registration alone, a flapping
- * supervisor can satisfy a single probe, and the child may be a CLI older than that
  * change. `isServiceViable()` cannot see any of those — it reads registration state.
  */
 async function serviceRestartServed(
@@ -1401,25 +969,7 @@ async function restartAfterUpdate(
   return fallback;
 }
 
-/** Compact listen-holder summary for update-job logs when reclaim fails. */
-function formatPortHolders(
-  port: number,
-  listPids: (port: number) => number[],
-  verifyEpx: (pid: number) => number | null,
-  allow: number[],
-): string {
-  const allowSet = new Set(allow);
-  const holders = listPids(port).map(pid => {
-    const tags = [
-      verifyEpx(pid) === pid ? "epx" : "foreign",
-      allowSet.has(pid) ? "allow" : "deny",
-      isProcessAlive(pid) ? "live" : "dead",
-    ];
-    return `${pid}(${tags.join(",")})`;
-  });
-  return `holders=[${holders.join(", ") || "none"}] allow=[${allow.join(", ") || "none"}]`;
-}
-
+/** Compact listen-holder summary helper lives in ./job-restart-verify.ts. */
 /** Exposed for tests: drives the non-service restart path with injected io. */
 export function restartAfterUpdateForTests(
   job: UpdateJobState,
@@ -1429,118 +979,12 @@ export function restartAfterUpdateForTests(
   return restartAfterUpdate(job, captured, io);
 }
 
-function restartFailureHint(port: number, installer: Installer): string {
-  const reinstall = installer === "pnpm"
-    ? "pnpm add -g --allow-build=bun easyproxy"
-    : installer === "bun"
-      ? "bun add -g easyproxy"
-      : installer === "source"
-        ? "git pull && bun install"
-        : "npm install -g --allow-scripts=bun easyproxy";
-  return `Update installed, but the restarted proxy did not stay healthy on port ${port}. `
-    + `Try 'epx start --port ${port}'. `
-    + "If the update log shows bun postinstall or EPERM warnings, "
-    + `reinstall with '${reinstall}'.`;
-}
-
-type AwaitHealthyResult =
-  | { ok: true }
-  | { ok: false; reason: "timeout" | "flapped" };
-
-/**
- * Wait for an identity-checked /healthz on the captured listen target, then require a short
- * stability window. Soft: never marks the job failed (callers decide whether to fail or retry).
- */
-async function awaitRestartedProxyHealthy(
-  job: UpdateJobState,
-  captured: { port: number; hostname: string },
-  io: RestartIo = {},
-): Promise<AwaitHealthyResult> {
-  // Fresh post-update starts are busy with catalog sync / OAuth; a single 750ms
-  // /healthz miss must not fail the job. Use a longer probe and tolerate brief blips.
-  const probe = io.probeProxy ?? (async (port: number, hostname?: string) => (
-    !!(await proxyIdentityAt(port, { hostname }, { timeoutMs: 2_000, attempts: 3 }))
-  ));
-  const sleep = io.sleepMs ?? (async (ms: number) => {
-    await new Promise(resolve => setTimeout(resolve, ms));
-  });
-  const now = io.now ?? (() => Date.now());
-  const port = captured.port;
-  const hostname = captured.hostname;
-  const startDeadline = now() + (io.healthTimeoutMs ?? RESTART_HEALTH_TIMEOUT_MS);
-  /** Consecutive failed probes before the stability window counts as a flap. */
-  const stabilityMissLimit = 3;
-
-  while (true) {
-    // Always make one identity-aware probe at or after the boundary. A replacement
-    // becoming healthy on the final tick must not be mistaken for a timeout.
-    const finalProbe = now() >= startDeadline;
-    if (await probe(port, hostname)) {
-      updateJob(job, {}, `Proxy reported healthy on ${hostname}:${port}; confirming it stays up...`);
-      const stableUntil = now() + RESTART_STABILITY_WINDOW_MS;
-      let misses = 0;
-      while (now() < stableUntil) {
-        if (await probe(port, hostname)) {
-          misses = 0;
-        } else {
-          misses += 1;
-          if (misses >= stabilityMissLimit) {
-            updateJob(job, {}, `Proxy became unhealthy on ${hostname}:${port} during the stability window.`);
-            return { ok: false, reason: "flapped" };
-          }
-        }
-        await sleep(500);
-      }
-      updateJob(job, {}, `Proxy stayed healthy for ${Math.trunc(RESTART_STABILITY_WINDOW_MS / 1000)}s after restart.`);
-      return { ok: true };
-    }
-    if (finalProbe) break;
-    await sleep(Math.min(250, Math.max(0, startDeadline - now())));
-  }
-
-  return { ok: false, reason: "timeout" };
-}
-
-/**
- * Confirm that the detached/service restart really came back and stayed up. The GUI worker
- * used to mark success immediately after spawning the new process, which hid Windows cases
- * where npm left the bundled Bun runtime half-updated and the restarted proxy died seconds
- * later. A healthy /healthz must appear, then remain healthy for one short stability window.
- */
-async function confirmRestartedProxy(
-  job: UpdateJobState,
-  captured: { port: number; hostname: string },
-  io: RestartIo = {},
-): Promise<boolean> {
-  /* [Decision Log]
-  - 목적과 의도: GUI update job이 detached restart 요청만 보고 성공 처리하지 않도록, 실제 프록시 복귀 여부를 확인한다.
-  - 기존 구현 및 제약 조건: update-job.json은 probeSpawn/service reinstall 직후 `succeeded`로 끝났고, Windows npm/Bun 교체 실패처럼 몇 초 후 죽는 재시작을 잡지 못했다.
-  - 검토한 주요 대안: (1) 포트 점유만 확인 — 외부 프로세스/죽기 직전 프로세스를 성공으로 오인할 수 있다. (2) 무기한 /healthz 폴링 — UX가 느려지고 worker 종료 시점이 불명확하다. (3) 짧은 healthy 등장 + 안정성 창 확인 — 실제 복귀를 확인하면서도 대기 시간을 제한할 수 있다.
-  - 선택한 방식: identity-aware /healthz probe가 일정 시간 안에 나타나고, 추가 안정성 창 동안 유지되는지 확인한다.
-  - 다른 대안 대신 이 방식을 선택한 이유: GUI는 "업데이트가 설치됐지만 재시작은 실패"를 분리해 알려줘야 하며, 이 방식이 가장 적은 오탐으로 그 경계를 만든다.
-  - 장점, 단점 및 영향: 장점은 silent restart failure가 update-job 상태로 드러난다는 점이다. 단점은 설정상 성공 판정 창이 30초 도착 + 15초 안정성으로 늘어나고 경계 probe 지연이 추가될 수 있다는 점이며, 대신 실제 복귀를 더 정확히 반영한다.
-  */
-  const result = await awaitRestartedProxyHealthy(job, captured, io);
-  if (result.ok) return true;
-  const port = captured.port;
-  const hostname = captured.hostname;
-  const error = result.reason === "flapped"
-    ? `proxy restart became unhealthy on ${hostname}:${port}`
-    : `proxy restart never became healthy on ${hostname}:${port}`;
-  updateJob(job, {
-    status: "failed",
-    restarted: false,
-    error,
-  }, restartFailureHint(port, job.installer));
-  return false;
-}
-
 export function confirmRestartAfterUpdateForTests(
   job: UpdateJobState,
   captured: { port: number; hostname: string },
   io: RestartIo,
 ): Promise<boolean> {
-  return confirmRestartedProxy(job, captured, io);
+  return confirmRestartedProxy(job, captured, io, updateJob);
 }
 
 async function defaultProbeProxyIdentity(
@@ -1566,58 +1010,6 @@ async function defaultProbeProxyIdentity(
     return null;
   }
 }
-
-/**
- * Health alone is not enough to skip the GUI worker restart: a surviving pre-update
- * process is still identity-healthy. Require update-correlated evidence — a new PID
- * when the pre-update PID was captured, and/or /healthz reporting the job's target
- * version when PID evidence is unavailable.
- */
-export function packageManagerSelfUpdateRestartEvidence(
-  job: Pick<UpdateJobState, "latestVersion">,
-  captured: { oldPid?: number },
-  identity: RestartProxyIdentity | null,
-): { ok: true; detail: string } | { ok: false; reason: string } {
-  if (!identity) return { ok: false, reason: "could not read proxy identity" };
-
-  const oldPid = typeof captured.oldPid === "number" && captured.oldPid > 0
-    ? captured.oldPid
-    : undefined;
-  const livePid = typeof identity.pid === "number" && identity.pid > 0 ? identity.pid : null;
-  const expected = typeof job.latestVersion === "string" && job.latestVersion.length > 0
-    ? job.latestVersion
-    : null;
-  const versionMatches = expected !== null && identity.version === expected;
-
-  if (oldPid !== undefined) {
-    if (livePid === oldPid) {
-      return { ok: false, reason: "still the pre-update PID" };
-    }
-    if (livePid !== null) {
-      if (expected !== null && identity.version && identity.version !== expected) {
-        // Never echo the REPORTED version: `/healthz` is answered by whatever holds the port,
-        // and `2.7.41-JaneDoe` is valid semver. Say that it mismatched, and name only the
-        // version we expected — which is ours.
-        return { ok: false, reason: `new pid but reported version did not match expected ${expected}` };
-      }
-      return { ok: true, detail: `pid changed ${oldPid}→${livePid}` };
-    }
-    // Pre-update PID known but healthz omitted pid — only accept matching target version.
-    // On a match the reported value equals `expected`, so render the trusted one.
-    if (versionMatches) return { ok: true, detail: `version ${expected}` };
-    return { ok: false, reason: "no PID in healthz and version did not match the update target" };
-  }
-
-  if (versionMatches) return { ok: true, detail: `version ${expected}` };
-  if (expected !== null && identity.version && identity.version !== expected) {
-    return { ok: false, reason: `reported version did not match expected ${expected}` };
-  }
-  return { ok: false, reason: "no pre-update PID capture and no expected-version match" };
-}
-
-// Kept as a compatibility export for callers and existing integrations that used the
-// original npm-specific name before pnpm became a supported package-manager path.
-export const npmSelfUpdateRestartEvidence = packageManagerSelfUpdateRestartEvidence;
 
 /**
  * Post-install restart for the GUI worker.
@@ -1667,13 +1059,9 @@ export async function finishGuiUpdateRestart(
         updateJob(job, {}, `${installer} self-update did not leave a live listener; performing explicit restart...`);
       } else {
         if (!scan.ok) {
-          updateJob(
-            job,
-            {},
-            `Listener scan inconclusive after ${installer} self-update; probing /healthz before deciding on explicit restart...`,
-          );
+          updateJob(job, {}, `Listener scan inconclusive after ${installer} self-update; probing /healthz before deciding on explicit restart...`);
         }
-        const already = await awaitRestartedProxyHealthy(job, captured, io);
+        const already = await awaitRestartedProxyHealthy(job, captured, io, updateJob);
         if (already.ok) {
           const identity = await (io.probeProxyIdentity ?? defaultProbeProxyIdentity)(
             captured.port,
@@ -1681,18 +1069,10 @@ export async function finishGuiUpdateRestart(
           );
           const evidence = packageManagerSelfUpdateRestartEvidence(job, captured, identity);
           if (evidence.ok) {
-            updateJob(
-              job,
-              {},
-              `Proxy already healthy on ${captured.hostname}:${captured.port} after ${installer} self-update (${evidence.detail}); skipping redundant restart.`,
-            );
+            updateJob(job, {}, `Proxy already healthy on ${captured.hostname}:${captured.port} after ${installer} self-update (${evidence.detail}); skipping redundant restart.`);
             return true;
           }
-          updateJob(
-            job,
-            {},
-            `${installer} self-update left a healthy proxy but ${evidence.reason}; performing explicit restart...`,
-          );
+          updateJob(job, {}, `${installer} self-update left a healthy proxy but ${evidence.reason}; performing explicit restart...`);
         } else {
           updateJob(job, {}, `${installer} self-update did not leave a healthy proxy; performing explicit restart...`);
         }
@@ -1703,96 +1083,14 @@ export async function finishGuiUpdateRestart(
   const restarted = await restartFn(job, captured, io);
   if (restarted === false) return false;
   // Bun/source: health alone remains enough unless a richer identity probe is supplied.
-  const confirm = !usesNodeLauncher(installer) && !io.probeProxyIdentity ? confirmRestartedProxy : confirmPackageManagerExplicitRestart;
-  const confirmed = await confirm(job, captured, io);
+  const confirmExplicit = !usesNodeLauncher(installer) && !io.probeProxyIdentity
+    ? () => confirmRestartedProxy(job, captured, io, updateJob)
+    : () => confirmPackageManagerExplicitRestart(job, captured, io, updateJob, defaultProbeProxyIdentity);
+  const confirmed = await confirmExplicit();
   if (confirmed && restarted === "unsupervised") updateJob(job, ...unsupervisedRestartFailure(captured.port)); // #7043
   return confirmed && restarted !== "unsupervised";
 }
 
-/**
- * After an explicit package-manager (or identity-aware) restart, require update-correlated
- * evidence — not merely a healthy EasyProxy listener. A no-op restart or a
- * failed port reclaim can leave the pre-update process on the captured port;
- * `confirmRestartedProxy` alone would treat that as success.
- */
-async function confirmPackageManagerExplicitRestart(
-  job: UpdateJobState,
-  captured: { port: number; hostname: string; oldPid?: number },
-  io: RestartIo = {},
-): Promise<boolean> {
-  const healthy = await awaitRestartedProxyHealthy(job, captured, io);
-  if (!healthy.ok) {
-    const port = captured.port;
-    const hostname = captured.hostname;
-    const error = healthy.reason === "flapped"
-      ? `proxy restart became unhealthy on ${hostname}:${port}`
-      : `proxy restart never became healthy on ${hostname}:${port}`;
-    updateJob(job, {
-      status: "failed",
-      restarted: false,
-      error,
-    }, restartFailureHint(port, job.installer));
-    return false;
-  }
-
-  const identity = await (io.probeProxyIdentity ?? defaultProbeProxyIdentity)(
-    captured.port,
-    captured.hostname,
-  );
-  const evidence = packageManagerSelfUpdateRestartEvidence(job, captured, identity);
-  if (!evidence.ok) {
-    updateJob(job, {
-      status: "failed",
-      restarted: false,
-      error: `proxy restart did not show update-correlated identity (${evidence.reason})`,
-    }, restartFailureHint(captured.port, job.installer));
-    return false;
-  }
-
-  updateJob(
-    job,
-    {},
-    `Proxy restart confirmed on ${captured.hostname}:${captured.port} (${evidence.detail}).`,
-  );
-  return true;
-}
-
-/**
- * Test seams for the GUI update worker.
- *
- * The cache pre-flight and the install/stop step were previously reached only through module
- * globals, so "the gate runs before the stop" could only be asserted by comparing source-string
- * positions — a test that stays green even if the call is unreachable. These make the ordering
- * observable: a failed pre-flight must leave `runCommand` untouched.
- */
-export interface GuiUpdateWorkerIo {
-  cachePreflightFn?: () => { ok: boolean; reason: string };
-  /** Force the resolved update target. A source checkout otherwise aborts before the update branch. */
-  checkForUpdateFn?: (channel: Channel) => ReturnType<typeof checkForUpdate>;
-  /** Bypass the registry integrity probe, which runs before the cache gate and needs network. */
-  integrityFn?: (version: string | null) => ReturnType<typeof checkUpdatePackageIntegrity>;
-  /** Override pnpm ownership discovery for an isolated worker test. */
-  resolvePnpmOwnerFn?: () => ReturnType<typeof resolveCurrentPnpmGlobalOwner>;
-  /** Resolve the launcher only after the pnpm update has verified its active group and shims. */
-  resolvePnpmActiveLauncherFn?: (owner: PnpmGlobalOwner) => string | null;
-  /** Restart seams used by focused worker tests; the verified launcher is always injected. */
-  restartIo?: RestartIo;
-  resolveOwnershipFn?: () => ServiceOwnershipResolution; // Defaults to the shared service install state.
-  serviceHomeAuthorityFn?: UpdateServiceHomeInspector;
-  launcherSupportsUpdateHomeFn?: (launcher: string, node: string) => boolean;
-  platform?: NodeJS.Platform; // Exercise the default Windows handoff without changing the host platform.
-  /** Isolated tray handoff plan for focused worker tests (default: the win32 tray handoff). */
-  trayHandoffFn?: (capturePlan?: Parameters<typeof defaultWorkerTrayHandoff>[0], authorizeMutation?: UpdateMutationAuthorizer) => ReturnType<typeof planWindowsTrayUpdate> | Promise<ReturnType<typeof planWindowsTrayUpdate>>;
-  /** Isolated tray command runner for focused worker tests (default: runLoggedCommand). */
-  trayCommandFn?: GuiUpdateWorkerIo["runCommandFn"];
-  runCommandFn?: (
-    job: UpdateJobState,
-    bin: string,
-    args: string[],
-    timeout: number,
-    env?: NodeJS.ProcessEnv,
-  ) => { status: number | null; signal: NodeJS.Signals | null };
-}
 export async function runGuiUpdateWorker(
   jobId: string,
   channel: Channel,

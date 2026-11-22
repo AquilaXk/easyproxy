@@ -1,19 +1,13 @@
 import { clientFacingModelLabel, type ClientFacingModelLabel } from "../../lib/error-destination";
-import { formatClientRetryAfter } from "../../lib/client-retry-after";
 import { conversationStateAccountId, releaseRequestOwnedMainOnOutcome, isKeyedRequestOwnedMain } from "../../codex/request-owned-affinity";
-import { CodexInstallationIdUnavailableError } from "../../codex/installation-id";
 import { MAIN_CODEX_ACCOUNT_ID } from "../../codex/account-id";
 import { isolateCodexPoolClientMetadata } from "../../codex/forward-transport-headers";
 import { captureAccountAutoPauseAttempt, wasAccountAutoPaused, wasPermanentAccountRefusal } from "../../oauth/account-auto-pause";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { captureAdmissionPolicy } from "../capture-admission-policy";
 import { createPhysicalSendReporter, rebindPhysicalSend } from "../../lib/request-execution-budget";
-import { hasResponseMediaType } from "../../lib/http-response-semantics";
 import { createInferenceSendBudget, fundChatGptRetryAttempts } from "../inference/context";
 import { unboundPoolSpendRefusalResponse } from "../workflow-refusal";
-import { capturePoolQuotaWriter } from "../../codex/account-store";
-import { join } from "node:path";
-import { rmSync } from "node:fs";
 import { previewXaiOauthWireModel } from "./core-normalize";
 import {
   admissionModelDeniedResponse, projectAdmissionModelDeniedLog,
@@ -21,81 +15,32 @@ import {
   assertRouteAllowedByScope,
   resolveAdmissionModelScope,
 } from "../admission-model-scope";
-import type { Server } from "bun";
-import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse, type ResponsesTerminalStatus } from "../../bridge";
-import {
-  getConfigPath,
-  getConfigDir,
-  multiAgentGuidanceEnabled,
-} from "../../config";
+import { formatErrorResponse } from "../../bridge";
 import { resolveProviderApiKey } from "../../providers/key-store";
 import { parseRequest } from "../../responses/parser";
-import { buildCompactV1Output, COMPACT_PROMPT, decodeCompactionSummary, extractCompactUserMessages } from "../../responses/compaction";
-import { applyReasoningRetention, appendRetentionNotice, type ReasoningRetentionResult } from "../../responses/reasoning-retention";
 import { FORWARD_HEADERS, sanitizeReasoningInputContent } from "../../adapters/openai-responses";
-import { isUnattendedAgyAcpHttpTurn } from "../../adapters/agy-acp/policy";
-import { agyAcpPreflightResponse } from "./agy-acp-preflight";
 import { repairUrlCitationAnnotations, stripProviderInputItemMetadata } from "../../adapters/openai-responses/request-strips";
-import { expandPreviousResponseInput, previousResponseProviderState, rememberResponseState } from "../../responses/state";
 import { repairLegacyDottedToolCallNames } from "../../responses/legacy-dotted-tool-name-repair";
 import { NoEligiblePolicyCandidateError, routeCompactionModel } from "../../router";
 import { evidenceFromBody } from "../../routing/request-evidence";
-import {
-  advanceComboAfterFailure,
-  comboDefaultEffort,
-  comboFailureDecision,
-  comboIdFromRawBody,
-  concreteComboRequestBody,
-  getCombo,
-  resolveComboId,
-  isComboTargetInCooldown,
-  NoAvailableComboTargetsError,
-  noteComboSuccess,
-  parseRetryAfterMs,
-  pickComboTarget,
-  targetKey,
-} from "../../combos";
-import { isInjectionDebugEnabled } from "../../lib/debug-settings";
-import { injectionDebugLog } from "../../lib/injection-debug-log";
-import { modelInList, namespacedToolName } from "../../types";
-import type { AdapterEvent, CodexAccountMode, EpxConfig, EpxParsedRequest, EpxProviderConfig, EpxProviderContinuationState, EpxUsage } from "../../types";
-import {
-  forceRefreshOAuthAccessSnapshot,
-  getOAuthCredentialApiBaseUrl,
-  getOAuthCredentialProjectId,
-  getValidAccessTokenSnapshot,
-  type OAuthAccessSnapshot,
-  UnsupportedOAuthProviderError,
-} from "../../oauth";
-import { buildWebSearchTool, planWebSearch, runWithWebSearch, shouldResolveOpenAiWebSearchSidecar } from "../../web-search";
-import { describeImagesInPlace, planVisionSidecar, shouldResolveOpenAiVisionSidecar, stripImagesInPlace } from "../../vision";
-import { createAdapterEventQueue, preflightAdapterEvents } from "../../adapters/run-turn-queue";
+import { resolveComboId } from "../../combos";
+import type { EpxConfig, EpxProviderConfig } from "../../types";
 import {
   applyCodexAuthContextToProvider,
   callerCodexWorkspaceAccountId,
   createCodexAuthDispatchGuard,
   unwrapUpstreamRetryEvidenceError,
-  CodexMainProfileDrainingError,
-  headersForCodexAuthContext,
   materializeCodexUpstreamAuthAsync,
-  isCodexAuthContextUsable,
   resolveCodexAuthContext,
   codexPoolAffinityKey,
   codexProbeLeaseId,
   codexTransientProbeGrant,
   codexProbeQuotaScope,
   releaseCodexAuthContextProbeLease,
-  stripCodexRuntimeProviderFields,
   type CodexAuthContext,
 } from "../../codex/auth-context";
+import type { NativeMainRefreshDependencies } from "../../codex/main-account";
 import {
-  forceRefreshMainAccountToken,
-  mainAccountTokenQuotaWriter,
-  type NativeMainRefreshDependencies,
-} from "../../codex/main-account";
-import {
-  formatCodexProviderForLog,
-  handOffThreadAffinityGeneration,
   recordCodexUpstreamOutcome,
   type CodexUpstreamOutcome,
 } from "../../codex/routing";
@@ -109,12 +54,6 @@ import {
   conversationCarriesUploadedFiles,
 } from "./account-change-state";
 import {
-  TokenRefreshError,
-  forceRefreshCodexPoolToken,
-  readCodexAccountRecord,
-} from "../../codex/account-store";
-import {
-  fetchWithResetRetry,
   fetchWithTransientRetry,
   applyUpstreamRecoveryInit,
   isNonReplayableResponse,
@@ -139,15 +78,13 @@ import {
 } from "../../codex/upstream-host-health";
 import {
   ForwardAdmissionCredentialError,
-  contextPrincipalIdOf,
   hasForwardableCodexBearer,
   resolveContextPrincipal,
   validateForwardAdmissionCredential,
 } from "../auth-cors";
 import type { DataPlaneAdmission } from "../auth-cors";
-import { listOpenAiForwardSidecarCandidates, resolveFirstUsableOpenAiSidecar, type ResolvedOpenAiForwardSidecar } from "../../providers/openai-sidecar";
 import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider, supportsNativeResponsesCompactEndpoint } from "../../providers/openai-tiers";
-import { buildResponsesTransport, copyResponsesClientMetadata } from "../../adapters/openai-responses/transport";
+import { buildResponsesTransport } from "../../adapters/openai-responses/transport";
 import { scrubEpxCompactionItems, stripCanonicalOnlyInputItems, stripCanonicalOnlyTopLevelFields, stripInternalChatMessageMetadataPassthrough } from "../../adapters/openai-responses/request-strips";
 import { dropResponsesReasoningInputItems } from "../../adapters/openai-responses/reasoning";
 import { requiresPlaintextReasoningReplay } from "../../adapters/openai-responses/passthrough";
@@ -163,7 +100,6 @@ import {
   isCodexReserveRequestEligible,
   CODEX_RESERVE_OPT_IN_REQUIRED_MESSAGE,
 } from "../../codex/loopback-target";
-import { slugsEquivalent } from "../../providers/slug-codec";
 import { decideTier, tierValueAfterDecision } from "../../providers/fastwire";
 import { fastPolicyForModel } from "../../providers/service-tier";
 import { parseFastOnlyRowId } from "../fast-row";
@@ -173,65 +109,39 @@ import {
   compactionRoutingKeepsProviderIdentity,
   type CompactionRoutingOverride,
 } from "./compaction-routing";
-import { isUsageDebugEnabled } from "../../usage/debug";
 import {
   readJsonRequestBody,
   resolveInboundBodyLimitBytes,
-  DecompressedBodyTooLargeError,
-  UnsupportedContentEncodingError,
 } from "../request-decompress";
-import { projectCapturedCustomToolPolicy, resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
-import { hasKeyPoolFailover, rotateProviderTransportOn429, selectProactiveApiKeyTransport, transientRetryPolicyFor } from "../../providers/key-failover";
+import { projectCapturedCustomToolPolicy } from "../adapter-resolve";
+import { rotateProviderTransportOn429, selectProactiveApiKeyTransport, transientRetryPolicyFor } from "../../providers/key-failover";
 import { sendSingleCompactRecovery, transientSendCapFor } from "./request-send-budget";
 import { distributedKeyPhysicalFetch, recordDistributedResponseFailure } from "../../providers/api-key-response-ownership";
 import { passiveKeyPhysicalFetch } from "../../providers/passive-key-observation";
 import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "../../providers/api-key-pause";
 import { providerAffinityGenerationIsCurrent, providerApiKeySelectionIsCurrent, resolveCurrentProviderApiKeyTransport } from "../../providers/api-key-selection";
 import { stampApiKeyAccountLabel } from "../../providers/label";
-import { shouldAttemptImageTierRetry } from "../image-retry";
 import { resolveProviderTransport } from "../../providers/xai-transport";
-import type { WsData } from "../ws-bridge";
-import { codexAccountSelectionForTurn, registerTurn, trackStreamLifetime, unregisterTurn } from "../lifecycle";
+import { codexAccountSelectionForTurn } from "../lifecycle";
 import type { AdmissionLease } from "../../lib/admission";
 import { redactSecretString } from "../../lib/redact";
 import { resolveConnectTimeoutMs } from "../../stall-timeout";
-import { CompactResponseTooLargeError, readCompactResponseBytes } from "./compact-response-body";
+import { readCompactResponseBytes } from "./compact-response-body";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import { isRateLimitOrQuotaFailureMessage } from "../../lib/errors";
-import { isProxyError } from "../../lib/client-error-body";
-import { WORKFLOW_LOCAL_REFUSAL_HEADER } from "../../lib/workflow-budget";
-import { upstreamErrorCode } from "./context-overflow";
-import { supportedLadderFor } from "../effort-policy";
 import {
-  catalogModelSupportsServiceTier,
   inspectResponseLogJson,
-  readConfiguredCodexServiceTier,
-  requestLogSpeedLabel,
-  usageFromResponsesPayload,
   type RequestLogContext,
 } from "../request-log";
 import { noteCredentialAttemptSend, sealCredentialRefusal } from "../credential-recovery-attempt";
 import type { AttemptRecoveryKind } from "../../usage/log";
-import {
-  consumeForInspection,
-  consumeForResponseLogMetadata,
-  markNativePassthroughSseResponse,
-  relaySseWithFailedTail,
-  relayWithAbort,
-  sanitizePassthroughHeaders,
-} from "../relay";
-import { hasResponsesItemIdRepair, relaySseWithResponsesItemIdRepair } from "../responses-item-id-repair";
-import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/catalog";
 import { codexAuthContextLogLabel } from "../../codex/account-label";
-import { rebindPoolCreditPolicy } from "../../codex/pool-credit-policy";
 import { clientCancelledResponse } from "./core-errors";
 
 import {
   codexAccountGatedCanonicalWireModel,
   decodeRequestErrorResponse,
-  handleResponses,
   preAuthUpstreamHostCircuitKey,
-  poolCredentialRefreshIncompleteResponse,
   shouldRetryCodexScopedQuotaOnAlternate,
   upstreamHostCircuitOpenResponse,
   usesCodexForwardPoolAuth,
@@ -239,99 +149,23 @@ import {
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel, safeOriginLabel, sendWithConnectionPolicy } from "./fetch-helpers";
 import { requestPacingOverloadResponse } from "./pacing-overload";
 import { shouldRetryCodexPoolAccountQuota, shouldRetryCodexPoolAccountTransient } from "./core-codex-account";
-import { mapCodexAuthContextErrorToResponse, nativeMainRefreshFailureResponse } from "./codex-auth-error";
-import { affinityLaneFromRequest, linkRequestSessionLane, reasoningReplayConversationIdFromResponsesRequest, sessionIdHeaderFromRequest, sessionLaneIdFromRequest } from "../request-log-conversation";
+import { mapCodexAuthContextErrorToResponse } from "./codex-auth-error";
+import { affinityLaneFromRequest, reasoningReplayConversationIdFromResponsesRequest, sessionIdHeaderFromRequest, sessionLaneIdFromRequest } from "../request-log-conversation";
 import { recallComboForLane } from "./combo-session-recall";
 import { OUTBOUND_SECRET_BLOCKED_MESSAGE, prepareCompactionBodyHygiene } from "../outbound-payload-hygiene";
 import { warnEagerCodexToolCatalog } from "./codex-tool-catalog";
+import { compactHandoffRoute, forgetCompactHandoffRoute } from "./compact-handoff-routes";
+import {
+  bufferCompactResponse,
+  refreshNativeMainCompactContext,
+  refreshPoolCompactContext,
+  resolveAlternateCompactContext,
+} from "./compact-context-recovery";
+import { runRoutedCompactTurn } from "./compact-routed";
 
 export { COMPACT_RESPONSE_MAX_BYTES } from "./compact-response-body";
-
-const COMPACT_HANDOFF_ROUTE_TTL_MS = 24 * 60 * 60_000;
-const COMPACT_HANDOFF_ROUTE_MAX_ENTRIES = 2_048;
-const COMPACT_HANDOFF_MODEL_MAX_LENGTH = 512;
-
-interface CompactHandoffRoute {
-  model: string;
-  lastUsedAt: number;
-}
-
-/**
- * The Codex client does not send its newly selected model on an automatic
- * previous-model compact request. Keep the last route that demonstrably compacted
- * this same thread so a quota-blocked previous model has one safe fallback target.
- */
-const compactHandoffRoutes = new Map<string, CompactHandoffRoute>();
-
-export function clearCompactHandoffRoutesForTests(): void {
-  compactHandoffRoutes.clear();
-}
-
-function pruneCompactHandoffRoutes(now: number): void {
-  for (const [key, entry] of compactHandoffRoutes) {
-    if (now - entry.lastUsedAt > COMPACT_HANDOFF_ROUTE_TTL_MS) compactHandoffRoutes.delete(key);
-  }
-  while (compactHandoffRoutes.size > COMPACT_HANDOFF_ROUTE_MAX_ENTRIES) {
-    const oldest = compactHandoffRoutes.keys().next().value;
-    if (typeof oldest !== "string") return;
-    compactHandoffRoutes.delete(oldest);
-  }
-}
-
-/**
- * The handoff map is process-global, so a caller-controlled lane header alone
- * cannot be the key: two authenticated clients sending the same lane header
- * would share one fallback route. Namespace the lane by the admitted principal.
- * A loopback or missing admission has no authenticated identity to bind this
- * cross-request state to, so it is ineligible rather than trusted.
- */
-function compactHandoffRouteKey(req: Request, admission: DataPlaneAdmission | undefined): string | null {
-  const lane = sessionLaneIdFromRequest(req.headers);
-  if (!lane || !admission || admission.kind === "loopback") return null;
-  // Fail closed rather than substituting a weaker identity. `keyId` survives a
-  // rotation and every identity-less environment admission would collapse into
-  // one bucket, which is the collision this key exists to prevent. Production
-  // admission always mints `contextPrincipalId` for configured and environment
-  // holders, so no real authenticated caller loses the route.
-  const principal = contextPrincipalIdOf(admission);
-  if (!principal) return null;
-  return `${principal}\u0000${lane}`;
-}
-
-function rememberCompactHandoffRoute(
-  req: Request,
-  admission: DataPlaneAdmission | undefined,
-  model: string,
-  now = Date.now(),
-): void {
-  const key = compactHandoffRouteKey(req, admission);
-  if (!key || model.length > COMPACT_HANDOFF_MODEL_MAX_LENGTH) return;
-  pruneCompactHandoffRoutes(now);
-  compactHandoffRoutes.delete(key);
-  compactHandoffRoutes.set(key, { model, lastUsedAt: now });
-  pruneCompactHandoffRoutes(now);
-}
-
-function forgetCompactHandoffRoute(req: Request, admission?: DataPlaneAdmission): void {
-  const key = compactHandoffRouteKey(req, admission);
-  if (key) compactHandoffRoutes.delete(key);
-}
-
-function compactHandoffRoute(
-  req: Request,
-  admission: DataPlaneAdmission | undefined,
-  previousModel: string,
-  now = Date.now(),
-): string | null {
-  const key = compactHandoffRouteKey(req, admission);
-  if (!key) return null;
-  pruneCompactHandoffRoutes(now);
-  const entry = compactHandoffRoutes.get(key);
-  if (!entry || entry.model === previousModel) return null;
-  compactHandoffRoutes.delete(key);
-  compactHandoffRoutes.set(key, { ...entry, lastUsedAt: now });
-  return entry.model;
-}
+export { clearCompactHandoffRoutesForTests } from "./compact-handoff-routes";
+export { bufferCompactResponse, compactResponseTooLargeError } from "./compact-context-recovery";
 
 export interface HandleResponsesCompactOptions {
   clientModelLabel?: ClientFacingModelLabel;
@@ -348,318 +182,6 @@ export interface HandleResponsesCompactOptions {
    * child then started over, so one compact could reach ten.
    */
   sendBudget?: RequestExecutionBudget;
-}
-
-export function compactResponseTooLargeError(): Response {
-  return new Response(JSON.stringify({
-    error: {
-      message: "Compact response exceeded 32 MiB",
-      type: "compact_response_too_large",
-      code: "compact_response_too_large",
-    },
-  }), { status: 502, headers: { "Content-Type": "application/json" } });
-}
-
-async function refreshNativeMainCompactContext(args: {
-  req: Request;
-  config: EpxConfig;
-  modelId?: string;
-  admission?: DataPlaneAdmission;
-  authCtx: CodexAuthContext;
-  provider: EpxProviderConfig;
-  codexAccountMode?: CodexAccountMode;
-  substituteMainCredential: boolean;
-  options: HandleResponsesCompactOptions;
-}): Promise<
-  | { ok: true; authCtx: CodexAuthContext; provider: EpxProviderConfig; headers: Headers }
-  | { ok: false; response: Response }
-> {
-  const { req, config, authCtx, provider, codexAccountMode, substituteMainCredential, options } = args;
-  if (authCtx.kind !== "main-pool") {
-    return { ok: false, response: formatErrorResponse(401, "authentication_error", "No native main credential to refresh") };
-  }
-  try {
-    const refreshed = await forceRefreshMainAccountToken(authCtx.accessToken, {
-      signal: req.signal,
-      ...(options.nativeMainRefreshDependencies ?? {}),
-    });
-    if (!refreshed) {
-      return { ok: false, response: formatErrorResponse(401, "authentication_error", "Codex main account needs reauthentication") };
-    }
-    const refreshedAuthCtx: CodexAuthContext = {
-      ...authCtx,
-      accessToken: refreshed.accessToken,
-      chatgptAccountId: refreshed.chatgptAccountId,
-      mainQuotaWriter: mainAccountTokenQuotaWriter(refreshed) ?? authCtx.mainQuotaWriter,
-    };
-    const refreshedProvider = applyCodexAuthContextToProvider(
-      stripCodexRuntimeProviderFields(provider),
-      refreshedAuthCtx,
-      codexAccountMode,
-    );
-    const headers = new Headers({ "content-type": "application/json" });
-    const selected = await materializeCodexUpstreamAuthAsync(req.headers, refreshedAuthCtx, {
-      admission: args.admission,
-      config,
-      modelId: args.modelId,
-      substituteMainCredential,
-      signal: req.signal,
-      nativeMainRefreshDependencies: options.nativeMainRefreshDependencies,
-    });
-    for (const name of FORWARD_HEADERS) {
-      const value = selected.get(name);
-      if (value !== null) headers.set(name, value);
-    }
-    const override = (refreshedProvider as { _codexAccountOverride?: { accessToken: string; chatgptAccountId: string } })._codexAccountOverride;
-    if (override) {
-      headers.set("authorization", `Bearer ${override.accessToken}`);
-      headers.set("chatgpt-account-id", override.chatgptAccountId);
-    }
-    return { ok: true, authCtx: refreshedAuthCtx, provider: refreshedProvider, headers };
-  } catch (error) {
-    if (req.signal.aborted) {
-      return { ok: false, response: formatErrorResponse(499, "client_cancelled", "Client cancelled compact request") };
-    }
-    return { ok: false, response: mapCodexAuthContextErrorToResponse(error, {
-      now: Date.now(),
-    }) ?? nativeMainRefreshFailureResponse(error) };
-  }
-}
-
-/** See the core counterpart: only a dead grant is terminal (#2887). */
-function isTerminalCompactPoolRefreshFailure(error: unknown): boolean {
-  return error instanceof TokenRefreshError && (error.reason === "revoked" || error.reason === "expired");
-}
-
-/**
- * Compact's forced refresh for an ordinary stored pool credential rejected with a
- * pre-stream 401. Mirrors {@link refreshNativeMainCompactContext} so the two 401
- * contracts on this endpoint cannot drift.
- */
-async function refreshPoolCompactContext(args: {
-  req: Request;
-  config: EpxConfig;
-  modelId?: string;
-  admission?: DataPlaneAdmission;
-  authCtx: CodexAuthContext & { kind: "pool" };
-  provider: EpxProviderConfig;
-  codexAccountMode?: CodexAccountMode;
-  /**
-   * Public selector for the account this refresh is for, when the request carried one. The
-   * caller has it and this function does not, because compact takes no `RouteResult` — which
-   * is the whole reason the refusal here used to be less specific than the one core returns
-   * for the identical failure.
-   */
-  codexAccountNamespace?: string;
-  substituteMainCredential: boolean;
-  options: HandleResponsesCompactOptions;
-}): Promise<
-  | { ok: true; authCtx: CodexAuthContext; provider: EpxProviderConfig; headers: Headers }
-  | { ok: false; response: Response; quarantine: boolean; quarantineGeneration?: number }
-> {
-  const { req, config, authCtx, provider, codexAccountMode, substituteMainCredential, options } = args;
-  const reauthResponse = () => formatErrorResponse(
-    401,
-    "authentication_error",
-    "Selected Codex account needs reauthentication",
-  );
-  try {
-    const refreshed = await forceRefreshCodexPoolToken(authCtx.accountId, {
-      rejectedGeneration: authCtx.generation,
-      rejectedAccessToken: authCtx.accessToken,
-      signal: req.signal,
-    });
-    // See the core counterpart: a successful response can rotate only the refresh grant,
-    // so the credential may already sit at a later generation than the one we rejected.
-    if (!refreshed.rotated) {
-      return { ok: false, quarantine: true, quarantineGeneration: refreshed.generation, response: reauthResponse() };
-    }
-    if (refreshed.selfRefreshed) {
-      handOffThreadAffinityGeneration(authCtx.accountId, authCtx.generation, refreshed.generation);
-    }
-    const refreshedAuthCtx: CodexAuthContext = {
-      ...authCtx,
-      accessToken: refreshed.accessToken,
-      chatgptAccountId: refreshed.chatgptAccountId,
-      generation: refreshed.generation,
-      poolQuotaWriter: capturePoolQuotaWriter(authCtx.accountId, refreshed),
-    };
-    // See the core counterpart: the spread dropped the WeakMap-bound credit policy, so a hold
-    // or opt-out landing during the refresh await would go unchecked on the copy.
-    rebindPoolCreditPolicy(authCtx, refreshedAuthCtx);
-    const refreshedProvider = applyCodexAuthContextToProvider(
-      stripCodexRuntimeProviderFields(provider),
-      refreshedAuthCtx,
-      codexAccountMode,
-    );
-    const headers = new Headers({ "content-type": "application/json" });
-    const selected = await materializeCodexUpstreamAuthAsync(req.headers, refreshedAuthCtx, {
-      admission: args.admission,
-      config,
-      modelId: args.modelId,
-      substituteMainCredential,
-      signal: req.signal,
-      nativeMainRefreshDependencies: options.nativeMainRefreshDependencies,
-    });
-    for (const name of FORWARD_HEADERS) {
-      const value = selected.get(name);
-      if (value !== null) headers.set(name, value);
-    }
-    const override = (refreshedProvider as { _codexAccountOverride?: { accessToken: string; chatgptAccountId: string } })._codexAccountOverride;
-    if (override) {
-      headers.set("authorization", `Bearer ${override.accessToken}`);
-      headers.set("chatgpt-account-id", override.chatgptAccountId);
-    }
-    return { ok: true, authCtx: refreshedAuthCtx, provider: refreshedProvider, headers };
-  } catch (error) {
-    if (isTerminalCompactPoolRefreshFailure(error)) {
-      return { ok: false, quarantine: true, response: reauthResponse() };
-    }
-    if (req.signal.aborted) {
-      return { ok: false, quarantine: false, response: clientCancelledResponse() };
-    }
-    // See the core counterpart: a policy refusal raised after a successful refresh maps like
-    // the admission path — a reset-bound 429, never a 503 mislabeled as a refresh failure.
-    const policyResponse = mapCodexAuthContextErrorToResponse(error, {
-      now: Date.now(),
-      accountSelector: args.codexAccountNamespace,
-    });
-    if (policyResponse) return { ok: false, quarantine: false, response: policyResponse };
-    return {
-      ok: false,
-      quarantine: false,
-      response: poolCredentialRefreshIncompleteResponse({
-        authCtx,
-        config,
-        accountSelector: args.codexAccountNamespace,
-      }),
-    };
-  }
-}
-
-
-
-/**
- * Resolve one eligible pool account other than `excludeAccountId`, and build everything
- * the alternate send needs. Returns null when no alternate exists or construction fails,
- * in which case the caller keeps the first account's rejection intact.
- *
- * Mirrors the auth resolution the native compact branch already does for the first
- * account, so the alternate is built the same way rather than through a second,
- * divergent path.
- */
-async function resolveAlternateCompactContext(args: {
-  req: Request;
-  config: EpxConfig;
-  route: { provider: EpxProviderConfig; codexAccountMode?: CodexAccountMode };
-  selectedModelId: string | undefined;
-  excludeAccountId: string | null;
-  turnAdmissionLease?: AdmissionLease;
-  admission?: DataPlaneAdmission;
-}): Promise<{ authCtx: CodexAuthContext; provider: EpxProviderConfig; headers: Headers } | { failure: Response } | null> {
-  const { req, config, route, selectedModelId, excludeAccountId, turnAdmissionLease } = args;
-  if (!route.codexAccountMode || !excludeAccountId) return null;
-  let authCtx: CodexAuthContext | undefined;
-  try {
-    authCtx = await resolveCodexAuthContext(req.headers, config, route.codexAccountMode, {
-      admission: args.admission,
-      ...(selectedModelId ? { modelId: selectedModelId } : {}),
-      excludeAccountId,
-      requestScopedMainCredential: hasForwardableCodexBearer(req.headers, config),
-      beginCodexAccountSelection: codexAccountSelectionForTurn(turnAdmissionLease),
-    });
-    // Caller-owned main has no Pool account id. It is still a valid one-shot alternate after a
-    // stored account fails; resolveCodexAuthContext already prevents returning it when main is the
-    // excluded credential.
-    if (authCtx.accountId === excludeAccountId) return null;
-    const provider = applyCodexAuthContextToProvider(route.provider, authCtx, route.codexAccountMode);
-    const headers = new Headers({ "content-type": "application/json" });
-    const selected = headersForCodexAuthContext(req.headers, authCtx, config, selectedModelId, args.admission);
-    for (const name of FORWARD_HEADERS) {
-      const value = selected.get(name);
-      if (value !== null) headers.set(name, value);
-    }
-    const override = (provider as { _codexAccountOverride?: { accessToken: string; chatgptAccountId: string } })._codexAccountOverride;
-    if (override) {
-      headers.set("authorization", `Bearer ${override.accessToken}`);
-      headers.set("chatgpt-account-id", override.chatgptAccountId);
-    }
-    if (provider.apiKey) headers.set("authorization", `Bearer ${resolveProviderApiKey(provider.apiKey)}`);
-    return { authCtx, provider, headers };
-  } catch (err) {
-    releaseCodexAuthContextProbeLease(authCtx);
-    if (err instanceof CodexInstallationIdUnavailableError) return { failure: formatErrorResponse(503, "server_busy", err.message) };
-    if (err instanceof CodexMainProfileDrainingError) {
-      // The native-main fence can start after account A has already rejected the
-      // request. Treat the now-fenced main profile as no alternate and preserve A's
-      // real rejection instead of replacing it with a synthetic drain response.
-      return null;
-    }
-    // No eligible alternate (all cooled, affinity expired, reauth needed) — the caller
-    // returns the first account's rejection unchanged, which is today's behavior.
-    return null;
-  }
-}
-
-/**
- * Headers a client needs to back off correctly after a pool rejection. The buffered
- * response is rebuilt from scratch, so anything not listed here is dropped — which is
- * what silently discarded `Retry-After` and the reset hints from a 429 before.
- * Deliberately narrow: no hop-by-hop headers, no content-length (the buffered body sets
- * its own), no cookies.
- */
-const COMPACT_PASSTHROUGH_HEADERS = [
-  "retry-after",
-  "x-codex-primary-reset-at",
-  "x-codex-secondary-reset-at",
-  "x-codex-tertiary-reset-at",
-  // A relayed 3xx keeps its Location so the client can follow it (#914).
-  "location",
-];
-
-function compactResponseHeaders(upstream: Response): Headers {
-  const headers = new Headers({ "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
-  for (const name of COMPACT_PASSTHROUGH_HEADERS) {
-    const value = upstream.headers.get(name);
-    if (value === null) continue;
-    if (name === "retry-after") {
-      // Retry advice leaves as an integer this proxy formats, never the upstream bytes.
-      const advice = formatClientRetryAfter(value);
-      if (advice !== undefined) headers.set(name, advice);
-    } else headers.set(name, value);
-  }
-  return headers;
-}
-
-export async function bufferCompactResponse(
-  upstream: Response,
-  signal: AbortSignal,
-  stallTimeoutSec?: number,
-  localUpstream?: boolean,
-): Promise<Response> {
-  const headers = compactResponseHeaders(upstream);
-  try {
-    if (signal.aborted) {
-      // No reader is attached yet. Cancellation must not wait for a broken source's cleanup.
-      void upstream.body?.cancel(signal.reason).catch(() => undefined);
-      return formatErrorResponse(499, "client_cancelled", "Client cancelled compact request");
-    }
-    if (!upstream.body) return new Response(null, { status: upstream.status, statusText: upstream.statusText, headers });
-    const bytes = await readCompactResponseBytes(upstream, signal, stallTimeoutSec);
-    if (signal.aborted) return formatErrorResponse(499, "client_cancelled", "Client cancelled compact request");
-    return new Response(bytes, { status: upstream.status, statusText: upstream.statusText, headers });
-  } catch (error) {
-    if (signal.aborted) return formatErrorResponse(499, "client_cancelled", "Client cancelled compact request");
-    if (error instanceof CompactResponseTooLargeError) return compactResponseTooLargeError();
-    if (error instanceof DOMException && error.name === "TimeoutError") {
-      return Response.json({ error: {
-        message: "Compact response body stalled",
-        type: "upstream_stall_timeout",
-        code: "upstream_stall_timeout",
-      } }, { status: 504 });
-    }
-    return formatErrorResponse(502, "upstream_error", "Failed to read compact response");
-  }
 }
 
 
@@ -1819,180 +1341,17 @@ export async function handleResponsesCompact(
     }
   }
 
-  // ROUTED model: run the v2 synthetic-compaction turn internally (appends COMPACT_PROMPT, no
-  // tools) and decode the resulting epx1 envelope into plain v1 replacement-history items.
-  const agyAcpUnattendedHttpTurn = isUnattendedAgyAcpHttpTurn(req.headers, raw);
-  // A direct refusal has no summarizer, so it must not create a reasoning archive.
-  if (agyAcpUnattendedHttpTurn && !route.combo && route.routeKind !== "policy" && route.provider.adapter === "agy-acp") {
-    const refusal = agyAcpPreflightResponse({
-      adapterName: route.provider.adapter, requestHeaders: req.headers, forwardHeaders: req.headers,
-      body: raw, unattendedHttpTurn: true, comboAttempt: false, internalDecisionCall: false, subagentFallback: false, logCtx,
-    });
-    if (refusal) return refusal;
-  }
-  const rawInputItems = Array.isArray(raw.input) ? (raw.input as unknown[]) : [];
-  // Keep readable reasoning local until success, outside the summarizer request.
-  // Opaque compaction responses below keep their original protocol and ciphertext.
-  const retention: ReasoningRetentionResult = config.reasoningRetention?.enabled === true
-    && !isCanonicalOpenAiForwardProvider(route.provider) ? applyReasoningRetention(rawInputItems, {
-    archiveDir: join(getConfigDir(), "reasoning-archive"),
-    contextWindow: route.staticPolicy.model.contextWindow ?? route.staticPolicy.model.maxInputTokens,
-    maxContextPercent: config.reasoningRetention?.maxContextPercent,
-    maxTokens: config.reasoningRetention?.maxTokens,
-  }) : { input: rawInputItems };
-  let keepArchive = false;
-  try {
-    const inputItems = retention.input;
-    const internalBody = {
-      ...raw,
-      // Canonical ChatGPT Responses rejects non-streaming turns. Daybreak cannot use the
-      // native compact endpoint either, so run its synthetic compaction as SSE and collapse
-      // the completed event back into the v1 compact JSON contract below. Combo-dispatched
-      // turns also go out as SSE: failover can land on a canonical child that rejects a
-      // non-streaming turn, and every combo-capable provider already serves streaming traffic.
-      stream: isCanonicalOpenAiForwardProvider(route.provider) || accountGatedCompactWireModel || route.combo ? true : false,
-      input: [...inputItems, { type: "compaction_trigger" }],
-    };
-    const internalHeaders = new Headers({ "content-type": "application/json" });
-    for (const name of FORWARD_HEADERS) {
-      const value = req.headers.get(name);
-      if (value || (value !== null && (name === "x-codex-installation-id" || name === "x-codex-turn-metadata"))) internalHeaders.set(name, value);
-    }
-    copyResponsesClientMetadata(internalHeaders, req.headers, route.provider);
-    const internalReq = new Request("http://localhost/v1/responses", {
-      method: "POST",
-      headers: internalHeaders,
-      body: JSON.stringify(internalBody),
-    });
-    linkRequestSessionLane(req, internalReq);
-    // The routed compaction turn is a handoff inside the same logical request, so it draws the
-    // REMAINDER. Minting here is what let a native attempt spend three sends and the routed
-    // fallback spend four more.
-    // internalReq keeps only FORWARD_HEADERS, so the caller principal is resolved from req.
-    const replayPrincipal = { clientPrincipalId: resolveContextPrincipal(req, config, admission) };
-    const sendsBeforeHandoff = sendBudget.used;
-    const priorTerminalSource = logCtx.terminalSource;
-    const priorErrorCode = logCtx.errorCode;
-    const priorLocalReason = logCtx.localTerminalReason;
-    const priorSpendDetail = logCtx.spendRefusalDetail;
-    const response = await handleResponses(internalReq, config, logCtx, {
-      clientModelLabel: options.clientModelLabel, abortSignal: req.signal, turnAdmissionLease, sendBudget,
-      compactionRecoveryKind: "compaction-v1", compactionRoutingOverride: options.compactionRoutingOverride,
-      advisorAdmissionPolicy: options.advisorAdmissionPolicy, replayPrincipal, agyAcpUnattendedHttpTurn,
-      ...(admission ? { admission } : {}),
-    });
-    if (req.signal.aborted) {
-      void response.body?.cancel(req.signal.reason).catch(() => undefined);
-      void nativeNotFound?.body?.cancel(req.signal.reason).catch(() => undefined);
-      return formatErrorResponse(499, "client_cancelled", "Client cancelled compact request");
-    }
-    if (nativeNotFound && response.status === 429 && sendBudget.used === sendsBeforeHandoff && isProxyError(response)
-      && (response.headers.has(WORKFLOW_LOCAL_REFUSAL_HEADER)
-        || upstreamErrorCode(await response.clone().text()) === "request_send_budget_exhausted")) {
-      await response.body?.cancel().catch(() => undefined);
-      logCtx.terminalSource = priorTerminalSource;
-      logCtx.errorCode = priorErrorCode;
-      logCtx.localTerminalReason = priorLocalReason;
-      logCtx.spendRefusalDetail = priorSpendDetail;
-      return nativeNotFound;
-    }
-    void nativeNotFound?.body?.cancel().catch(() => undefined);
-    if (!response.ok) return response;
-    let json: { output?: unknown[]; status?: unknown; error?: unknown };
-    if (hasResponseMediaType(response.headers, "text/event-stream")) {
-      if (!response.body) {
-        return formatErrorResponse(502, "server_error", "compaction turn returned an empty event stream");
-      }
-      const terminal = { status: "incomplete" as "completed" | "failed" | "incomplete" };
-      let completed: { id?: unknown; output?: unknown; status?: unknown } | undefined;
-      await new Promise<void>(resolve => {
-        consumeForInspection(
-          response.body!,
-          status => { terminal.status = status; },
-          req.signal,
-          resolve,
-          undefined,
-          undefined,
-          value => { completed = value; },
-        );
-      });
-      if (req.signal.aborted) {
-        return formatErrorResponse(499, "client_cancelled", "Client cancelled compact request");
-      }
-      if (terminal.status !== "completed" || !completed) {
-        return formatErrorResponse(502, "upstream_error", `compaction turn did not complete (status: ${terminal.status})`);
-      }
-      json = completed as { output?: unknown[]; status?: unknown; error?: unknown };
-    } else {
-      try {
-        json = await response.json() as { output?: unknown[]; status?: unknown; error?: unknown };
-      } catch {
-        return formatErrorResponse(502, "server_error", "compaction turn returned a non-JSON response");
-      }
-    }
-    if (req.signal.aborted) {
-      return formatErrorResponse(499, "client_cancelled", "Client cancelled compact request");
-    }
-    // The internal turn answers 200 even when it failed or was truncated, so the body
-    // has to be inspected. Reporting a failure beats installing "(no summary
-    // available)" as replacement history and silently losing the conversation (#422).
-    if (json.error) {
-      const message = typeof json.error === "string"
-        ? json.error
-        : (json.error as { message?: unknown })?.message;
-      return formatErrorResponse(502, "upstream_error", typeof message === "string" ? message : "compaction turn failed");
-    }
-    if (json.status !== "completed") {
-      return formatErrorResponse(
-        502,
-        "upstream_error",
-        `compaction turn did not complete (status: ${String(json.status ?? "unknown")})`,
-      );
-    }
-    const compactionItems = (json.output ?? []).filter(
-      (item): item is { type: string; encrypted_content?: string } =>
-        !!item && typeof item === "object" && (item as { type?: string }).type === "compaction",
-    );
-    if (compactionItems.length !== 1) {
-      return formatErrorResponse(
-        502,
-        "invalid_response_error",
-        `compaction turn produced ${compactionItems.length} compaction items, expected exactly 1`,
-      );
-    }
-    // Native Responses backends return a real opaque OpenAI-encrypted compaction item. EPX cannot
-    // and should not decrypt it; preserve that item for /responses/compact callers. Synthetic
-    // routed summaries are our `epx1:` envelope and must be decoded into v1 history items.
-    if (typeof compactionItems[0]!.encrypted_content === "string"
-      && compactionItems[0]!.encrypted_content.trim().length > 0
-      && !compactionItems[0]!.encrypted_content.startsWith("epx1:")) {
-      // Failover may reach native compaction after readable reasoning was withheld locally.
-      // The opaque item cannot contain that text, so publish it (or its archive notice) alongside.
-      const output = [...compactionItems, ...(retention.retainedReasoning ?? [])];
-      if (retention.archived) output.push({ type: "message", role: "user",
-        content: [{ type: "input_text", text: appendRetentionNotice("", retention.archived).trimStart() }] });
-      const result = new Response(JSON.stringify({ output }), {
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!options.compactionRoutingOverride) rememberCompactHandoffRoute(req, admission, raw.model);
-      keepArchive = true;
-      return result;
-    }
-    const encrypted = compactionItems[0]!.encrypted_content;
-    const decoded = typeof encrypted === "string" ? decodeCompactionSummary(encrypted) : null;
-    // An empty `epx1:` envelope decodes to "" rather than null, so length is what matters.
-    if (decoded === null || decoded.trim().length === 0) {
-      return formatErrorResponse(502, "invalid_response_error", "compaction turn produced an empty summary");
-    }
-    const summary = appendRetentionNotice(decoded, retention.archived);
-    const output = [...buildCompactV1Output(extractCompactUserMessages(inputItems), summary),
-      ...(retention.retainedReasoning ?? [])];
-    if (!options.compactionRoutingOverride) rememberCompactHandoffRoute(req, admission, raw.model);
-    const result = new Response(JSON.stringify({ output }), { headers: { "Content-Type": "application/json" } });
-    keepArchive = true;
-    return result;
-  } finally {
-    // Keep an archive only after successful replacement history publishes its path.
-    if (!keepArchive && retention.archived) rmSync(retention.archived.path, { force: true });
-  }
+  return runRoutedCompactTurn({
+    req,
+    raw: raw as { model: string; input?: unknown },
+    config,
+    route,
+    logCtx,
+    turnAdmissionLease,
+    admission,
+    sendBudget,
+    accountGatedCompactWireModel,
+    nativeNotFound,
+    options,
+  });
 }

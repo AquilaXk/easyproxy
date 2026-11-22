@@ -331,7 +331,6 @@ export function clearOAuthRefreshIntentIfMatch(
       || expected.uncertain
       || current.attemptId === undefined
       || expected.attemptId === undefined
-      || current.uncertain !== expected.uncertain
       || current.staleOwner !== expected.staleOwner
       || current.cleanupPending !== expected.cleanupPending
       || !sameOAuthRefreshIntentAttempt(current, expected)
