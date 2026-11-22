@@ -343,7 +343,7 @@ describe("pnpm global virtual-store owner (#8183)", () => {
     link(join(root, "outside", "deep"), join(group, "relay"));
     mkdirSync(join(root, "outside", "deep"), { recursive: true });
     link(layout.real, join(root, "outside", "node_modules", "@aquilaxk", "easyproxy"));
-    const dotted = join(group, "relay") + "/../node_modules/easyproxy";
+    const dotted = join(group, "relay") + "/../node_modules/@aquilaxk/easyproxy";
     expect(realpathSync(dotted)).toBe(realpathSync(layout.real));
     const run = layout.run;
     layout.run = args => args[0] === "list"

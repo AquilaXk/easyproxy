@@ -58,7 +58,7 @@ for (const platform of ["win32", "linux"] as const) {
         const body = section(node, "async function runPackageManagerSelfUpdate(manager, child) {", "function bunBinDir(")
           .replaceAll("import.meta.url", JSON.stringify(new URL("../../bin/epx.mjs", import.meta.url).href));
         const stage = (args: string[]) => {
-          tree(join(args[args.indexOf("--prefix") + 1]!, "node_modules", "@aquilaxk", "easyproxy"), "2.0.0");
+          tree(join(args[args.indexOf("--prefix") + 1]!, "node_modules", "easyproxy"), "2.0.0");
           installed = true;
           if (changed === "home") home = { kind: "unknown" };
           if (changed === "package-only-changed") home = { kind: "same" };

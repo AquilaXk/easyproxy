@@ -95,7 +95,7 @@ describe("compatibility verdicts", () => {
   test("a Child that predates the report is placed in a release range by its relay-auth", () => {
     const status = linkPeerStatus(home, entry(peers => peers.observe(linkId, "2", { reported: false, version: null, features: null })));
     expect(status).toMatchObject({ compatibility: "compatible", version: null, relayAuth: "2",
-      versionRange: { min: "2.69.0", below: "2.91.0" }, observedAt: at(1).toISOString() });
+      versionRange: { min: "0.1.0", below: "0.1.0" }, observedAt: at(1).toISOString() });
   });
 
   test("a reporting Child is compatible while the Home serves every feature it uses", () => {
@@ -186,7 +186,7 @@ describe("epx link status --json", () => {
     const dto = attachLinkPeers(projectLinkStatus(store(), [], { state: "listening", port: 19100 }, { runtimeRole: "hub" }, { version: 1, entries: {} }),
       home, () => entry(peers => peers.observe(linkId, "2", { reported: false, version: null, features: null })));
     expect(dto.local).toEqual(home);
-    expect(dto.links[0]!.peer).toMatchObject({ compatibility: "compatible", versionRange: { min: "2.69.0", below: "2.91.0" } });
+    expect(dto.links[0]!.peer).toMatchObject({ compatibility: "compatible", versionRange: { min: "0.1.0", below: "0.1.0" } });
     const lines: string[] = [];
     expect(await cliStatus(dto, lines)).toBe(0);
     expect(JSON.parse(lines[0]!)).toEqual(JSON.parse(JSON.stringify(dto)));

@@ -113,7 +113,7 @@ function parseOffered(value: unknown, allowMissing: boolean): ParsedProbeOffer {
     || typeof value.keyType !== "string" || !/^[A-Za-z0-9@._+-]{1,64}$/.test(value.keyType)) {
     throw new Error("Invalid host probe response");
   }
-  const legacyExact = keys.slice().sort().join(",") === "alias,fingerprint,keyType,epxVersion";
+  const legacyExact = keys.slice().sort().join(",") === "alias,epxVersion,fingerprint,keyType";
   if (!allowMissing && !legacyExact) throw new Error("Invalid host probe response");
   if (value.epxVersion === null) {
     if (!allowMissing || value.runtimeKind !== "missing") throw new Error("Invalid host version response");
@@ -152,7 +152,7 @@ function validateConfirmed(value: unknown, alias: string, fingerprint: string, a
   const keys = Object.keys(value);
   if (keys.some(k => !CONFIRM_ALLOWED_KEYS.has(k))) throw new Error("Invalid host confirmation response");
   if (value.alias !== alias || value.fingerprint !== fingerprint) throw new Error("Invalid host confirmation response");
-  const legacyExact = keys.slice().sort().join(",") === "alias,fingerprint,epxVersion";
+  const legacyExact = keys.slice().sort().join(",") === "alias,epxVersion,fingerprint";
   if (!allowMissing && !legacyExact) throw new Error("Invalid host confirmation response");
   if (value.epxVersion === null) {
     if (!allowMissing || value.runtimeKind !== "missing") throw new Error("Invalid host confirmation response");

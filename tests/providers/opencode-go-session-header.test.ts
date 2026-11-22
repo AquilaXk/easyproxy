@@ -15,19 +15,19 @@ const MUSE_MODEL = "muse-spark-1.3-contributor";
 const CHAT_MODEL = "glm-5.2";
 const SESSION_HEADER = "x-opencode-session";
 const CHAT_SESSION_VECTORS = {
-  metadataA: "epx_402dc1464c08a86e3c55073186a7a8b1",
-  metadataB: "epx_db71da58bc580eca9aa75a5979573122",
-  client: "epx_2225190737b6ba32dad580bee01ba899",
-  native: "epx_5010ddace206624d21c39711cbb786c0",
-  prefixed: "epx_d956cf086e3f7fc34f56f465ee4c7601",
-  codex: "epx_b7724df20a058b5cbf53f86b6dd829ff",
+  metadataA: "epx_63434ddda65b2ebab67a9b86b69384a5",
+  metadataB: "epx_d6ef9b581e9806d9399ab514c8b24212",
+  client: "epx_77adf43f4ba517e2b80d6ce2ad58bbb8",
+  native: "epx_85dab6753aeaea3dc7667ae15ac1a0ae",
+  prefixed: "epx_eb05bdfca296ffdcc07724f012a65f4d",
+  codex: "epx_8c18e119a63fdabccb840597e5ee9dd5",
 } as const;
 const RESPONSES_SESSION_VECTORS = {
-  metadataA: "epx_8eb3fc0d524fea055a33e64c0f4c1914",
-  client: "epx_7f1566030d3ebd6516c6fabb460fbda1",
-  native: "epx_409bae0177f90ebdc0653aff6b0e979f",
-  prefixed: "epx_c974cef031af8717276b933929f0c073",
-  codex: "epx_a0cfe09ee92e4bfa2e560579bc46c50e",
+  metadataA: "epx_5d739aa835af7234bbe0d0eb3f923a0e",
+  client: "epx_f4185daff577ccd19ec189447f1de2af",
+  native: "epx_7a223c89fbb22b9b2d3c33f6530c595d",
+  prefixed: "epx_66387e73a77ba938ae364cedc696e3ed",
+  codex: "epx_be965a7e5d46dd34fa6f24775282ee1f",
 } as const;
 let releaseSpendHome: (() => void) | undefined;
 

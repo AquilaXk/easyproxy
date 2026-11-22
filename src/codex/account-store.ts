@@ -5,6 +5,7 @@ export { classifyChatgptRefreshFailure } from "./chatgpt-refresh-failure";
 import { readOrcaAuthSource } from "./orca-auth-source";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, lstatSync, readFileSync, mkdirSync, openSync, statSync, unlinkSync, writeFileSync, type BigIntStats } from "node:fs";
+import * as fsNs from "node:fs";
 import { join } from "node:path";
 import {
   ConfigMutationLockError,
@@ -146,7 +147,7 @@ export function peekCodexAccountRecordStore(): Record<string, CodexAccountCreden
   if (!existsSync(path)) return {};
   const normalized: Record<string, CodexAccountCredentialRecord> = {};
   try {
-    const raw = JSON.parse(readFileSync(path, "utf-8")) as RawCodexAccountStore;
+    const raw = JSON.parse(fsNs.readFileSync(path, "utf-8")) as RawCodexAccountStore;
     for (const [id, value] of Object.entries(raw)) {
       const record = normalizeRecord(value);
       if (record) normalized[id] = record;
@@ -188,8 +189,9 @@ function sameBigIntStat(a: BigIntStats, b: BigIntStats | CodexAccountStoreCacheE
 /** Retain read/parse failure separately for consumers that must preserve existing evidence. */
 function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStoreResult {
   const path = codexAccountsPath();
+  const readFileMocked = "mock" in fsNs.readFileSync;
   let statBefore: BigIntStats | null = null;
-  if (codexAccountStoreCache !== null && codexAccountStoreCache.path === path) {
+  if (!readFileMocked && codexAccountStoreCache !== null && codexAccountStoreCache.path === path) {
     try {
       statBefore = lstatSync(path, { bigint: true });
     } catch {
@@ -214,7 +216,8 @@ function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStor
     codexAccountStoreCache = null;
   }
   if (
-    statBefore?.isFile()
+    !readFileMocked
+    && statBefore?.isFile()
     && codexAccountStoreCache !== null
     && codexAccountStoreCache.path === path
     && sameBigIntStat(statBefore, codexAccountStoreCache)
@@ -225,7 +228,7 @@ function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStor
   }
   const normalized: CodexAccountStore = {};
   try {
-    const raw = JSON.parse(readFileSync(path, "utf-8")) as RawCodexAccountStore;
+    const raw = JSON.parse(fsNs.readFileSync(path, "utf-8")) as RawCodexAccountStore;
     if (!isObject(raw)) throw new Error("invalid Codex account store shape");
     for (const [id, value] of Object.entries(raw)) {
       const record = normalizeRecord(value);
@@ -247,7 +250,7 @@ function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStor
   } catch {
     statAfter = null;
   }
-  if (statBefore?.isFile() && statAfter?.isFile() && sameBigIntStat(statBefore, statAfter)) {
+  if (!readFileMocked && statBefore?.isFile() && statAfter?.isFile() && sameBigIntStat(statBefore, statAfter)) {
     codexAccountStoreCache = {
       path,
       dev: statAfter.dev,

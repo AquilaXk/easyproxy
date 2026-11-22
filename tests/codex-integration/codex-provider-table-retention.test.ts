@@ -107,7 +107,7 @@ describe("lossless retained provider tables", () => {
 
   test.each([
     'model_providers.easyproxy = { name = "inline" }\n',
-    '"model_providers"."openco\\u0064ex" = { name = "inline" }\n',
+    '"model_providers"."easypr\\u006fxy" = { name = "inline" }\n',
     '[model_providers]\neasyproxy = { name = "inline" }\n',
   ])("unsupported inline definitions are refused rather than duplicated", content => {
     expect(() => appendOcxProviderTableBlock(content, header + 'name = "retained"\n')).toThrow();

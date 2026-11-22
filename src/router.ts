@@ -22,6 +22,16 @@ import {
   providerCodexAccountMode,
 } from "./providers/registry";
 const PROVIDER_REGISTRY_BY_ID = new Map(PROVIDER_REGISTRY.map(entry => [entry.id, entry]));
+let cachedRegistryLength = PROVIDER_REGISTRY.length;
+
+function getRegistryEntry(id: string) {
+  if (PROVIDER_REGISTRY.length !== cachedRegistryLength) {
+    PROVIDER_REGISTRY_BY_ID.clear();
+    for (const entry of PROVIDER_REGISTRY) PROVIDER_REGISTRY_BY_ID.set(entry.id, entry);
+    cachedRegistryLength = PROVIDER_REGISTRY.length;
+  }
+  return PROVIDER_REGISTRY_BY_ID.get(id);
+}
 // Imported from the module directly rather than through the registry facade, which is at its
 // file-size cap.
 import { registryModelIdKeys } from "./providers/registry/model-ids";
@@ -114,7 +124,7 @@ export function captureRouteStaticPolicy(
   effectiveAlias?: string | null,
   inboundWire: "responses" | "chat" | "anthropic" = "responses",
 ): ResolvedModelPolicy {
-  const registryEntry = PROVIDER_REGISTRY_BY_ID.get(providerName);
+  const registryEntry = getRegistryEntry(providerName);
   const transportMatchedRegistry = !!registryEntry
     && providerMatchesRegistryTransportWithStaticGuards(providerName, provider);
   return resolveModelPolicy({
@@ -160,7 +170,7 @@ export function knownModelIdsForProvider(
   for (const id of prov.models ?? []) ids.add(id);
   if (prov.defaultModel) ids.add(prov.defaultModel);
   const registry = providerMatchesRegistryTransportWithStaticGuards(provName, prov)
-    ? PROVIDER_REGISTRY_BY_ID.get(provName)
+    ? getRegistryEntry(provName)
     : undefined;
   for (const id of registry?.models ?? []) ids.add(id);
   // Registry model-keyed hint maps double as known native ids (e.g. NVIDIA carries no
@@ -305,7 +315,7 @@ function crossProviderRedirectTarget(config: EpxConfig, providerName: string, va
   try {
     const effective = routedProviderConfig(targetProvider, configured);
     const registry = providerMatchesRegistryTransportWithStaticGuards(targetProvider, configured)
-      ? PROVIDER_REGISTRY_BY_ID.get(targetProvider)
+      ? getRegistryEntry(targetProvider)
       : undefined;
     const authMode = effective.authMode ?? registry?.authKind ?? "key";
     if (authMode === "forward") return undefined; // The source caller bearer is stripped on a redirect.
@@ -568,7 +578,7 @@ function routeModelInternal(
         }
         const registryMatches = providerEntries.filter(([name, provider]) => {
           if (provider.alias !== undefined) return false;
-          const regAlias = PROVIDER_REGISTRY_BY_ID.get(name)?.alias;
+          const regAlias = getRegistryEntry(name)?.alias;
           if (!regAlias || regAlias.toLowerCase() !== requestedLower) return false;
           return claimantName === null || (claimantName === name && !claimantMultiple);
         });

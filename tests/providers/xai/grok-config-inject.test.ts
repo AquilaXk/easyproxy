@@ -145,8 +145,8 @@ describe("Grok config injection", () => {
 
   test("decodes TOML unicode escapes in user model headers", () => {
     const configPath = join(grokHome, "config.toml");
-    // \U0000006F and \u006F are both "o" — these headers canonically define model.epx-esc*.
-    const userContent = '[model."\\U0000006Fcx-esc"]\nmodel = "user/esc"\n[model."\\u006Fcx-esc4"]\nmodel = "user/esc4"\n';
+    // \U00000065 and \u0065 are both "e" — these headers canonically define model.epx-esc*.
+    const userContent = '[model."\\U00000065px-esc"]\nmodel = "user/esc"\n[model."\\u0065px-esc4"]\nmodel = "user/esc4"\n';
     writeFileSync(configPath, userContent, "utf8");
 
     injectGrokConfig(10100, [{ id: "esc" }, { id: "esc4" }], { grokHome });

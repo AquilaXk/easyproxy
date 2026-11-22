@@ -305,7 +305,7 @@ describe("bounded audit descriptors and privacy", () => {
       expect(Buffer.byteLength(bytes)).toBeLessThanOrEqual(CATALOG_AUDIT_MAX_EVENT_BYTES);
       expect(auditLines()[0]).toMatchObject({ writer: "other", command: "other" });
       expect(Object.keys(auditLines()[0]!).sort()).toEqual([
-        "at", "command", "intent", "easyproxyHome", "outcome", "pid", "ppid", "routedAfter", "routedBefore", "target", "writer",
+        "at", "command", "easyproxyHome", "intent", "outcome", "pid", "ppid", "routedAfter", "routedBefore", "target", "writer",
       ]);
     } finally { process.argv = originalArgv; }
   });

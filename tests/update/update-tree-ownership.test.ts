@@ -314,7 +314,7 @@ describe("#4202 install-tree dependency ownership", () => {
       if (opts.depsInOwnGroup) symlinkSync(physical, join(group, name), "dir");
     }
     const exposedGroup = join(root, "pnpm", "global", "v11", "g1", "node_modules");
-    mkdirSync(join(exposedGroup, "@aquilaxk"), { recursive: true });
+    mkdirSync(exposedGroup, { recursive: true });
     const exposed = join(exposedGroup, ...PKG.split("/"));
     symlinkSync(target, exposed, "dir");
     return exposed;
@@ -472,7 +472,7 @@ describe("#4202 install-tree dependency ownership", () => {
 
   test("refuses a non-sentinel dependency link outside the selected store", () => {
     const exposed = globalStoreLinksFixture({ depsInOwnGroup: true });
-    const target = realpathSync(exposed), group = join(target, "..", "..");
+    const target = realpathSync(exposed), group = join(target, "..");
     writeFileSync(join(target, "package.json"), JSON.stringify({ name: PKG, version: "2.0.0", dependencies: { bun: "1", zod: "1", other: "1" } }));
     const outside = join(root, "outside", "other"); writeDependency(outside, "other");
     symlinkSync(outside, join(group, "other"), "dir");
@@ -483,7 +483,7 @@ describe("#4202 install-tree dependency ownership", () => {
 
   test("refuses a dependency link that leaves the selected store and returns through an outside bridge", () => {
     const exposed = globalStoreLinksFixture({ depsInOwnGroup: true });
-    const store = join(root, "pnpm", "store", "v11"), group = join(realpathSync(exposed), "..", "..");
+    const store = join(root, "pnpm", "store", "v11"), group = join(realpathSync(exposed), "..");
     const original = join(group, "zod"), target = realpathSync(original), bridge = join(root, "bridge");
     rmSync(original); symlinkSync(target, bridge, "dir"); symlinkSync(bridge, original, "dir");
     expect(realpathSync(original)).toBe(target);
@@ -517,9 +517,9 @@ describe("#4202 install-tree dependency ownership", () => {
     const exposed = globalStoreLinksFixture({ depsInOwnGroup: true });
     const store = realpathSync(join(root, "pnpm", "store", "v11")), alias = join(root, "store-alias");
     symlinkSync(store, alias, "dir");
-    const link = join(realpathSync(exposed), "..", "..", "zod"), target = realpathSync(link);
+    const link = join(realpathSync(exposed), "..", "zod"), target = realpathSync(link);
     rmSync(link); symlinkSync(join(alias, relative(store, target)), link, "dir");
-    const bun = join(realpathSync(exposed), "..", "..", "bun"), bunTarget = realpathSync(bun);
+    const bun = join(realpathSync(exposed), "..", "bun"), bunTarget = realpathSync(bun);
     rmSync(bun); symlinkSync(bunTarget, bun, "dir");
     // A linked spelling would let its target, and any relay beneath it, count as inside the store.
     expect(verifyPnpmInstallTree(exposed, "2.0.0", store, exposingGroup(exposed), alias))
@@ -670,7 +670,7 @@ describe("#4202 install-tree dependency ownership", () => {
 
   test("checks an unshadowed shared-group dependency even if the first importer shadows it", () => {
     const exposed = globalStoreLinksFixture({ depsInOwnGroup: true });
-    const store = join(root, "pnpm", "store", "v11"), pkg = realpathSync(exposed), group = join(pkg, "..", "..");
+    const store = join(root, "pnpm", "store", "v11"), pkg = realpathSync(exposed), group = join(pkg, "..");
     const shadow = join(pkg, "node_modules", "evil"), dep = join(group, "dep"), evil = join(group, "evil");
     const outside = join(root, "outside.js");
     writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: PKG, version: "2.0.0", dependencies: { bun: "1", zod: "1", dep: "1" } }));
@@ -735,7 +735,7 @@ describe("#4202 install-tree dependency ownership", () => {
     const exposed = globalStoreLinksFixture({ depsInOwnGroup: true });
     const zod = join(root, "pnpm", "store", "v11", "links", "zod", "1.0.0", "h2", "node_modules", "zod");
     const outside = join(root, "outside-entry.js"); writeFileSync(outside, "module.exports = 1;\n");
-    const zodLink = join(realpathSync(exposed), "..", "..", "zod");
+    const zodLink = join(realpathSync(exposed), "..", "zod");
     writeFileSync(join(zod, "package.json"), JSON.stringify({ name: "zod", main: relative(zodLink, outside) }));
     const node = Bun.which("node"); if (!node) throw new Error("Node is required for this resolution fixture");
     const probe = spawnSync(node, ["-e", "process.stdout.write(require('node:module').createRequire(process.argv[1]).resolve('zod'))", join(realpathSync(exposed), "entry.js")], { encoding: "utf8" });
@@ -752,7 +752,7 @@ describe("#4202 install-tree dependency ownership", () => {
     const zod = join(store, "links", "zod", "1.0.0", "h2", "node_modules", "zod");
     const nested = join(zod, "lib"), outside = join(root, "outside-entry.js");
     mkdirSync(nested); writeFileSync(outside, "module.exports = 1;\n");
-    const nestedLink = join(realpathSync(exposed), "..", "..", "zod", "lib");
+    const nestedLink = join(realpathSync(exposed), "..", "zod", "lib");
     writeFileSync(join(nested, "package.json"), JSON.stringify({ main: relative(nestedLink, outside) }));
     const node = Bun.which("node"); if (!node) throw new Error("Node is required for this resolution fixture");
     const probe = spawnSync(node, ["-e", "process.stdout.write(require('node:module').createRequire(process.argv[1]).resolve('zod/lib'))", join(realpathSync(exposed), "entry.js")], { encoding: "utf8" });

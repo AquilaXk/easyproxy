@@ -30,7 +30,7 @@ const INCOMPLETE_OAUTH = new RegExp(OAUTH_BOUNDARY.source
 
 // A short suffix that could start or complete a supported credential in a later frame.
 const INCOMPLETE_TOKEN = new RegExp(`(?:${[
-  /o(?:c(?:x(?:_[A-Za-z0-9_-]{0,51}|r(?:w(?:_[A-Za-z0-9_-]{0,42})?)?)?)?)?/,
+  /e(?:p(?:x(?:_[A-Za-z0-9_-]{0,51}|r(?:w(?:_[A-Za-z0-9_-]{0,42})?)?)?)?)?/,
   /\b(?:b|be|bea|bear|beare|bearer(?:[ \t]{1,64}[A-Za-z0-9._~+/=-]{0,7})?)/,
   /\b(?:e|ey|eyj[A-Za-z0-9_-]{0,7})/,
   /\b(?:s|sk|sk-[A-Za-z0-9._-]{0,6})/,

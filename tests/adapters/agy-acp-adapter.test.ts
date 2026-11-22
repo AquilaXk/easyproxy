@@ -861,11 +861,10 @@ describe("agy acp turn", () => {
     expect(methods(h)).toEqual(["initialize", "session/new", "session/prompt"]);
     expect(h.sent[0]!.params).toMatchObject({ protocolVersion: 1, clientCapabilities: {} });
     expect(h.sent[1]!.params).toEqual({ cwd: "/tmp/epx-agy-acp-test", mcpServers: [] });
-    // Safe thinking text precedes the answer, and the pending suffix flushes before done.
+    // Safe thinking text precedes the answer.
     expect(h.events).toEqual([
       { type: "thinking_delta", thinking: "thinking" },
-      { type: "text_delta", text: "hell" },
-      { type: "text_delta", text: "o" },
+      { type: "text_delta", text: "hello" },
       { type: "done" },
     ]);
     expect(h.args).toEqual([...AGY_ACP_ARGS]);
@@ -909,7 +908,11 @@ describe("agy acp turn", () => {
       api.reply(frame.id, { stopReason: "end_turn" });
       return true;
     }));
-    expect(h.events.filter(event => event.type === "text_delta")).toEqual([{ type: "text_delta", text: "active" }]);
+    // "active" ends with "e" (an incomplete `epx_` credential prefix), so the trailing "e" flushes at end-of-turn.
+    expect(h.events.filter(event => event.type === "text_delta")).toEqual([
+      { type: "text_delta", text: "activ" },
+      { type: "text_delta", text: "e" },
+    ]);
     expect(terminal(h)).toEqual([{ type: "done" }]);
   });
 

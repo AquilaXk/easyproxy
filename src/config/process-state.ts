@@ -308,7 +308,9 @@ export function isEpxCommandLine(commandLine: string): boolean {
   // a service wrapper may respawn from `.easyproxy-*` during a global update.
   return normalized.includes("src/cli.ts")
     || normalized.includes("src/cli/index.ts")
-    || normalized.includes("easyproxy")
+    || normalized.includes("bin/epx.mjs")
+    || normalized.includes("/node_modules/easyproxy/")
+    || normalized.includes("/node_modules/@aquilaxk/easyproxy/")
     || /@aquilaxk\/\.easyproxy-/.test(normalized)
     || /(?:^|[\s/"'])(?:epx|easyproxy)(?:\.cmd|\.exe)?(?:$|[\s"'])/.test(normalized);
 }

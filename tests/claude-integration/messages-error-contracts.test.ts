@@ -187,6 +187,7 @@ const envelopeWriterRows = [
   ["src/server/claude-messages.ts", 30, "mapped local ingress/bypass constructors, original combo and defensive JSON presentation envelopes"],
   ["src/server/index/serve-options.ts", 4, "fixed endpoint auth/origin bypasses"],
   ["src/server/messages-native-tool-guard.ts", 1, "deferred local guard terminal"],
+  ["src/server/admitted-http-turn.ts", 1, "per-key admission budget refusal projection"],
 ] as const;
 test("W1/W3 envelope writers are covered by explicit dispositions", async () => {
   const actual: Record<string, number> = {};

@@ -485,9 +485,10 @@ function getApiKeyMaterial(entries: readonly EpxApiKeyEntry[], entry: EpxApiKeyE
   }
   const existing = entryMap.get(entry);
   const pending = entry.pendingRotation;
+  const keyId = typeof entry.id === "string" ? entry.id : "";
   if (
     existing
-    && existing.id === entry.id
+    && existing.id === keyId
     && existing.primary.raw === entry.key
     && ((!pending && !existing.pending)
       || (pending && existing.pending && existing.pending.raw === pending.key && existing.pending.expiresAtStr === pending.expiresAt))
@@ -495,12 +496,12 @@ function getApiKeyMaterial(entries: readonly EpxApiKeyEntry[], entry: EpxApiKeyE
     return existing;
   }
   const rebuilt: CachedApiKeyMaterial = {
-    id: entry.id,
-    primary: buildSecretMaterial("configured", entry.id, entry.key),
+    id: keyId,
+    primary: buildSecretMaterial("configured", keyId, entry.key),
     ...(pending
       ? {
           pending: {
-            ...buildSecretMaterial("configured", entry.id, pending.key),
+            ...buildSecretMaterial("configured", keyId, pending.key),
             expiresAtStr: pending.expiresAt,
             expiresAtMs: Date.parse(pending.expiresAt),
           },

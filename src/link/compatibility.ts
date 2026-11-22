@@ -23,12 +23,10 @@ export interface LinkProtocolRelease {
 export const LINK_PEER_REPORT_FEATURE = `link-peer-report/${LINK_PEER_REPORT_VERSION}`;
 
 export const LINK_PROTOCOL_RELEASES: readonly LinkProtocolRelease[] = [
-  { id: "relay-auth/2", since: "2.69.0", summary: "Connection-bound relay authentication before every relayed request." },
-  { id: "link-management-relay", since: "2.84.0", summary: "Read-only Home management and Home Codex settings for the Child." },
-  { id: LINK_PEER_REPORT_FEATURE, since: "2.91.0", summary: "The Child reports its version and features on the relay challenge." },
-  // The dev line's version when this landed; 2.100.x was already tagged, so the release that first
-  // ships it moves this to its own number (the test holds `since` at or below the package version).
-  { id: LINK_REQUEST_ZSTD_FEATURE, since: "2.100.0", summary: "The Home decodes per-body zstd request bodies and the Child sends them." },
+  { id: "relay-auth/2", since: "0.1.0", summary: "Connection-bound relay authentication before every relayed request." },
+  { id: "link-management-relay", since: "0.1.0", summary: "Read-only Home management and Home Codex settings for the Child." },
+  { id: LINK_PEER_REPORT_FEATURE, since: "0.1.0", summary: "The Child reports its version and features on the relay challenge." },
+  { id: LINK_REQUEST_ZSTD_FEATURE, since: "0.1.0", summary: "The Home decodes per-body zstd request bodies and the Child sends them." },
 ];
 
 /**

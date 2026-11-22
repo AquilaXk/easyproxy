@@ -12,13 +12,13 @@ import {
 describe("codex account privacy labels", () => {
   test("key labels follow the shared consumer contract and isolate provider, slot and reference", () => {
     expect(apiKeyAccountLogLabel("test-provider", { entryId: "slot-a", reference: "test-key-a" }))
-      .toBe("k35f7c109222440212853c90de03e7df5");
+      .toBe("k4e999a3b3449fd767400dd613d592025");
     expect(apiKeyAccountLogLabel("test-provider", { entryId: "slot-b", reference: "test-key-b" }))
-      .toBe("kae34539c9f0b302367a033166800ae47");
+      .toBe("k47cadcc6296dbc07dcf2c2dbc8ad5947");
     expect(apiKeyAccountLogLabel("test-provider", { reference: "test-key-a" }))
-      .toBe("ke4869182d193d18777b6ce175baaa41a");
+      .toBe("k3d91992d55a0104e88f03b32b765b32e");
     expect(apiKeyAccountLogLabel("other-provider", { entryId: "slot-a", reference: "test-key-a" }))
-      .toBe("k98c6a69a98c5537c6acd344f116e7579");
+      .toBe("kaa6a9f5f7748fb0f47558bd39f36924f");
     expect(apiKeyAccountLogLabel("test-provider", undefined)).toBeUndefined();
     expect(apiKeyAccountLogLabel("test-provider", { reference: "" })).toBeUndefined();
     expect(apiKeyAccountLogLabel("test-provider", { reference: "env:MISSING_SYNTHETIC_KEY" }))
