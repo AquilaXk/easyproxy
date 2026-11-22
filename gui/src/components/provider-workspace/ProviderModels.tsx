@@ -1,6 +1,7 @@
 /** Canonical inventory and revision-bound custom-definition operations for one provider. */
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/shared";
+import { isImeComposing } from "../../lib/ime";
 import { uxT } from "../../i18n/ux-overhaul-copy";
 import { Switch } from "../../ui";
 import { confirmAction } from "../../action-dialogs";
@@ -280,7 +281,7 @@ function ProviderModelInventory({ item, apiBase, availableModels, selectedModels
       <label className="text-label pws-custom-model-label" htmlFor={`pws-custom-model-${item.name}`}>{t("models.customAdd")}</label>
       <div className="row pws-custom-model-row">
         <input id={`pws-custom-model-${item.name}`} className="input" value={draft}
-          onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void addCustomModel(); }}
+          onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !isImeComposing(event)) void addCustomModel(); }}
           placeholder={t("models.customFieldModelIdPlaceholder")} aria-label={t("models.customAdd")} disabled={requestPending} />
         <button type="button" className="btn btn-primary btn-sm" onClick={() => { void addCustomModel(); }}
           disabled={actionsBlocked || !modelId || duplicate}>{requestPending ? t("models.customSaving") : t("models.customAddBtn")}</button>

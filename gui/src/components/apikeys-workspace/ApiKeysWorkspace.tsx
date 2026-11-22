@@ -7,6 +7,7 @@ import { IconChevron, IconTrash } from "../../icons";
 import { SectionTabs } from "../section-tabs";
 import { sectionAnchorId } from "../../section-anchors";
 import { useT } from "../../i18n/shared";
+import { isImeComposing } from "../../lib/ime";
 import type { ExternalModelRow, GatewayInboundProtocol } from "../../api-access-models";
 import {
   API_KEY_NAME_MAX_LENGTH,
@@ -442,7 +443,7 @@ export default function ApiKeysWorkspace({
                       onKeyDown={event => {
                         // Enter still saves, without relying on implicit form
                         // submission (which browsers and test DOMs disagree on).
-                        if (event.key === "Enter") { event.preventDefault(); void submitRename(); }
+                        if (event.key === "Enter" && !isImeComposing(event)) { event.preventDefault(); void submitRename(); }
                       }}
                     />
                     <button

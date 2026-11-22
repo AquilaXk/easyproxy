@@ -37,6 +37,7 @@ test("browser-open preference is an accessible switch and persists the inverse c
   act(() => { root = createRoot(host as unknown as HTMLElement); root.render(<LanguageProvider><OpenBrowserPrefToggle /></LanguageProvider>); });
   const input = host.querySelector<HTMLInputElement>('input[role="switch"]')!;
   expect(input).toBeTruthy();
+  expect(input.hasAttribute("switch")).toBe(true);
   expect(input.checked).toBe(false);
   expect(openBrowserRequestField()).toEqual({});
   const label = host.querySelector<HTMLLabelElement>(`label.open-browser-pref[for="${input.id}"]`)!;

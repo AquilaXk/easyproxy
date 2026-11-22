@@ -8,8 +8,9 @@ import { ModelsReloadFocusBoundary } from "./models-reload-focus-boundary";
 import { useCodexRestart } from "../use-codex-restart";
 import { confirmAction } from "../action-dialogs";
 import { editModelAlias, editProviderAlias } from "./models-alias-editing";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Switch, Notice, EmptyState, Select, Tooltip, type NoticeTone } from "../ui";
+import { isImeComposing } from "../lib/ime";
 import { IconChevron, IconBoxes, IconInfo, IconCheck, IconAlert, IconRefresh, IconPencil, IconX } from "../icons";
 import { ModalDialog } from "../components/ui-v2/modal-dialog";
 import { useT } from "../i18n/shared";
@@ -138,6 +139,20 @@ interface AliasView {
   providers: Record<string, string>;
   models: Record<string, Record<string, { alias: string; source: "user" | "builtin"; stale?: boolean }>>;
   defaults: { global: boolean; providers: Record<string, boolean> };
+}
+
+function handleSegmentedRadioKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+  const radios = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]:not(:disabled)')];
+  if (radios.length < 2) return;
+  const active = document.activeElement as HTMLButtonElement | null;
+  const currentIndex = active ? radios.indexOf(active) : radios.findIndex(radio => radio.getAttribute("aria-checked") === "true");
+  const base = currentIndex >= 0 ? currentIndex : 0;
+  const delta = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+  const next = radios[(base + delta + radios.length) % radios.length]!;
+  event.preventDefault();
+  next.focus();
+  next.click();
 }
 
 export default function Models({ apiBase, restartEpoch = 0, connected = false, catalogSyncedAt, reportRestart, onOpenPlayground }: { apiBase: string; restartEpoch?: number; connected?: boolean; catalogSyncedAt?: string; reportRestart: (message: string, tone: NoticeTone) => void; onOpenPlayground?: (seed?: PlaygroundSeed) => void }) {
@@ -1417,13 +1432,14 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
         && preset.appliedVersion < preset.availableVersion;
       return (
         <>
-          <div className="segmented models-segmented" role="radiogroup" aria-label={t("models.presetLabel")}>
+          <div className="segmented models-segmented" role="radiogroup" aria-label={t("models.presetLabel")} onKeyDown={handleSegmentedRadioKeyDown}>
             {(["preset", "all"] as const).map(mode => (
               <button
                 key={mode}
                 type="button"
                 role="radio"
                 aria-checked={preset.mode === mode}
+                tabIndex={preset.mode === mode || (preset.mode === "custom" && mode === "preset") ? 0 : -1}
                 className={`btn btn-sm${preset.mode === mode ? " btn-primary" : " btn-ghost"}`}
                 style={{
                   background: preset.mode === mode ? undefined : "transparent",
@@ -1446,6 +1462,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                 type="button"
                 role="radio"
                 aria-checked
+                tabIndex={-1}
                 className="btn btn-sm btn-primary"
                 disabled
               >{t("models.presetMode_custom")}</button>
@@ -1580,7 +1597,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                          placeholder={t("models.customPlaceholder")}
                          value={providerCapCustomDraft[provider] ?? ""}
                          onChange={e => setProviderCapCustomDraft(prev => ({ ...prev, [provider]: e.target.value }))}
-                         onKeyDown={e => { if (e.key === "Enter") applyProviderCustomCap(provider); }}
+                         onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) applyProviderCustomCap(provider); }}
                          disabled={busy}
                          aria-label={t("models.customPlaceholder")}
                        />
@@ -1640,15 +1657,21 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
               {!nativeProviderGroup && modelDiscovery && (
                 <div className="row models-provider-hint">
                   <span className="muted text-label">{t("models.newPolicyProvider")}</span>
-                  <div className="segmented models-segmented" role="radiogroup" aria-label={t("models.newPolicyProvider")}>
-                    {(["off", "on", "admit"] as const).map(mode => (
+                  <div className="segmented models-segmented" role="radiogroup" aria-label={t("models.newPolicyProvider")} onKeyDown={handleSegmentedRadioKeyDown}>
+                    {(["off", "on", "admit"] as const).map(mode => {
+                      const currentPolicy = modelDiscovery.providers[provider] ?? "inherit";
+                      const checked = currentPolicy === mode;
+                      const tabStop = checked || (currentPolicy !== "off" && currentPolicy !== "on" && currentPolicy !== "admit" && mode === "off");
+                      return (
                       <button key={mode} type="button" role="radio"
-                        aria-checked={(modelDiscovery.providers[provider] ?? "inherit") === mode}
-                        className={`btn btn-sm${(modelDiscovery.providers[provider] ?? "inherit") === mode ? " btn-primary" : " btn-ghost"}`}
+                        aria-checked={checked}
+                        tabIndex={tabStop ? 0 : -1}
+                        className={`btn btn-sm${checked ? " btn-primary" : " btn-ghost"}`}
                         onClick={() => void saveModelDiscovery(mode, provider)}>
                         {t(`models.newPolicy_${mode}` as TKey)}
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1806,13 +1829,14 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
 
         {(v2Loading || v2) && (
           <SettingsRow label={t("models.v2Label")}>
-            <div className="segmented models-segmented" role="radiogroup" aria-label={t("models.v2Label")}>
+            <div className="segmented models-segmented" role="radiogroup" aria-label={t("models.v2Label")} onKeyDown={handleSegmentedRadioKeyDown}>
               {subagentSurfaceModes(v2?.supportsPlaintextV2Mode === true).map(mode => (
                 <button
                   key={mode}
                   type="button"
                   role="radio"
                   aria-checked={(v2?.multiAgentMode ?? "default") === mode}
+                  tabIndex={(v2?.multiAgentMode ?? "default") === mode ? 0 : -1}
                   className={`btn btn-sm${(v2?.multiAgentMode ?? "default") === mode ? " btn-primary" : " btn-ghost"}`}
                   style={{ background: (v2?.multiAgentMode ?? "default") === mode ? undefined : "transparent", color: (v2?.multiAgentMode ?? "default") === mode ? undefined : "var(--muted)" }}
                   disabled={!v2 || v2Busy}
@@ -1903,7 +1927,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                 inputMode="numeric"
                 value={threadsCustom}
                 onChange={e => setThreadsCustom(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") void putV2Threads(Number(threadsCustom.replace(/[_,\s]/g, ""))); }}
+                onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) void putV2Threads(Number(threadsCustom.replace(/[_,\s]/g, ""))); }}
                 disabled={v2Busy}
                 aria-label={t("models.v2ThreadsLabel")}
               />
@@ -1944,7 +1968,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
               placeholder={t("models.customPlaceholder")}
               value={customCap}
               onChange={e => setCustomCap(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") applyCustomCap(); }}
+              onKeyDown={e => { if (e.key === "Enter" && !isImeComposing(e)) applyCustomCap(); }}
               disabled={busy}
               aria-label={t("models.customPlaceholder")}
             />

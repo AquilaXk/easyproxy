@@ -1,5 +1,6 @@
 import { IconExternal, IconLink } from "../icons";
 import { useT } from "../i18n/shared";
+import { isImeComposing } from "../lib/ime";
 import { useCopyFeedback } from "./use-copy-feedback";
 import type { BrowserLaunch } from "../oauth-browser-launch";
 
@@ -168,7 +169,7 @@ export function LoginHint({ hint, paste, providerId }: { hint: LoginHintData; pa
               value={paste.value}
               onChange={e => paste.onChange(e.target.value)}
               onKeyDown={e => {
-                if (e.key === "Enter") {
+                if (e.key === "Enter" && !isImeComposing(e)) {
                   e.preventDefault();
                   paste.onSubmit();
                 }

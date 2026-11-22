@@ -264,3 +264,31 @@ test("an Escape another layer already took does not also close Add Provider", as
     win.removeEventListener("keydown", taker as never);
   }
 });
+
+test("alertdialog sets aria-modal and wraps Tab / Shift+Tab focus when topmost", async () => {
+  const { RemoveConfirmDialog } = await import("../src/components/provider-workspace/ProviderDialogs");
+  const { createRoot } = await import("react-dom/client");
+  await act(async () => {
+    root = createRoot(host);
+    root.render(
+      <LanguageProvider>
+        <RemoveConfirmDialog providerName="demo" defaultProviderName={null} onConfirm={() => {}} onCancel={() => {}} />
+      </LanguageProvider>,
+    );
+  });
+  const dialog = host.querySelector<HTMLElement>('[role="alertdialog"]')!;
+  expect(dialog.getAttribute("aria-modal")).toBe("true");
+  const buttons = [...dialog.querySelectorAll<HTMLButtonElement>("button")];
+  expect(buttons).toHaveLength(2);
+  expect(win.document.activeElement).toBe(buttons[0] as unknown as Element);
+
+  await act(async () => {
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }) as never);
+  });
+  expect(win.document.activeElement).toBe(buttons[1] as unknown as Element);
+
+  await act(async () => {
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }) as never);
+  });
+  expect(win.document.activeElement).toBe(buttons[0] as unknown as Element);
+});

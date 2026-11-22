@@ -29,8 +29,7 @@ export function readKiroDeviceStatus(
   const controller = new AbortController();
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let settled = false;
-  let finish!: (result: KiroStatusResult) => void;
-  const result = new Promise<KiroStatusResult>(resolve => { finish = resolve; });
+  const { promise: result, resolve: finish } = Promise.withResolvers<KiroStatusResult>();
   const settle = (value: KiroStatusResult) => {
     if (settled) return;
     settled = true;

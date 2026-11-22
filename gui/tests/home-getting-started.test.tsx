@@ -255,3 +255,27 @@ test("clearing session storage elsewhere keeps a choice that could not be saved"
   });
   expect(headings(host)).not.toContain("Getting started");
 });
+
+test("Set up hub marks apps step Done from current client integration before the first request", async () => {
+  desktop();
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), "http://localhost/").pathname;
+    if (path === "/api/client-integrations") {
+      return Response.json({
+        clients: [
+          { clientId: "hermes", state: "current", supersededBy: "/tmp/alt.json" },
+          { clientId: "opencode", state: "current" },
+        ],
+      });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+
+  const host = await setupHub();
+  const appsRow = host.querySelector<HTMLElement>('li[data-step="apps"]')!;
+  const requestRow = host.querySelector<HTMLElement>('li[data-step="request"]')!;
+  expect(appsRow.textContent).toContain("Done");
+  expect(requestRow.textContent).toContain("To do");
+  expect(host.textContent).toContain("2 of 3 done");
+});

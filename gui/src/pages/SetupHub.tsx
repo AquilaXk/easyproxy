@@ -27,8 +27,14 @@ interface SetupHubProps {
   navigate: (page: Page, subPath?: string) => void;
 }
 
-interface ConfigBody { providers?: Record<string, unknown> }
+interface ConfigBody {
+  providers?: Record<string, unknown>;
+  claudeCode?: { enabled?: boolean };
+}
 interface UsageBody { summary?: { requests?: number } }
+interface IntegrationsBody {
+  clients?: Array<{ state?: string; supersededBy?: unknown }>;
+}
 
 async function getJson<T>(url: string, signal: AbortSignal): Promise<T | null> {
   const res = await fetch(url, { signal });
@@ -50,6 +56,8 @@ export default function SetupHub({ apiBase, navigate }: SetupHubProps) {
     signal => getJson<ConfigBody>(`${apiBase}/api/config`, signal));
   const usage = useKeyedClientResource(`setup-usage:${apiBase}`, [apiBase],
     signal => getJson<UsageBody>(`${apiBase}/api/usage?range=all`, signal));
+  const integrations = useKeyedClientResource(`setup-integrations:${apiBase}`, [apiBase],
+    signal => getJson<IntegrationsBody>(`${apiBase}/api/client-integrations`, signal));
   const startup = useStartupChecklist(apiBase);
   const gettingStarted = useGettingStartedHidden();
   // Show on Home removes its own row, so the confirmation that replaces it takes focus.
@@ -61,13 +69,16 @@ export default function SetupHub({ apiBase, navigate }: SetupHubProps) {
 
   const providers = config.data ? Object.keys(config.data.providers ?? {}).length > 0 : undefined;
   const requested = usage.data ? (usage.data.summary?.requests ?? 0) > 0 : undefined;
+  const hasConnectedApp = Boolean(config.data?.claudeCode?.enabled)
+    || Boolean(integrations.data?.clients?.some(client => client.state === "current" && !client.supersededBy));
+  const appsDone = requested === undefined ? (hasConnectedApp ? true : undefined) : (requested || hasConnectedApp);
   const autostart = startupChecklistStep(startup.data);
 
   const steps: Step[] = [
     { key: "provider", title: t("shellV2.stepProvider"), hint: t("shellV2.stepProviderHint"),
       done: providers, open: () => navigate("providers") },
     { key: "apps", title: t("shellV2.setupApps"), hint: t("shellV2.setupAppsHint"),
-      done: requested, open: () => navigate("integrations") },
+      done: appsDone, open: () => navigate("integrations") },
     { key: "request", title: t("shellV2.stepFirstRequest"), hint: t("shellV2.stepFirstRequestHint"),
       done: requested, open: () => navigate(requested ? "logs" : "integrations") },
     // The desktop app turns Start at Login on itself, so only the browser dashboard asks for it.

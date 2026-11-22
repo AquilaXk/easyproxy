@@ -3,6 +3,8 @@ import { navigateHash } from "../hash-routing";
 import { canonicalHashPath } from "../app-routing";
 import { useI18n } from "../i18n/shared";
 import { uxT, type UxCopyKey } from "../i18n/ux-overhaul-copy";
+import { readJsonOrThrow } from "../fetch-json";
+import { Notice } from "../ui";
 import ClientMark from "../components/ClientMark";
 import { DataSurfaceSkeleton } from "../components/data-surface";
 import { INTEGRATION_MARKS } from "../components/integration-marks";
@@ -90,6 +92,7 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
   const tabRefs = useRef<Map<IntegrationTab, HTMLButtonElement> | null>(null);
   const [machineClients, setMachineClients] = useState<string[]>([]);
   const [machineSyncing, setMachineSyncing] = useState(false);
+  const [machineSyncError, setMachineSyncError] = useState<string | null>(null);
   if (tabRefs.current === null) tabRefs.current = new Map();
 
   useEffect(() => {
@@ -107,12 +110,17 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
 
   const syncMachine = async () => {
     setMachineSyncing(true);
+    setMachineSyncError(null);
     try {
-      await fetch(`${machineApiBase}/api/machine/sync`, {
+      const response = await fetch(`${machineApiBase}/api/machine/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
       });
+      await readJsonOrThrow(response);
+    } catch (error) {
+      const detail = error instanceof Error && error.message ? error.message : String(error);
+      setMachineSyncError(`${t("connection.machineUnavailable")} (${detail})`);
     } finally { setMachineSyncing(false); }
   };
 
@@ -192,6 +200,14 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
           <span>{machineClients.length > 0 ? machineClients.join(", ") : t("connection.clients.none")}</span>
           <button type="button" className="btn btn-ghost btn-sm" disabled={machineSyncing} onClick={() => void syncMachine()}>{t(machineSyncing ? "connection.clients.syncing" : "connection.clients.sync")}</button>
         </section>
+      )}
+      {connected && machineSyncError && (
+        <Notice tone="err">
+          <span>{machineSyncError}</span>{" "}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMachineSyncError(null)}>
+            {t("common.close")}
+          </button>
+        </Notice>
       )}
 
       <div className="connect-split-layout">

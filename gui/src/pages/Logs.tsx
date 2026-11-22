@@ -923,7 +923,7 @@ export default function Logs({
         </div>
       ) : (
         <div className={panelBody}>
-        <div ref={scrollContainerRef} className="logs-table-wrap max-h-[calc(100dvh-300px)] overflow-auto [overflow-anchor:none]">
+        <div ref={scrollContainerRef} className="logs-table-wrap min-h-[180px] max-h-[max(180px,calc(100dvh-300px))] overflow-auto [overflow-anchor:none]">
           <table
             className={cn(
               "logs-table ui-v2 w-full table-fixed border-collapse text-[13px] font-normal text-fg",
@@ -978,14 +978,23 @@ export default function Logs({
                  data-index={virtualRow.index}
                  data-selected={selected ? "true" : undefined}
                  ref={rowVirtualizer.measureElement}
+                 tabIndex={0}
+                 aria-label={detailLabel}
                  className={cn(
-                   "group cursor-pointer border-b border-line transition-colors last:border-b-0 hover:bg-accent-soft",
+                   "group cursor-pointer border-b border-line transition-colors last:border-b-0 hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-highlight",
                    selected && "bg-accent-soft",
                  )}
                  onClick={event => {
                    // Opens the detail like the button does; a drag that selected text is a copy, not a click.
                    if ((event.target as HTMLElement).closest("button")) return;
                    if (window.getSelection?.()?.toString()) return;
+                   setDetail(log);
+                 }}
+                 onKeyDown={event => {
+                   if (event.key !== "Enter" && event.key !== " ") return;
+                   const target = event.target as HTMLElement | null;
+                   if (target && target !== event.currentTarget && target.closest("button, a, input, select, textarea")) return;
+                   event.preventDefault();
                    setDetail(log);
                  }}
                >

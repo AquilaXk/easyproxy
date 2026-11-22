@@ -60,7 +60,7 @@ export function RemoteWorkspaceChats({ apiBase, sessions, devices, selectedSessi
   const host = useRef<HTMLElement>(null);
   const actions = useSessionActions(apiBase, sessions, devices, stale, refresh);
   const ids = actions.sessions.map(session => session.id);
-  const fallback = [...actions.sessions].reverse().find(session => session.status !== "stopped")?.id ?? ids.at(-1);
+  const fallback = actions.sessions.findLast(session => session.status !== "stopped")?.id ?? ids.at(-1);
   const effectiveLayout = reconcileLayout(layout, ids, fallback);
   const visible = paneIds(effectiveLayout);
   const activeId = visible.includes(active) ? active : visible[0] ?? "";

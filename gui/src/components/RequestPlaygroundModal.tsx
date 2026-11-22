@@ -66,6 +66,16 @@ function isPointOutsideRect(rect: DOMRect, clientX: number, clientY: number): bo
   return clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom;
 }
 
+interface TurnItem extends PlaygroundTurn {
+  id: string;
+}
+
+let nextTurnSeq = 0;
+function toTurnItem(turn: PlaygroundTurn): TurnItem {
+  nextTurnSeq += 1;
+  return { ...turn, id: `turn-${nextTurnSeq}` };
+}
+
 function curlErrorKey(code: CurlImportErrorCode) {
   if (code === "empty") return "playground.importCurlErrEmpty" as const;
   if (code === "too_large") return "playground.importCurlErrTooLarge" as const;
@@ -118,8 +128,8 @@ export default function RequestPlaygroundModal({
   const [effort, setEffort] = useState<PlaygroundEffort>(() => initialSeed?.effort ?? "");
   const [serviceTier, setServiceTier] = useState(() => initialSeed?.serviceTier ?? "");
   const [systemPrompt, setSystemPrompt] = useState(() => initialSeed?.systemPrompt ?? "");
-  const [priorTurns, setPriorTurns] = useState<PlaygroundTurn[]>(() => (
-    initialSeed?.turns?.map(turn => ({ ...turn })) ?? []
+  const [priorTurns, setPriorTurns] = useState<TurnItem[]>(() => (
+    initialSeed?.turns?.map(toTurnItem) ?? []
   ));
   const [userPrompt, setUserPrompt] = useState(() => initialSeed?.userPrompt ?? "");
   const [stream, setStream] = useState(true);
@@ -148,7 +158,7 @@ export default function RequestPlaygroundModal({
       }
       if (initialSeed.systemPrompt !== undefined) setSystemPrompt(initialSeed.systemPrompt);
       if (initialSeed.userPrompt !== undefined) setUserPrompt(initialSeed.userPrompt);
-      if (initialSeed.turns !== undefined) setPriorTurns(initialSeed.turns.map(turn => ({ ...turn })));
+      if (initialSeed.turns !== undefined) setPriorTurns(initialSeed.turns.map(toTurnItem));
       if (initialSeed.maxTokens !== undefined) {
         setMaxTokensDraft(Number.isSafeInteger(initialSeed.maxTokens) && initialSeed.maxTokens > 0 ? String(initialSeed.maxTokens) : "");
       }
@@ -239,7 +249,9 @@ export default function RequestPlaygroundModal({
 
   const buildPayloadOptions = (promptText: string): PlaygroundPayloadOptions | undefined => {
     const temperature = parseOptionalTemperature(temperatureDraft);
-    const nonEmptyTurns = priorTurns.filter(turn => turn.content.trim().length > 0);
+    const nonEmptyTurns = priorTurns
+      .filter(turn => turn.content.trim().length > 0)
+      .map(({ role, content }) => ({ role, content }));
     const turns = nonEmptyTurns.length > 0
       ? [...nonEmptyTurns, { role: "user" as const, content: promptText }]
       : undefined;
@@ -393,7 +405,7 @@ export default function RequestPlaygroundModal({
       setModelA(seed.model);
     }
     setSystemPrompt(seed.systemPrompt ?? "");
-    setPriorTurns(seed.turns ? seed.turns.map(turn => ({ ...turn })) : []);
+    setPriorTurns(seed.turns ? seed.turns.map(toTurnItem) : []);
     setUserPrompt(seed.userPrompt ?? "");
     setMaxTokensDraft(seed.maxTokens !== undefined ? String(seed.maxTokens) : "");
     setTemperatureDraft(seed.temperature !== undefined ? String(seed.temperature) : "");
@@ -780,14 +792,14 @@ export default function RequestPlaygroundModal({
           {priorTurns.length > 0 && (
             <div className="flex flex-col gap-2">
               {priorTurns.map((turn, idx) => (
-                <div key={idx} className="playground-turn-row">
+                <div key={turn.id} className="playground-turn-row">
                   <div className="playground-turn-head">
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
                       disabled={sending}
-                      onClick={() => setPriorTurns(prev => prev.map((item, i) => (
-                        i === idx ? { ...item, role: item.role === "user" ? "assistant" : "user" } : item
+                      onClick={() => setPriorTurns(prev => prev.map(item => (
+                        item.id === turn.id ? { ...item, role: item.role === "user" ? "assistant" : "user" } : item
                       )))}
                     >
                       {turn.role === "assistant"
@@ -798,17 +810,18 @@ export default function RequestPlaygroundModal({
                       type="button"
                       className="btn btn-ghost btn-sm"
                       disabled={sending}
-                      onClick={() => setPriorTurns(prev => prev.filter((_, i) => i !== idx))}
+                      onClick={() => setPriorTurns(prev => prev.filter(item => item.id !== turn.id))}
                     >
                       {uxT(locale, "playground.removeTurn")}
                     </button>
                   </div>
                   <textarea
                     className="input playground-textarea playground-turn-textarea"
+                    aria-label={`${turn.role === "assistant" ? uxT(locale, "playground.roleAssistant") : uxT(locale, "playground.roleUser")} #${idx + 1}`}
                     value={turn.content}
                     disabled={sending}
-                    onChange={(e) => setPriorTurns(prev => prev.map((item, i) => (
-                      i === idx ? { ...item, content: e.target.value } : item
+                    onChange={(e) => setPriorTurns(prev => prev.map(item => (
+                      item.id === turn.id ? { ...item, content: e.target.value } : item
                     )))}
                   />
                 </div>
@@ -826,8 +839,8 @@ export default function RequestPlaygroundModal({
                 onClick={() => {
                   if (priorTurns.length === 0 && userPrompt.trim()) {
                     setPriorTurns([
-                      { role: "user", content: userPrompt },
-                      { role: "assistant", content: "" },
+                      toTurnItem({ role: "user", content: userPrompt }),
+                      toTurnItem({ role: "assistant", content: "" }),
                     ]);
                     setUserPrompt("");
                     return;
@@ -835,7 +848,7 @@ export default function RequestPlaygroundModal({
                   const nextRole = priorTurns.length > 0 && priorTurns[priorTurns.length - 1]!.role === "user"
                     ? "assistant"
                     : "user";
-                  setPriorTurns(prev => [...prev, { role: nextRole, content: "" }]);
+                  setPriorTurns(prev => [...prev, toTurnItem({ role: nextRole, content: "" })]);
                 }}
               >
                 {uxT(locale, "playground.addTurn")}

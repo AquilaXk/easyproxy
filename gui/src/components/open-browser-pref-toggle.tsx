@@ -41,6 +41,7 @@ export function OpenBrowserPrefToggle({ serverDefault = true }: { serverDefault?
           id={id}
           type="checkbox"
           role="switch"
+          switch=""
           aria-labelledby={labelId}
           aria-describedby={hintId}
           checked={!open}

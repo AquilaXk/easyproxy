@@ -241,6 +241,10 @@ dialog::backdrop {
   overscroll-behavior: contain;
 }
 
+dialog::backdrop {
+  overflow: hidden;
+}
+
 /* Off-screen provider cards defer layout & paint while holding height hints. */
 .epx-cv-section {
   content-visibility: auto;

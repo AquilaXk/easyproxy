@@ -85,7 +85,7 @@ export default function ProviderModelDiscovery({ apiBase, provider }: { apiBase:
   };
 
   const added = run.kind === "done" ? new Set(run.added) : new Set<string>();
-  const listed = [...recent].reverse().slice(0, MAX_LISTED);
+  const listed = recent.toReversed().slice(0, MAX_LISTED);
   return (
     <section className="pwi-pacing-card" aria-labelledby="pwi-model-discovery-title">
       <div className="pwi-pacing-head">

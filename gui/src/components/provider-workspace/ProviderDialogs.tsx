@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, type RefObject } from "react";
 import { useT } from "../../i18n/shared";
-import { isTopmostOverlayLayer } from "../overlay-layers";
+import { collectFocusableElements, isTopmostOverlayLayer } from "../overlay-layers";
 
 /**
  * Escape cancels a confirmation (#8849). These are plain alertdialogs, not native <dialog>s, so
@@ -29,12 +29,35 @@ function useEscapeToCancel(layer: RefObject<HTMLElement | null>, onCancel: () =>
 
 function useAlertDialogFocus(layer: RefObject<HTMLElement | null>): void {
   useEffect(() => {
+    const overlay = layer.current;
     const previousFocus = document.activeElement as HTMLElement | null;
-    const focusable = layer.current?.querySelector<HTMLElement>(
-      "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-    );
-    focusable?.focus();
+    collectFocusableElements(overlay)[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !isTopmostOverlayLayer(overlay)) return;
+      const items = collectFocusableElements(overlay);
+      if (items.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !overlay?.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
     return () => {
+      window.removeEventListener("keydown", onKeyDown);
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [layer]);
@@ -55,7 +78,7 @@ export function RemoveConfirmDialog({
   useAlertDialogFocus(layer);
   return (
     <div ref={layer} className="dialog-backdrop" onClick={onCancel}>
-      <div className="dialog" role="alertdialog" aria-label={t("pws.removeConfirmTitle")} onClick={e => e.stopPropagation()}>
+      <div className="dialog" role="alertdialog" aria-modal="true" aria-label={t("pws.removeConfirmTitle")} onClick={e => e.stopPropagation()}>
         <h3>{t("pws.removeConfirmTitle")}</h3>
         <p>{defaultProviderName
           ? t("pws.removeDefaultConfirmBody", { name: providerName, defaultProvider: defaultProviderName })
@@ -84,7 +107,7 @@ export function UnsavedLeaveDialog({
   useAlertDialogFocus(layer);
   return (
     <div ref={layer} className="dialog-backdrop" onClick={onCancel}>
-      <div className="dialog" role="alertdialog" aria-label={t("pws.unsavedLeaveTitle")} onClick={e => e.stopPropagation()}>
+      <div className="dialog" role="alertdialog" aria-modal="true" aria-label={t("pws.unsavedLeaveTitle")} onClick={e => e.stopPropagation()}>
         <h3>{t("pws.unsavedLeaveTitle")}</h3>
         <p>{t("pws.unsavedLeaveBody")}</p>
         <div className="dialog-actions">

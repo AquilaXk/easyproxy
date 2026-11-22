@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useKeyedClientResource } from "./client-resource";
 import Home from "./pages/Home";
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -110,8 +110,12 @@ export function RemoteWorkspaceRoute({ available, apiBase, hubOrigin, onOpenRemo
 }
 
 function readStoredTheme(): Theme {
-  const t = localStorage.getItem(THEME_KEY);
-  return t === "light" || t === "dark" ? t : "system";
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    return t === "light" || t === "dark" ? t : "system";
+  } catch {
+    return "system";
+  }
 }
 
 /*
@@ -352,9 +356,25 @@ export default function App() {
 
   useEffect(() => {
     const el = document.documentElement;
-    if (theme === "system") { el.removeAttribute("data-theme"); localStorage.removeItem(THEME_KEY); }
-    else { el.setAttribute("data-theme", theme); localStorage.setItem(THEME_KEY, theme); }
+    try {
+      if (theme === "system") { el.removeAttribute("data-theme"); localStorage.removeItem(THEME_KEY); }
+      else { el.setAttribute("data-theme", theme); localStorage.setItem(THEME_KEY, theme); }
+    } catch {
+      if (theme === "system") el.removeAttribute("data-theme");
+      else el.setAttribute("data-theme", theme);
+    }
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
+    if (meta) meta.content = theme === "system" ? "light dark" : theme;
   }, [theme]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== THEME_KEY) return;
+      setTheme(readStoredTheme());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // Success expires on its own; a failure and a degraded result stay until the user
   // dismisses them, because those are the two the user has to act on.
@@ -517,7 +537,7 @@ export default function App() {
   const actionContext = uxT(locale, "cmd.sectionActions");
   const playgroundShortcut = shortcutStyle(desktopShell).endsWith("mac") ? "⌘⇧P" : "Ctrl+Shift+P";
   const endpointUrl = targets.shared.serverOrigin || sharedBase || (typeof window !== "undefined" ? window.location.origin : "");
-  const copyProxyEndpoint = () => {
+  const copyProxyEndpoint = useCallback(() => {
     setNavOpen(false);
     if (!endpointUrl || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
       report(uxT(locale, "playground.copyFailed"), "err");
@@ -527,8 +547,8 @@ export default function App() {
       () => report(uxT(locale, "cmd.endpointCopied"), "ok"),
       () => report(uxT(locale, "playground.copyFailed"), "err"),
     );
-  };
-  const quickCommands: PaletteQuickCommand[] = [
+  }, [endpointUrl, locale, report]);
+  const quickCommands = useMemo<PaletteQuickCommand[]>(() => [
     {
       id: "playground",
       itemName: uxT(locale, "cmd.openPlayground"),
@@ -617,7 +637,7 @@ export default function App() {
       keywords: "classic legacy old ui dashboard",
       run: () => switchDashboardEdition("classic"),
     },
-  ];
+  ], [actionContext, copyProxyEndpoint, handleCodexRestart, locale, navigateToPage, playgroundShortcut, t]);
 
   return (
     <div ref={appRef} className={`app${desktopShell ? " app--desktop" : ""}${desktopMac ? " app--macos" : ""}${navCollapsed ? " app--nav-collapsed" : ""}`}>

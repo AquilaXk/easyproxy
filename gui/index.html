@@ -14,7 +14,13 @@
       (function () {
         try {
           var t = localStorage.getItem("epx-theme");
-          if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+          var meta = document.querySelector('meta[name="color-scheme"]');
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+            if (meta) meta.setAttribute("content", t);
+          } else if (meta) {
+            meta.setAttribute("content", "light dark");
+          }
         } catch (e) {}
         // FOUT guard: set <html lang> before first paint so :lang() font stacks apply immediately.
         // Mirrors detectInitial() + LOCALES in src/i18n/shared.ts.

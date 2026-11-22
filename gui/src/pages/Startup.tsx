@@ -4,6 +4,8 @@ import { type TFn, useI18n } from "../i18n/shared";
 import { readSessionListCache, writeSessionListCache } from "../session-list-cache";
 import { useDataSurface } from "../data-surface";
 import { DataSurfaceSkeleton } from "../components/data-surface";
+import { readJsonOrThrow } from "../fetch-json";
+import { Notice } from "../ui";
 import { Button } from "@/components/ui-v2/button";
 import { cn } from "@/lib/utils";
 import { Banner, CopyButton, PageHeader } from "../components/v2-startup/primitives";
@@ -94,6 +96,7 @@ export default function Startup({ apiBase, machineApiBase = apiBase, connected =
   const secondaryGenerationRef = useRef(0);
   const [machineShim, setMachineShim] = useState<{ installed?: boolean; healthy?: boolean } | null>(null);
   const [machineBusy, setMachineBusy] = useState(false);
+  const [machineError, setMachineError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!connected) return;
@@ -107,16 +110,18 @@ export default function Startup({ apiBase, machineApiBase = apiBase, connected =
 
   const runMachineShim = async (action: "install" | "repair" | "uninstall") => {
     setMachineBusy(true);
+    setMachineError(null);
     try {
       const response = await fetch(`${machineApiBase}/api/machine/shim`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      if (response.ok) {
-        const value = await response.json() as { shim?: { installed?: boolean; healthy?: boolean } };
-        setMachineShim(value.shim ?? null);
-      }
+      const value = await readJsonOrThrow<{ shim?: { installed?: boolean; healthy?: boolean } }>(response);
+      setMachineShim(value?.shim ?? null);
+    } catch (error) {
+      const detail = error instanceof Error && error.message ? error.message : String(error);
+      setMachineError(`${t("connection.machineUnavailable")} (${detail})`);
     } finally { setMachineBusy(false); }
   };
 
@@ -339,6 +344,14 @@ export default function Startup({ apiBase, machineApiBase = apiBase, connected =
           <strong className="font-semibold">{t("connection.machine.title")}</strong>{" "}
           <span className="text-fg-muted">{machineShim?.healthy ? t("connection.machine.shimHealthy") : t("connection.machine.shimNeedsAttention")}</span>
         </Banner>
+      )}
+      {connected && machineError && (
+        <Notice tone="err">
+          <span>{machineError}</span>{" "}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMachineError(null)}>
+            {t("common.close")}
+          </button>
+        </Notice>
       )}
 
       {loadState.showSkeleton && !data ? (
