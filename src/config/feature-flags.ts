@@ -1,0 +1,76 @@
+import type { EpxConfig } from "../types";
+
+export function websocketsEnabled(config: Pick<EpxConfig, "websockets">): boolean {
+  return config.websockets === true;
+}
+
+/**
+ * The Responses WebSocket over a Remote Link, Home side. It needs the Home's own WebSocket switch
+ * as well as its own: websockets is the owner's consent to the WebSocket pipeline, and this one adds
+ * linked Children to it. Both are read with === true, so an absent or malformed key means off.
+ */
+export function linkResponsesWebsocketEnabled(config: Pick<EpxConfig, "websockets" | "linkResponsesWebsocket">): boolean {
+  return config.websockets === true && config.linkResponsesWebsocket === true;
+}
+
+/**
+ * Opt-in Ultra Fast, read with the house `=== true` idiom so an absent key and a
+ * malformed one both mean off.
+ */
+export function ultraFastTierEnabled(config: Pick<EpxConfig, "ultraFastTier">): boolean {
+  return config.ultraFastTier === true;
+}
+
+/** Default-off aggregate request metrics; activation is fixed for one server process lifetime. */
+export function metricsExportEnabled(config: Pick<EpxConfig, "metricsExport">): boolean {
+  return config.metricsExport?.enabled === true;
+}
+
+/** Default-off service health recovery (#6671); read once when the proxy starts. */
+export function serviceHealthRecoveryEnabled(config: Pick<EpxConfig, "serviceHealthRecovery">): boolean {
+  return config.serviceHealthRecovery?.enabled === true;
+}
+
+/**
+ * Default cadence for catalog auto-refresh (issue #3630): one converge pass
+ * per hour. Each pass spends a live /models call against every enabled provider, and
+ * provider catalogs are themselves cached upstream for minutes, so an hour is fresh
+ * enough for newly released models to appear without an `epx sync`.
+ */
+export const CATALOG_AUTO_REFRESH_DEFAULT_INTERVAL_MS: number = 60 * 60_000;
+
+/**
+ * Floor under the configured cadence, for the same reason src/quota/reset-poller.ts has
+ * MIN_INTERVAL_MS: below this the refresh buys no freshness — upstream caches have not
+ * moved — and only multiplies the chance of a rate limit across every enabled provider.
+ */
+export const CATALOG_AUTO_REFRESH_MIN_INTERVAL_MS: number = 15 * 60_000;
+
+/**
+ * Enabled by default; explicit false or a zero cadence disables background work.
+ * Malformed enabled values still mean off. Pure on purpose: the scheduler calls this from a
+ * dynamically imported context, so it takes an explicit config slice and reads nothing
+ * global.
+ */
+export function isCatalogAutoRefreshEnabled(
+  config: Pick<EpxConfig, "catalogAutoRefresh">,
+): boolean {
+  const section = config.catalogAutoRefresh;
+  return (section?.enabled === undefined || section.enabled === true)
+    && section?.intervalMinutes !== 0;
+}
+
+/**
+ * Resolved tick interval in milliseconds. An explicit `intervalMinutes: 0` returns 0 —
+ * the section stays configured but the timer stays dormant — and any other value is
+ * clamped up to CATALOG_AUTO_REFRESH_MIN_INTERVAL_MS so a hand edit cannot outrun the
+ * upstream catalog caches. Absent means the hourly default.
+ */
+export function resolveCatalogAutoRefreshIntervalMs(
+  config: Pick<EpxConfig, "catalogAutoRefresh">,
+): number {
+  const minutes = config.catalogAutoRefresh?.intervalMinutes;
+  if (minutes === undefined) return CATALOG_AUTO_REFRESH_DEFAULT_INTERVAL_MS;
+  if (minutes === 0) return 0;
+  return Math.max(CATALOG_AUTO_REFRESH_MIN_INTERVAL_MS, Math.floor(minutes * 60_000));
+}

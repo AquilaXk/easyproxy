@@ -1,0 +1,100 @@
+---
+title: Masaüstü Uygulaması
+description: EasyProxy masaüstü uygulamasını macOS, Windows ve Linux üzerinde kurun ve kullanın.
+---
+
+EasyProxy masaüstü uygulaması yerel bir sistem tepsisini web kontrol paneliyle birleştirir. Paketindeki CLI mevcut bir yerel proxy'yi bulur; uygulama paketindeki çalışma zamanını yalnızca mevcut bir proxy bulunmadığı kesinleşirse başlatır.
+
+Kontrol paneli çözümlenen yerel proxy uç noktasından sunulur (varsayılan port `10100`). Masaüstü uygulaması, bu kontrol paneli ve paketindeki çalışma zamanı çevresinde yerel bir kabuktur.
+
+## Kurulum
+
+### macOS
+
+[Son sürümden](https://github.com/AquilaXk/easyproxy/releases) `EasyProxy-<version>-macos.dmg` dosyasını indirin. DMG'yi açın ve `EasyProxy.app` uygulamasını Applications klasörüne sürükleyin. Uygulama macOS 13 veya daha yenisini gerektirir.
+
+`EasyProxy.app` sürüm derlemeleri Developer ID ile imzalanır ve Apple tarafından noterleştirilir. Dolayısıyla ilk açılışta macOS normalde yalnızca indirilen uygulamalar için standart onayı ister. macOS yine de engellerse **System Settings → Privacy & Security → Open Anyway** yolunu kullanın.
+
+#### Homebrew (masaüstü uygulaması)
+
+Masaüstü uygulamasını alternatif olarak Homebrew Cask ile de yükleyebilirsiniz:
+
+```bash
+brew install --cask easyproxy
+```
+
+- **Uygulama içi güncellemeler (`auto_updates`)**: Masaüstü uygulamasının yerleşik bir güncelleyicisi vardır ve Cask `auto_updates true` bildirir. Belirli Cask için `brew upgrade --cask easyproxy` veya greedy yükseltme, uygulama içinde daha yeni bir sürüme güncellenmiş uygulamanın yerini alabilir. Homebrew ile yükseltmeden önce yüklü uygulamanın ve Cask’in sürümlerini kontrol edin.
+- **CLI ve arka plan servisi**: Cask yalnızca kendi CLI ve proxy çalışma ortamını içeren `EasyProxy.app` uygulamasını kurar. Bağımsız CLI veya arayüzsüz servis için `epx` npm ya da sürüm arşivleriyle ayrıca kurulabilir; ikisi de `~/.easyproxy` yapılandırmasını paylaşır. Servisi ayrı CLI’ye devretmek için EasyProxy’ten çıkın, ayrı CLI’yi açıkça seçin (etkinse [Desktop paket başlatıcısı devrini](/getting-started/installation/) de atlayın) ve `epx service install` çalıştırın. [Terminal komutu seçimine](/guides/desktop-app/#using-the-epx-cli-with-the-desktop-app) ve [çalışma ortamı sahipliğine](/reference/cli/lifecycle/#runtime-ownership) bakın.
+- **Cask yükseltmesinden sonra servis**: Cask’in kaldırma adımı, ayrı CLI’ye ait olsa bile `com.easyproxy.proxy` launchd işini ve plist dosyasını kaldırarak arka plan servisini durdurabilir. Yükseltmeden sonra EasyProxy’ten çıkın ve macOS grafik oturumunda yukarıda açıkça seçilen ayrı CLI ile `epx service status` çalıştırın. Servis yoksa `epx service install`, kurulu ancak yüklenmemişse `epx service repair` çalıştırın. Ardından `epx service status` ile tekrar kontrol edin. `epx service install` bağlantı noktasını kaldırılan işten değil, `EPX_BAKE_PORT` veya `config.port` değerinden alır; hizmet kaydedildikten sonra bunlardan biri değiştiyse eski bağlantı noktasını gösteren istemcileri güncelleyin. Aynı kaldırma adımı Desktop'ın kendi Start at Login öğesini (`EasyProxy` launchd işi) de kaldırır; kullanıyorsanız EasyProxy'te **Start at Login** seçeneğini yeniden açın.
+- **`--zap` ile veri silme**: `brew uninstall --zap --cask easyproxy`, `~/.easyproxy` ve `~/.easyproxy-desktop` dizinlerini siler. Bu dizinlerdeki CLI ve Desktop tarafından paylaşılan yapılandırma ve durum verileri de silinir. `--zap` kullanmadan önce saklamak istediğiniz verileri yedekleyin. 2.97.0 öncesi Cask tanımları bu iki dizini listelemiyordu ve Homebrew kaldırma işlemini kurulum sırasında kaydedilen tanımla yapabilir; `--zap` sonrasında dizinlerin kalıp kalmadığını kontrol edin ve isterseniz kendiniz silin.
+
+### Windows
+
+`EasyProxy-<version>-windows-x64.msi` dosyasını indirip yükleyiciyi çalıştırın. Yükleyici henüz kod imzalı olmadığından Windows SmartScreen uyarı verebilir; sürüm sayfasından indirdiğinizi doğruladıktan sonra **More info → Run anyway** seçeneğini seçin.
+
+### Linux
+
+Sürüm sayfasından `EasyProxy-<version>-linux-x86_64.AppImage` veya `EasyProxy-<version>-linux-amd64.deb` dosyasını indirin.
+
+AppImage için:
+
+```bash
+chmod +x EasyProxy-<version>-linux-x86_64.AppImage
+./EasyProxy-<version>-linux-x86_64.AppImage
+```
+
+Debian tabanlı dağıtımlar için:
+
+```bash
+sudo apt install ./EasyProxy-<version>-linux-amd64.deb
+```
+
+Tepsi simgesi, AppIndicator destekleyen bir masaüstü ortamı gerektirir.
+
+## İlk açılış
+
+Uygulama, paketindeki CLI'dan `epx resolve --json` çalıştırmasını ister ve zaten çalışan erişilebilir bir yerel proxy varsa ona bağlanır. Paketindeki çalışma zamanını yalnızca CLI yokluğunu kanıtlarsa başlatır; belirsiz sonuç başlangıç hatası olarak gösterilir. Ardından kontrol paneli, uygulamanın web görünümünde çözümlenen geri döngü uç noktasında açılır. Oturum açılışında tepside gizli başlayan bir uygulama ise hafif başlangıç sayfasını korur ve kontrol panelini tepsiden ilk açtığınızda ya da uygulamayı yeniden başlattığınızda yükler.
+
+Gömülü kontrol paneli ile normal tarayıcınız arasında geçmek için tepsideki **Open dashboard** veya **Open in browser** eylemini kullanın. Tepsi, güncelleme denetimlerini de sunar.
+
+macOS’te kontrol panelini kapattığınızda uygulama menü çubuğunda çalışmaya devam eder. Proxy’yi yeniden başlatmadan kontrol panelini geri getirmek için EasyProxy’i Dock veya Finder üzerinden yeniden açın.
+
+## Tepside kullanım
+
+macOS ve Windows'ta küçük kullanım penceresini açmak için tepsi simgesine tıklayın. Tepsideki **Show usage** eylemi de pencereyi açar; tıklama olaylarını iletmeyen Linux tepsilerinde de çalışır. Linux'ta masaüstü ortamı tepsi simgesi göstermese bile kontrol paneli başlangıçta açılır.
+
+Kullanım penceresi bugün ve 30 günlük toplamları, yapılandırılmış kullanım grafiğini, kısa model listesini ve sağlayıcı/hesap sınırlarını gösterir. Kota sıfırlama geri sayımları çubuklarının yanındadır; tam sıfırlama zamanını görmek için imleci üzerine getirin. Görünür bölümleri ve grafiği mevcut **Menu bar & widget** ayarları belirler. Gizlenen sağlayıcılar başlık, toplamlar, kotalar ve grafikten çıkarılır. Grafik geçerli zaman aralığındaki etkinliği de içerir. Kısmi veri göstergesi, bazı grafik verilerinin güvenilir biçimde ilişkilendirilemediğini belirtir. Eksik ölçümler sıfır kullanım olarak sunulmaz. Windows ve Linux'ta uzun hesap listesinin sonundaki Refresh ve Dashboard öğelerine ulaşmak için kullanım penceresinde kaydırın.
+
+macOS'ta bu pencere yerel SwiftUI denetimleri ve kaydırılabilir AppKit paneli kullanır. macOS 26 ve sonrasında Apple Liquid Glass, eski sistemlerde yerel açılır panel malzemesi kullanılır. Uzun hesap listelerinde kaydırırken başlık ile Refresh ve Dashboard düğmeleri görünür kalır. **View → Show Usage** (Command-Shift-U) yoluyla da açabilirsiniz. Kapatmak için Escape tuşuna basın veya panel dışına tıklayın.
+
+Tepsi menüsü bugünkü istek sayısını ve token miktarını, etkinse tahmini maliyetle birlikte gösterir. Widget ile aynı yerel gün kullanımını kullanır. Hemen güncellemek için **Refresh now** seçeneğini seçin; uygulama ayrıca her 60 saniyede bir yeniler. Görüntüleme tercihleri kontrol panelindeki **Menu bar & widget** bölümündedir. **Today** kapatılırsa özet gizlenir; **Cost** kapatılırsa maliyet özetten kaldırılır.
+
+Kullanılamayan veya açıkça ölçülmemiş kullanım, ölçülmüş sıfır yerine `—` olarak gösterilir. Yalnızca simge başlığını seçmek önceki sayacı temizler. Kısaltmalar tam sayıdaki sıfırları korur: on milyon token `1M` değil `10M` olur.
+
+## Güncellemeler
+
+Hemen denetlemek için tepsi menüsünden **Check for Updates…** seçeneğini seçin. Sürüm derlemeleri başlangıçtan sonra ve altı saatte bir otomatik denetim de yapar.
+
+Tauri güncelleyici yeni bir uygulama sürümü bulduğunda macOS menü çubuğu simgesinde veya bir tray host varsa Windows/Linux tepsi simgesinde mavi nokta görünür. Gömülü pano aynı masaüstü güncelleme sinyalini gösterir. Aynı proxy’ye bağlı normal tarayıcı, proxy paketinin güncelleme durumunu görmeye devam eder. Kabuk yaklaşık üç dakika bildirim yapmazsa gömülü rozet yeniden bağlanana kadar unknown olur. Nokta kullanılabilirliği bildirir; kurulum açık bir kullanıcı eylemi gerektirir.
+
+Masaüstü uygulamasında, kontrol panelindeki güncelleme düğmesi uygulamanın güncelleme sayfasını açar. Buradan yeniden denetleyebilir, bekleyen imzalı güncellemeyi kurabilir veya kontrol paneline dönebilirsiniz. Aynı kurulum işlemi tepsi menüsünde de bulunur. Kurulum başarısız olursa güncelleme yeniden denenmek üzere tutulur. Bu sayfa, masaüstünde tepsi simgesi bulunmayan Linux'ta da çalışır. Normal bir tarayıcı kontrol paneli bunun yerine o proxy'nin paket kurulumunu yönetir.
+
+Güncellemeler kurulmadan önce projenin imzalı güncelleyici açık anahtarıyla doğrulanır. macOS'ta uygulama içi güncellemeler `EasyProxy-<version>-macos.app.tar.gz` dosyasını indirir; DMG ilk kurulum içindir. Sürüm bildirimi yalnızca güncelleyici anahtar sırrı yapılandırıldığında üretilir ve o durumda dört platformun tamamının imzalanmasını gerektirir.
+
+Windows'ta uygulama penceresi olmadan da güncelleyebilirsiniz; örneğin SSH üzerinden. Kurulumun kendi `epx.exe` dosyasını EasyProxy'i çalıştıran Windows hesabıyla açılmış, yönetici yetkili bir terminalde çalıştırın: `"C:\Program Files\EasyProxy\epx.exe" update --desktop` (başka bir klasöre kurduysanız yolu değiştirin). Bir hizmet, SYSTEM olarak çalışan zamanlanmış bir görev veya başka bir hesap kendi EasyProxy ana dizinini kullanır, bu proxy'yi bulamaz ve eski sürümde bırakır. Komut tepsi menüsüyle aynı yayımlanmış sürümü denetler, MSI'yı aynı güncelleyici anahtarıyla doğrular ve herhangi bir uyuşmazlıkta reddeder, arayüzsüz kurar, ardından hâlâ eski sürümü çalıştıran proxy'yi yeniden başlatarak yeni sürümün yanıt vermesini sağlar. `--check` yalnızca durumu bildirir, `--json` makine tarafından okunabilir bir sonuç yazar. Çıkış kodu 0 tamamlandı ya da zaten güncel, 1 hiçbir şey kurulmadı, 2 güncelleme kuruldu ama eski proxy hâlâ çalışıyor (veya önce Windows yeniden başlatılmalı), 3 kurucu zamanında bitmedi demektir. Başka bir kurulumdan başlatılmış bir proxy asla durdurulmaz. MSI'yı elle kurduysanız `epx status`, kurulu sürümün çalışan proxy'den yeni olduğunu söyler ve bu komutu gösterir.
+
+## Widget
+
+macOS uygulaması EasyProxy WidgetKit uzantısını içerir. Widget kurulumu ve yerel anlık görüntü ayrıntıları için [macOS Menü Çubuğu Uygulaması rehberine](/tr/guides/macos-menu-bar/) bakın.
+
+## Kaldırma
+
+macOS'ta `EasyProxy.app` uygulamasını Applications klasöründen Çöp Sepeti'ne sürükleyin. Windows'ta EasyProxy'i **Installed apps** bölümünden kaldırın. Debian tabanlı Linux sistemlerinde şunu çalıştırın:
+
+```bash
+sudo apt remove easyproxy
+```
+
+AppImage için indirilen dosyayı silin.
+
+Kaydedilmiş menü çubuğu ayarları okunamıyorsa dosyayı korumak için kısmi düzenlemeler reddedilir. Tekrar düzenlemeden önce dosyayı geri yükleyin veya yardımcı ayarları açıkça sıfırlayın.

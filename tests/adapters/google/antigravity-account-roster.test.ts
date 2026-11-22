@@ -1,0 +1,399 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { gatherRoutedModels as gatherRoutedModelsDirect } from "../../../src/codex/catalog";
+import { clearModelCache } from "../../../src/codex/model-cache";
+import {
+  antigravityModelUnlistedMessage,
+  antigravityModelRefusal,
+  antigravityReplacementUnavailableMessage,
+  antigravitySelectedAccountUnlistedMessage,
+  clearGenericFailoverHealth,
+  hasEligibleGenericOAuthFailoverTarget,
+  noteGenericPoolSelection,
+  preferKiroModelSupport,
+  preferredInitialAccount,
+  rotateAntigravityAccountOnAuthRefusal,
+  rotateAntigravityAccountOnUpstreamFault,
+  rotateGenericOAuthAccountOn429,
+  routeAntigravityModel,
+  seedGenericPoolSelection,
+} from "../../../src/oauth/generic-account-failover";
+import { clearPoolRotationState } from "../../../src/oauth/pool-kernel";
+import { bindGenericSessionAccount, clearGenericSessionAffinity, genericSessionAccount } from "../../../src/oauth/generic-session-affinity";
+import {
+  ANTIGRAVITY_ACCOUNT_ROSTER_TTL_MS,
+  antigravityAccountRosterModelIds,
+  antigravityAccountSupportsModel,
+  clearAntigravityAccountRosters,
+  recordAntigravityAccountRoster,
+} from "../../../src/providers/antigravity-account-roster";
+import {
+  ANTIGRAVITY_MODELS,
+  ANTIGRAVITY_MODEL_EFFORTS,
+  parseAntigravityAvailableModels,
+  resolveAntigravityEffortWireModel,
+} from "../../../src/providers/antigravity-models";
+import { clearAccountQuotaCache, setCachedProviderAccountQuotaForTests } from "../../../src/providers/quota";
+import type { EpxConfig, EpxProviderConfig } from "../../../src/types";
+import { withStubbedProviderFetch } from "../../helpers/catalog-provider-fetch";
+import { removeTreeWithRetry } from "../../helpers/remove-tree";
+
+// Measured 2026-10-14 on live CCA: Antigravity gates Claude per account. One account lists only
+// claude-sonnet-4-6 / claude-opus-4-6-thinking (every claude-*-5-5-* id answers 404), others list
+// only the 5.5 suffix families. These payloads mirror those two roster shapes.
+const PROVIDER = "google-antigravity";
+const row = (maxTokens: number) => ({ maxTokens, supportsImages: true, supportsThinking: true });
+const ROSTER_46 = {
+  models: {
+    "gemini-3.8-flash-low": row(1_048_576), "gemini-3.8-flash-medium": row(1_048_576), "gemini-3.8-flash-high": row(1_048_576),
+    "claude-sonnet-4-6": row(250_000), "claude-opus-4-6-thinking": row(250_000),
+  },
+  agentModelSorts: [{ groups: [{ modelIds: [
+    "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking",
+  ] }] }],
+};
+const tiers = (base: string) => ["low", "medium", "high"].map(tier => `${base}-${tier}`);
+const ROSTER_55 = {
+  models: Object.fromEntries([
+    ...tiers("gemini-3.8-flash").map(id => [id, row(1_048_576)]),
+    ...tiers("gemini-4-argon").map(id => [id, row(1_048_576)]),
+    ...tiers("claude-opus-5-5").map(id => [id, row(1_000_000)]),
+    ...tiers("claude-sonnet-5-5").map(id => [id, row(1_000_000)]),
+  ]),
+  agentModelSorts: [{ groups: [{ modelIds: [
+    ...tiers("gemini-3.8-flash"), ...tiers("gemini-4-argon"), ...tiers("claude-opus-5-5"), ...tiers("claude-sonnet-5-5"),
+  ] }] }],
+};
+
+const gatherRoutedModels: typeof gatherRoutedModelsDirect = (config, options) =>
+  gatherRoutedModelsDirect(withStubbedProviderFetch(config), options);
+
+const originalFetch = globalThis.fetch;
+const originalHome = process.env.EASYPROXY_HOME;
+const homes: string[] = [];
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  clearModelCache();
+  clearAntigravityAccountRosters();
+  clearGenericFailoverHealth();
+  clearGenericSessionAffinity();
+  clearAccountQuotaCache(PROVIDER);
+  if (originalHome === undefined) delete process.env.EASYPROXY_HOME;
+  else process.env.EASYPROXY_HOME = originalHome;
+  for (const home of homes.splice(0)) removeTreeWithRetry(home);
+});
+
+function homeWithAccounts(accountIds: string[], activeAccountId: string, paused: string[] = []): string {
+  const home = mkdtempSync(join(tmpdir(), "epx-agy-roster-"));
+  homes.push(home);
+  process.env.EASYPROXY_HOME = home;
+  writeFileSync(join(home, "auth.json"), JSON.stringify({
+    [PROVIDER]: {
+      activeAccountId,
+      accounts: accountIds.map(id => ({
+        id,
+        ...(paused.includes(id) ? { paused: true } : {}),
+        credential: { access: `access-${id}`, refresh: `refresh-${id}`, expires: Date.now() + 3_600_000, projectId: "project-id" },
+      })),
+    },
+  }));
+  return home;
+}
+
+function provider(extra: Partial<EpxProviderConfig> = {}): EpxProviderConfig {
+  return {
+    adapter: "google",
+    authMode: "oauth",
+    baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+    googleMode: "cloud-code-assist",
+    project: "configured-project",
+    liveModels: true,
+    // The static lineup, as the registry seeds it.
+    models: [...ANTIGRAVITY_MODELS],
+    modelReasoningEfforts: ANTIGRAVITY_MODEL_EFFORTS,
+    ...extra,
+  } as EpxProviderConfig;
+}
+
+async function discoveredIds(payload: unknown, accountId: string): Promise<string[]> {
+  homeWithAccounts([accountId], accountId);
+  globalThis.fetch = (async () => Response.json(payload)) as typeof fetch;
+  const models = await gatherRoutedModels({ providers: { [PROVIDER]: provider() } } as unknown as EpxConfig);
+  return models.filter(model => model.provider === PROVIDER).map(model => model.id).sort();
+}
+
+describe("Antigravity exposure follows each account's own discovery", () => {
+  test("a Claude 4.6 account exposes 4.6 and hides the static 5.5 and Argon rows", async () => {
+    const ids = await discoveredIds(ROSTER_46, "acct-46");
+    expect(ids).toEqual(["claude-opus-4-6-thinking", "claude-sonnet-4-6", "gemini-3.8-flash"]);
+    expect(antigravityAccountSupportsModel(PROVIDER, "acct-46", "claude-sonnet-4-6")).toBe(true);
+    expect(antigravityAccountSupportsModel(PROVIDER, "acct-46", "claude-opus-5-5")).toBe(false);
+    expect(antigravityAccountSupportsModel(PROVIDER, "acct-46", "gemini-4-argon")).toBe(false);
+  });
+
+  test("a Claude 5.5 account exposes the full 3.8 / 4 / 5.5 / 5.5 lineup and no 4.6 row", async () => {
+    const ids = await discoveredIds(ROSTER_55, "acct-55");
+    expect(ids).toEqual(["claude-opus-5-5", "claude-sonnet-5-5", "gemini-3.8-flash", "gemini-4-argon"]);
+    expect(antigravityAccountSupportsModel(PROVIDER, "acct-55", "claude-opus-5-5")).toBe(true);
+    expect(antigravityAccountSupportsModel(PROVIDER, "acct-55", "claude-opus-5-5-high")).toBe(true);
+    expect(antigravityAccountSupportsModel(PROVIDER, "acct-55", "claude-sonnet-4-6")).toBe(false);
+    expect(antigravityAccountRosterModelIds(PROVIDER, "acct-55")).toEqual(expect.arrayContaining(["claude-opus-5-5", "gemini-4-argon"]));
+  });
+});
+
+describe("Claude 4.6 and 5.5 both map", () => {
+  test("4.6 rides thinkingLevel on its single wire id", () => {
+    expect(ANTIGRAVITY_MODEL_EFFORTS["claude-sonnet-4-6"]).toEqual(["low", "medium", "high", "max"]);
+    expect(resolveAntigravityEffortWireModel("claude-sonnet-4-6", "high"))
+      .toEqual({ wireModelId: "claude-sonnet-4-6", thinkingLevel: "high" });
+    // CCA's ThinkingLevel enum tops out at high.
+    expect(resolveAntigravityEffortWireModel("claude-opus-4-6-thinking", "max"))
+      .toEqual({ wireModelId: "claude-opus-4-6-thinking", thinkingLevel: "high" });
+  });
+
+  test("5.5 rides its per-tier suffix wire ids, statically and from discovery", () => {
+    for (const base of ["claude-opus-5-5", "claude-sonnet-5-5"]) {
+      for (const effort of ["low", "medium", "high"] as const) {
+        expect(resolveAntigravityEffortWireModel(base, effort)).toEqual({ wireModelId: `${base}-${effort}` });
+      }
+    }
+    const rows = parseAntigravityAvailableModels(ROSTER_55)!;
+    expect(rows.find(model => model.id === "claude-opus-5-5")?.effortWireModelIds).toEqual({
+      low: "claude-opus-5-5-low", medium: "claude-opus-5-5-medium", high: "claude-opus-5-5-high",
+    });
+  });
+});
+
+describe("account selection prefers an account whose roster lists the model", () => {
+  function recordBoth(): void {
+    recordAntigravityAccountRoster(PROVIDER, "acct-46", parseAntigravityAvailableModels(ROSTER_46)!);
+    recordAntigravityAccountRoster(PROVIDER, "acct-55", parseAntigravityAvailableModels(ROSTER_55)!);
+  }
+
+  test("ranking keeps listing accounts, skips known non-listing ones, and keeps unknown ones", () => {
+    homeWithAccounts(["acct-46", "acct-55", "acct-new"], "acct-46");
+    recordBoth();
+    expect(preferKiroModelSupport(PROVIDER, ["acct-46", "acct-55"], "claude-opus-5-5")).toEqual(["acct-55"]);
+    expect(preferKiroModelSupport(PROVIDER, ["acct-46", "acct-55"], "claude-sonnet-4-6")).toEqual(["acct-46"]);
+    // No roster yet means unknown, never "unsupported".
+    expect(preferKiroModelSupport(PROVIDER, ["acct-46", "acct-new"], "claude-opus-5-5")).toEqual(["acct-new"]);
+    // Every account's fresh roster omits it: nothing is eligible (#7500), never a fallback.
+    expect(preferKiroModelSupport(PROVIDER, ["acct-46"], "claude-opus-5-5")).toEqual([]);
+    expect(antigravityAccountSupportsModel(PROVIDER, "acct-new", "claude-opus-5-5")).toBeUndefined();
+  });
+
+  test("a stale roster is unknown", () => {
+    homeWithAccounts(["acct-46"], "acct-46");
+    recordAntigravityAccountRoster(PROVIDER, "acct-46", parseAntigravityAvailableModels(ROSTER_46)!,
+      Date.now() - ANTIGRAVITY_ACCOUNT_ROSTER_TTL_MS - 1);
+    expect(antigravityAccountSupportsModel(PROVIDER, "acct-46", "claude-opus-5-5")).toBeUndefined();
+  });
+
+  test("with proactive failover on, a 5.5 request leaves a 4.6-only active account", () => {
+    homeWithAccounts(["acct-46", "acct-55"], "acct-46");
+    recordBoth();
+    const config = { providers: { [PROVIDER]: provider({ oauthAccountFailover: { enabled: true } }) } } as unknown as EpxConfig;
+    expect(preferredInitialAccount(config, PROVIDER, Date.now(), "claude-opus-5-5")).toBe("acct-55");
+  });
+});
+
+describe("model routing fails closed on a proven roster omission (#7500)", () => {
+  const config = (enabled?: boolean) => ({ providers: { [PROVIDER]: provider(
+    enabled === undefined ? {} : { oauthAccountFailover: { enabled } },
+  ) } }) as unknown as EpxConfig;
+  const record = (id: string, roster: unknown) =>
+    recordAntigravityAccountRoster(PROVIDER, id, parseAntigravityAvailableModels(roster)!);
+
+  test("an account that lists the model, or has no roster yet, keeps the request", () => {
+    homeWithAccounts(["acct-55", "acct-new"], "acct-55");
+    record("acct-55", ROSTER_55);
+    expect(routeAntigravityModel(config(), PROVIDER, "acct-55", "claude-opus-5-5")).toEqual({ kind: "keep" });
+    expect(routeAntigravityModel(config(), PROVIDER, "acct-new", "claude-opus-5-5")).toEqual({ kind: "keep" });
+    // Other providers and model-less requests are never judged.
+    expect(routeAntigravityModel(config(), "kiro", "acct-55", "claude-sonnet-4-6")).toEqual({ kind: "keep" });
+    expect(routeAntigravityModel(config(), PROVIDER, "acct-55", null)).toEqual({ kind: "keep" });
+  });
+
+  test("an omitting account is replaced by a listing sibling before an unknown one", () => {
+    homeWithAccounts(["acct-46", "acct-new", "acct-55"], "acct-46");
+    record("acct-46", ROSTER_46);
+    record("acct-55", ROSTER_55);
+    expect(routeAntigravityModel(config(true), PROVIDER, "acct-46", "claude-opus-5-5"))
+      .toEqual({ kind: "reroute", accountId: "acct-55" });
+  });
+
+  test("an unknown sibling serves when none lists the model, and a cooled one ranks last", () => {
+    homeWithAccounts(["acct-46", "acct-cooled", "acct-new"], "acct-46");
+    record("acct-46", ROSTER_46);
+    record("acct-cooled", ROSTER_55);
+    rotateGenericOAuthAccountOn429(config(true), PROVIDER, "acct-cooled", "120", Date.now(), "claude-opus-5-5");
+    expect(routeAntigravityModel(config(true), PROVIDER, "acct-46", "claude-opus-5-5"))
+      .toEqual({ kind: "reroute", accountId: "acct-new" });
+  });
+
+  test("no usable sibling serving the model refuses; paused accounts do not count", () => {
+    homeWithAccounts(["acct-46", "acct-46b", "acct-paused"], "acct-46", ["acct-paused"]);
+    record("acct-46", ROSTER_46);
+    record("acct-46b", ROSTER_46);
+    record("acct-paused", ROSTER_55);
+    expect(routeAntigravityModel(config(true), PROVIDER, "acct-46", "claude-opus-5-5"))
+      .toEqual({ kind: "refuse", message: antigravityModelUnlistedMessage() });
+  });
+
+  test("without proactive failover the selected account is not moved; the request is refused", () => {
+    homeWithAccounts(["acct-46", "acct-55"], "acct-46");
+    record("acct-46", ROSTER_46);
+    record("acct-55", ROSTER_55);
+    for (const enabled of [undefined, false]) {
+      expect(routeAntigravityModel(config(enabled), PROVIDER, "acct-46", "claude-opus-5-5"))
+        .toEqual({ kind: "refuse", message: antigravitySelectedAccountUnlistedMessage() });
+      expect(antigravityModelRefusal(config(enabled), PROVIDER, "acct-46", "claude-opus-5-5"))
+        .toBe(antigravitySelectedAccountUnlistedMessage());
+    }
+    // With failover on, an omitting account that still resolved means the replacement failed;
+    // the refusal must not advise enabling a setting that is already on.
+    expect(antigravityModelRefusal(config(true), PROVIDER, "acct-46", "claude-opus-5-5"))
+      .toBe(antigravityReplacementUnavailableMessage());
+    expect(antigravityModelRefusal(config(true), PROVIDER, "acct-55", "claude-opus-5-5")).toBeNull();
+  });
+
+  test("429 rotation and its target probe never pick a sibling whose roster omits the model", () => {
+    homeWithAccounts(["acct-55", "acct-46"], "acct-55");
+    record("acct-55", ROSTER_55);
+    record("acct-46", ROSTER_46);
+    expect(hasEligibleGenericOAuthFailoverTarget(PROVIDER, "acct-55", Date.now(), "claude-opus-5-5")).toBe(false);
+    expect(rotateGenericOAuthAccountOn429(config(true), PROVIDER, "acct-55", null, Date.now(), "claude-opus-5-5")).toBeNull();
+    // The sibling still serves a model it lists.
+    expect(hasEligibleGenericOAuthFailoverTarget(PROVIDER, "acct-55", Date.now(), "gemini-3.8-flash")).toBe(true);
+  });
+
+  test("auth-refusal rotation walks past an omitting sibling to one that may serve", () => {
+    homeWithAccounts(["acct-a", "acct-46", "acct-55"], "acct-a");
+    record("acct-a", ROSTER_55);
+    record("acct-46", ROSTER_46);
+    record("acct-55", ROSTER_55);
+    expect(rotateAntigravityAccountOnAuthRefusal(true, "acct-a", "stale-generation", "claude-opus-5-5")).toBe("acct-55");
+    clearAntigravityAccountRosters(PROVIDER, "acct-55");
+    record("acct-55", ROSTER_46);
+    expect(rotateAntigravityAccountOnAuthRefusal(true, "acct-a", "stale-generation", "claude-opus-5-5")).toBeNull();
+  });
+
+  test("round-robin rotates across model-supporting accounts per family without resetting weights", () => {
+    clearPoolRotationState();
+    homeWithAccounts(["acct-46a", "acct-55a", "acct-46b", "acct-55b"], "acct-55a");
+    record("acct-46a", ROSTER_46);
+    record("acct-55a", ROSTER_55);
+    record("acct-46b", ROSTER_46);
+    record("acct-55b", ROSTER_55);
+    const rrConfig = {
+      pool: { kernel: true },
+      providers: {
+        [PROVIDER]: provider({ oauthAccountFailover: { enabled: true, strategy: "round-robin", stickyLimit: 1 } }),
+      },
+    } as unknown as EpxConfig;
+    const served: string[] = [];
+    for (let turn = 0; turn < 3; turn++) {
+      const picked = preferredInitialAccount(rrConfig, PROVIDER, Date.now(), "claude-opus-5-5") ?? "acct-55a";
+      noteGenericPoolSelection(rrConfig, PROVIDER, picked, "claude-opus-5-5");
+      served.push(picked);
+    }
+    expect(served).toEqual(["acct-55a", "acct-55b", "acct-55a"]);
+  });
+
+  test("conversation affinity keeps one account per quota family when a session alternates families", () => {
+    homeWithAccounts(["acct-55a", "acct-55b"], "acct-55a");
+    record("acct-55a", ROSTER_55);
+    record("acct-55b", ROSTER_55);
+    const affinityConfig = {
+      providers: {
+        [PROVIDER]: provider({ oauthAccountFailover: { enabled: true, sessionAffinity: "conversation" } }),
+      },
+    } as unknown as EpxConfig;
+    bindGenericSessionAccount(affinityConfig, PROVIDER, "session", "acct-55a", "claude-opus-5-5");
+    bindGenericSessionAccount(affinityConfig, PROVIDER, "session", "acct-55b", "gemini-3.8-flash-high");
+    expect(genericSessionAccount(affinityConfig, PROVIDER, "session", "claude-opus-5-5")).toBe("acct-55a");
+    expect(genericSessionAccount(affinityConfig, PROVIDER, "session", "gemini-3.8-flash-high")).toBe("acct-55b");
+  });
+  test("model filtering drops an account whose quota family is exhausted unless every listing account is", () => {
+    homeWithAccounts(["acct-55a", "acct-55b"], "acct-55a");
+    record("acct-55a", ROSTER_55);
+    record("acct-55b", ROSTER_55);
+    const spent = { updatedAt: Date.now(), customWindows: [{ label: "Cla", percent: 100 }, { label: "Gem", percent: 10 }] };
+    setCachedProviderAccountQuotaForTests(PROVIDER, "acct-55a", spent);
+    expect(preferKiroModelSupport(PROVIDER, ["acct-55a", "acct-55b"], "claude-opus-5-5")).toEqual(["acct-55b"]);
+    expect(preferKiroModelSupport(PROVIDER, ["acct-55a", "acct-55b"], "gemini-3.8-flash-high")).toEqual(["acct-55a", "acct-55b"]);
+    setCachedProviderAccountQuotaForTests(PROVIDER, "acct-55b", spent);
+    expect(preferKiroModelSupport(PROVIDER, ["acct-55a", "acct-55b"], "claude-opus-5-5")).toEqual(["acct-55a", "acct-55b"]);
+  });
+  test("a model-listing reroute skips a listing sibling whose quota family is exhausted", () => {
+    homeWithAccounts(["acct-46", "acct-55a", "acct-55b"], "acct-46");
+    record("acct-46", ROSTER_46);
+    record("acct-55a", ROSTER_55);
+    record("acct-55b", ROSTER_55);
+    setCachedProviderAccountQuotaForTests(PROVIDER, "acct-55a",
+      { updatedAt: Date.now(), customWindows: [{ label: "Cla", percent: 100 }, { label: "Gem", percent: 10 }] });
+    for (const strategy of ["round-robin", "fill-first"] as const) {
+      clearPoolRotationState();
+      const strategyConfig = {
+        pool: { kernel: true },
+        providers: { [PROVIDER]: provider({ oauthAccountFailover: { enabled: true, strategy, stickyLimit: 1 } }) },
+      } as unknown as EpxConfig;
+      expect(routeAntigravityModel(strategyConfig, PROVIDER, "acct-46", "claude-opus-5-5"))
+        .toEqual({ kind: "reroute", accountId: "acct-55b" });
+    }
+  });
+
+  test("403 and 5xx sibling rotations skip a sibling whose quota family is exhausted", () => {
+    homeWithAccounts(["acct-46", "acct-55a", "acct-55b"], "acct-46");
+    record("acct-55a", ROSTER_55);
+    record("acct-55b", ROSTER_55);
+    setCachedProviderAccountQuotaForTests(PROVIDER, "acct-55a",
+      { updatedAt: Date.now(), customWindows: [{ label: "Cla", percent: 100 }, { label: "Gem", percent: 10 }] });
+    // Roster order alone would hand the hop to acct-55a, whose Claude quota is spent.
+    expect(rotateAntigravityAccountOnAuthRefusal(true, "acct-46", "unsent-generation", "claude-opus-5-5")).toBe("acct-55b");
+    expect(rotateAntigravityAccountOnUpstreamFault(true, "acct-46", "unsent-generation", "claude-opus-5-5")).toBe("acct-55b");
+    // The Gemini family still has headroom on acct-55a, so it keeps its roster turn there.
+    expect(rotateAntigravityAccountOnUpstreamFault(true, "acct-46", "unsent-generation", "gemini-3.8-flash")).toBe("acct-55a");
+  });
+
+  test("model-listing reroutes follow the family round-robin ring", () => {
+    clearPoolRotationState();
+    homeWithAccounts(["acct-46a", "acct-55a", "acct-55b"], "acct-46a");
+    record("acct-46a", ROSTER_46);
+    record("acct-55a", ROSTER_55);
+    record("acct-55b", ROSTER_55);
+    const rrConfig = {
+      pool: { kernel: true },
+      providers: {
+        [PROVIDER]: provider({ oauthAccountFailover: { enabled: true, strategy: "round-robin", stickyLimit: 1 } }),
+      },
+    } as unknown as EpxConfig;
+    const served: (string | null)[] = [];
+    for (let turn = 0; turn < 3; turn++) {
+      const picked = preferredInitialAccount(rrConfig, PROVIDER, Date.now(), "claude-opus-5-5");
+      served.push(picked);
+      if (picked) noteGenericPoolSelection(rrConfig, PROVIDER, picked, "claude-opus-5-5");
+    }
+    expect(served).toEqual(["acct-55a", "acct-55b", "acct-55a"]);
+  });
+
+  test("a manual selection overrides a sticky family ring", () => {
+    clearPoolRotationState();
+    homeWithAccounts(["acct-55a", "acct-55b"], "acct-55a");
+    record("acct-55a", ROSTER_55);
+    record("acct-55b", ROSTER_55);
+    const rrConfig = {
+      pool: { kernel: true },
+      providers: {
+        [PROVIDER]: provider({ oauthAccountFailover: { enabled: true, strategy: "round-robin", stickyLimit: 5 } }),
+      },
+    } as unknown as EpxConfig;
+    noteGenericPoolSelection(rrConfig, PROVIDER, "acct-55a", "claude-opus-5-5");
+    expect(preferredInitialAccount(rrConfig, PROVIDER, Date.now(), "claude-opus-5-5", "acct-46x")).toBe("acct-55a");
+    seedGenericPoolSelection(PROVIDER, "acct-55b");
+    expect(preferredInitialAccount(rrConfig, PROVIDER, Date.now(), "claude-opus-5-5", "acct-46x")).toBe("acct-55b");
+    expect(preferredInitialAccount(rrConfig, PROVIDER, Date.now(), "gemini-3.8-flash-high", "acct-46x")).toBe("acct-55b");
+  });
+});

@@ -1,0 +1,635 @@
+import { randomUUID } from "node:crypto";
+import { readDesktopDisconnectReceipt } from "../claude/desktop-remote-store";
+import { flushLinkDiagnostics, recordLinkDiagnostic } from "../link/diagnostics";
+import { existsSync } from "node:fs";
+import type { Server } from "bun";
+import { siblingRuntimeField, withSiblingMarker } from "../codex/sibling-start";
+import { issueSiblingHandoff } from "../codex/sibling-handoff";
+import { loadConfig, withConfigMutationLockSync } from "../config";
+import { readRuntimePort, removePid, removeRuntimePort, writePid, writeRuntimePort, type ClientStopOwner, type RuntimePortState } from "../config/process-state";
+import { currentServingCommand } from "../config/serving-runtimes";
+import { installCrashGuards } from "../lib/crash-guard";
+import { observeLocalCredentials } from "../local-credentials/runtime-observation";
+import { verifiedHomeConnection } from "./link-connection";
+import { createLocalAttestationSecret } from "../lib/local-management-attestation";
+import { loadServiceTokenFromFile, serviceApiTokenFingerprint } from "../lib/service-secrets";
+import { handledSignalExitCode } from "../lib/handled-signal-exit";
+import {
+  CLIENT_RESTART_REBIND_WAIT_MS,
+  DESKTOP_RESTART_EXIT_CODE,
+  DESKTOP_SUPERVISED_ENV,
+  DESKTOP_SUPERVISED_PORT_WAIT_MS,
+  isDesktopSupervised,
+} from "../lib/system-restart-contract";
+import { findAvailablePort, isAddrInUse, PortUnavailableError, waitForPortAvailable } from "../server/ports";
+import type { ReplacementStartRequest } from "../server/restart-replacement";
+import type { EpxClientConnectionConfig } from "../types";
+import { createLinkKeySource } from "./link-ingress";
+import { HOME_INITIATED_LINK_TUNNEL } from "./link-relay";
+import { clientInitiatedLinkReadiness, createHomeInitiatedLinkReadiness } from "./link-readiness";
+import { createClientLinkSupervisor, type ClientLinkSupervisor } from "./link-tunnel";
+import { clientLinkStatePath, isChildInitiatedLink, recordChildInitiatedLink } from "./link-state";
+import { startMachineListener, type MachineListenerDeps } from "./machine-listener";
+import { startHubRelayLeaseRefresh } from "./hub-relay";
+import { currentHubRelayAdmission } from "./hub-session";
+import { isLinkConnection, linkStopConnectionOwner, pendingClientConnectMayOwnToken, readClientConnectionState, readClientConnectionStateWithEvidence, sameClientConnectionOwner } from "./state";
+import { withClientLifecycleSync } from "./lifecycle-lock";
+import { clientConnectionEnded, clientRestartRollbackAction, clientRestartSupervisor, createClientRestartController, LEGACY_FLAG_RESTART_OWNER, restartOwnerEvidence, type ClientRestartController, type RecordedRestartOwner, type RestartOwner } from "./runtime-restart";
+import { createLinkParityReporter, type LinkParityReporter } from "./link-parity-reporter";
+import { restoreLinkClientRoutingBeforeExit } from "./stop-routing";
+import { observeClientStopOwner } from "./stop-teardown-owner";
+import { SUPERVISOR_MARKER_ENVS } from "../lib/supervisor-markers";
+import { markClientRuntimeStopping, markClientRuntimeStoppingWithRetry } from "./sync-runtime";
+import { startRouteIntentTick, type RouteIntentTick } from "../integrations/route-intent-tick";
+import { startRouteIntentWatch, type RouteIntentRuntimeWatch } from "./route-intent-watch";
+
+let activeServer: Server<unknown> | null = null;
+let activePort: number | null = null;
+let activeSupervisor: ClientLinkSupervisor | null = null;
+let activeReporter: LinkParityReporter | null = null;
+let activeRouteWatch: RouteIntentRuntimeWatch | null = null;
+let activeRouteSync: RouteIntentTick | null = null;
+let activeHubRelayRefresh: { stop(): void } | null = null;
+// The local-credential observer lives exactly while this process serves (status attestation).
+// Every path that stops serving stops it, including a recycle back to standalone.
+let activeCredentialObservation: { stop(): void } | null = null;
+let recycleScheduled = false;
+let recycleTimer: ReturnType<typeof setTimeout> | undefined;
+let recycleFlight: Promise<void> | null = null;
+let clientStopping = false;
+let explicitClientStopRequested: boolean | undefined;
+let explicitClientStopOwner: ClientStopOwner | undefined;
+let standaloneRecycleAllowed = () => !clientStopping;
+
+/**
+ * When this runtime's process started (EPX-6, P5): what `/healthz` reports as `startedAt` and the
+ * Child reports to its Home. A Home settings apply recorded after it means this runtime predates it.
+ */
+export const CLIENT_RUNTIME_STARTED_AT = new Date(Date.now() - process.uptime() * 1000).toISOString();
+
+/**
+ * How long link mode waits for its configured port: the budget a hard-pinned `epx start --port`
+ * gives `reclaimListenPort` (`src/cli/index.ts`).
+ */
+export const LINK_PORT_WAIT_MS = 60_000;
+
+/** How long a pinned port is re-probed after the reclaim wait before the start gives up on it. */
+export const PINNED_PREFER_RETRY_MS = 5_000;
+
+/**
+ * Link mode's port-reclaim budget. Under the desktop app the whole wait (this plus
+ * {@link PINNED_PREFER_RETRY_MS}) ends inside the app's 30-second startup deadline, so the app sees
+ * this start either serve or exit instead of giving up on it first.
+ */
+export function linkPortWaitMs(desktopSupervised: boolean = isDesktopSupervised()): number {
+  return desktopSupervised ? DESKTOP_SUPERVISED_PORT_WAIT_MS : LINK_PORT_WAIT_MS;
+}
+/** Bind attempts when the port is taken between the free-port probe and `Bun.serve`. */
+const LINK_BIND_ATTEMPTS = 3;
+
+export interface ClientRuntimeIo {
+  /** Link-mode port budget; defaults to {@link LINK_PORT_WAIT_MS}. */
+  portWaitMs?: number;
+  startListener?: typeof startMachineListener;
+  /** Which supervisor owns this process for a bound restart; tests replace the production check. */
+  restartSupervisor?: () => Promise<"service" | "desktop" | null>;
+}
+
+export interface StandaloneRecycleIo {
+  spawnReplacement?: (request: ReplacementStartRequest) => Promise<void>;
+  exitProcess?: (code: number) => void;
+  configuredPort?: () => number | undefined;
+  isDesktopSupervised?: () => boolean;
+  /** A service that will really relaunch this process; defaults to the EPX_SERVICE marker. */
+  serviceSupervised?: () => boolean;
+}
+
+function cleanup(): void {
+  removePid(process.pid);
+  removeRuntimePort(process.pid);
+}
+
+/**
+ * What this runtime publishes in `runtime-port.json`. The attestation secret is what the desktop app
+ * reads to authenticate the runtime it started (`desktop/src-tauri/src/auth.rs`); a record without one
+ * reads as unusable there, the same as a standalone start's record would.
+ */
+export function clientRuntimeRecord(
+  pid: number,
+  port: number,
+  attestationSecret: string = createLocalAttestationSecret(),
+  owner: RecordedRestartOwner | null = recordedOwner(),
+): RuntimePortState {
+  let command: string[] | undefined;
+  try { command = currentServingCommand(); } catch { /* no reliable relaunch identity; update admission fails closed */ }
+  return { pid, port, hostname: "127.0.0.1", attestationSecret, ...(command ? { command } : {}), ...siblingRuntimeField(),
+    ...(clientStopping ? { clientStopping: true as const } : {}),
+    ...(explicitClientStopRequested !== undefined ? { clientStopRequested: explicitClientStopRequested } : {}),
+    ...(explicitClientStopOwner ? { clientStopOwner: explicitClientStopOwner } : {}), ...(owner ? { restartOwner: owner } : {}) };
+}
+
+/** Evaluated once: the launch environment and parent of this process do not change. */
+let ownerMemo: { value: RestartOwner | null } | undefined;
+function classifiedOwner(): RestartOwner | null {
+  ownerMemo ??= { value: restartOwnerEvidence({ desktop: isDesktopSupervised(), env: process.env }) };
+  return ownerMemo.value;
+}
+const ownerProven = (): boolean => classifiedOwner() !== null;
+/** The record's owner: the proven one, or legacy-flag for a bare EPX_SERVICE=1 (#8545; recordedRestartOwner). */
+const recordedOwner = (): RecordedRestartOwner => classifiedOwner() ?? LEGACY_FLAG_RESTART_OWNER;
+
+export function standaloneRecycleEnv(
+  env: NodeJS.ProcessEnv,
+  disconnectedTokenFingerprint: string,
+): NodeJS.ProcessEnv {
+  const childEnv = { ...env };
+  // A detached replacement is nobody's child: not the desktop app's, not a service's, not a Windows
+  // wrapper's. It must carry no supervisor marker it would otherwise misread as its own.
+  for (const name of SUPERVISOR_MARKER_ENVS) delete childEnv[name];
+  delete childEnv.EPX_SERVICE;
+  const admissionToken = childEnv.EASYPROXY_API_AUTH_TOKEN?.trim();
+  if (admissionToken && serviceApiTokenFingerprint(admissionToken) !== disconnectedTokenFingerprint) {
+    // A surviving env token shadows EPX_API_TOKEN_FILE entirely, so nothing below can
+    // reintroduce the disconnected token.
+    return childEnv;
+  }
+  if (admissionToken) delete childEnv.EASYPROXY_API_AUTH_TOKEN;
+  // The respawned `epx start` loads EPX_API_TOKEN_FILE into EASYPROXY_API_AUTH_TOKEN when the
+  // env token is absent, so vet the file by content: drop the pointer when it is unreadable or
+  // holds the disconnected token, keep it when it holds a different operator credential.
+  if (!childEnv.EPX_API_TOKEN_FILE?.trim()) return childEnv;
+  const fileToken = loadServiceTokenFromFile(childEnv);
+  if (fileToken === null || serviceApiTokenFingerprint(fileToken) === disconnectedTokenFingerprint) {
+    delete childEnv.EPX_API_TOKEN_FILE;
+  }
+  return childEnv;
+}
+
+export function scheduleStandaloneRecycle(disconnectedTokenFingerprint: string): void {
+  if (recycleScheduled || !standaloneRecycleAllowed()) return;
+  recycleScheduled = true;
+  recycleTimer = setTimeout(() => {
+    recycleTimer = undefined;
+    if (!standaloneRecycleAllowed()) { recycleScheduled = false; return; }
+    recycleFlight = recycleStandalone(disconnectedTokenFingerprint).finally(() => { recycleFlight = null; });
+    void recycleFlight.catch(error => { if (!clientStopping) throw error; });
+  }, 50);
+  if (typeof recycleTimer === "object" && "unref" in recycleTimer) recycleTimer.unref();
+}
+
+function configuredTcpPort(): number | undefined {
+  try {
+    const port = loadConfig().port;
+    return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function errorCode(error: unknown): string {
+  const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && /^[A-Za-z0-9_]{1,64}$/.test(code) ? code : "failed";
+}
+
+export async function recycleStandalone(
+  disconnectedTokenFingerprint: string,
+  io: StandaloneRecycleIo = {},
+): Promise<void> {
+  // The configured port when the listener never recorded one: the recycle still owes a proxy.
+  const port = activePort ?? (io.configuredPort ?? configuredTcpPort)();
+  const exit = io.exitProcess ?? ((code: number) => { process.exit(code); });
+  // Capture the one-use sibling handoff before this process removes its runtime record.
+  const serviceSupervised = (io.serviceSupervised ?? (() => process.env.EPX_SERVICE === "1"))();
+  const replacementEnv = port && !serviceSupervised
+    ? withSiblingMarker(standaloneRecycleEnv(process.env, disconnectedTokenFingerprint), issueSiblingHandoff)
+    : null;
+  activeCredentialObservation?.stop(); activeCredentialObservation = null;
+  activeHubRelayRefresh?.stop(); activeHubRelayRefresh = null;
+  activeReporter?.stop(); activeReporter = null;
+  activeRouteWatch?.stop(); activeRouteWatch = null;
+  activeRouteSync?.stop(); activeRouteSync = null;
+  try {
+    await activeSupervisor?.stop();
+  } catch (error) {
+    console.warn(`[client] link supervisor stop failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  activeSupervisor = null;
+  try {
+    activeServer?.stop(true);
+  } catch (error) {
+    console.warn(`[client] listener stop failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  cleanup();
+  await flushLinkDiagnostics();
+  // Recycling back to standalone after `epx disconnect` must actually bring a standalone
+  // proxy back, under every launch shape.
+  //
+  // Under the desktop app that spawned us: exit 75 and let the app start the standalone
+  // runtime, so it keeps owning it (tray Stop, Quit) instead of losing it to a detached child.
+  if ((io.isDesktopSupervised ?? isDesktopSupervised)()) {
+    exit(DESKTOP_RESTART_EXIT_CODE);
+    return;
+  }
+  // Unsupervised: spawn the replacement ourselves and exit 0.
+  //
+  // Supervised (`EPX_SERVICE=1`): do NOT spawn — the supervisor owns the process, and a
+  // second copy would fight it for the port. But exit 0 does not work either: the real
+  // supervisor configs are failure-only (systemd `Restart=on-failure`, WinSW
+  // `<onfailure action="restart"/>`, the Task Scheduler ERRORLEVEL loop), so a clean exit
+  // reads as "the service finished" and nothing restarts. The client stayed down until the
+  // operator noticed. Exit 1 is what those configs are watching for, and it is the same
+  // policy the dashboard recycle already uses (src/server/management/system-restart.ts).
+  //
+  // launchd's KeepAlive is failure-only too (`SuccessfulExit` false), so exit 1 is what
+  // relaunches it as well; an exit 0 would leave the job stopped.
+  if (serviceSupervised) {
+    exit(1);
+    return;
+  }
+  if (port === undefined) {
+    console.warn("[client] no valid port to restart the standalone proxy on; run 'epx start'");
+    exit(1);
+    return;
+  }
+  if (!replacementEnv) throw new Error("Standalone recycle has no replacement environment.");
+  // Wait until the replacement answers (it retries an early exit) instead of exiting the moment
+  // it spawned: a replacement that died unseen left no proxy and nothing to report it.
+  try {
+    const spawnReplacement = io.spawnReplacement
+      ?? (async (request: ReplacementStartRequest) => (await import("../server/restart-replacement")).spawnReplacementStart(request));
+    await spawnReplacement({
+      port,
+      waitForHealth: true,
+      // A sibling's replacement stays a sibling even if the owner is down while it probes.
+      env: replacementEnv,
+    });
+  } catch (error) {
+    console.warn(`[client] the standalone replacement did not start (${errorCode(error)}); run 'epx start'`);
+    exit(1);
+    return;
+  }
+  exit(0);
+}
+
+/**
+ * Bind the client listener. Link mode is pinned to the configured port because Codex routes to it:
+ * like a hard-pinned `epx start --port`, it waits for a port that a restarting parent is still
+ * releasing, never kills the holder and never hops. The waits run only while the port is busy; a
+ * free port binds on the first probe.
+ */
+export async function bindClientListener(
+  request: {
+    state: EpxClientConnectionConfig;
+    linkMode: boolean;
+    preferred: number;
+    explicitPort: boolean;
+    configuredPort: number;
+  } & Pick<MachineListenerDeps, "linkStatus" | "linkKeySource" | "linkTunnel" | "linkReadiness" | "linkConnectionGeneration" | "restart">,
+  io: ClientRuntimeIo = {},
+): Promise<{ server: Server<unknown>; port: number }> {
+  const { linkMode } = request;
+  const portWaitMs = io.portWaitMs ?? (linkMode ? linkPortWaitMs() : LINK_PORT_WAIT_MS);
+  const deadline = Date.now() + portWaitMs;
+  const busy = (cause: unknown) => new Error(
+    `link mode needs port ${request.configuredPort}; free it or change port`,
+    { cause },
+  );
+  let port: number;
+  try {
+    if (linkMode) {
+      const { reclaimListenPort } = await import("../server/port-reclaim");
+      await reclaimListenPort(request.configuredPort, "127.0.0.1", {
+        timeoutMs: portWaitMs,
+        intervalMs: 100,
+        scanIntervalMs: 500,
+        killEpxHolders: false,
+        dropTcpRows: true,
+      });
+    }
+    port = await findAvailablePort(request.preferred, "127.0.0.1", {
+      preferRetryMs: request.explicitPort ? PINNED_PREFER_RETRY_MS : 750,
+      preferRetryIntervalMs: 50,
+      allowEphemeralFallback: linkMode ? false : !request.explicitPort,
+    });
+  } catch (error) {
+    if (linkMode && error instanceof PortUnavailableError) throw busy(error);
+    throw error;
+  }
+  const startListener = io.startListener ?? startMachineListener;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const server = startListener(port, {
+        state: request.state,
+        machineApi: { scheduleStandaloneRecycle },
+        ...(request.linkStatus ? { linkStatus: request.linkStatus } : {}),
+        ...(request.linkKeySource ? { linkKeySource: request.linkKeySource } : {}),
+        ...(request.linkTunnel ? { linkTunnel: request.linkTunnel } : {}),
+        ...(request.linkReadiness ? { linkReadiness: request.linkReadiness } : {}),
+        ...(request.linkConnectionGeneration ? { linkConnectionGeneration: request.linkConnectionGeneration } : {}),
+        ...(request.restart ? { restart: request.restart } : {}),
+      });
+      return { server, port: server.port ?? port };
+    } catch (error) {
+      // Check-then-bind: the port can be taken between the probe and Bun.serve.
+      if (!linkMode || !isAddrInUse(error)) throw error;
+      const waitMs = Math.max(1_000, deadline - Date.now());
+      if (attempt >= LINK_BIND_ATTEMPTS
+        || !(await waitForPortAvailable(port, "127.0.0.1", { timeoutMs: waitMs, intervalMs: 100 }))) {
+        throw busy(error);
+      }
+    }
+  }
+}
+
+export async function startClientRuntime(
+  options: { port?: number; block?: boolean; afterPublish?: () => void } = {},
+  io: ClientRuntimeIo = {},
+): Promise<void> {
+  const state = readClientConnectionState();
+  if (state.kind !== "connected") throw new Error(`client runtime refused: client state is ${state.kind}`);
+  const config = loadConfig();
+  const linkMode = isLinkConnection(state.value);
+  const clientLinkOwner = linkMode ? linkStopConnectionOwner(state.value) : null;
+  if (linkMode && (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535)) {
+    throw new Error("link mode requires a valid local config port");
+  }
+  const preferred = linkMode ? config.port : options.port ?? config.port ?? 10100;
+  // Share one cached key source between the listener and its tunnel supervisor.
+  const linkKey = linkMode ? createLinkKeySource(state.value.tokenFingerprint) : undefined;
+  // Joins made before the marker existed get one now, while their sidecar is still here.
+  if (linkMode && state.value.link) {
+    try { recordChildInitiatedLink(state.value.link.linkId); } catch { /* the sidecar check below still applies */ }
+  }
+  const supervised = linkMode && existsSync(clientLinkStatePath());
+  // A Child with no sidecar and no record of joining itself was connected by its Home over
+  // `ssh -R`; that link keeps 2.67.0's unproven forward. A Child-initiated link that lost its
+  // sidecar gets no gate at all, so the relay refuses it.
+  const homeInitiated = linkMode && !supervised && !!state.value.link
+    && !isChildInitiatedLink(state.value.link.linkId);
+  // One secret for the life of this process: a rollback republishes the same identity.
+  const attestationSecret = createLocalAttestationSecret();
+
+  // Bind, start a fresh tunnel supervisor and publish. Runs once at start and again when a failed
+  // restart rolls back (EPX-6); the stopped supervisor cannot be started twice, so each call builds one.
+  // The port this process actually serves on; a rollback binds exactly this one again.
+  let servedPort = preferred;
+  const observeExplicitStop = (): boolean => {
+    const current = readRuntimePort(process.pid);
+    if (current?.port === servedPort && current.attestationSecret === attestationSecret && current.clientStopRequested !== undefined) {
+      explicitClientStopRequested = current.clientStopRequested;
+      explicitClientStopOwner = current.clientStopOwner;
+      clientStopping = true;
+    }
+    return explicitClientStopRequested === true
+      && (!explicitClientStopOwner || observeClientStopOwner(explicitClientStopOwner) !== "confirmed-stale");
+  };
+  // An unpublishable rollback closes the new listener before the caller considers a recycle.
+  const serve = async (rollback?: { port: number; portWaitMs: number }): Promise<boolean> => {
+    const supervisor = supervised
+      ? createClientLinkSupervisor({
+        diagnostic: recordLinkDiagnostic,
+        onLinkEnded: () => scheduleStandaloneRecycle(state.value.tokenFingerprint),
+        linkKey,
+      })
+      : null;
+    // What `/readyz` reports about the link: the supervisor's tunnel, or for a Home-initiated
+    // link the shared relay preflight. A link with neither refuses every relayed request.
+    const link = state.value.link;
+    const linkReadiness: MachineListenerDeps["linkReadiness"] = !linkMode ? undefined
+      : supervisor ? () => clientInitiatedLinkReadiness(supervisor.status())
+      : homeInitiated && link && linkKey
+        ? createHomeInitiatedLinkReadiness({ target: { tunnelPort: link.tunnelPort, linkId: link.linkId, apiKeyId: state.value.apiKeyId }, linkKey })
+        : () => ({ ready: false, reason: "tunnel_unavailable" });
+    const { server, port: boundPort } = await bindClientListener({
+      state: state.value,
+      linkMode,
+      // A rollback takes back exactly the port it gave up: never the preferred one, never another.
+      preferred: rollback?.port ?? preferred,
+      explicitPort: rollback !== undefined || options.port !== undefined,
+      configuredPort: config.port,
+      restart: { attestationSecret, startedAt: CLIENT_RUNTIME_STARTED_AT, ...(linkMode ? { linkStopFence: true as const } : {}), request: () => restartController.request() },
+      ...(linkMode ? { linkStatus: () => activeSupervisor?.status() ?? { kind: "stopped" as const }, linkKeySource: linkKey } : {}),
+      ...(supervisor ? { linkTunnel: supervisor } : homeInitiated ? { linkTunnel: HOME_INITIATED_LINK_TUNNEL } : {}),
+      ...(linkReadiness ? { linkReadiness } : {}),
+      ...(supervisor ? { linkConnectionGeneration: () => supervisor.connectionGeneration() }
+        : homeInitiated && link ? { linkConnectionGeneration: () => verifiedHomeConnection(link.linkId) } : {}),
+    }, rollback === undefined ? io : { ...io, portWaitMs: rollback.portWaitMs });
+    const publishRecord = (): void => {
+      // A parent stop can arrive after restart admission. Never clear its fence on rollback;
+      // a fresh process has another attestation identity and cannot inherit this request.
+      if (rollback) observeExplicitStop();
+      writePid(process.pid);
+      // A new generation refuses commits from syncs admitted before the failed restart.
+      writeRuntimePort({ ...clientRuntimeRecord(process.pid, boundPort, attestationSecret), servingGeneration: randomUUID(),
+        clientLinkOwner });
+    };
+    const activate = (): void => {
+      activeServer = server;
+      activePort = boundPort;
+      servedPort = boundPort;
+      activeSupervisor = supervisor;
+      supervisor?.start();
+      activeCredentialObservation ??= observeLocalCredentials();
+      if (!linkMode) {
+        activeHubRelayRefresh ??= startHubRelayLeaseRefresh(state.value.managementUrl,
+          (method, target) => currentHubRelayAdmission(state.value, method, target));
+      }
+      if (linkMode && state.value.link && linkKey) {
+        activeReporter = createLinkParityReporter({ connection: state.value, linkKey, runtimeStartedAt: CLIENT_RUNTIME_STARTED_AT });
+        activeReporter.start();
+        const scheduler = startRouteIntentTick(state.value, { onApplied: () => activeReporter?.requestReport() });
+        activeRouteSync = scheduler;
+        activeRouteWatch = startRouteIntentWatch(state.value, linkKey, { requestSync: () => scheduler.requestSync() });
+      }
+    };
+    if (!rollback) {
+      publishRecord();
+      activate();
+      return true;
+    }
+    // Admission and publication are synchronous after bind. A busy lock must close the
+    // rebound listener before yielding. Link takes C to preserve an explicit stop fence.
+    const publishIfOwned = () => {
+      if (clientRestartRollbackAction(state.value, readClientConnectionState()) === "recycle") return false;
+      publishRecord();
+      return true;
+    };
+    let published = false;
+    try {
+      published = withClientLifecycleSync(() => linkMode ? withConfigMutationLockSync(publishIfOwned) : publishIfOwned());
+    } catch { /* failed admission */ }
+    if (published) activate();
+    else {
+      try { await server.stop(true); } catch { /* never published */ }
+    }
+    return published;
+  };
+
+  // Stop everything this process serves, giving in-flight requests up to `drainMs`.
+  const stopServing = async (drainMs: number): Promise<void> => {
+    activeCredentialObservation?.stop();
+    activeCredentialObservation = null;
+    activeHubRelayRefresh?.stop(); activeHubRelayRefresh = null;
+    activeReporter?.stop();
+    activeReporter = null;
+    activeRouteWatch?.stop(); activeRouteWatch = null;
+    activeRouteSync?.stop(); activeRouteSync = null;
+    try {
+      await activeSupervisor?.stop();
+    } catch (error) {
+      console.warn(`[client] link supervisor stop failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    activeSupervisor = null;
+    const server = activeServer;
+    activeServer = null;
+    if (!server) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.resolve(server.stop(false)),
+        new Promise<void>(resolve => { timer = setTimeout(resolve, drainMs); }),
+      ]);
+    } catch { /* closed below */ } finally {
+      if (timer) clearTimeout(timer);
+    }
+    try { await server.stop(true); } catch { /* already closed */ }
+  };
+
+  let shuttingDown = false;
+  standaloneRecycleAllowed = () => {
+    try {
+      if (shuttingDown || observeExplicitStop()) return false;
+      if (!clientStopping) return true;
+      // A retained sync fence is not an active exit. Only a completed disconnect of this exact
+      // served owner permits recovery; partial cleanup, a new connect or uncertain state cannot.
+      return withConfigMutationLockSync(() => {
+        if (observeExplicitStop()) return false;
+        const receipt = readDesktopDisconnectReceipt();
+        return ownerProven() && !pendingClientConnectMayOwnToken()
+          && readClientConnectionStateWithEvidence().kind === "disconnected"
+          && receipt.kind === "valid" && receipt.value.phase === "complete"
+          && sameClientConnectionOwner(receipt.value.owner, state.value)
+          && receipt.value.tokenFingerprint === state.value.tokenFingerprint;
+      });
+    } catch { return false; }
+  };
+  const restartController: ClientRestartController = createClientRestartController({
+    stopping: () => !standaloneRecycleAllowed(),
+    supervisor: io.restartSupervisor ?? clientRestartSupervisor,
+    connectionChanged: () => clientConnectionEnded(state.value, readClientConnectionStateWithEvidence()),
+    ownerProven,
+    recycle: supervisor => recycleStandalone(state.value.tokenFingerprint, {
+      isDesktopSupervised: () => supervisor === "desktop",
+      serviceSupervised: () => supervisor === "service",
+    }),
+    // Fence Link syncs before the teardown: a sync already past admission would otherwise keep
+    // writing client files and receipts while the listener closes. Marking the record makes every
+    // later commit stand down under C; the replacement's record, or the fresh generation a rollback
+    // publishes, keeps those syncs refused and admits new ones. A mark that cannot be written
+    // abandons the restart before anything stops.
+    fence: async () => !linkMode || await markClientRuntimeStoppingWithRetry({ pid: process.pid, port: servedPort, attestationSecret }, {
+      mark: () => withConfigMutationLockSync(() => {
+        if (observeExplicitStop()) throw new Error("client_stop_requested");
+        markClientRuntimeStopping({ pid: process.pid, port: servedPort, attestationSecret });
+      }),
+    }),
+    stop: stopServing,
+    spawnReplacement: async deadlineAt => {
+      const { replacementStartEnvironment } = await import("../server/management/system-restart");
+      const { spawnReplacementStart } = await import("../server/restart-replacement");
+      await spawnReplacementStart(
+        { port: activePort ?? config.port, waitForHealth: true, env: replacementStartEnvironment(true), notReady: "terminate" },
+        { deadlineAt },
+      );
+    },
+    resume: async () => {
+      const recycleAfterRollback = () => {
+        if (standaloneRecycleAllowed()) return recycleStandalone(state.value.tokenFingerprint);
+      };
+      // The connection may have changed while the replacement was starting (`epx disconnect`, a
+      // new connect). Serving the old one again would be a stale runtime nothing recycles; hand
+      // off to the recycle, which starts whatever the durable state now calls for.
+      if (clientRestartRollbackAction(state.value, readClientConnectionState()) === "recycle") {
+        await recycleAfterRollback();
+        return;
+      }
+      if (!(await serve({ port: servedPort, portWaitMs: CLIENT_RESTART_REBIND_WAIT_MS }))) {
+        await recycleAfterRollback();
+      }
+    },
+    exitProcess: async code => {
+      try { await flushLinkDiagnostics(); }
+      finally { process.exit(code); }
+    },
+  });
+
+  installCrashGuards();
+  // serve() publishes the pid and runtime record; the ownership lease is released only after it.
+  await serve();
+  options.afterPublish?.();
+
+  const shutdown = (signal?: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    clientStopping = true;
+    if (recycleTimer) {
+      clearTimeout(recycleTimer);
+      recycleTimer = undefined;
+      recycleScheduled = false;
+    }
+    const fenceSync = () => {
+      if (!linkMode) return true;
+      try { markClientRuntimeStopping({ pid: process.pid, port: servedPort, attestationSecret }); return true; }
+      catch { return false; }
+    };
+    let syncFenced = fenceSync();
+    void (async () => {
+      // An accepted restart owns its replacement and rollback. A successful handoff exits
+      // inside that flight; a rollback finishes before this signal tears the runtime down.
+      if (restartController.hasHandoff()) await restartController.settled().catch(() => {});
+      if (recycleFlight) await recycleFlight.catch(() => {});
+      // A rollback may have republished its runtime record while shutdown joined it.
+      syncFenced = !linkMode || await markClientRuntimeStoppingWithRetry({ pid: process.pid, port: servedPort, attestationSecret });
+      activeCredentialObservation?.stop();
+      activeCredentialObservation = null;
+      activeHubRelayRefresh?.stop(); activeHubRelayRefresh = null;
+      activeReporter?.stop();
+      activeReporter = null;
+      activeRouteWatch?.stop(); activeRouteWatch = null;
+      activeRouteSync?.stop(); activeRouteSync = null;
+      try {
+        await activeSupervisor?.stop();
+      } catch (error) {
+        console.warn(`[client] link supervisor stop failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      activeSupervisor = null;
+      const restored = linkMode ? await restoreLinkClientRoutingBeforeExit(state.value, {
+        syncFenced, runtime: { pid: process.pid, port: servedPort, attestationSecret },
+      }) : null;
+      if (restored && !restored.success) console.error(`[client] ${restored.message}`);
+      if (restored?.retainListener) {
+        // Keep the stopping record and socket. Another signal can retry after the operator
+        // repairs the retained file/ownership evidence; no background sync can reapply it.
+        shuttingDown = false;
+        return;
+      }
+      try {
+        activeServer?.stop(true);
+      } catch (error) {
+        console.warn(`[client] listener stop failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        // Keep stopping admission visible through the last await. Cleanup and exit are adjacent.
+        try { await flushLinkDiagnostics(); } finally { cleanup(); }
+        // launchd relaunches only unsuccessful exits; an external signal must still count.
+        if (restored?.success === false) process.exit(1);
+        else process.exit(handledSignalExitCode(signal));
+      }
+    })();
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  if (process.platform !== "win32") process.on("SIGHUP", shutdown);
+  process.on("exit", cleanup);
+
+  if (options.block ?? true) await new Promise<void>(() => {});
+}

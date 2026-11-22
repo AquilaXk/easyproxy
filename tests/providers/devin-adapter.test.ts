@@ -1,0 +1,1068 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createDevinAdapter, mapDevinToolCallStartForTests, mapEpxMessagesToDevin, mapEpxToolsToDevin, resolveWireModelUidForTests } from "../../src/adapters/devin";
+import { buildGetChatMessageRequestForTests, sanitizeTextForCognitionForTests, sanitizeToolDescriptionForCognitionForTests, streamChatEvents, type ChatHistoryItem } from "../../src/adapters/devin/cloud-direct/chat";
+import { DEVIN_MODEL_CONTEXT_WINDOWS, DEVIN_STATIC_MODELS, collapseDevinModelUid } from "../../src/adapters/devin/live-models";
+import { parseCatalogBuffer } from "../../src/adapters/devin/cloud-direct/catalog";
+import { encodeMessage, encodeString, encodeVarintField, frameConnectStream, iterFields } from "../../src/adapters/devin/cloud-direct/wire";
+import { encodeDevinSignature } from "../../src/adapters/devin/reasoning-signature";
+import { parseRequest } from "../../src/responses/parser";
+import { encodeReasoningEnvelope } from "../../src/responses/reasoning-envelope";
+import { DEPRECATED_OAUTH_PROVIDER_ALIASES, OAUTH_PROVIDERS, resolveRefreshPolicy } from "../../src/oauth";
+import { DEVIN_DEFAULT_API_SERVER } from "../../src/oauth/devin";
+import { saveCredential } from "../../src/oauth/store";
+import { createTranslatorBudget } from "../../src/lib/translator-budget";
+import { PROVIDER_REGISTRY } from "../../src/providers/registry";
+import type { AdapterEvent, EpxParsedRequest } from "../../src/types";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+
+describe("devin adapter", () => {
+  test("is registered as an oauth provider and adapter", () => {
+    expect(OAUTH_PROVIDERS.devin.defaultModel).toBe("swe-2");
+    const entry = PROVIDER_REGISTRY.find((row) => row.id === "devin");
+    expect(entry?.adapter).toBe("devin");
+    expect(entry?.authKind).toBe("oauth");
+    expect(entry?.liveModels).toBe(true);
+    expect(createDevinAdapter({ adapter: "devin", baseUrl: "https://server.codeium.com" }).name).toBe("devin");
+  });
+
+  test("maps user/assistant/tool history and tools", () => {
+    const parsed: EpxParsedRequest = {
+      modelId: "swe-1-7",
+      stream: true,
+      context: {
+        systemPrompt: ["be brief"],
+        messages: [
+          { role: "user", content: "hi", timestamp: 1 },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "calling" },
+              { type: "toolCall", id: "c1", name: "lookup", arguments: { q: "x" } },
+            ],
+            timestamp: 2,
+          },
+          { role: "toolResult", toolCallId: "c1", toolName: "lookup", content: "ok", isError: false, timestamp: 3 },
+        ],
+        tools: [{ name: "lookup", description: "lookup", parameters: { type: "object" } }],
+      },
+      options: {},
+    };
+    const history = mapEpxMessagesToDevin(parsed);
+    // One system item carrying the prompt and, because this request advertises a
+    // tool, the shared non-OpenAI catalog contract paragraph after it.
+    expect(history[0]?.role).toBe("system");
+    expect(String(history[0]?.content)).toStartWith("be brief\n\nTool contract:");
+    expect(history[1]).toEqual({ role: "user", content: "hi" });
+    expect(history[2]?.role).toBe("assistant");
+    expect(history[2]?.tool_calls?.[0]?.id).toBe("c1");
+    expect(history[3]).toEqual({ role: "tool", content: "ok", tool_call_id: "c1" });
+    expect(mapEpxToolsToDevin(parsed.context.tools)?.[0]?.name).toBe("lookup");
+  });
+
+  test("the tool catalog nudge names the bare wire names the encoder actually sends", () => {
+    // Cognition is offered `tool.name` with no namespace prefix (mapEpxToolsToDevin),
+    // so a nudge built from the default namespaced form would advertise a name the
+    // model is never given. The merged `devin` provider and the deprecated
+    // `devin-cli` alias share this adapter, so this one place covers both.
+    const parsed: EpxParsedRequest = {
+      modelId: "swe-1-7",
+      stream: true,
+      context: {
+        systemPrompt: ["be brief"],
+        messages: [{ role: "user", content: "hi", timestamp: 1 }],
+        tools: [
+          { name: "exec_command", description: "run", parameters: { type: "object" } },
+          { namespace: "codex_app", name: "list_threads", description: "list", parameters: { type: "object" } },
+        ],
+      },
+      options: {},
+    };
+    const system = String(mapEpxMessagesToDevin(parsed)[0]?.content);
+    const wireNames = (mapEpxToolsToDevin(parsed.context.tools) ?? []).map((tool) => tool.name);
+    expect(wireNames).toEqual(["exec_command", "list_threads"]);
+    for (const name of wireNames) expect(system).toContain(`\`${name}\``);
+    expect(system).not.toContain("codex_app__list_threads");
+  });
+
+  test("maps Cognition tool_call_start names to unique canonical request identities", () => {
+    const tools = [
+      { namespace: "mcp__cua_repl", name: "js", description: "control UI", parameters: { type: "object" } },
+      { name: "exec", description: "run code", parameters: { type: "object" } },
+    ];
+
+    expect(mapDevinToolCallStartForTests("call_js", "js", tools)).toEqual({
+      type: "tool_call_start",
+      id: "call_js",
+      name: "mcp__cua_repl__js",
+    });
+    expect(mapDevinToolCallStartForTests("call_canonical", "mcp__cua_repl__js", tools)).toEqual({
+      type: "tool_call_start",
+      id: "call_canonical",
+      name: "mcp__cua_repl__js",
+    });
+    expect(mapDevinToolCallStartForTests("call_exec", "exec", tools)).toEqual({
+      type: "tool_call_start",
+      id: "call_exec",
+      name: "exec",
+    });
+    expect(mapDevinToolCallStartForTests("call_unknown", "undeclared", tools)).toEqual({
+      type: "tool_call_start",
+      id: "call_unknown",
+      name: "undeclared",
+    });
+  });
+
+  test("maps ambiguous Cognition tool_call_start names to a non-retryable error", () => {
+    const namespaceCollision = [
+      { namespace: "mcp__first", name: "js", description: "first", parameters: { type: "object" } },
+      { namespace: "mcp__second", name: "js", description: "second", parameters: { type: "object" } },
+    ];
+    const bareCollision = [
+      { name: "js", description: "bare", parameters: { type: "object" } },
+      { namespace: "mcp__cua_repl", name: "js", description: "namespaced", parameters: { type: "object" } },
+    ];
+    const duplicateIdentity = [
+      { namespace: "mcp__cua_repl", name: "js", description: "first copy", parameters: { type: "object" } },
+      { namespace: "mcp__cua_repl", name: "js", description: "second copy", parameters: { type: "object" } },
+    ];
+
+    const expected = {
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    };
+    expect(mapDevinToolCallStartForTests("call_1", "js", namespaceCollision)).toEqual(expected);
+    expect(mapDevinToolCallStartForTests("call_1", "js", [...namespaceCollision].reverse())).toEqual(expected);
+    expect(mapDevinToolCallStartForTests("call_1", "js", bareCollision)).toEqual(expected);
+    expect(mapDevinToolCallStartForTests("call_1", "js", duplicateIdentity)).toEqual({
+      type: "tool_call_start",
+      id: "call_1",
+      name: "mcp__cua_repl__js",
+    });
+  });
+
+  test("fails closed when one tool's canonical identity is another tool's advertised name", () => {
+    // `a__x` is the first tool's canonical identity and also the second tool's advertised local
+    // name, whose own canonical identity is `b__a__x`. Both readings are legitimate, so resolving
+    // to either owner would dispatch the call to a tool the caller may not have named. Before the
+    // map tracked canonical aliases, a returned `a__x` silently became `b__a__x`.
+    const aliasCollision = [
+      { namespace: "a", name: "x", description: "namespaced", parameters: { type: "object" } },
+      { namespace: "b", name: "a__x", description: "lookalike local name", parameters: { type: "object" } },
+    ];
+
+    expect(mapDevinToolCallStartForTests("call_1", "a__x", aliasCollision)).toEqual({
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    });
+    expect(mapDevinToolCallStartForTests("call_1", "a__x", [...aliasCollision].reverse())).toEqual({
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    });
+    // The unambiguous local name still resolves, and an unrelated canonical name is untouched.
+    expect(mapDevinToolCallStartForTests("call_2", "x", aliasCollision)).toEqual({
+      type: "tool_call_start",
+      id: "call_2",
+      name: "a__x",
+    });
+    expect(mapDevinToolCallStartForTests("call_3", "b__a__x", aliasCollision)).toEqual({
+      type: "tool_call_start",
+      id: "call_3",
+      name: "b__a__x",
+    });
+  });
+
+  test("replays a restored namespaced call under the same bare name Cognition was offered", () => {
+    const parsed: EpxParsedRequest = {
+      modelId: "swe-2",
+      stream: true,
+      context: {
+        messages: [{
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "js_0",
+            namespace: "mcp__cua_repl",
+            name: "js",
+            arguments: { code: "1+1" },
+          }],
+          timestamp: 1,
+        }],
+        tools: [{
+          namespace: "mcp__cua_repl",
+          name: "js",
+          description: "control UI",
+          parameters: { type: "object" },
+        }],
+      },
+      options: {},
+    };
+
+    expect(mapEpxMessagesToDevin(parsed).find(item => item.role === "assistant")?.tool_calls).toEqual([{
+      id: "js_0",
+      name: "js",
+      arguments: JSON.stringify({ code: "1+1" }),
+    }]);
+  });
+
+  test("a request with no tools keeps the system prompt exactly as it was", () => {
+    const parsed: EpxParsedRequest = {
+      modelId: "swe-1-7",
+      stream: true,
+      context: {
+        systemPrompt: ["be brief"],
+        messages: [{ role: "user", content: "hi", timestamp: 1 }],
+      },
+      options: {},
+    };
+    expect(mapEpxMessagesToDevin(parsed)[0]).toEqual({ role: "system", content: "be brief" });
+  });
+
+  test("collapseDevinModelUid strips effort suffixes to base ids", () => {
+    expect(collapseDevinModelUid("swe-1-7")).toBe("swe-1-7");
+    expect(collapseDevinModelUid("swe-1-7-medium")).toBe("swe-1-7");
+    expect(collapseDevinModelUid("swe-1-7-lightning")).toBe("swe-1-7-lightning");
+    expect(collapseDevinModelUid("swe-1-7-lightning-medium")).toBe("swe-1-7-lightning");
+    expect(collapseDevinModelUid("gpt-5-6-sol-high")).toBe("gpt-5-6-sol");
+    expect(collapseDevinModelUid("gpt-5-6-sol-high-priority")).toBe("gpt-5-6-sol");
+    expect(collapseDevinModelUid("glm-5-2-max-1m")).toBe("glm-5-2");
+    expect(collapseDevinModelUid("claude-opus-4-8-high-fast")).toBe("claude-opus-4-8");
+    expect(collapseDevinModelUid("claude-fable-5-1-high")).toBe("claude-fable-5-1");
+    expect(collapseDevinModelUid("claude-fable-5-2-high")).toBe("claude-fable-5-2");
+    expect(collapseDevinModelUid("claude-fable-5-2-high-fast")).toBe("claude-fable-5-2");
+    expect(collapseDevinModelUid("grok-4-5-medium")).toBe("grok-4-5");
+  });
+
+  test("devin-cli survives only as a deprecated alias, never a provider entry", () => {
+    // The merge removed the registry row and the OAUTH_PROVIDERS def: an
+    // `oauthConfig("devin-cli")` entry would throw at module load, and a live
+    // entry would re-expose the id as a second dashboard/login row. What keeps
+    // `epx login devin-cli` and pre-migration saved state working is the alias
+    // map plus refresh-policy resolution.
+    expect(PROVIDER_REGISTRY.find((row) => row.id === "devin-cli")).toBeUndefined();
+    expect("devin-cli" in OAUTH_PROVIDERS).toBe(false);
+    expect(DEPRECATED_OAUTH_PROVIDER_ALIASES["devin-cli"]).toBe("devin");
+    // A lingering devin-cli config row must inherit devin's "disabled" policy:
+    // resolving to the "lazy-only" fallback would make the guardian attempt
+    // refreshes Cognition has no endpoint for and mark the account needsReauth.
+    expect(resolveRefreshPolicy("devin-cli", { providers: {} } as never)).toBe("disabled");
+    // The canonical entry takes forceLogin so reauth/add-account can skip the
+    // CLI import and reach the browser flow for a different account.
+    expect(OAUTH_PROVIDERS.devin.login.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("rewrites the Cognition blocklist trigger phrase in tool descriptions", () => {
+    // The exact 7-word phrase (capital T, single spaces) triggers Cognition's
+    // permission_denied content filter. The rewrite must break the exact match
+    // while preserving meaning.
+    const trigger = "Takes a task_id parameter identifying the task";
+    expect(sanitizeToolDescriptionForCognitionForTests(trigger)).toBe("Accepts a task_id parameter identifying the task");
+    // Case-sensitive: lowercase first letter is NOT rewritten (it doesn't trigger)
+    expect(sanitizeToolDescriptionForCognitionForTests("takes a task_id parameter identifying the task"))
+      .toBe("takes a task_id parameter identifying the task");
+    // Substring match: the phrase embedded in a larger description is rewritten
+    const full = "- Retrieves output from a running or completed task\n- Takes a task_id parameter identifying the task\n- Returns the task output";
+    const rewritten = sanitizeToolDescriptionForCognitionForTests(full);
+    expect(rewritten).not.toContain("Takes a task_id parameter identifying the task");
+    expect(rewritten).toContain("Accepts a task_id parameter identifying the task");
+    // Surrounding text is preserved
+    expect(rewritten).toContain("- Retrieves output from a running or completed task");
+    expect(rewritten).toContain("- Returns the task output");
+    // Descriptions without the trigger pass through unchanged
+    expect(sanitizeToolDescriptionForCognitionForTests("A benign description.")).toBe("A benign description.");
+  });
+
+  test("rewrites the Codex built-in tool descriptions Cognition refuses", () => {
+    // These two are Codex's own exec_command and write_stdin descriptions,
+    // verbatim. Every Codex turn carries them, so leaving them intact made the
+    // cloud refuse every request from a Codex client, a bare "hi" included.
+    // Measured against a live account: the sentences below were refused, and
+    // the rewritten forms were accepted.
+    const execCommand = "Runs a command in a PTY, returning output or a session ID for ongoing interaction.";
+    expect(sanitizeToolDescriptionForCognitionForTests(execCommand))
+      .toBe("Executes a command in a PTY, returning output or a session ID for ongoing interaction.");
+
+    const writeStdin = "Writes characters to an existing unified exec session and returns recent output.";
+    expect(sanitizeToolDescriptionForCognitionForTests(writeStdin))
+      .toBe("Sends characters to an existing unified exec session and returns recent output.");
+
+    // Cognition matches these two case-insensitively and tolerates both a
+    // doubled interior space and a missing comma, so the rewrite has to reach
+    // every variant that still gets refused rather than only the exact bytes.
+    expect(sanitizeToolDescriptionForCognitionForTests(execCommand.toLowerCase()))
+      .toContain("Executes a command in a PTY");
+    expect(sanitizeToolDescriptionForCognitionForTests(
+      "Runs a command in a PTY  returning output or a session  ID for ongoing interaction.",
+    )).toContain("Executes a command in a PTY");
+
+    // Changing any single word already clears the filter, so a description that
+    // merely resembles these must survive untouched.
+    const nearMiss = "Runs a command in a terminal, returning output or a session ID for ongoing interaction.";
+    expect(sanitizeToolDescriptionForCognitionForTests(nearMiss)).toBe(nearMiss);
+  });
+
+  test("rewrites the Codex escalation phrase on instruction surfaces and preserves data", () => {
+    // This trigger lives in Codex's <permissions instructions> boilerplate,
+    // which Codex sends as system prompt — not in a tool description. The
+    // clause was isolated live: the full sentence is refused while every
+    // sub-phrase passes, so the rewrite edits the verb phrase only.
+    const trigger = "asking the user if they want to allow the action in `justification` parameter";
+    const rewritten = sanitizeTextForCognitionForTests(
+      `Include a short question ${trigger}. e.g. "Do you want to run it?"`,
+    );
+    expect(rewritten).toContain("asking the user whether to allow the action in the `justification` parameter");
+    expect(rewritten).not.toContain("if they want to allow the action");
+    // Flexible whitespace/case, same as the other Codex entries.
+    expect(sanitizeTextForCognitionForTests(trigger.toUpperCase()))
+      .toContain("whether to allow the action");
+    expect(sanitizeTextForCognitionForTests(trigger.replaceAll(" ", "\n  "))).toBe(
+      "asking the user whether to allow the action in the `justification` parameter",
+    );
+
+    // The phrase is rewritten on instruction surfaces — #2 (system prompt)
+    // and tool descriptions — but data fields must stay byte-exact: a user
+    // message, replayed thinking, or tool-call arguments quoting the phrase
+    // are literal content (patches, exact needles) where a rewrite would
+    // silently change what the model did. If the cloud still refuses such a
+    // request, the caller sees the upstream permission_denied.
+    const sys = `<permissions instructions>\n- Include a short question ${trigger}. e.g. "Do it?"\n</permissions>`;
+    const req = buildGetChatMessageRequestForTests({
+      apiKey: "k",
+      modelUid: "swe-2",
+      cascadeId: "c",
+      sessionId: "s",
+      requestId: 1n,
+      triggerId: "t",
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: `here is a quote: ${trigger}` },
+        {
+          role: "assistant",
+          content: "ok",
+          thinking: `the prompt says: ${trigger}`,
+          tool_calls: [{ id: "c1", name: "apply_patch", arguments: `{"patch":"${trigger}"}` }],
+        },
+        { role: "tool", tool_call_id: "c1", content: `file bytes: ${trigger}` },
+        { role: "user", content: "hello" },
+      ],
+      tools: [{ name: "codex_escalation", description: trigger, parameters: { type: "object" } }],
+    });
+    // Decode #2 independently: a rewritten tool description cannot mask an
+    // unsanitized system prompt in a whole-buffer substring assertion.
+    const systemField = [...iterFields(req)].find((field) => field.num === 2);
+    expect(systemField?.value).toEqual(Buffer.from(
+      `<permissions instructions>\n- Include a short question asking the user whether to allow the action in the \`justification\` parameter. e.g. "Do it?"\n</permissions>`,
+    ));
+    // ...but data fields preserve the literal bytes (user text, thinking,
+    // tool-call arguments all still carry the verbatim trigger).
+    expect(req.includes(Buffer.from(`here is a quote: ${trigger}`, "utf8"))).toBe(true);
+    expect(req.includes(Buffer.from(`the prompt says: ${trigger}`, "utf8"))).toBe(true);
+    expect(req.includes(Buffer.from(`{"patch":"${trigger}"}`, "utf8"))).toBe(true);
+    expect(req.includes(Buffer.from(`file bytes: ${trigger}`, "utf8"))).toBe(true);
+
+    // A request where the ONLY trigger carrier is a tool description must
+    // come out clean — pins encodeToolDef specifically.
+    const toolOnly = buildGetChatMessageRequestForTests({
+      apiKey: "k",
+      modelUid: "swe-2",
+      cascadeId: "c",
+      sessionId: "s",
+      requestId: 1n,
+      triggerId: "t",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ name: "codex_escalation", description: trigger, parameters: { type: "object" } }],
+    });
+    expect(toolOnly.includes(Buffer.from(trigger, "utf8"))).toBe(false);
+    expect(toolOnly.includes(Buffer.from("whether to allow the action", "utf8"))).toBe(true);
+  });
+
+  test("rewrites the Codex CLI identity phrase and the ANSI renderer clause", () => {
+    const identity = "Codex refers to the open-source agentic coding interface";
+    expect(sanitizeTextForCognitionForTests(
+      "Within this context, Codex refers to the open-source agentic coding interface (not the old Codex language model built by OpenAI).",
+    )).toBe(
+      "Within this context, Codex refers to the open-source agentic coding tool (not the old Codex language model built by OpenAI).",
+    );
+    expect(sanitizeTextForCognitionForTests(identity.toLowerCase()))
+      .toContain("agentic coding tool");
+    expect(sanitizeTextForCognitionForTests(identity.replace("open-source", "open source")))
+      .toContain("agentic coding tool");
+    const identityNearMiss = "Codex refers to the open-source agentic coding";
+    expect(sanitizeTextForCognitionForTests(identityNearMiss)).toBe(identityNearMiss);
+    const unrelated = "refers to the open-source agentic coding tool";
+    expect(sanitizeTextForCognitionForTests(unrelated)).toBe(unrelated);
+
+    const ansi = "Don’t output ANSI escape codes directly — the CLI renderer applies them";
+    expect(sanitizeTextForCognitionForTests("- " + ansi + "."))
+      .toBe("- Don’t emit ANSI escape codes directly — the CLI renderer applies them.");
+    expect(sanitizeTextForCognitionForTests(ansi.toUpperCase()))
+      .toContain("emit ANSI escape codes");
+    expect(sanitizeTextForCognitionForTests(ansi.replace("’", "\u0060")))
+      .toContain("emit ANSI escape codes");
+    const ansiPrefix = "Don’t output ANSI escape codes directly";
+    expect(sanitizeTextForCognitionForTests(ansiPrefix)).toBe(ansiPrefix);
+    const ansiTail = "ANSI escape codes directly — the CLI renderer applies them";
+    expect(sanitizeTextForCognitionForTests(ansiTail)).toBe(ansiTail);
+  });
+
+  test("sanitizeDataSurfaces extends the rewrite to history data fields", () => {
+    const trigger = "asking the user if they want to allow the action in `justification` parameter";
+    const rewrittenFragment = "asking the user whether to allow the action in the `justification` parameter";
+    const signature = "sig--opaque";
+    const req = buildGetChatMessageRequestForTests({
+      apiKey: "k",
+      modelUid: "swe-2",
+      cascadeId: "c",
+      sessionId: "s",
+      requestId: 1n,
+      triggerId: "t",
+      sanitizeDataSurfaces: true,
+      messages: [
+        { role: "user", content: `here is a quote: ${trigger}` },
+        {
+          role: "assistant",
+          content: "ok",
+          thinking: `the prompt says: ${trigger}`,
+          signature,
+          signature_type: "opaque",
+          tool_calls: [{ id: "c1", name: "apply_patch", arguments: `{"patch":"${trigger}"}` }],
+        },
+        { role: "tool", tool_call_id: "c1", content: `file bytes: ${trigger}` },
+        { role: "user", content: "hello" },
+      ],
+      tools: [{ name: "codex_escalation", description: trigger, parameters: { type: "object" } }],
+    });
+    // Every data surface carrying the phrase is rewritten on the wire.
+    expect(req.includes(Buffer.from(trigger, "utf8"))).toBe(false);
+    expect(req.includes(Buffer.from(`here is a quote: ${rewrittenFragment}`, "utf8"))).toBe(true);
+    expect(req.includes(Buffer.from(`the prompt says: ${rewrittenFragment}`, "utf8"))).toBe(true);
+    expect(req.includes(Buffer.from(`{"patch":"${rewrittenFragment}"}`, "utf8"))).toBe(true);
+    expect(req.includes(Buffer.from(`file bytes: ${rewrittenFragment}`, "utf8"))).toBe(true);
+    // Identifiers stay byte-exact, but a rewritten thinking block no longer
+    // matches its attestation and must be replayed unsigned.
+    expect(req.includes(Buffer.from("apply_patch", "utf8"))).toBe(true);
+    expect(req.includes(Buffer.from(signature, "utf8"))).toBe(false);
+
+    // A clean message carries no surprise rewrites — only the trigger phrase
+    // itself is touched, everything else stays literal.
+    const clean = buildGetChatMessageRequestForTests({
+      apiKey: "k",
+      modelUid: "swe-2",
+      cascadeId: "c",
+      sessionId: "s",
+      requestId: 1n,
+      triggerId: "t",
+      sanitizeDataSurfaces: true,
+      messages: [{ role: "user", content: "run sed -n '5,10p' file.ts verbatim" }],
+    });
+    expect(clean.includes(Buffer.from("run sed -n '5,10p' file.ts verbatim", "utf8"))).toBe(true);
+  });
+
+  test("rewrites the Claude Code system prompt sentences Cognition refuses (#8558)", () => {
+    // Three whole sentences from Claude Code's system prompt. Each alone was
+    // refused live; the rewritten forms were accepted.
+    const agentSdk = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+    expect(sanitizeTextForCognitionForTests(agentSdk))
+      .toBe("You are a Claude agent, built on Anthropic's Claude Agent Toolkit.");
+
+    const dualUse = "Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.";
+    expect(sanitizeTextForCognitionForTests(dualUse))
+      .toBe("Dual-purpose security tools (C2 frameworks, credential testing, exploit development) need clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.");
+
+    const surfaces = "Claude Code is available as a CLI in the terminal, desktop app (Mac/Windows), web app (claude.ai/code), and IDE extensions (VS Code, JetBrains).";
+    expect(sanitizeTextForCognitionForTests(surfaces))
+      .toBe("Claude Code ships as a CLI in the terminal, desktop app (Mac/Windows), web app (claude.ai/code), and IDE extensions (VS Code, JetBrains).");
+
+    // Lowercase, a missing comma and a doubled space were all still refused,
+    // so they must be rewritten too.
+    expect(sanitizeTextForCognitionForTests(agentSdk.toLowerCase())).toContain("Claude Agent Toolkit");
+    expect(sanitizeTextForCognitionForTests("You are a Claude agent built on Anthropic's Claude Agent SDK."))
+      .toContain("Claude Agent Toolkit");
+    expect(sanitizeTextForCognitionForTests(dualUse.replace("tools (C2", "tools  (C2"))).toContain("Dual-purpose security tools");
+    expect(sanitizeTextForCognitionForTests(surfaces.toUpperCase())).toContain("Claude Code ships as a CLI");
+
+    // Embedded in a longer prompt: surrounding text survives.
+    const prompt = `Intro line.\n${agentSdk}\n\nIMPORTANT: ${dualUse}\n - ${surfaces}\nOutro line.`;
+    const rewritten = sanitizeTextForCognitionForTests(prompt);
+    expect(rewritten).not.toMatch(/Claude Agent SDK/);
+    expect(rewritten).not.toMatch(/Dual-use security tools/);
+    expect(rewritten).not.toMatch(/Claude Code is available as a CLI/);
+    expect(rewritten.startsWith("Intro line.\n")).toBe(true);
+    expect(rewritten.endsWith("\nOutro line.")).toBe(true);
+
+    // Sub-phrases passed live, so they must stay untouched.
+    for (const benign of ["Claude Agent SDK", "credential testing", "VS Code, JetBrains", "Claude Code is available"]) {
+      expect(sanitizeTextForCognitionForTests(benign)).toBe(benign);
+    }
+  });
+
+  test("the Claude Code system-prompt rewrites reach the Cognition wire (#8558)", () => {
+    // Claude Code sends its system prompt through buildGetChatMessageRequest's
+    // #2 instruction surface — the same path the Codex escalation sentence
+    // takes above. These three whole sentences were each refused live with
+    // permission_denied, every sub-phrase passed, and the same account served
+    // Codex turns, so the trigger is the sentence rather than the account.
+    const sentences = [
+      "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+      "Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.",
+      "Claude Code is available as a CLI in the terminal, desktop app (Mac/Windows), web app (claude.ai/code), and IDE extensions (VS Code, JetBrains).",
+    ];
+    const rewrites = [
+      "You are a Claude agent, built on Anthropic's Claude Agent Toolkit.",
+      "Dual-purpose security tools (C2 frameworks, credential testing, exploit development) need clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.",
+      "Claude Code ships as a CLI in the terminal, desktop app (Mac/Windows), web app (claude.ai/code), and IDE extensions (VS Code, JetBrains).",
+    ];
+    // Meaning-preserving: the authorization and safety intent survives.
+    expect(rewrites[1]).toContain("clear authorization context");
+    expect(rewrites[1]).toContain("defensive use cases");
+
+    const systemPrompt = `Intro line.\n${sentences[0]}\n\n${sentences[1]}\n\n${sentences[2]}\nOutro line.`;
+    const expectedSystemPrompt = `Intro line.\n${rewrites[0]}\n\n${rewrites[1]}\n\n${rewrites[2]}\nOutro line.`;
+
+    // The same literal sentences sit in every data position the sanitizer
+    // must not touch: user text, replayed history and thinking, tool-call
+    // arguments, and a tool result quoting file bytes.
+    const userText = `Please quote this verbatim: ${sentences.join(" ")}`;
+    const historyText = `earlier: ${sentences[2]}`;
+    const thinking = `I reasoned about: ${sentences[0]}`;
+    const args = JSON.stringify({ patch: `${sentences[0]}\n${sentences[1]}\n${sentences[2]}` });
+    const toolResult = `bytes on disk: ${sentences.join(" ")}`;
+
+    const messages: ChatHistoryItem[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userText },
+      {
+        role: "assistant",
+        content: historyText,
+        thinking,
+        tool_calls: [{ id: "c1", name: "apply_patch", arguments: args }],
+      },
+      { role: "tool", tool_call_id: "c1", content: toolResult },
+      { role: "user", content: "hello" },
+    ];
+    const base = {
+      apiKey: "k",
+      modelUid: "swe-2",
+      cascadeId: "c",
+      sessionId: "s",
+      requestId: 1n,
+      triggerId: "t",
+      tools: [{ name: "benign", description: "A benign description.", parameters: { type: "object" } }],
+    };
+
+    const withSystem = buildGetChatMessageRequestForTests({ ...base, messages });
+    const withoutSystem = buildGetChatMessageRequestForTests({ ...base, messages: messages.slice(1) });
+
+    // #2 — the instruction surface the Claude Code prompt actually travels on
+    // — comes out fully rewritten, with the surrounding text intact.
+    const systemBytes = [...iterFields(withSystem)].find((field) => field.num === 2)?.value as Buffer;
+    expect(systemBytes).toEqual(Buffer.from(expectedSystemPrompt, "utf8"));
+    for (const sentence of sentences) {
+      expect(systemBytes.includes(Buffer.from(sentence, "utf8"))).toBe(false);
+    }
+
+    const promptBodies = (request: Buffer): Buffer[] =>
+      [...iterFields(request)].filter((field) => field.num === 3).map((field) => field.value as Buffer);
+    const sanitizedBodies = promptBodies(withSystem);
+    const plainBodies = promptBodies(withoutSystem);
+    expect(sanitizedBodies.length).toBe(4);
+    expect(plainBodies.length).toBe(4);
+
+    // Byte-for-byte: removing #2 leaves every #3 body identical, so the
+    // rewrite cannot have reached message content, thinking, tool-call
+    // arguments, or tool results. Each prompt mints a fresh random message id
+    // (field #1), so the comparison re-serializes every other field verbatim.
+    const dataBytesOf = (body: Buffer): Buffer => {
+      const parts: Buffer[] = [];
+      for (const field of iterFields(body)) {
+        if (field.num === 1) continue; // per-request uuid, not derived from text
+        if (field.wire === 2) parts.push(encodeMessage(field.num, field.value as Buffer));
+        else if (field.wire === 0) parts.push(encodeVarintField(field.num, field.value as bigint));
+        else throw new Error(`unexpected writable field #${field.num}`);
+      }
+      return Buffer.concat(parts);
+    };
+    sanitizedBodies.forEach((body, index) => {
+      expect(dataBytesOf(body).equals(dataBytesOf(plainBodies[index] as Buffer))).toBe(true);
+    });
+
+    // And those unchanged bodies still carry the literal bytes verbatim.
+    const data = Buffer.concat(sanitizedBodies);
+    expect(data.includes(Buffer.from(userText, "utf8"))).toBe(true);
+    expect(data.includes(Buffer.from(historyText, "utf8"))).toBe(true);
+    expect(data.includes(Buffer.from(thinking, "utf8"))).toBe(true);
+    expect(data.includes(Buffer.from(args, "utf8"))).toBe(true);
+    expect(data.includes(Buffer.from(toolResult, "utf8"))).toBe(true);
+    for (const rewrite of rewrites) {
+      expect(data.includes(Buffer.from(rewrite, "utf8"))).toBe(false);
+    }
+  });
+
+  test("the Claude Code rewrites cover tool descriptions but never tool arguments (#8558)", () => {
+    // The #8558 sentences live in the system prompt, but tool descriptions are
+    // the other instruction surface the sanitizer owns, so they must be
+    // rewritten too — while the identical bytes inside tool-call arguments
+    // stay literal.
+    const sentence = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+    const rewrite = "You are a Claude agent, built on Anthropic's Claude Agent Toolkit.";
+    const args = JSON.stringify({ note: sentence });
+    const request = buildGetChatMessageRequestForTests({
+      apiKey: "k",
+      modelUid: "swe-2",
+      cascadeId: "c",
+      sessionId: "s",
+      requestId: 1n,
+      triggerId: "t",
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "ok", tool_calls: [{ id: "c1", name: "note", arguments: args }] },
+      ],
+      tools: [{ name: "note", description: sentence, parameters: { type: "object" } }],
+    });
+    const toolBytes = [...iterFields(request)].find((field) => field.num === 10)?.value as Buffer;
+    expect(toolBytes.includes(Buffer.from(sentence, "utf8"))).toBe(false);
+    expect(toolBytes.includes(Buffer.from(rewrite, "utf8"))).toBe(true);
+    expect(request.includes(Buffer.from(args, "utf8"))).toBe(true);
+  });
+
+  test("the catalog parser reads the per-account context window", () => {
+    // ClientModelConfig #18 is the max input tokens, and it is the only
+    // first-party context-window figure Cognition exposes: the Devin CLI and
+    // Desktop model pages, the SWE-2 announcement and the Windsurf model
+    // reference all list these models without a window.
+    const withWindow = Buffer.concat([
+      encodeString(1, "SWE-2 High"),
+      encodeVarintField(18, 262_000),
+      encodeString(22, "swe-2-high"),
+    ]);
+    const withoutWindow = Buffer.concat([
+      encodeString(1, "Mystery"),
+      encodeString(22, "mystery-model"),
+    ]);
+    const catalog = parseCatalogBuffer(
+      Buffer.concat([encodeMessage(1, withWindow), encodeMessage(1, withoutWindow)]),
+      "key",
+      "https://server.codeium.com",
+    );
+    expect(catalog.byUid.get("swe-2-high")?.contextWindow).toBe(262_000);
+    // Absent rather than zero, so a caller can tell "not reported" from
+    // "reported as nothing" and keep its fallback.
+    expect(catalog.byUid.get("mystery-model")?.contextWindow).toBeUndefined();
+  });
+
+  test("the catalog parser preserves image support as a tri-state", () => {
+    // ClientModelConfig #5 is supports_images. encodeVarintField(5, 0) emits
+    // real bytes ([0x28, 0x00]), so the false case is not an omission case —
+    // and a genuinely absent field must stay unknown rather than collapse to
+    // text-only (#1796).
+    const vision = Buffer.concat([
+      encodeString(1, "Vision Model"),
+      encodeVarintField(5, 1),
+      encodeString(22, "vision-model"),
+    ]);
+    const textOnly = Buffer.concat([
+      encodeString(1, "Text Model"),
+      encodeVarintField(5, 0),
+      encodeString(22, "text-model"),
+    ]);
+    const unknown = Buffer.concat([
+      encodeString(1, "Unknown Model"),
+      encodeString(22, "unknown-model"),
+    ]);
+    const catalog = parseCatalogBuffer(
+      Buffer.concat([encodeMessage(1, vision), encodeMessage(1, textOnly), encodeMessage(1, unknown)]),
+      "key",
+      "https://server.codeium.com",
+    );
+    expect(catalog.byUid.get("vision-model")?.supportsImages).toBe(true);
+    // toBe(false), not toBeFalsy: a present 0 asserts text-only.
+    expect(catalog.byUid.get("text-model")?.supportsImages).toBe(false);
+    // The entry must exist before its field can be asserted absent.
+    expect(catalog.byUid.get("unknown-model")).toBeDefined();
+    expect(catalog.byUid.get("unknown-model")?.supportsImages).toBeUndefined();
+  });
+
+  test("the degraded-mode windows match what Cognition serves", () => {
+    // This table was wrong for nine of its eleven rows because it had been
+    // copied from each model's ORIGINAL vendor rather than measured against
+    // Cognition's catalog. The spot-checks are the three shapes of that error:
+    // a Claude row five times too small, a Grok row about half its real size,
+    // and a GPT row rounded up past what the service accepts.
+    expect(DEVIN_MODEL_CONTEXT_WINDOWS["claude-sonnet-5"]).toBe(1_000_000);
+    expect(DEVIN_MODEL_CONTEXT_WINDOWS["claude-sonnet-5-5"]).toBe(1_000_000);
+    expect(DEVIN_MODEL_CONTEXT_WINDOWS["claude-haiku-5-5"]).toBe(1_000_000);
+    expect(DEVIN_MODEL_CONTEXT_WINDOWS["grok-4-5"]).toBe(500_000);
+    expect(DEVIN_MODEL_CONTEXT_WINDOWS["gpt-5-6-sol"]).toBe(1_000_000);
+    expect(DEVIN_MODEL_CONTEXT_WINDOWS["swe-2"]).toBe(850_000);
+    // Every statically advertised model needs one, or the picker reports 128k.
+    for (const model of DEVIN_STATIC_MODELS) {
+      expect(DEVIN_MODEL_CONTEXT_WINDOWS[model]).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("Devin data-surface reasoning signatures", () => {
+  const trigger = "Takes a task_id parameter identifying the task";
+  const rewritten = "Accepts a task_id parameter identifying the task";
+  const signature = `opaque\u0001:${trigger}:한글`;
+  const fields = (wire: Buffer) => [...iterFields(wire)];
+  const nested = (wire: Buffer, num: number) => fields(wire).filter(f => f.num === num).map(f => f.value as Buffer);
+  const text = (wire: Buffer, num: number) => nested(wire, num)[0]?.toString("utf8");
+  const build = (messages: ChatHistoryItem[], sanitizeDataSurfaces?: boolean) => buildGetChatMessageRequestForTests({
+    apiKey: "k", modelUid: "swe-2", messages, cascadeId: "c", sessionId: "s", requestId: 1n, triggerId: "t",
+    sanitizeDataSurfaces,
+  });
+  const assistant = (wire: Buffer) => nested(wire, 3).find(prompt => fields(prompt).some(f => f.num === 2 && f.value === 2n))!;
+
+  test.each([
+    [undefined, "sealed"], [false, "sealed"], [true, "sealed"],
+    [true, "openai"], [true, "anthropic"], [true, undefined],
+  ] as const)("changed thinking, sanitize=%s, signature type=%s", (sanitize, signatureType) => {
+    const prompt = assistant(build([{
+      role: "assistant", content: "calling", thinking: trigger, signature, signature_type: signatureType,
+    }], sanitize));
+    expect(text(prompt, 11)).toBe(sanitize ? rewritten : trigger);
+    expect(text(prompt, 12)).toBe(sanitize ? undefined : signature);
+    expect(text(prompt, 18)).toBe(sanitize ? undefined : signatureType);
+    expect(nested(prompt, 12)).toHaveLength(sanitize ? 0 : 1);
+    expect(nested(prompt, 18)).toHaveLength(sanitize || signatureType === undefined ? 0 : 1);
+  });
+
+  test.each([undefined, "", "reasoning without a trigger"])("preserves unchanged thinking and signature-only replay (%s)", thinking => {
+    const id = `call:${trigger}`;
+    const name = `tool:${trigger}`;
+    const wire = build([
+      {
+        role: "assistant", thinking, signature, signature_type: "sealed",
+        content: [{ type: "text", text: trigger }, { type: "image", mimeType: "image/png", base64Data: "AAEC", caption: trigger }],
+        tool_calls: [{ id, name, arguments: JSON.stringify({ quote: trigger }) }],
+      },
+      { role: "tool", content: trigger, tool_call_id: id },
+    ], true);
+    const prompt = assistant(wire);
+    expect(text(prompt, 3)).toBe(rewritten);
+    expect(text(prompt, 11)).toBe(thinking || undefined);
+    expect(text(prompt, 12)).toBe(signature);
+    expect(text(prompt, 18)).toBe("sealed");
+    const call = nested(prompt, 6)[0]!;
+    expect(text(call, 1)).toBe(id);
+    expect(text(call, 2)).toBe(name);
+    expect(text(call, 3)).toBe(JSON.stringify({ quote: rewritten }));
+    const image = nested(prompt, 10)[0]!;
+    expect(text(image, 1)).toBe("AAEC");
+    expect(text(image, 2)).toBe("image/png");
+    expect(text(image, 3)).toBe(rewritten);
+    const tool = nested(wire, 3)[1]!;
+    expect(text(tool, 7)).toBe(id);
+    expect(text(tool, 3)).toBe(rewritten);
+  });
+
+  test("rewrites unsigned thinking without introducing a signature or orphan signature type", () => {
+    for (const signatureType of [undefined, "sealed"]) {
+      const prompt = assistant(build([{
+        role: "assistant", content: "calling", thinking: trigger, signature_type: signatureType,
+      }], true));
+      expect(text(prompt, 11)).toBe(rewritten);
+      expect(nested(prompt, 12)).toHaveLength(0);
+      expect(nested(prompt, 18)).toHaveLength(0);
+    }
+  });
+
+  test("only env value 1 rewrites replay, preserving authentication, continuity and stored history", async () => {
+    const beforeSanitize = process.env.EASYPROXY_DEVIN_SANITIZE_DATA_SURFACES;
+    const beforeJwt = process.env.EASYPROXY_DEVIN_SEND_USER_JWT;
+    // Exercise the Responses parser and late signature trailer, then encode the
+    // same history with the opt-in both on and off. Nothing stored is rewritten.
+    const messages = mapEpxMessagesToDevin(parseRequest({
+      model: "devin/swe-2",
+      input: [
+        { role: "user", content: trigger },
+        { type: "reasoning", id: "rs_text", summary: [{ type: "summary_text", text: trigger }] },
+        { type: "reasoning", id: "rs_sig", summary: [], encrypted_content: encodeReasoningEnvelope({ sig: encodeDevinSignature(signature, "sealed") }) },
+        { type: "function_call", call_id: "call_1", name: "lookup", arguments: "{}" },
+        { type: "function_call_output", call_id: "call_1", output: "done" },
+      ],
+    }));
+    const original = structuredClone(messages);
+    const apiKey = "devin-session-token$sanitize-regression";
+    try {
+      delete process.env.EASYPROXY_DEVIN_SEND_USER_JWT;
+      for (const setting of [undefined, "", "0", "true", "01", " 1 ", "1", undefined]) {
+        if (setting === undefined) delete process.env.EASYPROXY_DEVIN_SANITIZE_DATA_SURFACES;
+        else process.env.EASYPROXY_DEVIN_SANITIZE_DATA_SURFACES = setting;
+        const requests: Buffer[] = [];
+        const output: string[] = [];
+        for await (const event of streamChatEvents({
+          apiKey, modelUid: "swe-2", messages, cascadeId: "cascade-sanitize", trajectoryId: "trajectory-sanitize", catalog: null,
+          executor: (async (url, init) => {
+            expect(String(url)).toBe("https://server.codeium.com/exa.api_server_pb.ApiServerService/GetChatMessage");
+            expect(new Headers(init?.headers).get("Authorization")).toBe(`Basic ${apiKey}-${apiKey}`);
+            const framed = Buffer.from(await (init!.body as Blob).arrayBuffer());
+            expect(framed[0]).toBe(0);
+            expect(framed.readUInt32BE(1)).toBe(framed.length - 5);
+            requests.push(framed.subarray(5));
+            return new Response(Buffer.concat([
+              frameConnectStream(encodeString(3, "ok"), false), Buffer.from([2, 0, 0, 0, 2, 123, 125]),
+            ]));
+          }) as typeof fetch,
+        })) if (event.kind === "text") output.push(event.text);
+        expect(output).toEqual(["ok"]);
+        expect(requests).toHaveLength(1);
+        const wire = requests[0]!;
+        const metadata = nested(wire, 1)[0]!;
+        expect(text(metadata, 3)).toBe(apiKey);
+        expect(nested(metadata, 21)).toHaveLength(0);
+        expect(text(wire, 16)).toBe("cascade-sanitize");
+        expect(text(nested(wire, 15)[0]!, 1)).toBe("trajectory-sanitize");
+        const prompt = assistant(wire);
+        const enabled = setting === "1";
+        expect(text(nested(wire, 3)[0]!, 3)).toBe(enabled ? rewritten : trigger);
+        expect(text(prompt, 11)).toBe(enabled ? rewritten : trigger);
+        expect(text(prompt, 12)).toBe(enabled ? undefined : signature);
+        expect(text(prompt, 18)).toBe(enabled ? undefined : "sealed");
+        expect(text(nested(prompt, 6)[0]!, 1)).toBe("call_1");
+        expect(text(nested(wire, 3)[2]!, 7)).toBe("call_1");
+        expect(messages).toEqual(original);
+      }
+    } finally {
+      if (beforeSanitize === undefined) delete process.env.EASYPROXY_DEVIN_SANITIZE_DATA_SURFACES;
+      else process.env.EASYPROXY_DEVIN_SANITIZE_DATA_SURFACES = beforeSanitize;
+      if (beforeJwt === undefined) delete process.env.EASYPROXY_DEVIN_SEND_USER_JWT;
+      else process.env.EASYPROXY_DEVIN_SEND_USER_JWT = beforeJwt;
+    }
+  });
+});
+
+describe("SWE-2 wire effort selection", () => {
+  // Every case here passes a null catalog: this is the degraded path. With a
+  // catalog, family metadata decides (devin-family-resolution.test.ts).
+  // Cognition spells SWE-2 effort as the model id, so an explicit effort has to
+  // beat a suffix the picker already chose. Before this, swe-2-high asked for at
+  // medium stayed high and the caller was silently ignored.
+  test.each(["medium", "high", "max"])("an explicit %s effort overrides every SWE-2 variant", async (effort) => {
+    for (const model of ["swe-2", "swe-2-medium", "swe-2-high", "swe-2-max", "swe-2.high"]) {
+      expect(await resolveWireModelUidForTests(model, "unused", "unused", effort, null)).toBe(`swe-2-${effort}`);
+    }
+  });
+
+  test.each([
+    ["none", "medium"], ["off", "medium"], ["minimal", "medium"],
+    ["low", "medium"], ["xhigh", "max"], ["ultra", "max"],
+  ])("maps %s to the supported SWE-2 %s lane", async (effort, expected) => {
+    expect(await resolveWireModelUidForTests("swe-2-high", "unused", "unused", effort, null)).toBe(`swe-2-${expected}`);
+  });
+
+  // Case is normalised, which the source contribution did not do: a caller that
+  // sends HIGH means the same lane as high.
+  test("effort matching is case-insensitive", async () => {
+    expect(await resolveWireModelUidForTests("swe-2-medium", "unused", "unused", "HIGH", null)).toBe("swe-2-high");
+  });
+
+  test("omitted or unknown effort preserves an explicit variant", async () => {
+    expect(await resolveWireModelUidForTests("swe-2-high", "unused", "unused", undefined, null)).toBe("swe-2-high");
+    expect(await resolveWireModelUidForTests("swe-2-max", "unused", "unused", "future-effort", null)).toBe("swe-2-max");
+  });
+
+  test("without a catalog, other model families keep their suffix precedence", async () => {
+    for (const model of ["claude-opus-5-medium", "gpt-5-6-sol-high", "swe-1-7-high", "swe-20-high"]) {
+      expect(await resolveWireModelUidForTests(model, "unused", "unused", "max", null)).toBe(model);
+    }
+  });
+});
+
+describe("effort suffix detection and caller effort values are different sets", () => {
+  // The two had drifted: the request path was missing `priority`, so a UID that
+  // already carried it read as unsuffixed and got a second suffix appended —
+  // the exact shape Cognition answers with an opaque permission_denied.
+  test("a UID carrying the priority tier is recognised as already suffixed", async () => {
+    for (const uid of ["gpt-5-6-sol-priority", "gpt-5-6-sol-medium-priority"]) {
+      expect(await resolveWireModelUidForTests(uid, "unused", "unused", "high", null)).toBe(uid);
+    }
+  });
+
+  test("detection handles a compound suffix, which a last-token test could not", async () => {
+    expect(await resolveWireModelUidForTests("gpt-5-6-sol-medium-priority", "unused", "unused", undefined, null)).toBe(
+      "gpt-5-6-sol-medium-priority",
+    );
+  });
+
+  test("a bare model still receives the caller effort", async () => {
+    expect(await resolveWireModelUidForTests("gpt-5-6-sol", "unused", "unused", "high", null)).toBe("gpt-5-6-sol-high");
+  });
+
+  // `priority` is a service tier, not something a caller asks for as effort.
+  // Sharing one set between detection and caller validity would admit it.
+  test("priority is not accepted as a caller reasoning effort", async () => {
+    expect(await resolveWireModelUidForTests("gpt-5-6-sol", "unused", "unused", "priority", null)).toBe(
+      "gpt-5-6-sol-medium",
+    );
+  });
+
+  // These never appear as a trailing token, so they are meaningless to detection,
+  // but a caller can still name them and they must survive.
+  test.each(["max-1m", "none-1m", "1m", "fast"])("the compound caller value %p is preserved", async (effort) => {
+    expect(await resolveWireModelUidForTests("gpt-5-6-sol", "unused", "unused", effort, null)).toBe(
+      `gpt-5-6-sol-${effort}`,
+    );
+  });
+
+  test("a model name is never mistaken for a suffix", async () => {
+    // Greedy collapse must not eat part of a real model name.
+    for (const uid of ["claude-opus-5", "swe-1-7", "glm-5-3"]) {
+      expect(await resolveWireModelUidForTests(uid, "unused", "unused", "high", null)).toBe(`${uid}-high`);
+    }
+  });
+});
+
+describe("devin adapter api-server host resolution (#4503)", () => {
+  // The `devin-cli` -> `devin` merge rekeys a config row and its credential
+  // slot together at startup, so until that migration runs a row already named
+  // `devin` can have its only credential — and the tenant apiBaseUrl recorded
+  // on it — still sitting under the `devin-cli` slot. runTurn resolves the
+  // dispatch host through resolveDevinApiServer(provider.baseUrl,
+  // credentialProviderId), which must follow the DEPRECATED_OAUTH_PROVIDER_ALIASES
+  // link to that slot before falling back to the configured baseUrl and then
+  // the US default. Without it an EU/FedStart tenant's traffic — api_key
+  // included — is sent to a host the account is not provisioned on.
+  const EU_TENANT_HOST = "https://eu.windsurf.com/_route/api_server";
+  const FEDSTART_TENANT_HOST = "https://windsurf.fedstart.com/_route/api_server";
+  // A valid, non-default configured baseUrl. If the credential slots were
+  // skipped the adapter would dispatch here; if baseUrl were also skipped it
+  // would land on DEVIN_DEFAULT_API_SERVER. The assertions below reject both.
+  const CONFIGURED_BASE_URL = "https://server-staging.codeium.com";
+
+  const previousHome = process.env.EASYPROXY_HOME;
+  const previousFetch = globalThis.fetch;
+  let home = "";
+  let seenUrls: string[] = [];
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "epx-devin-host-"));
+    process.env.EASYPROXY_HOME = home;
+    seenUrls = [];
+    // No providerFetch is supplied by this direct adapter test, so inference falls back to the
+    // global fetch alongside catalog/JWT RPCs and this stub observes every upstream URL.
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      seenUrls.push(String(input));
+      return new Response("down", { status: 500 });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+    if (previousHome === undefined) delete process.env.EASYPROXY_HOME;
+    else process.env.EASYPROXY_HOME = previousHome;
+    removeTreeWithRetry(home);
+  });
+
+  // Drive one real runTurn. The stubbed 500 ends the turn in an upstream error
+  // only after every outbound URL has been recorded.
+  async function runOneTurn(apiKey: string, providerId = "devin"): Promise<AdapterEvent[]> {
+    const adapter = createDevinAdapter(
+      { adapter: "devin", baseUrl: CONFIGURED_BASE_URL, apiKey },
+      { providerId },
+    );
+    const parsed: EpxParsedRequest = {
+      modelId: "swe-2-high",
+      stream: true,
+      context: { messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+      options: {},
+    };
+    const events: AdapterEvent[] = [];
+    await adapter.runTurn!(
+      parsed,
+      { headers: new Headers(), translatorBudget: createTranslatorBudget() },
+      (event) => events.push(event),
+    );
+    return events;
+  }
+
+  function expectDispatchedTo(host: string): void {
+    expect(seenUrls.length).toBeGreaterThan(0);
+    for (const url of seenUrls) expect(url).toStartWith(host);
+  }
+
+  test("a devin row adopts the tenant host from an un-rekeyed devin-cli credential", async () => {
+    await saveCredential("devin-cli", {
+      access: "devin-cli-session",
+      refresh: "devin-cli-session",
+      expires: Number.MAX_SAFE_INTEGER,
+      source: "local-cli",
+      apiBaseUrl: EU_TENANT_HOST,
+    });
+
+    const events = await runOneTurn("devin-cli-session");
+
+    expectDispatchedTo(EU_TENANT_HOST);
+    expect(seenUrls.some((url) => url.startsWith(DEVIN_DEFAULT_API_SERVER))).toBe(false);
+    expect(seenUrls.some((url) => url.startsWith(CONFIGURED_BASE_URL))).toBe(false);
+    // The turn reached the transport and failed there on the stubbed 500 —
+    // proof the recorded URLs came from a real dispatch, not an early return.
+    expect(events.some((event) => event.type === "error")).toBe(true);
+  });
+
+  test("an independently configured key does not borrow an alias credential's tenant host", async () => {
+    await saveCredential("devin", {
+      access: "different-account-session",
+      refresh: "different-account-session",
+      expires: Number.MAX_SAFE_INTEGER,
+      source: "local-cli",
+      apiBaseUrl: EU_TENANT_HOST,
+    });
+
+    await runOneTurn("configured-provider-key", "devin-cli");
+
+    expectDispatchedTo(CONFIGURED_BASE_URL);
+    expect(seenUrls.some((url) => url.startsWith(EU_TENANT_HOST))).toBe(false);
+  });
+
+  test("a usable literal devin slot still wins over the aliased devin-cli slot", async () => {
+    await saveCredential("devin", {
+      access: "devin-session",
+      refresh: "devin-session",
+      expires: Number.MAX_SAFE_INTEGER,
+      source: "oauth",
+      apiBaseUrl: FEDSTART_TENANT_HOST,
+    });
+    await saveCredential("devin-cli", {
+      access: "devin-cli-session",
+      refresh: "devin-cli-session",
+      expires: Number.MAX_SAFE_INTEGER,
+      source: "local-cli",
+      apiBaseUrl: EU_TENANT_HOST,
+    });
+
+    await runOneTurn("devin-session");
+
+    expectDispatchedTo(FEDSTART_TENANT_HOST);
+  });
+
+  test("a configured key does not borrow the literal devin slot's tenant host", async () => {
+    await saveCredential("devin", {
+      access: "devin-session",
+      refresh: "devin-session",
+      expires: Number.MAX_SAFE_INTEGER,
+      source: "oauth",
+      apiBaseUrl: FEDSTART_TENANT_HOST,
+    });
+
+    await runOneTurn("configured-provider-key");
+
+    expectDispatchedTo(CONFIGURED_BASE_URL);
+    expect(seenUrls.some((url) => url.startsWith(FEDSTART_TENANT_HOST))).toBe(false);
+  });
+
+  test("with neither credential slot populated the configured baseUrl still applies", async () => {
+    await runOneTurn("epx-test-no-credential-key");
+
+    expectDispatchedTo(CONFIGURED_BASE_URL);
+  });
+});

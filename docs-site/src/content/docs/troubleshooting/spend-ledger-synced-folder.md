@@ -1,0 +1,72 @@
+---
+title: Spend Ledger Refused in a Synced Folder
+description: Why requests can fail with "Spend-ledger storage could not be opened safely" when the easyproxy state directory is inside iCloud Drive or another synced folder, and how to fix it.
+---
+
+Spend-ledger storage refusals return HTTP 503 with error type `server_error` and code
+`spend_ledger_storage_unavailable`. This is a local storage problem; it does not count against
+provider or account health. Request logs attribute it as `local-refusal`. An already streaming response carries the same code in its terminal
+error event. Other requests in the same session may succeed if the file condition is temporary.
+
+Older builds reported HTTP 502 with a misleading "Provider unreachable" prefix. Current builds
+say which file and which check refused it, for example:
+
+```text
+Spend-ledger storage could not be opened safely (journal: extra-hard-link).
+```
+
+## What the check is
+
+easyproxy keeps a spend ledger in its state directory (`~/.easyproxy` by default, or
+`EASYPROXY_HOME`): a journal file, `spend-ledger.jsonl`, and a salt file, `spend-ledger.salt`.
+Before every write it checks that each file is regular, is not a symbolic link,
+and has exactly one directory entry. Outside Windows it also checks that you own the file;
+the owner comparison is not performed on Windows. A second hard link would mean another name elsewhere
+on the volume can see or change the same bytes, so easyproxy refuses instead of writing through
+it. This check stays strict on purpose.
+
+| Condition in the message | Meaning |
+| --- | --- |
+| `extra-hard-link` | Another directory entry points at the same file. |
+| `symbolic-link` | The ledger file is a symbolic link. |
+| `not-regular-file` | Something other than a regular file sits at the ledger path. |
+| `foreign-owner` | The file belongs to a different user (checked outside Windows). |
+| `invalid-salt` | The salt file exists but its content is not a valid salt. |
+
+The role in the message is `journal`, `journal-compaction` (the temporary file written while
+the journal is compacted) or `salt`.
+
+## Why a synced folder triggers it
+
+macOS sync services, including iCloud Drive with "Desktop & Documents Folders" turned on and
+File Provider clients such as OneDrive, Dropbox and Google Drive, can briefly keep a second link
+to a file while they stage or upload a change. If the state directory is inside such a folder,
+the journal can have two links for a moment after an ordinary write. A request that lands in
+that moment is refused, and the next one may succeed. Once the sync settles, the file is back to
+one link, so inspecting it afterwards shows nothing wrong.
+
+At startup easyproxy warns when the state directory resolves inside iCloud Drive
+(`~/Library/Mobile Documents`), a File Provider folder (`~/Library/CloudStorage`), Desktop
+or Documents while iCloud Desktop & Documents sync appears to be on, or Desktop or Documents
+while Google Drive for desktop appears to be in use. The Google Drive hint is the presence
+of `~/Library/CloudStorage/GoogleDrive-*` or `~/Library/Application Support/Google/DriveFS`.
+It does not read which folders the app was told to sync, so Drive being installed can warn
+even when Documents is not selected. The warning is advisory. The detection reads the folder
+layout and can be wrong in either direction.
+
+## Fix
+
+Keep the state directory outside synced folders. The default `~/.easyproxy` is not synced.
+
+1. Stop easyproxy.
+2. Move or copy the state directory to an unsynced location, for example `~/.easyproxy-trial`.
+3. Set `EASYPROXY_HOME` to that location, or unset it to use the default, and start easyproxy
+   again.
+
+Do not delete the journal, relax its permissions, or remove the check to make the error go away.
+The journal holds your recorded spend, and the check is what keeps it from being written through
+an unexpected link.
+
+If the message names a condition other than `extra-hard-link`, or the state directory is not in
+a synced folder, please open an issue with the full refusal message. It contains no path,
+account or request content.

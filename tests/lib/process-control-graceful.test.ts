@@ -1,0 +1,549 @@
+import { describe, expect, test } from "bun:test";
+import { gracefulStopHost, lastStopRefusalCode, lastStopRefusalMessage, ProxyOwnershipRefusedError, refusalNextStep, stopProxy, stopProxyGracefully } from "../../src/lib/process-control";
+
+function okResponse(): Response {
+  return new Response(JSON.stringify({ success: true, sharedTeardown: "performed" }), { status: 200 });
+}
+
+/**
+ * A live process this test owns, for the pid-taking stop paths.
+ *
+ * `spawn("sleep", ...)` depends on a POSIX `sleep` on PATH and, worse, waits forever when
+ * the spawn itself fails: the `spawn` event never fires and the `error` event is unhandled.
+ * The runtime's own binary is always present, and a failed start now rejects instead of
+ * hanging the suite.
+ */
+async function spawnIdleChild(): Promise<import("node:child_process").ChildProcess> {
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], { stdio: "ignore" });
+  await new Promise<void>((resolve, reject) => {
+    child.once("spawn", () => resolve());
+    child.once("error", reject);
+  });
+  return child;
+}
+
+describe("gracefulStopHost", () => {
+  test("loopback aliases and wildcard binds answer on IPv4 loopback", () => {
+    for (const host of [undefined, "", "  ", "localhost", "LOCALHOST", "127.0.0.1", "0.0.0.0", "::", "[::]"]) {
+      expect(gracefulStopHost(host)).toBe("127.0.0.1");
+    }
+  });
+
+  test("concrete binds are followed (and IPv6 bracketed)", () => {
+    expect(gracefulStopHost("::1")).toBe("[::1]");
+    expect(gracefulStopHost("[::1]")).toBe("[::1]");
+    expect(gracefulStopHost("192.168.1.20")).toBe("192.168.1.20");
+    expect(gracefulStopHost("2001:db8::5")).toBe("[2001:db8::5]");
+    expect(gracefulStopHost("[2001:db8::5]")).toBe("[2001:db8::5]");
+  });
+
+  test("DNS bind names fall back to loopback so credentials are never sent through DNS", () => {
+    expect(gracefulStopHost("proxy.internal.example")).toBe("127.0.0.1");
+    expect(gracefulStopHost("attacker.invalid")).toBe("127.0.0.1");
+  });
+});
+
+describe("stopProxyGracefully", () => {
+  test("a refused mayTerminate keeps the forced-stop fallback from signalling the process", async () => {
+    // A throwaway child as the target: a regression could only ever signal it. The runtime's own
+    // binary is the idle process, so the case runs where /bin/sleep does not exist; on Windows the
+    // forced fallback it guards is taskkill, behind the same mayTerminate check.
+    const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30_000)"], { stdout: "ignore", stderr: "ignore" });
+    try {
+      await expect(stopProxy(child.pid, {
+        runtimeEndpoint: { hostname: "127.0.0.1", port: 1 }, runtimeEndpointOnly: true,
+        fetchFn: (async () => { throw new Error("unanswered"); }) as unknown as typeof fetch,
+        mayTerminate: () => false,
+      })).rejects.toThrow("Process termination refused");
+      expect(child.exitCode).toBeNull();
+    } finally {
+      child.kill("SIGKILL");
+      await child.exited;
+    }
+  });
+
+  test("runtimeEndpointOnly sends nothing without the resolved endpoint and never re-reads the record", async () => {
+    let reads = 0, requests = 0;
+    const result = await stopProxyGracefully(4242, {
+      // A record published after the caller resolved no endpoint, naming another port.
+      readRuntime: () => { reads++; return { port: 10200 }; },
+      runtimeEndpointOnly: true,
+      deferSharedTeardownNonce: "a".repeat(32),
+      fetchFn: (async () => { requests++; return new Response(null, { status: 500 }); }) as unknown as typeof fetch,
+      waitExit: () => true,
+    });
+    expect({ result, reads, requests }).toEqual({ result: false, reads: 0, requests: 0 });
+  });
+
+  for (const [name, body] of [
+    ["reported restore failure", JSON.stringify({ success: false, sharedTeardown: "performed" })],
+    ["missing teardown result", JSON.stringify({ success: true })],
+    ["unexpected deferral", JSON.stringify({ success: true, sharedTeardown: "deferred" })],
+    ["nonboolean success", JSON.stringify({ success: "true", sharedTeardown: "performed" })],
+    ["empty body", ""],
+    ["invalid JSON", "{broken"],
+    ["null body", "null"],
+    ["array body", "[]"],
+  ]) {
+    test(`process exit does not confirm shared teardown: ${name}`, async () => {
+      const waits: number[] = [];
+      const result = await stopProxyGracefully(4242, {
+        readRuntime: () => ({ port: 10100 }),
+        fetchFn: (async () => new Response(body, { status: 200 })) as typeof fetch,
+        waitExit: pid => { waits.push(pid); return true; },
+        exitTimeoutMs: 1,
+        env: {},
+      });
+      expect(result).toBe("teardown-unconfirmed");
+      expect(waits).toEqual([4242]);
+    });
+  }
+
+  test("requires the assigned deferred response when a receipt nonce was sent", async () => {
+    for (const sharedTeardown of ["deferred", "performed"]) {
+      const result = await stopProxyGracefully(4242, {
+        readRuntime: () => ({ port: 10100 }),
+        fetchFn: (async () => new Response(JSON.stringify({ success: true, sharedTeardown }))) as typeof fetch,
+        waitExit: () => true,
+        deferSharedTeardownNonce: "receipt-nonce",
+        exitTimeoutMs: 1,
+        env: {},
+      });
+      expect(result).toBe(sharedTeardown === "deferred" ? true : "teardown-unconfirmed");
+    }
+  });
+
+  test("a sibling's not-owned answer confirms a plain stop but never a deferral", async () => {
+    // A sibling instance owns no shared teardown, so nothing is left for the caller to finish.
+    // A caller that handed over a receipt asked for something else, and still gets no confirmation.
+    for (const nonce of [undefined, "receipt-nonce"]) {
+      const result = await stopProxyGracefully(4242, {
+        readRuntime: () => ({ port: 10199 }),
+        fetchFn: (async () => new Response(JSON.stringify({ success: true, sharedTeardown: "not-owned" }))) as typeof fetch,
+        waitExit: () => true,
+        ...(nonce ? { deferSharedTeardownNonce: nonce } : {}),
+        exitTimeoutMs: 1,
+        env: {},
+      });
+      expect(result).toBe(nonce ? "teardown-unconfirmed" : true);
+    }
+  });
+
+  test("not-owned acceptance narrows to callers that opt in, never past a sent deferral", async () => {
+    // A sibling's `not-owned` is a truthful final answer; a Link Child caller refuses it
+    // because an old build says it while preserving the route this stop must restore.
+    // The option only narrows a no-nonce stop — a sent receipt is never confirmed this way.
+    for (const [nonce, accept, expected] of [
+      [undefined, true, true],
+      [undefined, false, "teardown-unconfirmed"],
+      ["receipt-nonce", true, "teardown-unconfirmed"],
+      ["receipt-nonce", false, "teardown-unconfirmed"],
+    ] as const) {
+      const result = await stopProxyGracefully(4242, {
+        readRuntime: () => ({ port: 10199 }),
+        fetchFn: (async () => new Response(JSON.stringify({ success: true, sharedTeardown: "not-owned" }))) as typeof fetch,
+        waitExit: () => true,
+        ...(nonce ? { deferSharedTeardownNonce: nonce } : {}),
+        acceptNotOwnedTeardown: accept,
+        exitTimeoutMs: 1,
+        env: {},
+      });
+      expect(result).toBe(expected);
+    }
+  });
+
+  test("an unconfirmed response still requires process exit", async () => {
+    expect(await stopProxyGracefully(4242, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => new Response(JSON.stringify({ success: false, sharedTeardown: "performed" }))) as typeof fetch,
+      waitExit: () => false,
+      exitTimeoutMs: 1,
+      env: {},
+    })).toBe(false);
+  });
+
+  test("ownership refusal never waits for exit or becomes a teardown retry", async () => {
+    expect(await stopProxyGracefully(4242, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => new Response("refused", { status: 409 })) as typeof fetch,
+      waitExit: () => { throw new Error("must not wait for a refused stop"); },
+      env: {},
+    })).toBe("refused");
+  });
+
+  test("follows the recorded bind hostname when it names a concrete address", async () => {
+    const calls: string[] = [];
+    await stopProxyGracefully(9, {
+      readRuntime: () => ({ port: 10100, hostname: "::1" }),
+      fetchFn: (async (url: string | URL | Request) => {
+        calls.push(String(url));
+        return okResponse();
+      }) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+    });
+    expect(calls).toEqual(["http://[::1]:10100/api/stop"]);
+  });
+
+  test("POSTs /api/stop on 127.0.0.1 with the runtime port, then waits for exit", async () => {
+    const calls: { url: string; method?: string }[] = [];
+    const result = await stopProxyGracefully(4242, {
+      readRuntime: pid => (pid === 4242 ? { port: 10123 } : null),
+      fetchFn: (async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(url), method: init?.method });
+        return okResponse();
+      }) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+    });
+
+    expect(result).toBe(true);
+    expect(calls).toEqual([{ url: "http://127.0.0.1:10123/api/stop", method: "POST" }]);
+  });
+
+  test("sends the management token instead of the data token", async () => {
+    let headers: Record<string, string> | undefined;
+    await stopProxyGracefully(1, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async (_url: string | URL | Request, init?: RequestInit) => {
+        headers = init?.headers as Record<string, string>;
+        return okResponse();
+      }) as typeof fetch,
+      waitExit: () => true,
+      env: {
+        EASYPROXY_API_AUTH_TOKEN: "data-secret",
+        EASYPROXY_ADMIN_AUTH_TOKEN: "admin-secret",
+      },
+    });
+
+    expect(headers?.["x-easyproxy-api-key"]).toBe("admin-secret");
+  });
+
+  test("never sends the management token to a recorded DNS hostname", async () => {
+    let requestedUrl = "";
+    await stopProxyGracefully(1, {
+      readRuntime: () => ({ port: 10100, hostname: "attacker.invalid" }),
+      fetchFn: (async (url: string | URL | Request) => {
+        requestedUrl = String(url);
+        return okResponse();
+      }) as typeof fetch,
+      waitExit: () => true,
+      env: { EASYPROXY_ADMIN_AUTH_TOKEN: "admin-secret" },
+    });
+
+    expect(requestedUrl).toBe("http://127.0.0.1:10100/api/stop");
+  });
+
+  test("returns false when no runtime port is recorded (caller falls back to killProxy)", async () => {
+    const result = await stopProxyGracefully(7, {
+      readRuntime: () => null,
+      fetchFn: (async () => okResponse()) as typeof fetch,
+      waitExit: () => true,
+    });
+    expect(result).toBe(false);
+  });
+
+  test("returns false when the API call fails or the process never exits", async () => {
+    const rejected = await stopProxyGracefully(7, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => {
+        throw new Error("connection refused");
+      }) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+    });
+    expect(rejected).toBe(false);
+
+    const non200 = await stopProxyGracefully(7, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => new Response("nope", { status: 401 })) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+    });
+    expect(non200).toBe(false);
+
+    const noExit = await stopProxyGracefully(7, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => okResponse()) as typeof fetch,
+      waitExit: () => false,
+      env: {},
+    });
+    expect(noExit).toBe(false);
+  });
+});
+
+describe("409 refusal reporting", () => {
+  test("a refusal carries the server's own reason, not the ownership guess", async () => {
+    // /api/stop answers 409 for more than one reason: a scheduler wrapper under another
+    // home, and (since #4023) the proxy being the installed launchd/systemd job itself.
+    // stopProxy used to report the first of those unconditionally, sending an operator
+    // whose proxy is simply the service to a CODEX_HOME that does not exist.
+    const selfUnload = "This proxy is running as the installed service, so stopping the manager"
+      + " from inside it would end this process before native Codex is restored."
+      + " Run `epx stop`, which stops the service from outside and completes the restore."
+      + " Nothing was changed.";
+    const result = await stopProxyGracefully(7, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => new Response(
+        JSON.stringify({ success: false, code: "self_unload_service", message: selfUnload }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      )) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+    });
+    expect(result).toBe("refused");
+    expect(lastStopRefusalMessage()).toBe(selfUnload);
+  });
+
+  test("a 409 with no readable body falls back rather than reporting a stale reason", async () => {
+    const result = await stopProxyGracefully(7, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => new Response("not json", { status: 409 })) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+    });
+    expect(result).toBe("refused");
+    expect(lastStopRefusalMessage()).toBeNull();
+  });
+
+  test("the refusal code is captured alongside the message", async () => {
+    // The message alone cannot drive the fallback: a refusal that arrives with an empty or
+    // unparseable body still has to name a cause, and #4169 showed what happens when the
+    // fallback guesses one — the operator re-checks CODEX_HOME for a refusal the scheduler
+    // wrapper issued.
+    await stopProxyGracefully(7, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => new Response(
+        JSON.stringify({ success: false, code: "respawnable_service", message: "wrapper owns it" }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      )) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+    });
+    expect(lastStopRefusalCode()).toBe("respawnable_service");
+
+    await stopProxyGracefully(7, {
+      readRuntime: () => ({ port: 10100 }),
+      fetchFn: (async () => new Response("not json", { status: 409 })) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+    });
+    expect(lastStopRefusalCode()).toBeNull();
+  });
+
+  test("a refusal without a message falls back by code, never to an ownership claim", async () => {
+    const refusalFor = async (code: string | null): Promise<string> => {
+      const body = code === null ? "not json" : JSON.stringify({ success: false, code });
+      try {
+        await stopProxy(process.pid, {
+          readRuntime: () => ({ port: 10100 }),
+          fetchFn: (async () => new Response(body, {
+            status: 409,
+            headers: { "content-type": "application/json" },
+          })) as typeof fetch,
+          waitExit: () => { throw new Error("must not wait for a refused stop"); },
+          env: {},
+        });
+      } catch (err) {
+        if (err instanceof ProxyOwnershipRefusedError) return err.message;
+        throw err;
+      }
+      throw new Error("stopProxy must throw on a refusal");
+    };
+
+    const respawnable = await refusalFor("respawnable_service");
+    expect(respawnable).toContain("respawn");
+    // Not `epx stop`: the only callers of stopProxy are `epx stop` and the service
+    // manager's own cleanup, so recommending it here is the #4169 loop. The fallback names
+    // the cause and refusalNextStep names the command.
+    expect(respawnable).not.toContain("epx stop");
+
+    const selfUnload = await refusalFor("self_unload_service");
+    expect(selfUnload).toContain("installed service itself");
+    expect(selfUnload).not.toContain("epx stop");
+
+    const unknownState = await refusalFor("service_state_unknown");
+    expect(unknownState).toContain("could not be read");
+    expect(unknownState).not.toContain("epx stop");
+
+    const noBody = await refusalFor(null);
+    expect(noBody).toContain("sent no reason");
+    expect(noBody).not.toContain("epx stop");
+
+    // None of them may assert the cause that #4169 was filed for.
+    for (const message of [respawnable, selfUnload, unknownState, noBody]) {
+      expect(message).not.toContain("CODEX_HOME");
+      expect(message).not.toContain("EASYPROXY_HOME");
+    }
+  });
+
+  test("the refusal carries its code to the caller that has to report it", async () => {
+    // The reporting caller acts on the cause. Re-parsing the prose is not an option: the
+    // message is the server's, and the server's message is exactly what recommends the
+    // command that already failed.
+    let thrown: unknown;
+    try {
+      await stopProxy(process.pid, {
+        readRuntime: () => ({ port: 10100 }),
+        fetchFn: (async () => new Response(
+          JSON.stringify({ success: false, code: "respawnable_service", message: "wrapper owns it" }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        )) as typeof fetch,
+        waitExit: () => { throw new Error("must not wait for a refused stop"); },
+        env: {},
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ProxyOwnershipRefusedError);
+    expect((thrown as ProxyOwnershipRefusedError).code).toBe("respawnable_service");
+    // The server's own message still wins, unchanged.
+    expect((thrown as ProxyOwnershipRefusedError).message).toBe("wrapper owns it");
+  });
+
+  test("a caller that forbids the forced fallback never reaches the kill ladder", async () => {
+    // #7771 round 7 (B): uninstall's proxy step runs after a Part A that did not prove the
+    // manager stopped. The graceful POST is still worth sending; taskkill /T /F under a
+    // wrapper that could respawn the proxy is exactly what the checked stop prevents.
+    //
+    // The pid is a real live process this test owns, and the ladder is injected: the rule
+    // is "was the ladder entered", which a mock of the whole stop could not show.
+    const child = await spawnIdleChild();
+    const failing = (async () => new Response("nope", { status: 500 })) as typeof fetch;
+    try {
+      const forbidden: number[] = [];
+      const unconfirmed = await stopProxy(child.pid!, {
+        readRuntime: () => null, fetchFn: failing, waitExit: () => true, env: {},
+        allowForcedFallback: false, forceKill: pid => { forbidden.push(pid); },
+      });
+      expect(unconfirmed).toBe(false);
+      expect(forbidden).toEqual([]);
+
+      // Default behaviour is unchanged: an unconfirmed graceful stop still falls back.
+      const fallback: number[] = [];
+      await stopProxy(child.pid!, {
+        readRuntime: () => null, fetchFn: failing, waitExit: () => true, env: {},
+        forceKill: pid => { fallback.push(pid); },
+      });
+      expect(fallback).toEqual([child.pid!]);
+
+      // A 409 refusal is never forced, with or without the option.
+      for (const allowForcedFallback of [true, false]) {
+        const refused: number[] = [];
+        await expect(stopProxy(child.pid!, {
+          readRuntime: () => ({ port: 10100 }),
+          fetchFn: (async () => new Response(
+            JSON.stringify({ success: false, code: "respawnable_service", message: "wrapper owns it" }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          )) as typeof fetch,
+          waitExit: () => true, env: {}, allowForcedFallback,
+          forceKill: pid => { refused.push(pid); },
+        })).rejects.toBeInstanceOf(ProxyOwnershipRefusedError);
+        expect(refused).toEqual([]);
+      }
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  test("a forbidden fallback's port wait never kills a verified listener", async () => {
+    // #7771 round 8: `waitForStoppedPort` reclaimed the port with `killEpxHolders` and
+    // `onlyKillPids: [pid]` even when the caller had forbidden the forced ladder. A
+    // verified-but-still-live listener was then killed through `killProxy` — the forced
+    // stop the caller had just refused. The wait is observational in that mode: it runs,
+    // it just may not terminate anything.
+    const { reclaimListenPort } = await import("../../src/server/port-reclaim");
+    const child = await spawnIdleChild();
+    const kills: number[] = [];
+    const pid = child.pid!;
+    const reclaimed: unknown[] = [];
+    const unconfirmed = await stopProxy(pid, {
+      runtimeEndpoint: { hostname: "127.0.0.1", port: 45999 },
+      fetchFn: (async () => new Response("nope", { status: 500 })) as typeof fetch,
+      waitExit: () => true,
+      env: {},
+      allowForcedFallback: false,
+      forceKill: target => { kills.push(target); },
+      reclaimPort: async (port, hostname, opts) => {
+        reclaimed.push({ port, hostname, killEpxHolders: opts.killEpxHolders, onlyKillPids: opts.onlyKillPids });
+        return reclaimListenPort(port, hostname, {
+          ...opts,
+          timeoutMs: 30,
+          intervalMs: 5,
+          scanIntervalMs: 0,
+          sleepMs: async () => {},
+          isAvailableFn: async () => false,
+          listListenPidsFn: () => ({ ok: true, pids: [pid] }),
+          isAliveFn: () => true,
+          verifyEpxFn: candidate => candidate,
+          killFn: target => { kills.push(target); },
+          dropTcpFn: () => {},
+        });
+      },
+    });
+    try {
+      expect(unconfirmed).toBe(false);
+      // The wait ran against the resolved endpoint (it is not silently skipped)...
+      expect(reclaimed).toEqual([{ port: 45999, hostname: "127.0.0.1", killEpxHolders: false, onlyKillPids: [] }]);
+      // ...and a verified listener that was still alive survived it.
+      expect(kills).toEqual([]);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  test("no next step sends the operator back to the command that just refused", () => {
+    // #4169's loop: POST /api/stop answers "the stop must be run by `epx stop`", and
+    // `epx stop` reprints it. Whatever the cause, the next step has to be something else,
+    // because the service manager was already asked to stop before this point.
+    for (const code of ["respawnable_service", "self_unload_service", "service_state_unknown", null]) {
+      const step = refusalNextStep(code);
+      // Naming `epx stop` in order to rule it out is the point; recommending it is the loop.
+      expect(step).not.toMatch(/Run `epx stop`/);
+      expect(step).toContain("epx service status");
+    }
+    // The two service causes say why repeating the stop is not the missing step, since the
+    // server's message printed just above them recommends exactly that.
+    expect(refusalNextStep("respawnable_service")).toContain("already asked the service manager");
+    expect(refusalNextStep("self_unload_service")).toContain("already asked the service manager");
+  });
+
+  test("concurrent refusals each keep their own cause", async () => {
+    // Reading the reason from module state lets one stop publish its refusal and a second
+    // overwrite it before the first continuation consumes it. Starting both together is
+    // what actually reproduces that: verified against the pre-fix global handoff, where
+    // this schedule fails with the first call throwing the second's cause
+    // ("...it is the installed service itself..." for the respawnable_service stop).
+    // A schedule that lets one call finish entirely before resuming the other does NOT
+    // discriminate — the parked call republishes its own globals last and passes either way.
+    const refusalOf = (code: string) => async (): Promise<string> => {
+      try {
+        await stopProxy(process.pid, {
+          readRuntime: () => ({ port: 10100 }),
+          fetchFn: (async () => new Response(JSON.stringify({ success: false, code }), {
+            status: 409,
+            headers: { "content-type": "application/json" },
+          })) as typeof fetch,
+          waitExit: () => { throw new Error("must not wait for a refused stop"); },
+          env: {},
+        });
+      } catch (err) {
+        if (err instanceof ProxyOwnershipRefusedError) return err.message;
+        throw err;
+      }
+      throw new Error("stopProxy must throw on a refusal");
+    };
+
+    // Repeated because the interleaving is scheduler-dependent; the pre-fix code fails on
+    // the first iteration, but a single run would be a weak guard against reintroduction.
+    for (let i = 0; i < 20; i++) {
+      const [respawnable, selfUnload] = await Promise.all([
+        refusalOf("respawnable_service")(),
+        refusalOf("self_unload_service")(),
+      ]);
+      expect(respawnable).toContain("respawn");
+      expect(selfUnload).toContain("installed service itself");
+    }
+  });
+});

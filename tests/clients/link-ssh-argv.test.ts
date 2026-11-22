@@ -1,0 +1,452 @@
+import { afterEach, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  buildExecArgv,
+  buildProbeArgv,
+  buildTunnelArgv,
+  buildWindowsProbeArgv,
+  LinkSshArgumentError,
+  quoteRemote,
+  REMOTE_EPX_SCRIPT,
+  remoteEpxArgv,
+  WINDOWS_OS_PROBE,
+} from "../../src/link/ssh-argv";
+import {
+  boundHint,
+  createSshRunner,
+  linkSshPath,
+  linkSshSpawnEnv,
+  sshFailureHint,
+  sshRunnerErrorHint,
+  SSH_OUTPUT_CAP_BYTES,
+  SshRunnerError,
+} from "../../src/link/ssh-runner";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { repoPath } from "../helpers/repo-root";
+import { confirmWindowsShell, requireRemotePlatform, requireRemotePlatformFramed } from "../../src/link/remote-platform";
+
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0)) removeTreeWithRetry(root);
+});
+
+function tempPath(label: string): string {
+  const root = mkdtempSync(join(tmpdir(), `epx-link-argv-${label}-`));
+  roots.push(root);
+  return join(root, "known_hosts");
+}
+
+function expectCommonTrustOptions(argv: string[], strict: "yes" | "accept-new", knownHostsFile: string): void {
+  expect(argv).toContain("BatchMode=yes");
+  expect(argv).toContain("HashKnownHosts=no");
+  expect(argv).toContain(`StrictHostKeyChecking=${strict}`);
+  expect(argv).toContain(`UserKnownHostsFile=${knownHostsFile}`);
+  expect(argv).toContain("GlobalKnownHostsFile=none");
+  expect(argv).toContain("KnownHostsCommand=none");
+  expect(argv).toContain("VerifyHostKeyDNS=no");
+  expect(argv).toContain("CheckHostIP=no");
+}
+
+test("tunnel argv uses a loopback forward and the confirmed host-key policy", () => {
+  const knownHostsFile = tempPath("tunnel");
+  for (const direction of ["R", "L"] as const) {
+    const argv = buildTunnelArgv({
+      alias: "alpha.example.test",
+      direction,
+      bindPort: 20100,
+      targetPort: 10100,
+      knownHostsFile,
+    });
+    expect(argv.slice(0, 3)).toEqual(["ssh", "-N", "-T"]);
+    expectCommonTrustOptions(argv, "yes", knownHostsFile);
+    expect(argv).toContain("ExitOnForwardFailure=yes");
+    expect(argv).toContain(`-${direction}`);
+    expect(argv).toContain("127.0.0.1:20100:127.0.0.1:10100");
+    expect(argv.slice(-2)).toEqual(["--", "alpha.example.test"]);
+  }
+});
+
+test("exec argv emits only sh bare, quotes arguments, and clears forwarding", () => {
+  const knownHostsFile = tempPath("exec");
+  const argv = buildExecArgv({
+    alias: "beta.example.test",
+    argv: ["sh", "it's ready"],
+    knownHostsFile,
+  });
+  expect(argv).toContain("-T");
+  expect(argv).not.toContain("-N");
+  expectCommonTrustOptions(argv, "yes", knownHostsFile);
+  expect(argv).toContain("ClearAllForwardings=yes");
+  expect(argv.slice(-3, -1)).toEqual(["--", "beta.example.test"]);
+  expect(argv[argv.length - 1]).toBe(`sh 'it'"'"'s ready'`);
+});
+
+test("Windows %OS% probe is a fixed literal that trusts only an already recorded host key", () => {
+  const knownHostsFile = tempPath("windows-probe");
+  const argv = buildWindowsProbeArgv({ alias: "gamma.example.test", knownHostsFile });
+  expect(argv.slice(0, 2)).toEqual(["ssh", "-T"]);
+  expectCommonTrustOptions(argv, "yes", knownHostsFile);
+  expect(argv).toContain("ClearAllForwardings=yes");
+  expect(argv.slice(-3)).toEqual(["--", "gamma.example.test", "cmd.exe /c echo %OS%"]);
+  // Win32-OpenSSH runs `cmd.exe /c "<command>"`; a bare `cmd` there keeps the closing quote in the echo (#8972).
+  expect(WINDOWS_OS_PROBE).toBe("cmd.exe /c echo %OS%");
+  expect(() => buildWindowsProbeArgv({ alias: "-oProxyCommand=x", knownHostsFile })).toThrow(LinkSshArgumentError);
+});
+
+/** A host that answers the %OS% probe with `windows` and every other command with `other`. */
+function platformRunner(windows: { code: number; stdout: string; stderr?: string }, other: { code: number; stdout: string; stderr?: string }) {
+  const answer = (value: { code: number; stdout: string; stderr?: string }) => ({ stderr: "", ...value });
+  return {
+    run: async (argv: readonly string[]) => answer(argv.at(-1) === WINDOWS_OS_PROBE ? windows : other),
+    spawnTunnel: () => { throw new Error("no tunnel in a platform probe"); },
+  };
+}
+
+test.each(["Windows_NT\r\n", "Windows_NT\"\r\n", "Windows_NT\" \r\n", "  Windows_NT\"\n"])("%j from the %OS% probe is Windows (#8972)", async stdout => {
+  const knownHostsFile = tempPath("windows-nt");
+  const runner = platformRunner({ code: 0, stdout }, { code: 1, stdout: "", stderr: "unexpected uname" });
+  expect(await requireRemotePlatform(runner, "win", null, knownHostsFile)).toBe("windows");
+  expect(await requireRemotePlatformFramed(runner, "win", null, knownHostsFile)).toBe("windows");
+  expect(await confirmWindowsShell(runner, "win", null, knownHostsFile)).toBe(true);
+});
+
+test.each(["\"Windows_NT\"\r\n", "Windows_NT\"\"\r\n", "Windows_NTx\r\n", "Windows\r\n"])("%j from the %OS% probe is not Windows", async stdout => {
+  const knownHostsFile = tempPath("not-windows-nt");
+  const runner = platformRunner({ code: 0, stdout }, { code: 0, stdout: "Linux\n" });
+  expect(await requireRemotePlatform(runner, "linux", null, knownHostsFile)).toBe("posix");
+  expect(await confirmWindowsShell(runner, "linux", null, knownHostsFile)).toBe(false);
+});
+
+test("an undetermined platform carries the remote reason as a hint (#8972)", async () => {
+  const knownHostsFile = tempPath("platform-hint");
+  const localized = platformRunner({ code: 0, stdout: "Windows_NT?\r\n" }, { code: 1, stdout: "", stderr: "El sistema no puede encontrar la ruta especificada.\r\n" });
+  const error = await requireRemotePlatform(localized, "win", null, knownHostsFile).catch((caught: unknown) => caught);
+  expect(sshRunnerErrorHint(error)).toBe("Remote platform could not be determined: El sistema no puede encontrar la ruta especificada.");
+  const silent = platformRunner({ code: 127, stdout: "" }, { code: 0, stdout: "?\n" });
+  const bare = await requireRemotePlatform(silent, "odd", null, knownHostsFile).catch((caught: unknown) => caught);
+  expect(sshRunnerErrorHint(bare)).toBe("Remote platform could not be determined");
+  const refused = platformRunner({ code: 255, stdout: "", stderr: "win: Permission denied (publickey).\r\n" }, { code: 0, stdout: "Linux\n" });
+  const transport = await requireRemotePlatform(refused, "win", null, knownHostsFile).catch((caught: unknown) => caught);
+  expect(sshRunnerErrorHint(transport)).toBe("SSH platform discovery failed: win: Permission denied (publickey).");
+});
+
+test("probe argv uses accept-new only with its temporary known_hosts file", () => {
+  const knownHostsFile = tempPath("probe");
+  writeFileSync(knownHostsFile, "", { mode: 0o600 });
+  const argv = buildProbeArgv({ alias: "gamma.example.test", tempKnownHostsFile: knownHostsFile });
+  expect(argv.slice(0, 2)).toEqual(["ssh", "-T"]);
+  expect(argv).not.toContain("-N");
+  expectCommonTrustOptions(argv, "accept-new", knownHostsFile);
+  expect(argv).toContain("ClearAllForwardings=yes");
+  expect(argv.slice(-3, -1)).toEqual(["--", "gamma.example.test"]);
+  expect(argv[argv.length - 1]).toBe("echo epx-link-probe");
+});
+
+test("aliases and forwarding ports are validated before building argv", () => {
+  const knownHostsFile = tempPath("validation");
+  for (const alias of ["-oProxyCommand=x", "", "alpha beta", "alpha\nbeta"]) {
+    expect(() => buildTunnelArgv({ alias, direction: "R", bindPort: 1, targetPort: 2, knownHostsFile }))
+      .toThrow(LinkSshArgumentError);
+  }
+  for (const port of [0, 65536, 1.5]) {
+    expect(() => buildTunnelArgv({ alias: "alpha.example.test", direction: "R", bindPort: port, targetPort: 2, knownHostsFile }))
+      .toThrow(LinkSshArgumentError);
+    expect(() => buildTunnelArgv({ alias: "alpha.example.test", direction: "R", bindPort: 1, targetPort: port, knownHostsFile }))
+      .toThrow(LinkSshArgumentError);
+  }
+});
+
+test("known_hosts option paths are absolute and safely quoted", () => {
+  const pathWithSpaces = tempPath("path with spaces");
+  const argv = buildTunnelArgv({
+    alias: "alpha.example.test",
+    direction: "R",
+    bindPort: 1,
+    targetPort: 2,
+    knownHostsFile: pathWithSpaces,
+  });
+  expect(argv).toContain(`UserKnownHostsFile="${pathWithSpaces}"`);
+
+  for (const knownHostsFile of [
+    "none",
+    "relative/known_hosts",
+    "~/k",
+    "/tmp/%h/known_hosts",
+    "/tmp/${HOME}/k",
+    "/tmp/\"quoted\"/known_hosts",
+    "/tmp/control\ncharacter/known_hosts",
+  ]) {
+    expect(() => buildProbeArgv({ alias: "alpha.example.test", tempKnownHostsFile: knownHostsFile }))
+      .toThrow(LinkSshArgumentError);
+  }
+});
+
+test("quoteRemote allows only sh in command position and rejects NUL", () => {
+  expect(quoteRemote(["sh", "it's", "-c"])).toBe(`sh 'it'"'"'s' '-c'`);
+  for (const command of ["", "printf", "1", ".", "-x", "sh;echo bad", "sh\n", "sh\0bad"]) {
+    expect(() => quoteRemote([command, "safe"])).toThrow(LinkSshArgumentError);
+  }
+  expect(() => quoteRemote(["sh", "bad\0argument"])).toThrow(LinkSshArgumentError);
+});
+
+test("remote epx argv runs epx through a single-quoted sh PATH prelude", () => {
+  expect(remoteEpxArgv(["link", "port"])).toEqual(["sh", "-c", REMOTE_EPX_SCRIPT, "epx", "link", "port"]);
+  const argv = buildExecArgv({ alias: "delta.example.test", argv: remoteEpxArgv(["link", "issue", "--alias", "it's x", "--json"]), knownHostsFile: tempPath("remote-epx") });
+  expect(argv.at(-1)).toBe(`sh '-c' '${REMOTE_EPX_SCRIPT.replaceAll("'", `'"'"'`)}' 'epx' 'link' 'issue' '--alias' 'it'"'"'s x' '--json'`);
+});
+
+test.skipIf(process.platform !== "win32")("PowerShell parses the remote command as sh invocation", () => {
+  const remote = quoteRemote(remoteEpxArgv(["link", "port"]));
+  const script = [
+    "$tokens = $null; $errors = $null",
+    "$ast = [System.Management.Automation.Language.Parser]::ParseInput($env:EPX_REMOTE_COMMAND, [ref]$tokens, [ref]$errors)",
+    "if ($errors.Count -ne 0) { Write-Error ($errors | Out-String); exit 1 }",
+    "$commands = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true))",
+    "if ($commands.Count -ne 1 -or $commands[0].GetCommandName() -cne 'sh') { Write-Error 'remote command did not dispatch sh'; exit 1 }",
+    "Write-Output $commands[0].GetCommandName()",
+  ].join("; ");
+  const result = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], {
+    env: { ...process.env, EPX_REMOTE_COMMAND: remote },
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout.toString().trim()).toBe("sh");
+});
+
+/** Install a stub `epx` in `dir` that prints `label`, the PATH it ran with, and each argument in brackets. */
+function fakeEpx(dir: string, label: string): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "epx"), `#!/bin/sh\nprintf "%s\\n" "${label}" "$PATH"\nfor arg in "$@"; do printf "[%s]\\n" "$arg"; done\n`, { mode: 0o755 });
+}
+
+/**
+ * A remote PATH with only sh and a controlled uname. System directories may hold a real epx;
+ * fixtureRemoteCommand maps the fixed Desktop/system candidates into the fixture as well.
+ */
+function shOnlyRemotePath(home: string): string {
+  const dir = join(home, "remote-bin");
+  mkdirSync(dir, { recursive: true });
+  symlinkSync("/bin/sh", join(dir, "sh"));
+  writeFileSync(join(dir, "uname"), "#!/bin/sh\nprintf 'Darwin\\n'\n", { mode: 0o755 });
+  return dir;
+}
+
+/** Keep fixed system candidates inside the fixture, regardless of the host's installed epx. */
+function fixtureRemoteCommand(home: string, args: string[]): string {
+  const argv = remoteEpxArgv(args);
+  argv[2] = REMOTE_EPX_SCRIPT.replaceAll("/Applications/EasyProxy.app/Contents/MacOS/epx", join(home, "app-epx"))
+    .replaceAll("/usr/bin/epx", join(home, "system-epx"));
+  return quoteRemote(argv);
+}
+
+test.skipIf(process.platform === "win32")("the remote prelude appends ~/.bun/bin after the remote PATH and keeps every argument", () => {
+  const home = mkdtempSync(join(tmpdir(), "epx-link-remote-home-"));
+  roots.push(home);
+  fakeEpx(join(home, ".bun", "bin"), "bun");
+  const remotePath = shOnlyRemotePath(home);
+  const command = fixtureRemoteCommand(home, ["link", "issue", "--alias", "it's x", "--json"]);
+  const result = Bun.spawnSync(["/bin/sh", "-c", command], { env: { HOME: home, PATH: remotePath } });
+  expect(result.exitCode).toBe(0);
+  const lines = result.stdout.toString().trim().split("\n");
+  expect(lines[0]).toBe("bun");
+  expect(lines[1]).toBe(`${remotePath}:${home}/.bun/bin:${home}/.local/bin:/opt/homebrew/bin:/usr/local/bin`);
+  expect(lines.slice(2)).toEqual(["[link]", "[issue]", "[--alias]", "[it's x]", "[--json]"]);
+});
+
+test.skipIf(process.platform === "win32")("an epx the remote PATH already resolves wins over the appended fallbacks", () => {
+  const home = mkdtempSync(join(tmpdir(), "epx-link-remote-first-"));
+  roots.push(home);
+  fakeEpx(join(home, "first"), "first");
+  fakeEpx(join(home, ".bun", "bin"), "bun");
+  const result = Bun.spawnSync(["/bin/sh", "-c", fixtureRemoteCommand(home, ["--version"])], { env: { HOME: home, PATH: `${home}/first:${shOnlyRemotePath(home)}` } });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout.toString().split("\n")[0]).toBe("first");
+});
+
+test.skipIf(process.platform === "win32")("the constructed remote command preserves POSIX argument bytes", () => {
+  const home = mkdtempSync(join(tmpdir(), "epx-link-remote-bytes-"));
+  roots.push(home);
+  const bin = join(home, ".bun", "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "epx"), "#!/bin/sh\nprintf '%s\\0' \"$@\"\n", { mode: 0o755 });
+  const args = ["it's x", "two\nlines", "火🔥", "x;$(echo no)", ""];
+  const remote = fixtureRemoteCommand(home, args);
+  const result = Bun.spawnSync(["/bin/sh", "-c", remote], { env: { HOME: home, PATH: shOnlyRemotePath(home) } });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toEqual(new TextEncoder().encode(args.join("\0") + "\0"));
+});
+
+test("ssh PATH appends helper directories once and leaves Windows untouched", () => {
+  expect(linkSshPath({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: "/Users/test" }, "darwin"))
+    .toBe("/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:/Users/test/.bun/bin:/Users/test/.local/bin");
+  expect(linkSshPath({ PATH: "/opt/homebrew/bin:/usr/bin:/usr/bin", HOME: "/h" }, "linux"))
+    .toBe("/opt/homebrew/bin:/usr/bin:/usr/local/bin:/h/.bun/bin:/h/.local/bin");
+  expect(linkSshPath({ HOME: "/h" }, "darwin")).toBe("/opt/homebrew/bin:/usr/local/bin:/h/.bun/bin:/h/.local/bin");
+  expect(linkSshPath({ PATH: "C:\\Windows", HOME: "C:\\Users\\t" }, "win32")).toBeUndefined();
+  expect(linkSshSpawnEnv({ PATH: "C:\\Windows" }, "win32")).toBeUndefined();
+  expect(linkSshSpawnEnv({ PATH: "/usr/bin", HOME: "/h", SSH_AUTH_SOCK: "/tmp/agent" }, "darwin"))
+    .toEqual({ PATH: "/usr/bin:/opt/homebrew/bin:/usr/local/bin:/h/.bun/bin:/h/.local/bin", HOME: "/h", SSH_AUTH_SOCK: "/tmp/agent" });
+});
+
+function fakeSpawn(captured: Array<Record<string, unknown>>): typeof Bun.spawn {
+  const closed = () => new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
+  return ((_argv: string[], options: Record<string, unknown>) => {
+    captured.push(options);
+    return { pid: 7, stdout: closed(), stderr: closed(), stdin: undefined, exited: Promise.resolve(0), kill() {} };
+  }) as unknown as typeof Bun.spawn;
+}
+
+function byteSpawn(stdoutBytes: Uint8Array, stderrBytes: Uint8Array, capturedStdin: Uint8Array[] = []): typeof Bun.spawn {
+  const stream = (bytes: Uint8Array) => new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } });
+  return ((_argv: string[], _options: Record<string, unknown>) => ({
+    pid: 7,
+    stdout: stream(stdoutBytes),
+    stderr: stream(stderrBytes),
+    stdin: { async write(value: string | Uint8Array) { capturedStdin.push(typeof value === "string" ? new TextEncoder().encode(value) : value); }, async end() {} },
+    exited: Promise.resolve(1),
+    kill() {},
+  })) as unknown as typeof Bun.spawn;
+}
+
+test("runner decodes capped non-UTF-8 stderr for a bounded redacted hint and keeps key stdin separate", async () => {
+  const secret = `epx_data_${"a".repeat(40)}`;
+  const stderr = new Uint8Array([
+    ...new TextEncoder().encode(`noise\nssh: ${secret} https://example.test/path?key=hidden `),
+    0xa1, 0xad,
+    ...new TextEncoder().encode("\n"),
+  ]);
+  const stdin: Uint8Array[] = [];
+  const runner = createSshRunner({ spawn: byteSpawn(new TextEncoder().encode(""), stderr, stdin) });
+  const result = await runner.run(["ssh"], { stdin: secret });
+  expect(result.stderr).toContain("\ufffd");
+  const hint = sshFailureHint(result.stderr);
+  expect(hint).toContain("ssh: epx_data_[redacted] https://example.test/path");
+  expect(hint).not.toContain(secret);
+  expect(hint).not.toContain("key=hidden");
+  expect(Array.from(hint ?? "").length).toBeLessThanOrEqual(160);
+  expect(stdin).toEqual([new TextEncoder().encode(secret)]);
+});
+
+test("runner still rejects invalid UTF-8 stdout", async () => {
+  const runner = createSshRunner({ spawn: byteSpawn(new Uint8Array([0xa1, 0xad]), new TextEncoder().encode("diagnostic")) });
+  await expect(runner.run(["ssh"])).rejects.toMatchObject({ code: "decode" });
+});
+
+test("tunnel output retains diagnostics and releases inherited pipes shortly after exit", async () => {
+  let exit!: (code: number) => void;
+  const exited = new Promise<number>(resolve => { exit = resolve; });
+  let stderrController!: ReadableStreamDefaultController<Uint8Array>;
+  let cancelled = 0;
+  // Even an underlying cancellation that never resolves must not block the reader's cleanup.
+  const cancel = () => { cancelled += 1; return new Promise<void>(() => {}); };
+  const stdout = new ReadableStream<Uint8Array>({ cancel });
+  const stderr = new ReadableStream<Uint8Array>({
+    start(controller) { stderrController = controller; controller.enqueue(new TextEncoder().encode("Host key verification")); },
+    cancel,
+  });
+  const spawn = (() => ({ pid: 7, stdout, stderr, exited, kill() {} })) as unknown as typeof Bun.spawn;
+  const child = createSshRunner({ spawn }).spawnTunnel(["ssh", "-N", "--", "host"]);
+  let settled = false;
+  void child.stderr!.then(() => { settled = true; });
+  try {
+    await Bun.sleep(300);
+    expect(settled).toBe(false); // The grace starts at process exit, not spawn.
+    exit(255);
+    await Bun.sleep(20);
+    stderrController.enqueue(new TextEncoder().encode(" failed.\n"));
+    const deadline = Bun.sleep(1_000).then(() => "deadline");
+    expect(await Promise.race([child.stderr!, deadline])).toBe("Host key verification failed.\n");
+    expect(await Promise.race([child.stdout!, deadline])).toBe("");
+    expect(cancelled).toBe(2);
+    expect(stderr.locked).toBe(false);
+    expect(stdout.locked).toBe(false);
+  } finally {
+    exit(255);
+    if (stderr.locked) stderrController.close();
+  }
+});
+
+test("runner enforces stderr byte limit before replacement decoding", async () => {
+  const runner = createSshRunner({ spawn: byteSpawn(new Uint8Array(), new Uint8Array([0xa1, 0xad])) });
+  await expect(runner.run(["ssh"], { maxOutputBytes: 1 })).rejects.toMatchObject({ code: "output_limit" });
+});
+
+test("tunnel stderr still rejects and cancels output over the byte cap", async () => {
+  let cancelled = false;
+  const stderr = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new Uint8Array(SSH_OUTPUT_CAP_BYTES + 1)); },
+    cancel() { cancelled = true; },
+  });
+  const stdout = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
+  const spawn = (() => ({ pid: 7, stdout, stderr, exited: Promise.resolve(255), kill() {} })) as unknown as typeof Bun.spawn;
+  const child = createSshRunner({ spawn }).spawnTunnel(["ssh"]);
+  await expect(child.stderr!).rejects.toMatchObject({ code: "output_limit" });
+  expect(cancelled).toBe(true);
+  expect(stderr.locked).toBe(false);
+});
+
+test("the runner spawns commands and tunnels with the augmented environment", async () => {
+  const captured: Array<Record<string, unknown>> = [];
+  const runner = createSshRunner({ spawn: fakeSpawn(captured), env: () => linkSshSpawnEnv({ PATH: "/usr/bin:/bin", HOME: "/h" }, "darwin") });
+  expect((await runner.run(["ssh", "-G", "--", "host"])).code).toBe(0);
+  runner.spawnTunnel(["ssh", "-N", "--", "host"]);
+  expect(captured.map(options => (options.env as Record<string, string>).PATH))
+    .toEqual(Array(2).fill("/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/h/.bun/bin:/h/.local/bin"));
+
+  const windows: Array<Record<string, unknown>> = [];
+  const windowsRunner = createSshRunner({ spawn: fakeSpawn(windows), env: () => linkSshSpawnEnv({ PATH: "C:\\Windows" }, "win32") });
+  await windowsRunner.run(["ssh", "-G", "--", "host"]);
+  windowsRunner.spawnTunnel(["ssh", "-N", "--", "host"]);
+  expect(windows).toHaveLength(2);
+  expect(windows.every(options => !("env" in options))).toBe(true);
+
+  if (process.platform !== "win32") {
+    const defaults: Array<Record<string, unknown>> = [];
+    await createSshRunner({ spawn: fakeSpawn(defaults) }).run(["ssh", "-G", "--", "host"]);
+    expect((defaults[0]?.env as Record<string, string>).PATH.split(":")).toContain("/opt/homebrew/bin");
+  }
+});
+
+test("ssh failure hints keep one clean stderr line and redact secrets", () => {
+  expect(sshFailureHint("\u001b[31mdebug noise\u001b[0m\nuser@host: Permission denied (publickey).\r\n\n")).toBe("user@host: Permission denied (publickey).");
+  expect(sshFailureHint("bad\u202e line\u0007\there")).toBe("bad line here");
+  expect(sshFailureHint(`issue failed epx_data_${"a".repeat(40)} and epx_session_x-y`)).toBe("issue failed epx_data_[redacted] and epx_session_[redacted]");
+  expect(sshFailureHint("open https://team.example.test/cdn-cgi/access/cli?token=abc&aud=x to log in")).toBe("open https://team.example.test/cdn-cgi/access/cli to log in");
+  const long = sshFailureHint("x".repeat(400));
+  expect(long?.length).toBe(160);
+  expect(long?.endsWith("…")).toBe(true);
+  expect(sshFailureHint("")).toBeUndefined();
+  expect(sshFailureHint("\n \u001b[0m\n")).toBeUndefined();
+  expect(sshRunnerErrorHint(new SshRunnerError("timeout", "ssh command exceeded 30000ms"))).toBe("ssh command exceeded 30000ms");
+  expect(sshRunnerErrorHint(new Error("unrelated"))).toBeUndefined();
+});
+
+test("hint bounding caps astral text by code point and never leaves a lone surrogate", () => {
+  const astral = String.fromCodePoint(0x1f511);
+  // 200 astral characters are 400 UTF-16 units; a unit-based cut at 159 would split a pair.
+  for (const hint of [boundHint(astral.repeat(200)), sshFailureHint(`noise\n${astral.repeat(200)}\n`)]) {
+    const points = Array.from(hint ?? "");
+    expect(points).toHaveLength(160);
+    expect(points.at(-1)).toBe(String.fromCodePoint(0x2026));
+    expect(points.slice(0, -1).every(point => point === astral)).toBe(true);
+    expect(points.every(point => { const code = point.codePointAt(0)!; return code < 0xd800 || code > 0xdfff; })).toBe(true);
+  }
+  expect(boundHint(astral.repeat(160))).toBe(astral.repeat(160));
+});
+
+/** Invisible and bidi formatting code points that must never sit literally in link hint sources. */
+function isInvisibleOrBidi(code: number): boolean {
+  return (code >= 0x7f && code <= 0x9f) || (code >= 0x200b && code <= 0x200f) || (code >= 0x202a && code <= 0x202e)
+    || (code >= 0x2060 && code <= 0x206f) || code === 0xfeff;
+}
+
+test("link hint sources spell invisible and bidi characters as escapes, and hints still strip them", () => {
+  for (const file of ["src/link/ssh-runner.ts", "src/server/management/link-routes.ts", "gui/src/remote-link-api.ts"]) {
+    const literal = [...readFileSync(repoPath(file), "utf8")].map(char => char.codePointAt(0)!).filter(isInvisibleOrBidi);
+    expect({ file, literal: literal.map(code => code.toString(16)) }).toEqual({ file, literal: [] });
+  }
+  const controls = [0x85, 0x200b, 0x200f, 0x202a, 0x202e, 0x2060, 0x206f, 0xfeff].map(code => String.fromCodePoint(code)).join("");
+  expect(sshFailureHint(`left${controls}right`)).toBe("left right");
+});

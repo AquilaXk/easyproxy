@@ -1,0 +1,210 @@
+---
+title: Grok Build
+description: Use any easyproxy-routed model from xAI's Grok Build CLI — models are auto-registered into ~/.grok/config.toml while the proxy runs.
+---
+
+easyproxy serves an OpenAI-compatible `POST /v1/responses` on its local port, and Grok Build
+supports custom models against OpenAI-compatible servers. Starting with this integration,
+easyproxy registers its whole visible catalog into Grok Build automatically — no manual config
+editing required.
+
+## Auto-registration
+
+When `~/.grok` exists, `epx start` (and `epx ensure` / `epx restart`) writes a managed block
+into `~/.grok/config.toml`:
+
+```toml
+# >>> easyproxy managed block — do not edit (removed by `epx stop`) >>>
+[model_providers.easyproxy]
+base_url = "http://127.0.0.1:10100/v1"
+api_backend = "responses"
+api_key = "easyproxy-loopback"
+extra_headers = { "x-easyproxy-grok" = "1" }
+
+[model.epx-gpt-5-6-sol]
+model = "gpt-5.6-sol"
+model_provider = "easyproxy"
+name = "EPX gpt-5.6-sol"
+context_window = 272000
+supports_reasoning_effort = true
+reasoning_effort = "low"
+
+[[model.epx-gpt-5-6-sol.reasoning_efforts]]
+id = "low"
+value = "low"
+label = "Low"
+description = "Quick, fast implementations"
+default = true
+# ... remaining rungs for this model, then one [model.epx-*] table per visible model,
+# each referencing model_provider = "easyproxy" ...
+# <<< easyproxy managed block <<<
+```
+
+- **Additive:** your own config outside the fence is never touched. Before the first
+  injection into a pre-existing file, a one-time backup is written to
+  `~/.grok/config.toml.bak-easyproxy`.
+- **Idempotent:** every `epx start` (and `epx ensure` while autostart is enabled) replaces
+  the fenced block with the current catalog.
+- **Removed on teardown:** `epx stop`, `epx eject`, `epx uninstall`, and graceful
+  non-service daemon shutdown strip the fenced block and restore your file
+  byte-for-byte. Under a service manager, teardown goes through `epx stop`/`epx
+  uninstall` (service-mode processes intentionally keep the block across respawns).
+- **Conflict-safe:** aliases already defined by your own `[model.*]` tables are respected
+  (easyproxy suffixes its own entries); a damaged fence (begin marker without end marker)
+  refuses any automatic change and asks for manual repair.
+
+Then pick a model inside Grok Build:
+
+```bash
+grok models          # lists epx-* entries alongside native grok models
+grok -m epx-anthropic-claude-opus-4-8 -p "hello"
+# or in the TUI: /model epx-anthropic-claude-opus-4-8
+```
+
+## Reasoning effort
+
+Grok Build's `/effort` (and `--effort`) only works for models whose catalog entry
+advertises the ladder: its model list fetch reads the raw `GET /v1/models` response, and
+entries there must carry `supports_reasoning_effort` plus `reasoning_efforts` menu
+options. A Grok-compatible projection of that ladder is written into each managed
+`[model.*]` table
+(`supports_reasoning_effort`, default `reasoning_effort`, and
+`[[model.<alias>.reasoning_efforts]]` picker rows) so the menu is present when Grok
+reads the model from `config.toml`. For routed model entries, easyproxy mirrors the
+configured provider tiers (`reasoningEfforts` / `modelReasoningEfforts`, and the default
+from `modelDefaultReasoningEfforts`). This metadata describes the proxy-configured
+routed ladder. Adapters may emulate reasoning or map levels onto provider-specific
+fields. Routed models with a configured ladder show the effort control in Grok Build
+just like they do in Codex.
+Models with an empty tier list keep no effort control, matching Codex behavior. Native
+GPT-5.6 entries are separate: they preserve and expose their pinned upstream reasoning
+ladders rather than provider-configured routed metadata. Valid Grok rungs, including
+`none` and `minimal`, are preserved when advertised. Unsupported or duplicate rungs,
+including Codex-only `ultra`, are omitted from the file, keeping every emitted picker
+option selectable.
+
+Grok Build talks to easyproxy over the Responses API. When the route advertises a reasoning
+ladder, the Responses passthrough forwards `reasoning.summary` as configured, so thinking
+traces reach Grok natively as Responses reasoning items. Set `reasoning.summary: "none"` if
+a client wants the model to think without returning the trace. An explicit `reasoning.summary`
+wins over the route default.
+
+## Authentication note
+
+Grok Build requires a non-empty API key for custom models even on loopback. The injected
+entries carry a placeholder (`easyproxy-loopback`) — easyproxy ignores admission keys for
+loopback connections, so no real secret is involved.
+
+**Auto-registration is loopback-only.** When easyproxy binds a non-loopback host — including
+the wildcards `0.0.0.0` and `::`, which expose every interface — requests need your real
+admission token, and a managed block cannot carry one safely. Writing the literal token would
+put your secret into `~/.grok/config.toml` and overwrite whatever you set there on the next
+`epx start`/`ensure`/`restart`. So easyproxy writes nothing at all in that case (and removes
+any block left over from an earlier loopback bind), and you configure the models yourself
+outside the managed markers, where nothing easyproxy does can clobber them. See
+[Manual recipe](#manual-recipe-without-auto-registration) for the exact table, and set both
+`base_url` (a host that is actually reachable from where you run `grok`) and `api_key`
+(your `EASYPROXY_API_AUTH_TOKEN`).
+
+**An enabled `unauthenticatedLoopbackListener` is the exception.** When that listener is on,
+easyproxy writes the managed block after all, pointing at `127.0.0.1` on the listener's port,
+because loopback requests there need no admission token regardless of how the public listener is
+bound. A port-less companion listener shares the proxy port, and EasyProxy accepts that shape only
+on a specific non-loopback address; on the wildcards `0.0.0.0` or `::` it refuses the pair, so give
+the loopback listener a distinct `port` to use this exception. The manual recipe below still
+applies when you want to manage those entries yourself.
+
+Do not replace `api_key` with `env_key` here. An `env_key` that fails to resolve does not
+stop the request — Grok falls through to your xAI session
+token and sends it to whatever `base_url` the entry names, which for a LAN deployment is a
+plaintext HTTP endpoint that is not xAI.
+
+The injected `api_key` on the provider entry sits first in Grok's credential chain for
+these models, so turns against easyproxy need no additional Grok login. Keep your normal
+`grok login` / `XAI_API_KEY` setup for native grok models and any harness features that
+contact xAI directly.
+
+## xAI OAuth returns 403 in Legacy privacy mode
+
+If `epx provider test xai` or a Grok turn tells you the account uses **Legacy (no storage)**, open
+the xAI/Grok privacy settings and switch the account to **Privacy Mode**. Then run
+`epx provider test xai` again. This setting also blocks model discovery and quota checks, which
+report the same guidance in the EasyProxy service log. You can keep your existing OAuth login.
+If the Grok model is part of a Responses combo, the combo can try another eligible model.
+If the combo exhausts its eligible models, a confirmed context-window error or applicable quota
+response takes precedence over the Privacy Mode guidance.
+
+## Manual recipe (without auto-registration)
+
+If you manage `~/.grok/config.toml` yourself — or easyproxy is on a non-loopback bind with the
+loopback listener off — add a `[model_providers.easyproxy]` block and per-model tables that
+reference it, outside the `# >>> easyproxy managed block` markers:
+
+```toml
+[model_providers.easyproxy]
+base_url = "http://127.0.0.1:10100/v1"
+api_backend = "responses"
+api_key = "easyproxy-loopback"
+
+[model.epx-opus]
+model = "anthropic/claude-opus-4-8"
+model_provider = "easyproxy"
+```
+
+For a proxy reachable over the network, configure a TLS frontend before supplying your admission
+token, then point `base_url` at its HTTPS address. Alternatively, use a local tunnel and its
+loopback address. Grok stores the literal `api_key` in `~/.grok/config.toml`; restrict access to
+that file and keep it out of version control and shared backups.
+
+```toml
+[model_providers.easyproxy]
+base_url = "https://proxy.example.com/v1"   # configured TLS frontend
+api_backend = "responses"
+api_key = "your-EASYPROXY_API_AUTH_TOKEN"
+
+[model.epx-opus]
+model = "anthropic/claude-opus-4-8"
+model_provider = "easyproxy"
+```
+
+This uses `[model_providers.<id>]` inheritance, which requires Grok Build 0.2.109 or later
+(released 2026-07-21). On older versions the inherited `base_url` is not applied to inference
+routing — upgrade, or fall back to per-model direct fields (`base_url`/`api_backend`/`api_key`
+on each `[model.*]` table).
+
+Quote any alias containing a dot: bare `[model.grok-4.5]` is a three-segment key path, not
+the id `grok-4.5`. Generated aliases avoid dots entirely for this reason.
+
+## Known limitations
+
+- **Service-installed `epx restart`:** the running proxy owns restart authorization and drain
+  coordination, while the installed service manager launches the replacement after the old process
+  exits. Service supervision remains installed. On loopback auto-registration, the managed block
+  also remains in place across the handoff; non-loopback deployments use manually managed Grok
+  configuration instead. The command succeeds only after a different, identity-verified process is
+  healthy on the same port.
+- **Config read timing:** start easyproxy first, then launch `grok` for the most
+  predictable results. Grok Build watches `~/.grok/config.toml` and reloads when the
+  `[model]` table actually changes (roughly a one-second debounce, compared by content), so
+  a refreshed block reaches an open session without a restart. To confirm what Grok parsed,
+  run `grok inspect`: it lists the config sources it loaded and warns about any field it
+  rejected. It does not print the resolved model list. Current Grok Build reports and skips
+  invalid model fields while retaining the rest of the model entry. A TOML syntax error still
+  prevents the file from loading. easyproxy writes atomically, so Grok observes a complete
+  document on every reload.
+- **Catalog updates:** the fenced block reflects the catalog at injection time. After
+  adding providers or models, run `epx ensure` (or restart the proxy) to refresh it.
+
+## Devin rate limits
+
+If Devin rejects a direct request with a rate limit before producing output or performing
+an action, EasyProxy returns HTTP 429 with a JSON error. Grok can then recognize the limit
+instead of displaying a generic 500 error from a failed HTTP 200 stream. If the response
+includes `Retry-After`, follow that delay before retrying. Exhausted quotas without a reset
+hint do not receive a default delay. Existing OAuth account failover still applies. This
+HTTP 429 handling also applies to non-streaming Responses requests.
+
+For streaming requests, EasyProxy waits up to the configured stall timeout for this early
+refusal. If that wait
+expires, it opens the SSE response and lets the existing stream watchdog handle stalls.
+After HTTP headers are sent, a later failure stays in the stream as `response.failed`.

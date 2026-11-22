@@ -1,0 +1,140 @@
+import { formatErrorResponse } from "../../bridge";
+import { markProxyError } from "../../lib/client-error-body";
+import type { RouteResult } from "../../router";
+import type { RouteDecisionTraceV1 } from "../../routing/trace";
+import { resolveOpenAiVirtualModel } from "../../providers/openai-virtual-models";
+import type { AdapterEvent } from "../../types";
+
+/** Request-owned authorization, separate from the diagnostic trace and each physical attempt. */
+export interface PolicyRequestScope {
+  decision?: RouteDecisionTraceV1;
+  eligibility?: ReadonlySet<string>;
+  readonly triedDestinations: Set<string>;
+  preparedDestination?: string;
+}
+
+export function policyDestinationKey(provider: string, model: string): string {
+  return `${provider}\u0000${model}`;
+}
+
+export function policyWireDestination(route: Pick<RouteResult, "providerName" | "modelId">): string {
+  const model = resolveOpenAiVirtualModel(route.providerName, route.modelId)?.wireModelId ?? route.modelId;
+  return policyDestinationKey(route.providerName, model);
+}
+
+export class PolicyCandidateUnavailableError extends Error {
+  constructor() {
+    super("The candidate cannot serve this request within its original routing policy.");
+    this.name = "PolicyCandidateUnavailableError";
+  }
+}
+
+export class MandatoryToolChoiceUnavailableError extends PolicyCandidateUnavailableError {
+  constructor() {
+    super();
+    this.name = "MandatoryToolChoiceUnavailableError";
+  }
+}
+
+export class ComboVisionDescriptionUnavailableError extends PolicyCandidateUnavailableError {}
+
+export function mandatoryToolChoiceUnavailableResponse(): Response {
+  return markProxyError(formatErrorResponse(400, "invalid_request_error",
+    "This mandatory tool_choice cannot be preserved for a translated Chat destination."));
+}
+
+const localRefusals = new WeakSet<Response>();
+const mandatoryToolRefusals = new WeakSet<Response>();
+const visionDescriptionRefusals = new WeakSet<Response>();
+
+/** Attach candidate-local provenance without changing the HTTP envelope. */
+export function markPolicyCandidateRefusal(response: Response): Response {
+  localRefusals.add(response);
+  return response;
+}
+
+/** A mandatory hosted selection cannot be admitted under the credential's spend policy. */
+export class HostedAdvisorSpendRefusal extends Error {
+  constructor(reason: "ceiling" | "ambiguous-credentials" | "credential-binding") {
+    super(reason === "ceiling"
+      ? "The selected hosted Advisor tool is unavailable under the applicable token spend ceiling."
+      : reason === "ambiguous-credentials"
+        ? "The selected hosted Advisor tool is unavailable with ambiguous upstream credentials."
+        : "The selected hosted Advisor tool requires an unambiguous match to the admitted upstream credential.");
+  }
+
+  event(): Extract<AdapterEvent, { type: "error" }> {
+    return { type: "error", status: 400, errorType: "invalid_request_error", message: this.message, retryable: false };
+  }
+
+  response(): Response {
+    return markPolicyCandidateRefusal(markProxyError(formatErrorResponse(400, "invalid_request_error", this.message)));
+  }
+}
+
+export function policyCandidateRefusalResponse(error: unknown): Response | undefined {
+  if (!(error instanceof PolicyCandidateUnavailableError)) return undefined;
+  const response = formatErrorResponse(409, "policy_candidate_unavailable", error.message);
+  if (error instanceof MandatoryToolChoiceUnavailableError) mandatoryToolRefusals.add(response);
+  if (error instanceof ComboVisionDescriptionUnavailableError) visionDescriptionRefusals.add(response);
+  return markPolicyCandidateRefusal(response);
+}
+
+/** Upstream text or a matching error code cannot authorize another policy attempt. */
+export function isPolicyCandidateRefusal(response: Response): boolean {
+  return localRefusals.has(response);
+}
+
+export function isMandatoryToolChoiceRefusal(response: Response): boolean {
+  return mandatoryToolRefusals.has(response);
+}
+
+export function isComboVisionDescriptionRefusal(response: Response): boolean {
+  return visionDescriptionRefusals.has(response);
+}
+
+/** Preserve local refusal authority when response lifetime owners wrap the body. */
+export function carryPolicyCandidateRefusal(source: Response, target: Response): Response {
+  if (localRefusals.has(source)) localRefusals.add(target);
+  if (mandatoryToolRefusals.has(source)) mandatoryToolRefusals.add(target);
+  if (visionDescriptionRefusals.has(source)) visionDescriptionRefusals.add(target);
+  return target;
+}
+
+export function capturePolicyRequestRoute(scope: PolicyRequestScope, route: RouteResult): RouteResult {
+  if (!scope.eligibility && route.policyEligibility && route.routeDecision?.routeKind === "policy") {
+    scope.eligibility = new Set(route.policyEligibility);
+    scope.decision = route.routeDecision;
+  }
+  if (!scope.eligibility) return route;
+  if (!scope.eligibility.has(policyDestinationKey(route.providerName, route.modelId))) {
+    throw new PolicyCandidateUnavailableError();
+  }
+  // Preparation and normalization both project from RouteResult into the log. Keep the original
+  // authorization and decision on every allowed replacement, including recovery's second pass.
+  route.routeKind = "policy";
+  route.policyEligibility = scope.eligibility;
+  route.routeDecision = scope.decision;
+  return route;
+}
+
+/** Only the admitted selector's existing virtual-model rewrite may change its final route id. */
+export function assertPolicyNormalizedRoute(
+  scope: PolicyRequestScope,
+  admitted: Pick<RouteResult, "providerName" | "modelId">,
+  route: RouteResult,
+): void {
+  if (!scope.eligibility) return;
+  if (route.providerName !== admitted.providerName || (route.modelId !== admitted.modelId
+    && route.modelId !== resolveOpenAiVirtualModel(admitted.providerName, admitted.modelId)?.wireModelId)) {
+    throw new PolicyCandidateUnavailableError();
+  }
+}
+
+/** Called once preparation has settled the wire, before dispatch; account retries keep their own budget. */
+export function recordPolicyPreparedDestination(scope: PolicyRequestScope, provider: string, model: string): void {
+  if (!scope.eligibility) return;
+  const destination = policyDestinationKey(provider, model);
+  if (scope.triedDestinations.has(destination)) throw new PolicyCandidateUnavailableError();
+  scope.preparedDestination = destination;
+}

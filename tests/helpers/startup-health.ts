@@ -1,0 +1,33 @@
+import type { StartupHealth } from "../../src/codex/autostart-health";
+
+export function startupHealthFixture(overrides: Partial<StartupHealth> = {}): StartupHealth {
+  return {
+    status: "native",
+    routingKind: "native",
+    routingInjected: false,
+    localRoutingDependency: false,
+    autostartEnabled: false,
+    rebootSafe: true,
+    protection: "none",
+    serviceInstalled: false,
+    serviceViable: false,
+    serviceEnabled: false,
+    serviceRunning: false,
+    serviceStale: false,
+    serviceConflict: false,
+    shimInstalled: false,
+    shimHealthy: false,
+    shimCoverage: "none",
+    serviceSupported: true,
+    platform: process.platform,
+    diagnosticStale: false,
+    recommendedCommand: null,
+    commands: {
+      installService: "epx service install",
+      repairService: "epx service repair",
+      installShim: "epx codex-shim install",
+      restoreNative: "epx restore",
+    },
+    ...overrides,
+  };
+}

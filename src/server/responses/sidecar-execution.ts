@@ -1,0 +1,994 @@
+import { expandInferenceSearchSendBudget } from "../inference/context";
+import { clientFacingModelText } from "../../lib/error-destination";
+import { createAnthropicThinkingRecovery } from "./anthropic-thinking-recovery";
+import { anthropicRefusalCredentialChanged, rotateAnthropicAccountOnResponseForInstance } from "../../oauth/anthropic-account-refusal";
+import type { ResponsesRequestContext } from "./core-options";
+import type { PreparedResponsesRequest } from "./request-prepare";
+import type { ResponsesTransport } from "./request-transport";
+import type { ResponsesSidecarAuth } from "./request-sidecar-auth";
+import type { ResponsesEffects } from "./response-effects";
+import type { ResponsesSendBudget } from "./request-send-budget";
+import { formatErrorResponse } from "../../bridge";
+import { planWebSearch, buildWebSearchTool, runWithWebSearch } from "../../web-search";
+import { createRegisteredAdvisorPlan } from "./advisor-plan-slot";
+import { ADVISOR_TOOL_NAME, advisorToolAllowed, createAdvisorSidecarStep } from "./advisor-slot";
+import { advisorServerToolDestination, hasAdvisorServerTools, withholdAdvisorServerTools } from "../../adapters/anthropic/advisor-tool";
+import { addProtocolEntryReason } from "../../protocols/trace";
+import { responsesHostedAdvisorSpendTarget } from "./request-spend-target";
+import { hostedAdvisorSpendRefusalFor } from "./hosted-advisor-spend";
+import type { HostedAdvisorSpendRefusal } from "./policy-request-scope";
+import { buildToolBridgeMaps } from "./collaboration";
+import {
+  planImageBridge,
+  planVideoBridge,
+  IMAGE_GEN_TOOL_NAME,
+  buildImageTool,
+  VIDEO_GEN_TOOL_NAME,
+  buildVideoTool,
+  runWithImageBridge,
+  clampImageMaxRounds,
+} from "../../images";
+import type { AdapterRequest, ProviderAdapter } from "../../adapters/base";
+import type { EpxParsedRequest, EpxProviderConfig, EpxUsage } from "../../types";
+import { rotateProviderTransportOn429, rateLimitRetryPolicyFor } from "../../providers/key-failover";
+import {
+  isGenericOAuthFailoverEnabled,
+  rotateGenericOAuthAccountOn429,
+  rotateGenericOAuthAccountOnRefusal,
+  rotateAntigravityAccountOnAuthRefusal,
+  quarantineKiroSuspendedAccount,
+  failoverAccountSnapshot,
+} from "../../oauth/generic-account-failover";
+import { classifyKiroRefusal } from "../../adapters/kiro-refusal";
+import { isNonReplayableResponse, SendBudgetExhaustedError, errorDestinationLabel } from "../../lib/upstream-retry";
+import { isVerifiedModelNotInPlanResponse, markVerifiedModelNotInPlanResponse } from "../../lib/errors";
+import { unwrapUpstreamRetryEvidenceError } from "../../codex/auth-context";
+import { AdmissionModelDeniedError, admissionModelDeniedResponse, projectAdmissionModelDeniedLog } from "../admission-model-scope";
+import { noteKiroMonthlyRefusal, noteKiroServedSuccess } from "../../providers/kiro-usage";
+import { persistKiroAccountState } from "../../providers/kiro-account-state-disk";
+import { anthropicPoolCooldownResponse, readDisplaySafeErrorText } from "./core-errors";
+import { sidecarContextOverflowResponse } from "./context-overflow";
+import { emptyCompletionRetryEnabled } from "./empty-completion-guard";
+import {
+  anthropicRoutingFor,
+  formatAnthropicProviderForLog,
+} from "../../oauth/anthropic-routing";
+import { resolveWireProtocolOverride } from "../adapter-resolve";
+import { bindRouteReasoningReplayScope, adapterNeedsForcedContinuation, adapterNeedsToolCallContinuation } from "./core-replay";
+import { namespacedToolName, toolChoiceCandidates } from "../../types";
+import { providerFetch } from "./fetch-helpers";
+import { createAnthropicImageRecovery } from "./image-context-recovery";
+import type { AttemptRecoveryKind } from "../../usage/log";
+import { sealCredentialRefusal } from "../credential-recovery-attempt";
+import { assignNativeLogConversationId, normalizeLogConversationId } from "../request-log-conversation";
+import { attemptAccountChanged } from "../request-log-account-rotation";
+import { rememberResponseState } from "../../responses/state";
+import { trackStreamLifetime } from "../lifecycle";
+import { isAntigravityRawValidationRefusal } from "./antigravity-validation-refusal";
+import { createSidecarSendBudget } from "./sidecar-send-budget";
+import { stripReplayedSearchPairs } from "../../web-search/sidecar-search-replay";
+import { providerConnectTimeoutMs, providerStallTimeoutSec } from "../../stall-timeout";
+import { settleAnthropicPerMessageEffort, shareAnthropicPerMessageEffortTurn } from "../../adapters/anthropic/per-message-effort";
+
+/** One responsibility of the Responses request pipeline; state owners are explicit. */
+export async function executeResponsesSidecars(
+  requestContext: Pick<ResponsesRequestContext, "config" | "options" | "logCtx">,
+  requestState: Pick<
+    PreparedResponsesRequest,
+    | "parsed"
+    | "route"
+    | "inboundWire"
+    | "subagentFallbackSelected"
+    | "selectedForwardHeaders"
+    | "translatorBudget"
+    | "completedToolBlocks"
+    | "clientToolCatalogRestriction"
+    | "toolBridgeMaps"
+    | "rememberKiroDeliveredFinalAnswer"
+    | "responseStateOptions"
+    | "admissionScope"
+    | "advisorAdmissionPolicy"
+  >,
+  transportState: Pick<
+    ResponsesTransport,
+    | "adapter"
+    | "genericFailoverAccountId"
+    | "genericFailovers"
+    | "genericFailoverLimit" | "anthropicFailoverLimit"
+    | "replayOAuthCredentialSnapshot"
+    | "applyFailoverSnapshot"
+    | "anthropicInstance"
+    | "currentAnthropicRouteDecision"
+    | "anthropicRouteDecision"
+    | "anthropicPoolAccountId"
+    | "anthropicPoolFailovers"
+    | "anthropicSessionKey"
+    | "commitResolvedOAuthSelection"
+    | "resolveSelectionAdapter"
+    | "resolveCopilotSelection"
+    | "oauthDispatch"
+    | "pinAnthropicImageRecovery"
+    | "noteRoutedAttemptSend" | "createCredentialReplayAttempt" | "credentialReplayHandoff"
+    | "commitRunTurnAttemptSend" | "commitAdapterAttemptSend" | "isCurrentInferenceResponse"
+    | "bindKeyUsageFromBridge"
+    | "hostedAdvisorSpendGuard"
+    | "initialAdapterProvider"
+  >,
+  sidecarState: Pick<ResponsesSidecarAuth, "routedCompaction" | "openAiSidecar">,
+  responseEffects: Pick<
+    ResponsesEffects,
+    | "commitReasoningReplayServingRoute"
+    | "continuationStateForResponse"
+    | "notifyResponseComplete"
+    | "cancelResponseCompletion"
+  >,
+  sendBudgetState: Pick<ResponsesSendBudget, "initialSendAllowance" | "sendBudgetExhausted" | "hasCapturedSpendCeiling" | "reserveCredentialHop" | "refundableAdapterDispatchBudget" | "adapterDispatchBudget" | "adapterSendBudget" | "noteInitialDispatch" | "noteAdapterPhysicalSend" | "noteAdapterRecoveryWithheld" | "pendingHopPermit" | "dispatchSidecarSend" | "remainingTransientSendBudget" | "targetSendsUsed" | "imageRecoverySendReporter">,
+) {
+  const { config, options, logCtx } = requestContext;
+  const antigravityPoolActivated = requestState.route.providerName === "google-antigravity"
+    && isGenericOAuthFailoverEnabled(config, requestState.route.providerName);
+  const {
+    applyFailoverSnapshot,
+    anthropicInstance,
+    currentAnthropicRouteDecision,
+    anthropicSessionKey,
+    commitResolvedOAuthSelection,
+    resolveSelectionAdapter,
+    resolveCopilotSelection,
+    oauthDispatch,
+  } = transportState;
+  const {
+    parsed,
+    route,
+    inboundWire,
+    translatorBudget,
+    rememberKiroDeliveredFinalAnswer,
+    responseStateOptions,
+    admissionScope,
+  } = requestState;
+  const { routedCompaction, openAiSidecar } = sidecarState;
+  const { reserveCredentialHop } = sendBudgetState;
+  const sidecarBudget = createSidecarSendBudget(options, sendBudgetState, () => logCtx.usageLogInputTokens);
+  const {
+    commitReasoningReplayServingRoute,
+    continuationStateForResponse,
+    notifyResponseComplete,
+    cancelResponseCompletion,
+  } = responseEffects;
+
+  // Resolving the OpenAI search credential may hold the account's sole
+  // cooldown-recovery probe lease. A streamed sidecar result keeps it until the
+  // stream settles — completion or client cancel — so a later in-stream search
+  // outcome can still clear the cooldown; a response with no live body is
+  // terminal, so the lease is handed back before returning it. A recorded
+  // search outcome already settled the lease, making each release a
+  // generation-bound no-op.
+  const releaseSearchProbeLease = (): void => {
+    openAiSidecar?.releaseProbeLease?.();
+  };
+
+
+  // Tool results are PAIRED by call_id. parseRequest writes it into EpxToolResultMessage.toolCallId
+  // (parser.ts:738/752) without validating it, because inputItemSchema's permissive catch-all
+  // (schema.ts:106) accepts a tool item whose strict schema failed only for a missing call_id. A
+  // translating adapter then consumes `toolCallId: string` holding undefined: kiro-wire.ts:32
+  // TypeErrors, ollama-native.ts:334 throws, and anthropic.ts:775 sends
+  // "[tool_result without adjacent tool_use: undefined]" upstream (issue #3259).
+  //
+  // This CANNOT move into the schema. parseRequest (:2812) runs before the passthrough branch
+  // (:3719), so a parse-time rejection would also kill forward/key passthrough and routed
+  // compaction — paths that never read context.messages, build from _rawBody, and already
+  // degrade an unpaired output to "[tool output for unknown call]" on their own.
+  //
+  // Keyed on the adapter, not on position: routedCompaction skips the passthrough branch above
+  // yet still builds from _rawBody (see the :3703 comment).
+  if (!("passthrough" in transportState.adapter && transportState.adapter.passthrough)) {
+    const unpaired = parsed.context.messages.find(
+      message => message.role === "toolResult"
+        && (typeof (message as { toolCallId?: unknown }).toolCallId !== "string"
+          || (message as { toolCallId: string }).toolCallId.length === 0),
+    );
+    if (unpaired) {
+      // Local validation has no running sidecar body to own this lease.
+      releaseSearchProbeLease();
+      // Never interpolate the tool output: this message reaches the client and the logs.
+      return formatErrorResponse(
+        400,
+        "invalid_request_error",
+        "tool result requires a non-empty string call_id",
+      );
+    }
+  }
+
+  // Hosted Advisor usage is not independently accounted by the main model's terminal usage.
+  // Read the actual authenticated target's captured ceilings before an optional plan can await;
+  // this query never starts or changes the main-model accounting mode.
+  const hostedAdvisorSpendScope = options.hostedAdvisorSpendScope ?? { optionalWithheld: false };
+  let hostedAdvisorSpendRefusal: HostedAdvisorSpendRefusal | undefined;
+  const explicitlySelectedHostedAdvisor = options.anthropicHostedAdvisorSelection === "selected";
+  const withholdHostedAdvisorBySpend = (request: EpxParsedRequest, provider: EpxProviderConfig, finalRefusal?: HostedAdvisorSpendRefusal) => {
+    if (!hostedAdvisorSpendScope.optionalWithheld && !hostedAdvisorSpendRefusal
+      && (finalRefusal || hasAdvisorServerTools(parsed) || hasAdvisorServerTools(request))) {
+      const refusal = finalRefusal ?? hostedAdvisorSpendRefusalFor(provider, () =>
+        sendBudgetState.hasCapturedSpendCeiling(responsesHostedAdvisorSpendTarget(logCtx, route.providerName, provider)));
+      if (refusal) {
+        if (explicitlySelectedHostedAdvisor) hostedAdvisorSpendRefusal = refusal;
+        else hostedAdvisorSpendScope.optionalWithheld = true;
+        addProtocolEntryReason(logCtx, "advisor-tool-withheld-by-spend-policy");
+      }
+    }
+    if (hostedAdvisorSpendScope.optionalWithheld) {
+      withholdAdvisorServerTools(parsed);
+      if (request !== parsed) withholdAdvisorServerTools(request);
+    }
+  };
+  withholdHostedAdvisorBySpend(parsed, transportState.initialAdapterProvider);
+  if (hostedAdvisorSpendRefusal) {
+    releaseSearchProbeLease();
+    return hostedAdvisorSpendRefusal.response();
+  }
+  const normalizeWithheldAdvisorChoice = (request = parsed) => {
+    const choice = request.options.toolChoice;
+    // Wait for the final catalog: a client function or the later proxy Advisor may own this name.
+    if (!hostedAdvisorSpendScope.optionalWithheld || typeof choice !== "object" || choice === null || !("name" in choice)
+      || choice.name !== ADVISOR_TOOL_NAME || toolChoiceCandidates(request.context.tools, choice.name).length !== 0) return;
+    request.options = { ...request.options, toolChoice: "auto" };
+    // The unmatched named choice authorized no earlier map entries. Charge the newly usable
+    // tools once and rebuild their delivery mappings before an adapter can emit their calls.
+    if (request === parsed) requestState.toolBridgeMaps = buildToolBridgeMaps(parsed, translatorBudget);
+  };
+  // A replacement key/OAuth identity can have a different answer from an authoritative holder.
+  // Every physical adapter builder, including sidecar copies and dispatch-time reselection,
+  // passes its resolved wire, which can differ from the rebuilt credential route's default.
+  // Withholding is monotonic across all later identities/copies.
+  transportState.hostedAdvisorSpendGuard = (request, provider, finalRefusal) => {
+    withholdHostedAdvisorBySpend(request, provider, finalRefusal);
+    if (hostedAdvisorSpendRefusal) throw hostedAdvisorSpendRefusal;
+    normalizeWithheldAdvisorChoice();
+    if (request !== parsed) normalizeWithheldAdvisorChoice(request);
+  };
+
+  // Advisor sidecar plan (optional subsystem; null when disabled, unconfigured, or when this
+  // request IS an advisor loopback consultation — the recursion fence). The plan carries
+  // request-scoped state only; preflight keeps fixed policy separate from user-role advice
+  // before the worker is dispatched. Registration seam: the core path sees only
+  // `parsed._advisorGuard`; only an activated factory can load the optional implementation.
+  const advisorPlan = options.advisorInternal === true
+    ? null
+    : await createRegisteredAdvisorPlan({
+      config,
+      workerIdentity: `${route.modelId} (provider ${route.providerName})`,
+      workerModelId: route.modelId,
+      admissionScope,
+      admissionPolicy: requestState.advisorAdmissionPolicy,
+      abortSignal: options.abortSignal,
+    });
+  // Preflight only on real worker turns: a routed-compaction turn is a summarization request,
+  // and injecting advice into it would pollute the summary Codex replaces its history with.
+  // An explicit hosted Advisor choice reserves this turn's consultation for Anthropic.
+  if (advisorPlan && !routedCompaction && !options.anthropicHostedAdvisorSelection) {
+    await advisorPlan.preflightInject(parsed);
+  }
+  // The synthetic `advisor` owns the name for the whole turn it joins, so a typed Advisor declaration
+  // is withheld here, not only while the function is on the catalog: a later loop iteration that
+  // drops the synthetic tool must not forward it either (adapters/anthropic/advisor-tool.ts).
+  const withholdShadowedAdvisorTool = () => {
+    if (withholdAdvisorServerTools(parsed) && advisorServerToolDestination(transportState.initialAdapterProvider)) {
+      addProtocolEntryReason(logCtx, "advisor-tool-shadowed-by-proxy-advisor");
+    }
+  };
+
+  // Image / web-search sidecars: plan once, then dispatch with runTurn-aware priority.
+  // Routed-compaction turns must NOT hit the image bridge: compaction disables tool execution but
+  // leaves _imageGeneration, so planImageBridge would activate and return a normal Responses
+  // completion instead of the synthetic compaction item Codex expects (#424).
+  //
+  // Web-search's loop only supports buildRequest/fetch/parseStream — NOT adapter.runTurn. Sending
+  // Cursor/runTurn requests into runWithWebSearch produces empty HTTP failures. So:
+  //   - non-runTurn: web-search wins over image when both eligible (documented priority)
+  //   - runTurn: a search plan takes priority over media bridges and is executed
+  //     by executeResponsesRunTurn; the fetch loop below remains fetch-only.
+  // LOCAL PATCH (runturn-websearch): runTurn adapters run their own web-search
+  // loop inside executeResponsesRunTurn (src/web-search/run-turn-loop.ts); the
+  // fetch-path loop below stays non-runTurn-only.
+  const wsPlan = !routedCompaction
+    ? planWebSearch(config, parsed, false, route.provider, route.modelId, openAiSidecar, {
+      admission: options.admission, codexAuthPolicy: options.codexAuthPolicy, providerName: route.providerName,
+      routedTransport: transportState.adapter.runTurn ? "runTurn" : "http",
+    })
+    : undefined;
+  const imgPlan = !routedCompaction ? await planImageBridge(config, parsed, route.provider) : undefined;
+  // Replayed search pairs call the synthetic web_search tool only the sidecar declares (#7269).
+  if (!wsPlan) stripReplayedSearchPairs(parsed);
+  const vidPlan = !routedCompaction ? await planVideoBridge(config, parsed, route.provider) : undefined;
+  // Hosted loops rebuild per iteration from spread copies; they share one per-message effort turn (#6895).
+  if (wsPlan || imgPlan || vidPlan) shareAnthropicPerMessageEffortTurn(parsed);
+  const canRunWebSearch = !!wsPlan && !transportState.adapter.runTurn;
+  let sidecarOutputStarted = false;
+  const sidecarHasCommittedOutput = () => sidecarOutputStarted
+    || (logCtx.activeAttempt?.deliverySummary?.semanticBytes ?? 0) > 0
+    || (logCtx.activeAttempt?.deliverySummary?.sideEffectEvents ?? 0) > 0;
+  const noteSidecarOutput = () => { sidecarOutputStarted = true; options.onFirstOutput?.(); };
+  // A single request may rotate once for a verification refusal. Keep this separate from the
+  // broader OAuth failover count: a sidecar turn can also spend that count on rate-limit recovery.
+  let antigravityValidationRotationAttempted = false;
+  // A replacement credential whose Copilot Auto negotiation leaves the key's scope ends the turn.
+  // The loops only see "no rotation" and fail with the original, replayable 429, so the refusal
+  // is held here and answers in place of that failure.
+  let sidecarScopeDenial: AdmissionModelDeniedError | undefined;
+  const noteSidecarScopeDenial = (error: unknown): void => {
+    const refusal = unwrapUpstreamRetryEvidenceError(error);
+    if (refusal instanceof AdmissionModelDeniedError) sidecarScopeDenial ??= refusal;
+  };
+  const sidecarScopeRefusal = (response: Response): Response | undefined => {
+    if (response.ok) return undefined;
+    const hostedSpendRefusal = response.status === 400 ? hostedAdvisorSpendRefusal : undefined;
+    if (!sidecarScopeDenial && !hostedSpendRefusal) return undefined;
+    void response.body?.cancel().catch(() => {});
+    releaseSearchProbeLease();
+    return sidecarScopeDenial ? admissionModelDeniedResponse(projectAdmissionModelDeniedLog(sidecarScopeDenial, logCtx))
+      : hostedSpendRefusal?.response();
+  };
+  let sentSidecarInference = false;
+  let pendingSidecarReplay: { status: number; kind: AttemptRecoveryKind; dispatched?: boolean } | undefined;
+  let sidecarRetryKind: AttemptRecoveryKind | undefined;
+  const noteSidecarAttempt = (recovery?: AttemptRecoveryKind): void => {
+    sidecarRetryKind = recovery;
+    if (transportState.adapter.runTurn && !transportState.adapter.reportsPhysicalSends) {
+      transportState.noteRoutedAttemptSend(logCtx.usageLogInputTokens, recovery);
+    }
+  };
+  /** Admit a replacement credential, or leave the loop's original refusal authoritative. */
+  const rotateSidecarProviderOn429 = async (
+    retryAfter: string | null,
+    responseHeaders?: Headers,
+    retryParsed?: EpxParsedRequest,
+    originalResponse?: Response,
+    hiddenUsage?: EpxUsage,
+  ): Promise<{ adapter: ProviderAdapter; recoveryKind: AttemptRecoveryKind } | null> => {
+    if (originalResponse && !transportState.isCurrentInferenceResponse(originalResponse)) return null;
+    const antigravityValidationResponse = canRunWebSearch && route.providerName === "google-antigravity"
+      && route.provider.authMode === "oauth" && originalResponse?.status === 403;
+    if (route.providerName !== "kiro" && !(anthropicInstance && (originalResponse?.status === 403 || originalResponse?.status === 401))
+      && !antigravityValidationResponse && originalResponse && originalResponse.status !== 429) return null;
+    const sealSidecarRefusal = (recovery: AttemptRecoveryKind | undefined): void => {
+      if (!originalResponse) return;
+      if (hiddenUsage) transportState.bindKeyUsageFromBridge(hiddenUsage);
+      sealCredentialRefusal(logCtx, originalResponse.status, recovery);
+    };
+    let antigravityVerification = false;
+    if (antigravityValidationResponse) {
+      if (transportState.adapter.name !== "google" || !antigravityPoolActivated
+        || options.abortSignal?.aborted || isNonReplayableResponse(originalResponse)
+        || antigravityValidationRotationAttempted
+        || transportState.genericFailovers >= transportState.genericFailoverLimit
+        || sidecarHasCommittedOutput()) return null;
+      antigravityVerification = await isAntigravityRawValidationRefusal(originalResponse, options.abortSignal);
+      if (!antigravityVerification) return null;
+    }
+    const refusal = route.providerName === "kiro" && originalResponse
+      ? classifyKiroRefusal(originalResponse.status,
+        await readDisplaySafeErrorText(originalResponse.clone(), options.abortSignal ?? new AbortController().signal, "")).kind
+      : "rate";
+    if (refusal === "other") return null;
+    const sent = transportState.replayOAuthCredentialSnapshot;
+    const monthlyCooldownMs = route.providerName === "kiro" && refusal === "monthly_quota" && sent
+      ? noteKiroMonthlyRefusal(sent.accountId, sent.generation, Date.now()) : undefined;
+    if (monthlyCooldownMs !== undefined) persistKiroAccountState();
+    if (route.providerName === "kiro" && refusal === "suspended" && transportState.genericFailoverAccountId)
+      quarantineKiroSuspendedAccount(transportState.genericFailoverAccountId, sent?.generation);
+    // Which credential axis actually moved. The main routed path already reports these three
+    // separately (`adapter-dispatch`: key-429 / anthropic-oauth-429 / oauth-account-429); the
+    // sidecar loops used to flatten all three to `key-429`, so an account rotation read as a key
+    // rotation in the attempt row and in the Logs UI.
+    let recoveryKind: AttemptRecoveryKind = "key-429";
+    if (antigravityVerification) {
+      const sent = transportState.replayOAuthCredentialSnapshot;
+      const failedAccountId = transportState.genericFailoverAccountId;
+      if (!sent || !failedAccountId || sent.accountId !== failedAccountId) return null;
+      if (options.abortSignal?.aborted || sidecarHasCommittedOutput()) return null;
+
+      const hop = reserveCredentialHop(
+        "auth-recovery",
+        `${route.providerName}|${route.modelId}|sidecar-oauth-verify`,
+      );
+      if (!hop.allowed) return null;
+      antigravityValidationRotationAttempted = true;
+      const nextAccountId = rotateAntigravityAccountOnAuthRefusal(
+        antigravityPoolActivated, sent.accountId, sent.generation, route.modelId,
+      );
+      if (!nextAccountId) {
+        hop.permit?.release();
+        return null;
+      }
+      try {
+        // Keep the sibling's bearer and its account-matched project together; never inherit the
+        // failed account's identity or project.
+        const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
+        if (options.abortSignal?.aborted || !await applyFailoverSnapshot(snapshot, retryParsed)
+          || transportState.replayOAuthCredentialSnapshot?.accountId !== nextAccountId) {
+          hop.permit?.release();
+          return null;
+        }
+        transportState.genericFailovers += 1;
+      } catch (error) {
+        noteSidecarScopeDenial(error);
+        hop.permit?.release();
+        return null;
+      }
+      recoveryKind = "oauth-account-403";
+      sidecarBudget.ownCredentialHop(hop.permit);
+    }
+    const rotated = !originalResponse || originalResponse.status === 429
+      ? rotateProviderTransportOn429(config, route.providerName, route.provider, {
+      retryAfter,
+      now: Date.now(),
+      attemptedKey: route.provider.apiKey,
+      promptCacheKey: parsed.options.promptCacheKey,
+      }) : null;
+    if (antigravityVerification) {
+      // `applyFailoverSnapshot` has already rebound the route to the sibling identity/project.
+    } else if (rotated) {
+      route.provider = rotated;
+      try { await resolveCopilotSelection(retryParsed ?? parsed); }
+      catch (error) { // Keep the sidecar's original refusal when replacement negotiation fails.
+        sealSidecarRefusal(recoveryKind);
+        noteSidecarScopeDenial(error);
+        return null;
+      }
+    } else if (
+      // A POSITIVE gate, not an early return. An early `return null` here made every later arm
+      // unreachable: Anthropic never has a genericFailoverAccountId (isGenericFailoverProvider
+      // excludes it), so its sidecar 429s died on this guard before the Anthropic arm below
+      // could ever be considered.
+      transportState.genericFailoverAccountId
+      && transportState.genericFailovers < transportState.genericFailoverLimit
+      && isGenericOAuthFailoverEnabled(config, route.providerName)
+    ) {
+      // Intersection with the request's shared budget. The sidecar replay is dispatched by the
+      // web-search/image loop. Its guarded executor or adapter settles this reservation
+      // when the replacement is admitted to the wire.
+      const hop = reserveCredentialHop(
+        "auth-recovery",
+        `${route.providerName}|${route.modelId}|sidecar-oauth-429`,
+      );
+      if (!hop.allowed) return null;
+      const nextAccountId = route.providerName === "kiro" ? rotateGenericOAuthAccountOnRefusal(
+        config, route.providerName, transportState.genericFailoverAccountId,
+        refusal, retryAfter, Date.now(), route.modelId, monthlyCooldownMs,
+      ) : rotateGenericOAuthAccountOn429(
+        config,
+        route.providerName,
+        transportState.genericFailoverAccountId,
+        retryAfter,
+        Date.now(),
+        route.modelId,
+      );
+      if (!nextAccountId) {
+        hop.permit?.release();
+        return null;
+      }
+      try {
+        const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
+        if (route.providerName !== "kiro") transportState.genericFailovers += 1;
+        if (!await applyFailoverSnapshot(snapshot, retryParsed)) {
+          sealSidecarRefusal("oauth-account-429");
+          hop.permit?.release();
+          return null;
+        }
+        if (route.providerName === "kiro") transportState.genericFailovers += 1;
+      } catch (error) {
+        sealSidecarRefusal("oauth-account-429");
+        noteSidecarScopeDenial(error);
+        hop.permit?.release();
+        return null;
+      }
+      recoveryKind = "oauth-account-429";
+      sidecarBudget.ownCredentialHop(hop.permit);
+    } else if (
+      // Anthropic's pool is excluded from generic failover, so without this arm a 429 inside a
+      // web-search or image-bridge turn was terminal even with the pool fully enabled -- while
+      // the very same 429 on the main response path rotated.
+      anthropicInstance && transportState.anthropicPoolAccountId
+    ) {
+      // Same intersection for the Anthropic roster: its own per-request bound still applies,
+      // and the shared budget decides whether this request may spend another send at all.
+      const hop = reserveCredentialHop(
+        "auth-recovery",
+        `${route.providerName}|${route.modelId}|sidecar-anthropic-429`,
+      );
+      let nextAccountId: string | null;
+      try {
+        nextAccountId = await rotateAnthropicAccountOnResponseForInstance(anthropicInstance,
+          originalResponse ?? new Response(null, { status: 429, headers: responseHeaders ?? (retryAfter ? { "retry-after": retryAfter } : undefined) }), {
+            config, accountId: transportState.anthropicPoolAccountId, sessionKey: anthropicSessionKey,
+            model: route.modelId, requestKey: transportState, decision: transportState.anthropicRouteDecision, currentDecision: currentAnthropicRouteDecision, signal: options.abortSignal,
+            allow429Recovery: !sidecarHasCommittedOutput(), allowAccountRefusal: !sidecarHasCommittedOutput(),
+            canRetry: hop.allowed && transportState.anthropicPoolFailovers < transportState.anthropicFailoverLimit,
+          });
+      } catch (error) { hop.permit?.release(); throw error; }
+      if (!nextAccountId) {
+        hop.permit?.release();
+        return null;
+      }
+      try {
+        // Deliberately NOT applyFailoverSnapshot: that helper exists to pair per-account routing
+        // metadata (Copilot origin, Antigravity project, Kiro context) with its bearer. Anthropic
+        // carries none, and getAnthropicPoolAccessToken is what enforces its fail-closed
+        // local-cli credential rule. Both existing Anthropic rotation sites apply the token the
+        // same way.
+        const admitted = await commitResolvedOAuthSelection(await anthropicRoutingFor(anthropicInstance).getAnthropicPoolAccessSnapshot(nextAccountId));
+        if (!admitted) throw new Error("OAuth selection changed during recovery");
+        recoveryKind = originalResponse && !anthropicRefusalCredentialChanged(originalResponse, admitted) ? "rate-limit-429"
+          : originalResponse?.status === 401 ? "oauth-401"
+          : originalResponse?.status === 403 ? "oauth-account-403" : "anthropic-oauth-429";
+        transportState.anthropicPoolAccountId = admitted.accountId;
+        transportState.anthropicPoolFailovers += 1;
+        route.provider = { ...route.provider, apiKey: admitted.accessToken };
+        logCtx.provider = formatAnthropicProviderForLog(anthropicInstance, admitted.accountId, config);
+      } catch {
+        hop.permit?.release();
+        return null;
+      }
+      sidecarBudget.ownCredentialHop(hop.permit);
+    } else {
+      // No key pool, no generic OAuth roster, no Anthropic pool could produce a replacement
+      // credential. The 429 is terminal for this sidecar turn.
+      return null;
+    }
+    const rotatedAdapter = resolveSelectionAdapter(
+      resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),
+      config.cacheRetention,
+    );
+    // The sidecar loops build each attempt from an iteration-local shallow copy of parsed, so a
+    // rebind that lands only on the outer request never reaches the wire: the retry would pair
+    // the new bearer with the previous account's Kiro routing metadata and continuation identity.
+    // Rebind the exact request the rotated adapter will be built from (same pattern as the
+    // continuation loop's nextParsed); when the hook ran without one, the outer bind below stands.
+    if (retryParsed && retryParsed !== parsed) {
+      bindRouteReasoningReplayScope({
+        parsed: retryParsed,
+        providerName: route.providerName,
+        provider: route.provider,
+        adapterName: rotatedAdapter.name,
+        ...(antigravityVerification ? { oauthCredentialSnapshot: transportState.replayOAuthCredentialSnapshot } : {}),
+      });
+    }
+    bindRouteReasoningReplayScope({
+      parsed,
+      providerName: route.providerName,
+      provider: route.provider,
+      adapterName: rotatedAdapter.name,
+      ...(antigravityVerification ? { oauthCredentialSnapshot: transportState.replayOAuthCredentialSnapshot } : {}),
+    });
+    if (sentSidecarInference && originalResponse && recoveryKind !== "rate-limit-429") {
+      pendingSidecarReplay = { status: originalResponse.status, kind: recoveryKind };
+    }
+    return { adapter: rotatedAdapter, recoveryKind };
+  };
+  const recoverImageContext = route.provider.anthropicImageContextRecovery === true && transportState.adapter.name === "anthropic"
+    ? createAnthropicImageRecovery(requestContext, requestState, transportState, sendBudgetState, providerConnectTimeoutMs(config, route.provider) ?? 200_000)
+    : undefined;
+  // Legacy sidecar sends under spend enforcement do not carry an authoritative physical receipt.
+  const imageRecovery: typeof recoverImageContext = recoverImageContext && ((response, ...args) =>
+    sendBudgetState.adapterDispatchBudget?.spendEnforced === true
+      ? Promise.resolve({ response }) : recoverImageContext(response, ...args));
+  // One guard follows the active sidecar across all iterations. Enforced spend has no
+  // authoritative receipt for earlier legacy sends, so recovery cannot claim headroom there.
+  const thinkingRecovery = createAnthropicThinkingRecovery(parsed,
+    options.abortSignal ?? new AbortController().signal, { attempted: false },
+    () => !sendBudgetState.sendBudgetExhausted()
+      && !!sendBudgetState.adapterDispatchBudget
+      && sendBudgetState.adapterDispatchBudget.spendEnforced !== true, logCtx);
+  const thinkingReceipt = (request: AdapterRequest, adapter: ProviderAdapter, recovery?: AttemptRecoveryKind) =>
+    adapter.name !== "anthropic" ? {} : { onPhysicalDispatch: () => {
+      if (recovery === "opaque-blob-rejection") {
+        const decision = sendBudgetState.adapterDispatchBudget?.reserveDispatch({
+          sendClass: "repair", targetKey: sendBudgetState.adapterDispatchBudget.lastTargetKey
+            ?? `${route.providerName}|${request.url}|${route.modelId}`,
+        });
+        if (sendBudgetState.adapterDispatchBudget?.spendEnforced || !decision?.allowed) {
+          if (decision?.allowed) decision.permit.release();
+          throw new SendBudgetExhaustedError(errorDestinationLabel(request.url));
+        }
+        try { sendBudgetState.noteInitialDispatch(decision.permit); }
+        finally { decision.permit.release(); }
+      } else {
+        const existing = sidecarBudget.fetchOptions(adapter).onPhysicalDispatch;
+        if (existing) existing();
+        else {
+          const prepaid = sendBudgetState.pendingHopPermit;
+          if (anthropicInstance && !prepaid && sendBudgetState.initialSendAllowance(1) === 0) throw new SendBudgetExhaustedError();
+          sendBudgetState.pendingHopPermit = undefined;
+          sendBudgetState.noteInitialDispatch(prepaid);
+        }
+      }
+    } };
+  const sidecarRequestFetch = (request: AdapterRequest, iterParsed: EpxParsedRequest, adapter: ProviderAdapter, recovery?: AttemptRecoveryKind, onPhysicalDispatch?: () => void) => {
+    const staged = pendingSidecarReplay?.kind === recovery ? pendingSidecarReplay : undefined;
+    if (!staged) pendingSidecarReplay = undefined;
+    const handoff = transportState.credentialReplayHandoff;
+    const commit = handoff ?? (staged && transportState.createCredentialReplayAttempt(staged.status, staged.kind));
+    const physicalOptions = { ...sidecarBudget.fetchOptions(adapter), ...thinkingReceipt(request, adapter, recovery) };
+    let published = false;
+    return providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+      dispatchOverride: oauthDispatch(request, iterParsed, "adapter", true),
+      providerName: route.providerName, modelId: route.modelId, ...physicalOptions,
+      onPhysicalDispatch: () => {
+        if (physicalOptions.onPhysicalDispatch) physicalOptions.onPhysicalDispatch();
+        else if (!(adapter.fetchResponse && sendBudgetState.adapterDispatchBudget)
+          && (handoff || sendBudgetState.pendingHopPermit)) {
+          const prepaid = sendBudgetState.pendingHopPermit;
+          if (!prepaid && sendBudgetState.sendBudgetExhausted()) throw new SendBudgetExhaustedError(errorDestinationLabel(request.url));
+          sendBudgetState.noteInitialDispatch(prepaid);
+          sendBudgetState.pendingHopPermit = undefined;
+        }
+        if (!adapter.fetchResponse || !published) {
+          if (commit) {
+            commit(request, adapter.name, sidecarRetryKind === recovery ? undefined : sidecarRetryKind);
+            if (staged) staged.dispatched = true;
+            if (handoff) transportState.credentialReplayHandoff = undefined;
+          } else {
+            transportState.commitAdapterAttemptSend(request, adapter.name, sidecarRetryKind);
+          }
+          published = true;
+        }
+        sentSidecarInference = true;
+        onPhysicalDispatch?.();
+      },
+    });
+  };
+  const releaseSidecarHop = (): void => {
+    if (pendingSidecarReplay && !pendingSidecarReplay.dispatched) {
+      sealCredentialRefusal(logCtx, pendingSidecarReplay.status, pendingSidecarReplay.kind);
+    }
+    pendingSidecarReplay = undefined;
+    sidecarBudget.releaseUnsentHop();
+  };
+  // A loop's hidden rounds before a rotation were spent by the account it left. Bill them to that
+  // attempt while it is still open. A staged credential replay also starts a new row even
+  // when the account label stays the same. In-place retries keep the loop’s accumulated usage.
+  const billRotatedUsage = (usage: EpxUsage | undefined): boolean => {
+    const attempt = logCtx.activeAttempt;
+    if (!attempt || (!pendingSidecarReplay && !attemptAccountChanged(attempt.accountLogLabel, logCtx.accountLogLabel, attempt.provider, logCtx.provider))) return false;
+    if (usage) transportState.bindKeyUsageFromBridge(usage);
+    return true;
+  };
+  const configureModelSendAllowance = !options.comboAttempt && !options.comboInitialSend && !routedCompaction
+    ? (baseSends: number) => expandInferenceSearchSendBudget(options.sendBudget, baseSends)
+    : undefined;
+  if ((imgPlan || vidPlan) && wsPlan) {
+    // Web search takes priority when both are active — the media bridge cannot run
+    // alongside runWithWebSearch. Surface a runtime signal so the user knows their
+    // configured video/image bridge was skipped for this turn, rather than silently
+    // dropping a paid capability.
+    if (vidPlan) console.warn("[videos] video bridge skipped: web search is active for this turn");
+    if (imgPlan) console.warn("[images] image bridge skipped: web search is active for this turn");
+  }
+  if ((imgPlan || vidPlan) && !wsPlan) {
+    // The image bridge detects a hosted image_generation tool and requires streaming.
+    // The video bridge activates from config and injects a tool — it also needs streaming
+    // (the loop returns SSE). For video-only (no imgPlan) on a non-streaming request, skip
+    // the bridge entirely so enabling the feature doesn't break ordinary non-streaming traffic.
+    if (!parsed.stream) {
+      if (imgPlan) {
+        releaseSearchProbeLease();
+        return formatErrorResponse(400, "invalid_request_error", "image bridge requires stream=true");
+      }
+      // Video-only: skip bridge for non-streaming requests
+    } else {
+    // Replace any pre-existing image_gen/video_gen aliases instead of appending duplicate wire names.
+    const priorTools = parsed.context.tools ?? [];
+    const bridgeTools = [...priorTools.filter(t => {
+      if (t.imageGeneration) return false;
+      if (t.videoGeneration) return false;
+      if (imgPlan && imgPlan.toolNames.has(t.name)) return false;
+      if (imgPlan && t.namespace && imgPlan.toolNames.has(namespacedToolName(t.namespace, t.name))) return false;
+      // Only strip unnamespaced video_gen aliases — a namespaced MCP video_gen is left alone.
+      if (vidPlan && !t.namespace && vidPlan.toolNames.has(t.name)) return false;
+      return true;
+    })];
+    const existingNames = new Set(bridgeTools.map(t => t.name));
+    if (imgPlan && !existingNames.has(IMAGE_GEN_TOOL_NAME)) bridgeTools.push(buildImageTool());
+    if (vidPlan && !existingNames.has(VIDEO_GEN_TOOL_NAME)) bridgeTools.push(buildVideoTool(vidPlan.model));
+    parsed.context.tools = bridgeTools;
+    // Hosted image_generation tool_choice / allowed_tools must target the synthetic function name.
+    // Gate on imgPlan — in a video-only turn buildImageTool() was never injected, so rewriting
+    // image_generation/image_gen aliases would add an undeclared tool that strict upstreams reject.
+    const tc = parsed.options.toolChoice;
+    if (imgPlan && tc && typeof tc === "object" && "allowedTools" in tc && Array.isArray(tc.allowedTools)) {
+      const mapped = tc.allowedTools.map(name =>
+        name === "image_generation" || name === "image_gen" || (imgPlan.toolNames.has(name) ?? false)
+          ? IMAGE_GEN_TOOL_NAME
+          : name,
+      );
+      parsed.options.toolChoice = { ...tc, allowedTools: [...new Set(mapped)] };
+    } else if (imgPlan && tc && typeof tc === "object" && "name" in tc && typeof tc.name === "string"
+      && (tc.name === "image_generation" || imgPlan.toolNames.has(tc.name))) {
+      parsed.options.toolChoice = { ...tc, name: IMAGE_GEN_TOOL_NAME };
+    }
+    normalizeWithheldAdvisorChoice();
+    const imageProviderFetch = providerFetch(
+      route.provider,
+      options.codexWsRuntimeIdentity,
+      { providerName: route.providerName, modelId: route.modelId, ...sidecarBudget.fetchOptions(transportState.adapter) },
+    );
+    const imgLoopResponse = await runWithImageBridge({
+      configureModelSendAllowance,
+      parsed, adapter: transportState.adapter,
+      chatRawReasoningVisible: options.chatRawReasoningVisible,
+      ...(transportState.adapter.name === "anthropic" ? { thinkingRecovery } : {}),
+      ...(imageRecovery ? { imageRecovery } : {}),
+      clientToolCatalogRestriction: route.provider.authMode === "forward" ? undefined : requestState.clientToolCatalogRestriction,
+      incomingMeta: { headers: requestState.selectedForwardHeaders, providerName: route.providerName, abortSignal: options.abortSignal, translatorBudget,
+        ...(options.comboInitialSend ? { providerFetch: imageProviderFetch } : {}), ...sidecarBudget.incomingMeta,
+        // Policy facts ride every runTurn caller, independent of a combo send-budget receipt.
+        comboAttempt: options.comboAttempt === true, ...(requestState.subagentFallbackSelected ? { subagentFallback: true } : {}),
+        ...(options.internalDecisionCall ? { internalDecisionCall: true } : {}),
+        ...(transportState.adapter.reportsPhysicalSends ? {
+          onPhysicalSend: (send: { ordinal: number; recovery?: AttemptRecoveryKind }) => {
+            if (send.ordinal === 1) transportState.commitRunTurnAttemptSend(parsed, send.recovery);
+            sendBudgetState.noteAdapterPhysicalSend(logCtx.usageLogInputTokens, send);
+          },
+        } : {}),
+      },
+      onProducerStart: sidecarBudget.takeProducerOwnership,
+      onProducerEnd: sidecarBudget.release,
+      onIterationEnd: releaseSidecarHop,
+      ...(imgPlan ? { plan: imgPlan } : {}),
+      ...(vidPlan ? { videoPlan: vidPlan } : {}),
+      forwardHeaders: requestState.selectedForwardHeaders,
+      onAttemptSend: noteSidecarAttempt,
+      abortSignal: options.abortSignal,
+      maxRounds: imgPlan && vidPlan
+        ? clampImageMaxRounds(Math.min(config.images?.maxRounds ?? 3, config.images?.videoMaxRounds ?? 2))
+        : imgPlan
+          ? clampImageMaxRounds(config.images?.maxRounds)
+          : clampImageMaxRounds(config.images?.videoMaxRounds ?? 2),
+      connectTimeoutMs: providerConnectTimeoutMs(config, route.provider) ?? 200_000,
+      stallTimeoutSec: providerStallTimeoutSec(config, route.provider), proxyErrorContext: logCtx,
+      waitForRequestSlot: imageProviderFetch.waitForPacing,
+      fetchImpl: imageProviderFetch.unpacedFetch ?? imageProviderFetch,
+      fetchForRequest: (...args) => {
+        const fetch = sidecarRequestFetch(...args);
+        return fetch.unpacedFetch ?? fetch;
+      },
+      ...(vidPlan?.timeoutMs ? { videoTimeoutMs: vidPlan.timeoutMs } : {}),
+      onUsage: usage => {
+        // Cursor may assign _cursorConversationId inside the image loop's first runTurn;
+        // backfill so Logs can filter/total that opening request (parity with the normal
+        // runTurn branch).
+        assignNativeLogConversationId(logCtx, normalizeLogConversationId(parsed._cursorConversationId));
+        transportState.bindKeyUsageFromBridge(usage);
+      },
+      on429: rotateSidecarProviderOn429,
+      onRotatedUsage: billRotatedUsage,
+      retryOn429Policy: route.providerName === "kiro" && isGenericOAuthFailoverEnabled(config, "kiro")
+        ? null : rateLimitRetryPolicyFor(route.provider),
+      onFirstOutput: noteSidecarOutput,
+      ...(options.forceEmptyResponseId ? { forceEmptyResponseId: true } : {}),
+      terminalRefusalAsFailed: inboundWire !== "chat" && inboundWire !== "anthropic",
+      escapeMemoryCitationTags: inboundWire !== "chat" && inboundWire !== "anthropic",
+      onCompletedResponse: (response, providerState) => {
+        if (!options.abortSignal?.aborted) thinkingRecovery.rememberSuccess(response);
+        settleAnthropicPerMessageEffort(parsed, response, transportState.adapter.name);
+        const served = transportState.replayOAuthCredentialSnapshot;
+        if (route.providerName === "kiro" && response.status === "completed" && served
+          && noteKiroServedSuccess(served.accountId, served.generation)) persistKiroAccountState();
+        commitReasoningReplayServingRoute();
+        rememberKiroDeliveredFinalAnswer(transportState.adapter.name, response);
+        rememberResponseState(
+          parsed._rawBody,
+          response,
+          continuationStateForResponse(providerState),
+          {
+            ...responseStateOptions(adapterNeedsForcedContinuation(transportState.adapter.name)),
+            retainForToolContinuation: adapterNeedsToolCallContinuation(transportState.adapter.name),
+          },
+        );
+        notifyResponseComplete(response);
+      },
+    });
+    const imgScopeRefusal = sidecarScopeRefusal(imgLoopResponse);
+    if (imgScopeRefusal) return imgScopeRefusal;
+    // A provider overflow on the first iteration answers as the main path's context failure (#7316).
+    const imgResponse = options.comboAttempt ? imgLoopResponse : sidecarContextOverflowResponse(imgLoopResponse, {
+      stream: parsed.stream, modelId: clientFacingModelText(options.clientModelLabel), translatorBudget,
+    });
+    if (imgResponse.body) {
+      const imgTurnAc = new AbortController();
+      imgTurnAc.signal.addEventListener("abort", cancelResponseCompletion, { once: true });
+      const tracked = new Response(trackStreamLifetime(imgResponse.body, imgTurnAc, releaseSearchProbeLease, options.turnAdmissionLease), {
+        status: imgResponse.status,
+        headers: imgResponse.headers,
+      });
+      // The wrapper is a new object; a verified plan refusal keeps its provenance across it.
+      if (isVerifiedModelNotInPlanResponse(imgResponse)) markVerifiedModelNotInPlanResponse(tracked);
+      return tracked;
+    }
+    releaseSearchProbeLease();
+    return imgResponse;
+    } // end else (streaming bridge)
+  }
+
+  // Web-search sidecar: Codex enabled web_search but this is a routed (non-OpenAI) model that can't
+  // run it server-side. Expose web_search as a function tool and run searches via the gpt-mini sidecar
+  // through the ChatGPT passthrough, looping until the model answers. Otherwise take the normal path.
+  // Placed BEFORE the runTurn early-return for non-runTurn adapters so dual-tool turns dispatch
+  // through web-search instead of being swallowed. runTurn adapters never enter this branch.
+  if (canRunWebSearch && wsPlan) {
+    const requestedTools = parsed.context.tools ?? [];
+    const advisorAllowed = advisorPlan && advisorToolAllowed(parsed, advisorPlan.tool);
+    const webSearchAdvisor = advisorPlan && advisorAllowed && !routedCompaction
+      && typeof advisorPlan.consult === "function" && typeof advisorPlan.formatUnavailable === "function"
+      ? advisorPlan
+      : undefined;
+    parsed.context.tools = [
+      ...requestedTools.filter(tool => !webSearchAdvisor || (!tool.advisor && tool.name !== ADVISOR_TOOL_NAME)),
+      buildWebSearchTool(),
+      ...(webSearchAdvisor ? [webSearchAdvisor.tool] : []),
+    ];
+    if (webSearchAdvisor) {
+      withholdShadowedAdvisorTool();
+      requestState.toolBridgeMaps = buildToolBridgeMaps(parsed);
+      translatorBudget.chargeRetained(new TextEncoder().encode(ADVISOR_TOOL_NAME).byteLength * 2, {
+        kind: "retained_collectors",
+      });
+    }
+    normalizeWithheldAdvisorChoice();
+    // Resolve the mutable route at send time: a 429 rotation replaces route.provider, so retaining
+    // one pre-rotation providerFetch would keep the old credential and transport pin.
+    const routedProviderFetch = ((input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) =>
+      providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+        providerName: route.providerName,
+        modelId: route.modelId,
+        ...sidecarBudget.fetchOptions(transportState.adapter),
+      })(input, init)) as typeof globalThis.fetch;
+    const loopResponse = await runWithWebSearch({
+      terminalContinuationGuard: route.provider.terminalContinuationGuard === true
+        && !options.comboAttempt && !routedCompaction,
+      configureModelSendAllowance,
+      emptyCompletionRetry: emptyCompletionRetryEnabled(config) && !options.comboAttempt && !routedCompaction,
+      dispatchSidecarSend: sendBudgetState.dispatchSidecarSend,
+      parsed, adapter: transportState.adapter,
+      ...(webSearchAdvisor ? { advisor: createAdvisorSidecarStep(webSearchAdvisor as Parameters<typeof createAdvisorSidecarStep>[0]) } : {}),
+      chatRawReasoningVisible: options.chatRawReasoningVisible,
+      ...(transportState.adapter.name === "anthropic" ? { thinkingRecovery } : {}),
+      ...(imageRecovery ? { imageRecovery } : {}),
+      clientToolCatalogRestriction: route.provider.authMode === "forward" ? undefined : requestState.clientToolCatalogRestriction,
+      onIterationEnd: releaseSidecarHop,
+      fetchForRequest: (...args) =>
+        Object.assign(sidecarRequestFetch(...args), { reportsPhysicalDispatch: true as const }),
+      incomingMeta: {
+        headers: requestState.selectedForwardHeaders,
+        providerName: route.providerName,
+        abortSignal: options.abortSignal,
+        translatorBudget,
+        providerFetch: routedProviderFetch,
+        ...sidecarBudget.incomingMeta,
+        ...(!options.comboInitialSend && route.providerName === "google-antigravity"
+          ? { sendBudget: sendBudgetState.refundableAdapterDispatchBudget } : {}),
+        comboAttempt: options.comboAttempt === true,
+        ...(requestState.subagentFallbackSelected ? { subagentFallback: true } : {}),
+        ...(options.internalDecisionCall ? { internalDecisionCall: true } : {}),
+      },
+      backend: wsPlan.backend,
+      forwardProvider: wsPlan.forwardSidecar?.provider,
+      anthropicSidecar: wsPlan.anthropicSidecar,
+      xaiSidecar: wsPlan.xaiSidecar,
+      geminiSidecar: wsPlan.geminiSidecar,
+      xaiSearchOptions: wsPlan.xaiSearchOptions,
+      // The exa key never rides the plan: read it from config at unpack time (L9).
+      ...(wsPlan.exaConfigured ? { exaApiKey: config.webSearchSidecar?.exaApiKey } : {}),
+      hostedTool: wsPlan.hostedTool,
+      selectedForwardHeaders: wsPlan.forwardSidecar?.headers ?? requestState.selectedForwardHeaders,
+      settings: wsPlan.settings,
+      maxSearches: wsPlan.maxSearches,
+      forceEmptyResponseId: true,
+      terminalRefusalAsFailed: inboundWire !== "chat" && inboundWire !== "anthropic",
+      escapeMemoryCitationTags: inboundWire !== "chat" && inboundWire !== "anthropic",
+      abortSignal: options.abortSignal,
+      onFirstOutput: noteSidecarOutput,
+      onAttemptSend: noteSidecarAttempt,
+      onUsage: usage => {
+        transportState.bindKeyUsageFromBridge(usage);
+      },
+      recordSidecarOutcome: wsPlan.forwardSidecar?.recordOutcome,
+      beforeSidecarDispatch: wsPlan.forwardSidecar?.beforeDispatch,
+      connectTimeoutMs: providerConnectTimeoutMs(config, route.provider) ?? 200_000,
+      routedModelStallTimeoutMs: wsPlan.routedModelStallTimeoutMs,
+      stallTimeoutSec: wsPlan.stallTimeoutSec, proxyErrorContext: logCtx,
+      onLocalFailure: options.onWebSearchLocalFailure,
+      streamRoutedModelOutput: wsPlan.streamRoutedModelOutput,
+      on429: rotateSidecarProviderOn429,
+      onRotatedUsage: billRotatedUsage,
+      ...(!options.comboInitialSend && route.providerName === "google-antigravity" ? { onIterationEnd: () => {
+        // The next Antigravity adapter dispatch claims this permit. If request construction,
+        // admission or cancellation stopped it first, return the unused send allowance.
+        const permit = sendBudgetState.pendingHopPermit;
+        releaseSidecarHop();
+        sendBudgetState.pendingHopPermit = undefined;
+        permit?.release();
+      } } : {}),
+      retryOn429Policy: route.providerName === "kiro" && isGenericOAuthFailoverEnabled(config, "kiro")
+        ? null : rateLimitRetryPolicyFor(route.provider),
+      onCompletedResponse: response => {
+        settleAnthropicPerMessageEffort(parsed, response, transportState.adapter.name);
+        const served = transportState.replayOAuthCredentialSnapshot;
+        if (route.providerName === "kiro" && response.status === "completed" && served
+          && noteKiroServedSuccess(served.accountId, served.generation)) persistKiroAccountState();
+        commitReasoningReplayServingRoute();
+        if (!options.abortSignal?.aborted) thinkingRecovery.rememberSuccess(response);
+        notifyResponseComplete(response);
+      },
+    });
+    if (loopResponse.ok && parsed.stream) options.onHostedWebSearchStream?.();
+    const wsScopeRefusal = sidecarScopeRefusal(loopResponse);
+    if (wsScopeRefusal) return wsScopeRefusal;
+    // A routed Anthropic model whose last pool account refused on spent quota fails the loop's
+    // first iteration with a generic 429 before any search runs. Answer the usage limit instead,
+    // as the main path does (#6991), so Codex stops rather than retrying the whole turn.
+    const poolUsageLimit = loopResponse.status === 429 && anthropicInstance && route.provider.authMode === "oauth"
+      && !options.comboAttempt
+      ? anthropicRoutingFor(anthropicInstance).anthropicPoolUsageLimitAfterRefusal(Date.now(), transportState.anthropicRouteDecision, route.modelId)
+      : null;
+    if (poolUsageLimit) void loopResponse.body?.cancel().catch(() => {});
+    // A provider overflow on the first iteration answers as the main path's context failure (#7316).
+    const wsResponse = poolUsageLimit ? anthropicPoolCooldownResponse(poolUsageLimit, { logCtx })
+      : options.comboAttempt ? loopResponse
+        : sidecarContextOverflowResponse(loopResponse, {
+          stream: parsed.stream, modelId: clientFacingModelText(options.clientModelLabel), translatorBudget,
+        });
+    // Register the sidecar stream as an active turn so drainAndShutdown waits for (or aborts)
+    // in-flight web-search turns instead of skipping them during graceful shutdown.
+    if (wsResponse.body) {
+      const wsTurnAc = new AbortController();
+      wsTurnAc.signal.addEventListener("abort", cancelResponseCompletion, { once: true });
+      const tracked = new Response(trackStreamLifetime(wsResponse.body, wsTurnAc, releaseSearchProbeLease, options.turnAdmissionLease), {
+        status: wsResponse.status,
+        headers: wsResponse.headers,
+      });
+      if (isVerifiedModelNotInPlanResponse(wsResponse)) markVerifiedModelNotInPlanResponse(tracked);
+      return tracked;
+    }
+    releaseSearchProbeLease();
+    return wsResponse;
+  }
+
+  // Advisor synthetic tool + stream guard: attach ONLY when this function is about to hand the
+  // request back to the normal translated exchange (no sidecar loop claimed the turn, not a
+  // run-turn adapter, not compaction). Web-search handles advisor in its own loop above; the
+  // image/video and run-turn loops cannot intercept it. Preflight still applies to those paths.
+  if (advisorPlan && !routedCompaction && !transportState.adapter.runTurn && !wsPlan && !imgPlan && !vidPlan) {
+    if (!advisorToolAllowed(parsed, advisorPlan.tool)) {
+      // Keep the refusal guard without injecting or shadowing tools. Direct Messages delivery
+      // must not expose a forbidden synthetic call merely because it was never advertised.
+      normalizeWithheldAdvisorChoice();
+      advisorPlan.attachGuard(parsed);
+      return undefined;
+    }
+    // A client-declared tool named "advisor" would collide with the synthetic injection (one
+    // wire name, two schemas); the synthetic runtime owns the name for this turn.
+    parsed.context.tools = [
+      ...(parsed.context.tools ?? []).filter(t => !t.advisor && t.name !== ADVISOR_TOOL_NAME),
+      advisorPlan.tool,
+    ];
+    withholdShadowedAdvisorTool();
+    // The advisor tool joined AFTER prepare computed the bridge maps; recompute so the tool is
+    // declared (undeclared-tool guard, tool_choice mapping, schema repair) on this turn.
+    //
+    // Rebuild WITHOUT the budget: prepare already charged every tool in the catalog, and
+    // buildToolBridgeMaps charges each name it registers, so re-passing the budget would bill the
+    // whole catalog a second time and can trip `translation_buffer_limit` for a large MCP catalog.
+    // Charge only the one entry that is genuinely new — the synthetic advisor tool is a bare
+    // function tool, so it retains its wire name and its bare name (collaboration.ts:187, :233).
+    requestState.toolBridgeMaps = buildToolBridgeMaps(parsed);
+    translatorBudget.chargeRetained(new TextEncoder().encode(ADVISOR_TOOL_NAME).byteLength * 2, {
+      kind: "retained_collectors",
+    });
+    advisorPlan.attachGuard(parsed);
+  }
+
+  normalizeWithheldAdvisorChoice();
+  return undefined;
+}

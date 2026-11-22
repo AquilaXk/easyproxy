@@ -1,0 +1,188 @@
+import { isKeyInCooldown } from "./api-key-cooldowns";
+import { randomUUID } from "node:crypto";
+import { mutatePersistedConfig } from "../config";
+import { publishAccountSelection } from "../lib/account-selection-events";
+import { clearModelCache } from "../codex/model-cache";
+import type { EpxConfig, EpxProviderConfig } from "../types";
+import type { ProviderApiKeySelection } from "../types/provider";
+import { routedProviderConfig } from "./routed-config";
+import { OPENCODE_GO_SESSION_HEADER } from "./opencode-go-transport";
+import { resolveProviderTransport, XAI_GROK_COMPATIBILITY, type EpxProviderTransport } from "./xai-transport";
+import { captureProviderApiKeySelection } from "./api-key-selection-capture";
+import { vertexEnvironmentKeyIsCurrent } from "./vertex-environment-authority";
+import { cacheAffinityApplies } from "./cache-affinity";
+import { currentCacheAffinityIdentity } from "./cache-affinity-identity";
+
+export { captureProviderApiKeySelection } from "./api-key-selection-capture";
+
+export function affinitySelectionIsCurrent(name: string, provider: EpxProviderConfig, expected: ProviderApiKeySelection): boolean {
+  return !!expected.cacheAffinityGeneration && !!expected.entryId
+    && expected.cacheAffinityGeneration === currentCacheAffinityIdentity(name, provider, expected.entryId);
+}
+
+/** A stale affinity generation cannot authorize paced readmission onto another credential. */
+export function providerAffinityGenerationIsCurrent(config: EpxConfig, name: string, routed: EpxProviderConfig): boolean {
+  const selection = routed._apiKeyAttempt;
+  return !selection?.cacheAffinity || !!config.providers[name]
+    && affinitySelectionIsCurrent(name, config.providers[name]!, selection);
+}
+
+function matchesSelection(name: string, provider: EpxProviderConfig, expected: ProviderApiKeySelection): boolean {
+  if (expected.distributed && !expected.cacheAffinity) return provider.apiKeySelectionRevision === expected.revision
+    && provider.requestPacing?.enabled === true && provider.requestPacing.keySelection === "round-robin"
+    && !!provider.apiKeyPool?.some(entry => !entry.disabled && entry.id === expected.entryId && entry.key === expected.reference);
+  if (expected.cacheAffinity === true) {
+    // Affinity picks are fenced on credential/destination generation, not selection revision.
+    // commitProviderApiKeySelection bumps the revision on EVERY committed key
+    // change — automatic rotation included — so a revision fence cannot tell
+    // an operator's re-selection from another conversation's rotation, and
+    // telling them apart is not affinity's job: the conversation keeps its
+    // credential while its generation lives, and the provider's cacheAffinity mode
+    // is the operator's override. (Ordinary captured selections keep the
+    // revision fence below: a permit for the previously committed key must
+    // not dispatch after a manual replacement.)
+    return cacheAffinityApplies(provider) && affinitySelectionIsCurrent(name, provider, expected) && !!expected.entryId && !!expected.reference
+      && (provider.apiKeyPool ?? []).some(entry => !entry.disabled && entry.id === expected.entryId && entry.key === expected.reference);
+  }
+  const current = captureProviderApiKeySelection(provider);
+  if (current.revision !== expected.revision) return false;
+  return current.entryId === expected.entryId && current.reference === expected.reference;
+}
+
+function currentKeyProvider(config: EpxConfig, name: string, selection?: ProviderApiKeySelection, allowCooling = false): EpxProviderConfig | null {
+  const configured = config.providers[name];
+  if (!configured || configured.disabled) return null;
+  if (selection?.cacheAffinity && !cacheAffinityApplies(configured)) return null;
+  if (selection?.cacheAffinity && !affinitySelectionIsCurrent(name, configured, selection)) return null;
+  let row = configured;
+  if (selection?.distributed) {
+    const entry = configured.apiKeyPool?.find(key => key.id === selection.entryId && key.key === selection.reference);
+    if (!entry || entry.disabled || (!allowCooling && isKeyInCooldown(name, entry.id)) || (!selection.cacheAffinity && configured.apiKeySelectionRevision !== selection.revision)
+      || !configured.requestPacing?.enabled || configured.requestPacing.keySelection !== "round-robin") return null;
+    row = { ...configured, apiKey: entry.key, _apiKeyAttempt: selection };
+  }
+  else if (selection?.cacheAffinity && selection.entryId && selection.reference) {
+    // A request-captured pool selection (cache affinity picks one without
+    // committing it globally) survives this re-read while its generation is live:
+    // present with the captured key, enabled, and out of cooldown. It is
+    // deliberately NOT fenced on the selection revision — that revision bumps
+    // on every committed change, automatic rotation included, so it cannot
+    // supersede a pick whose whole purpose is to outlast committed movement.
+    // An invalidated captured pick cannot authorize a different credential.
+    const entry = configured.apiKeyPool?.find(key => key.id === selection.entryId && key.key === selection.reference);
+    if (entry && !entry.disabled && (allowCooling || !isKeyInCooldown(name, entry.id))) {
+      row = { ...configured, apiKey: entry.key, _apiKeyAttempt: selection };
+    } else return null;
+  }
+  const hasPausedActiveReference = row.apiKeyPool?.some(entry => entry.disabled && entry.key === row.apiKey)
+    && !row.apiKeyPool?.some(entry => !entry.disabled && entry.key === row.apiKey);
+  if (hasPausedActiveReference || row.apiKeyPool?.length && row.apiKeyPool.every(entry => entry.disabled)) return null;
+  const current = routedProviderConfig(name, { ...row, _apiKeyAttempt: row === configured ? undefined : selection });
+  if (current.authMode === "oauth" || current.authMode === "forward") return null;
+  if (current.authMode === "key" && !current.keyOptional && !current.apiKey?.trim()
+    && !(current.adapter === "google" && current.googleMode === "vertex")) return null;
+  return current;
+}
+
+/** Physical-send check; stored references alone do not detect a changed env/keychain value. */
+export function providerApiKeySelectionIsCurrent(
+  config: EpxConfig,
+  name: string,
+  routedProvider: EpxProviderConfig,
+): boolean {
+  return matchesConfiguredSelection(config, name, routedProvider, false);
+}
+
+/** An already sent failure can extend cooldown, but cannot authorize another dispatch. */
+export function providerApiKeySelectionOwnsFailure(
+  config: EpxConfig, name: string, routedProvider: EpxProviderConfig,
+): boolean {
+  return matchesConfiguredSelection(config, name, routedProvider, true);
+}
+
+function matchesConfiguredSelection(
+  config: EpxConfig, name: string, routedProvider: EpxProviderConfig, allowCooling: boolean,
+): boolean {
+  const expected = routedProvider._apiKeyAttempt;
+  const current = currentKeyProvider(config, name, expected, allowCooling);
+  return current !== null && expected !== undefined
+    && vertexEnvironmentKeyIsCurrent(expected, current)
+    && (expected.distributed === true || matchesSelection(name, config.providers[name]!, expected))
+    && current.apiKey === routedProvider.apiKey
+    && current.authMode === routedProvider.authMode
+    && current.baseUrl === routedProvider.baseUrl
+    && (current.googleMode !== "vertex" && routedProvider.googleMode !== "vertex"
+      || current.googleMode === routedProvider.googleMode && current.project === routedProvider.project
+        && current.location === routedProvider.location);
+}
+
+/** Rebuild transport from the already committed choice; never allocate or publish a selection. */
+export function resolveCurrentProviderApiKeyTransport(
+  config: EpxConfig,
+  name: string,
+  routedProvider: EpxProviderConfig,
+): EpxProviderConfig | null {
+  // A permit acquired for one key cannot authorize a different key after a manual edit.
+  if (routedProvider.requestPacing?.enabled && routedProvider.requestPacing.keys
+    && routedProvider._apiKeyAttempt && config.providers[name]
+    && !routedProvider._apiKeyAttempt.distributed && !matchesSelection(name, config.providers[name]!, routedProvider._apiKeyAttempt)) return null;
+  const current = currentKeyProvider(config, name, routedProvider._apiKeyAttempt);
+  if (!current) return null;
+  const runtime = routedProvider as EpxProviderTransport;
+  const headers = { ...current.headers };
+  const affinityHeaders = name === "xai"
+    ? [XAI_GROK_COMPATIBILITY.headers.conversationId, XAI_GROK_COMPATIBILITY.headers.sessionId]
+    : [OPENCODE_GO_SESSION_HEADER];
+  for (const header of affinityHeaders) {
+    const configured = Object.keys(headers).some(key => key.toLowerCase() === header.toLowerCase());
+    const value = Object.entries(runtime.headers ?? {}).find(([key]) => key.toLowerCase() === header.toLowerCase())?.[1];
+    if (!configured && value !== undefined) headers[header] = value;
+  }
+  const fetch = (current as EpxProviderTransport).fetch ?? runtime.fetch;
+  return resolveProviderTransport(name, {
+    ...current,
+    ...(Object.keys(headers).length ? { headers } : {}),
+    ...(fetch ? { fetch } : {}),
+  });
+}
+
+type SelectionMutation<T> = { changed: boolean; value: T; selectionChanged?: boolean };
+export type ProviderApiKeyCommit<T> =
+  | { status: "committed"; provider: EpxProviderConfig; value: T }
+  | { status: "superseded"; provider: EpxProviderConfig }
+  | { status: "unavailable" };
+
+/** GUI and recovery share one persisted selection transaction and post-commit notification. */
+export function commitProviderApiKeySelection<T>(
+  config: EpxConfig,
+  name: string,
+  mutation: (provider: EpxProviderConfig) => SelectionMutation<T>,
+  expectedSelection?: ProviderApiKeySelection,
+): ProviderApiKeyCommit<T> {
+  const outcome = mutatePersistedConfig<ProviderApiKeyCommit<T> & { notify?: boolean }>(fresh => {
+    const provider = fresh.providers[name];
+    if (!provider || provider.authMode === "oauth" || provider.authMode === "forward") {
+      return { changed: false, value: { status: "unavailable" } };
+    }
+    if (expectedSelection && !matchesSelection(name, provider, expectedSelection)) {
+      return { changed: false, value: { status: "superseded", provider: structuredClone(provider) } };
+    }
+    const before = provider.apiKey;
+    const result = mutation(provider);
+    const notify = result.selectionChanged === true || before !== provider.apiKey;
+    if (notify) provider.apiKeySelectionRevision = randomUUID();
+    delete provider._apiKeyAttempt;
+    return {
+      changed: result.changed || notify,
+      value: { status: "committed", provider: structuredClone(provider), value: result.value, notify },
+    };
+  });
+  if (outcome.status === "unavailable") return { status: "unavailable" };
+  const committed = outcome.value;
+  if (committed.status !== "unavailable") config.providers[name] = structuredClone(committed.provider);
+  if (committed.status === "committed" && committed.notify) {
+    clearModelCache(name);
+    publishAccountSelection(name, "api-key");
+  }
+  return committed;
+}

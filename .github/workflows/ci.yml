@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  gates:
+    name: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: runtime
+
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          bun install --cwd gui --frozen-lockfile
+
+      - name: Repository hygiene and commit guard
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ -n "${BASE_SHA:-}" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            bun scripts/check-repo-hygiene.ts --commits "${BASE_SHA}..${HEAD_SHA}"
+          else
+            bun scripts/check-repo-hygiene.ts
+          fi
+
+      - name: Typecheck and static invariants
+        run: |
+          bun run typecheck
+          bun run typecheck:tsc
+          bun run privacy:scan
+          bun run structure:check
+          bun run skill:surface:check
+          bun run docs:clients:check
+
+      - name: Lint and build GUI
+        run: |
+          bun run lint:gui
+          bun run build:gui
+
+      - name: Layout and CI contract tests
+        run: |
+          bun test tests/test-layout.test.ts tests/test-layout-tooling.test.ts tests/ci-workflows/ tests/lab/core-lab-boundary.test.ts tests/server/startup-prompt.test.ts
+
+  native-rust:
+    name: native rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: test-runner
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Test native Rust helpers
+        run: |
+          bun run test:remote-workspace-helper
+          bun run test:epx-child
+
+  macos-menubar:
+    name: macos menubar
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Run MenuBarCoreTests
+        run: swift run --package-path app MenuBarCoreTests

@@ -1,0 +1,117 @@
+---
+title: Pi
+description: Pi에서 라우팅된 모델을 그대로 쓸 수 있습니다. `epx export`가 Pi의 `models.json`에 맞는 커스텀 provider 블록을 내보내고, 실행 중인 프록시에 연결합니다.
+---
+
+Pi는 하나의 전역 JSON 파일에서 공급자를 읽습니다. easyproxy가 Pi를 실행하는 대신 `epx export`가 기본 URL, 모델 목록, 비밀이 아닌 로컬 키 자리표시자가 담긴 `easyproxy` 공급자 블록을 출력합니다. 이 블록을 기존 설정에 병합하세요.
+
+## 빠른 시작
+
+프록시를 먼저 띄우고 config를 출력합니다.
+
+```bash
+epx start
+```
+
+이 프로세스를 실행한 상태로 두고, 두 번째 터미널에서 설정을 출력하세요.
+
+```bash
+epx export --client pi
+```
+
+출력에는 JSON 다음으로 대상 경로, 병합 경고, 루프백 사용 안내와 확인된 컨텍스트 한도가 있는 모델 수가 나옵니다. 이 내보내기는 인증이 없는 루프백 프록시만 지원하며 원격 접근 인증을 설정하지 않습니다.
+
+```json
+{
+  "providers": {
+    "easyproxy": {
+      "baseUrl": "http://127.0.0.1:10100/v1",
+      "api": "openai-completions",
+      "apiKey": "easyproxy-loopback",
+      "compat": {
+        "sendSessionAffinityHeaders": true,
+        "supportsDeveloperRole": false
+      },
+      "models": [
+        {
+          "id": "anthropic/claude-opus-5",
+          "name": "Claude Opus 5 (anthropic)",
+          "input": ["text"],
+          "contextWindow": 200000,
+          "maxTokens": 128000
+        }
+      ]
+    }
+  }
+}
+```
+
+생성된 Pi provider에는 `compat.sendSessionAffinityHeaders`가 활성화됩니다. provider를 병합하거나 직접 수정할 때 이 설정을 유지하세요. Pi가 안정적인 세션 식별자를 보내면 EasyProxy가 이를 바탕으로 정규 OpenCode Go 대상의 affinity를 계산합니다. `cacheRetention`이 `none`이면 Pi가 식별자를 보내지 않을 수 있습니다.
+
+생성된 Pi provider는 `compat.supportsDeveloperRole`도 `false`로 설정합니다. 그래서 Pi는 시스템 프롬프트를 `developer`가 아닌 `system` 역할로 보냅니다. EasyProxy는 Chat Completions 역할을 받은 그대로 전달하는데, OpenAI 호환 업스트림 중 일부는 `developer`를 400으로 거부합니다. `system`은 모든 업스트림이 받습니다.
+
+모델 id는 프록시의 정규 선택자이므로, 라우팅된 모델은 `provider/model`
+(`anthropic/claude-opus-5`) 형태로 나타나고, 네이티브 OpenAI slug는 접두사 없이
+(`gpt-5.6-sol`) 유지됩니다. `name` 접미사인 `(anthropic)`, `(native)`, `(routed)`는
+Pi 선택기에서 같은 이름의 서로 다른 upstream 모델을 구분하게 해줍니다.
+
+중첩된 upstream 모델 ID는 실행 중인 프록시가 같은 모델에 도달함을 증명하면 Pi 내보내기에서
+슬래시가 있는 원래 선택자를 사용합니다. 예를 들어 `openrouter/openrouter/free`는 OpenRouter의
+`openrouter/free` 모델을 선택하고, 그 Fast 행은 `openrouter/openrouter/free--fast`입니다.
+프록시가 이렇게 증명할 수 없는 모델(인벤토리가 아직 로드되지 않았거나 원래 표기를 다른 모델이 이미
+쓰는 경우 등)은 인코딩된 선택자를 유지합니다. 사용자 지정 별칭은 이름을 유지합니다.
+
+## 저장 위치
+
+Pi의 전역 모델 config는 다음과 같습니다.
+
+```text
+~/.pi/agent/models.json
+```
+
+:::caution[병합하고, 대체하지 마세요]
+`epx export`는 그 파일을 절대 쓰지 않습니다. `providers.easyproxy` 블록을 그 안에
+병합하세요. 파일을 통째로 바꾸면 이미 설정해 둔 다른 provider가 모두 사라집니다.
+`--out`은 임시 경로용이며, `--force` 없이 이미 존재하는 파일을 덮어쓰지 못합니다.
+
+```bash
+epx export --client pi --out ~/easyproxy-pi-models.json
+epx export --client pi --json > ~/easyproxy-pi-models.json   # or redirect the byte-exact JSON
+```
+:::
+
+내보낸 블록은 실시간 뷰가 아니라 고정 스냅샷입니다. provider를 추가하거나 모델
+가시성을 바꾼 뒤에는 `epx export`를 다시 실행하고, 새 블록을 옛 블록 위에 병합하세요.
+
+## 인증 키
+
+내보낸 `apiKey`는 비밀이 아닌 자리표시자 `easyproxy-loopback`입니다. 키 환경 변수를 내보낼 필요가 없습니다. 내보내기는 인증이 없는 루프백 프록시만 허용하며 원격 또는 토큰으로 보호된 프록시는 거부합니다. 공급자 자격 증명은 [공급자](/ko/guides/providers/)에 설명된 easyproxy 설정에 남습니다. 이 Pi 블록에 상위 공급자의 키를 넣지 마세요. 원격 접근에는 프록시 접근 인증을 지원하는 통합을 사용하세요. 자리표시자를 바꿔도 Pi 원격 내보내기가 활성화되지 않습니다.
+
+## 모델 메타데이터
+
+`contextWindow`와 `maxTokens`는 카탈로그가 확정된 context window를 보고할 때만
+출력됩니다. 그렇지 않으면 두 필드 모두 해당 모델에서 생략되고, Pi는 자체 기본값을
+적용합니다. `epx export`는 그 경우가 몇 줄이었는지도 함께 출력합니다.
+
+출력 한도는 카탈로그 또는 생성된 메타데이터의 알려진 모델 한도를 사용합니다. 알 수 없는 경우에만 `32000`을 사용합니다. 출력 한도는 항상 context window 이하로 제한되며, `32000`보다 작은 알려진 한도도 유지됩니다.
+
+`cost`는 의도적으로 생략합니다. 네 가격 필드가 모두 필요하지만 easyproxy에는 라우팅 모델의 가격 데이터가 없으므로, 0을 출력하면 모든 모델이 무료라는 잘못된 의미가 됩니다.
+
+카탈로그의 effort 단계가 **비어 있지 않을 때** `"reasoning": true`를 출력합니다. 단계가 없거나 명시적으로 비어 있으면 출력하지 않습니다. `thinkingLevelMap`은 대응 대상이 없는 Pi 단계를 `null`로 숨겨 선언되지 않은 값을 제안하거나 보내지 않게 합니다. `max` 없이 `ultra`만 선언되면 Pi의 `max`를 `ultra`에 매핑합니다. 다른 매핑은 Pi 문서에 따라 `thinkingLevelMap`을 직접 편집하세요.
+
+`reasoning`은 카탈로그에서 파생된 Pi UI 메타데이터이며 공급자의 네이티브 지원 증거가 아닙니다. 실제 `reasoning_effort`는 어댑터와 모델에 따라 전달, 변환, 제한, 에뮬레이션되거나 생략됩니다(예: `noReasoningModels`). 이 불리언은 Pi가 제어 항목을 제공할지만 결정합니다.
+
+## 스키마 상태
+
+:::note[실제 설치에서 검증하지 않음]
+위의 형태는 Pi가 공개한 custom-provider 문서를 따른 것입니다. Pi가 설치된 머신의
+실제 `~/.pi/agent/models.json`으로는 아직 검증하지 않았습니다. Pi가 내보낸 블록을
+거부하면 문제는 우리 쪽에 있습니다. Pi가 무엇을 보고했는지와 함께
+[issue를 열어주세요](https://github.com/AquilaXk/easyproxy/issues).
+:::
+
+## 요구 사항
+
+실행 중인 easyproxy 프록시(`epx start`)와 설치된 Pi가 필요합니다. `epx export`는
+프록시의 management API를 통해 live catalog를 읽으므로, 빈 모델 목록으로는 config를
+내보낼 수 없습니다.

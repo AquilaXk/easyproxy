@@ -1,0 +1,77 @@
+# Structural turn replay membership
+
+`src/server/responses/turn-membership.ts` enables structural replay normalization
+only with explicit embedding-shell `EASYPROXY_RESPONSE_TURN_SIGNING_KEY` material,
+an admitted request, a separately verified dedicated local API credential and an
+explicit own `thread-id` header. Parent-thread and session/cache cohorts do not qualify.
+`src/server/auth-cors.ts` derives the structural principal with the signing key;
+its existing process-local context principal and provider-opaque state ownership
+remain unchanged. A different credential or signing key starts a different scope.
+
+`src/responses/turn-membership.ts` verifies versioned item IDs bound to that caller,
+thread, turn nonce, item kind and ordinal. IDs prove structural grouping only:
+they do not authenticate payload bytes, completion, execution permission or vendor
+metadata. `src/server/responses/request-prepare.ts` applies the pass before `parseRequest`. It keeps unique
+real results and forms the buffered semantic-items/calls/results ordering only
+for authenticated closed spans. Invalid signed groups leave the entire input
+unchanged. The codec copies supplied key bytes independently of typed-array subclasses,
+so clearing a caller-owned Buffer does not mutate the signing key. No key is generated, restored from customer history or written to disk.
+The absent/malformed-key default changes no input. The pass uses bounded linear
+indexing with at most 65,536 input items and retains existing item references.
+
+Independently of structural normalization, request preparation snapshots current-turn
+tool names for output normalization. Responses enforces membership in that catalog;
+Chat and Messages enforce it when the caller explicitly empties a catalog, while
+omitted and partial catalogs retain deferred delivery. Declarations prepended while
+expanding `previous_response_id` remain history and cannot grant current-turn membership.
+A nameless hosted declaration that translated adapters expose as a function (`tool_search`)
+adds that function name to the snapshot only when the current turn declares it; a replayed
+declaration still grants nothing.
+Delivery intersects current names with the existing selection-filtered bridge names, so
+`tool_choice` cannot be widened by the snapshot. Ordinary Responses validation retains its
+delivery owner and diagnostics; the additional guard enforces explicit-empty catalogs and
+Responses replay boundaries. Initial hosted-sidecar deferred delivery retains its existing contract.
+A named [hosted Advisor selection](../advisor.md#execution-paths) uses the original Messages
+declaration, with availability checked separately on each fallback candidate before dispatch.
+When the serialized Anthropic request carries a hosted Advisor credential binding, initial,
+recovery, and continuation send reporters claim the workflow slot at the executor receipt after
+credential validation. A post-rewrite refusal consumes zero slots for that attempt, and an optional
+rebuild consumes one slot when its executor runs. A destination with Advisor forwarding disabled
+uses its ordinary reporter even when the inbound catalog declares Advisor.
+`tests/responses/explicit-empty-tool-catalog-history.test.ts` covers these continuation boundaries
+and normalization across adapter/run-turn JSON/SSE. The real direct Messages planner and delivery
+share one signed-history translation budget in `tests/responses/current-turn-tool-catalog-direct.test.ts`.
+Namespace restoration must also name a current canonical identity; an ambiguous historical bare
+alias is refused while the current canonical spelling stays callable. The two identity directions
+are covered by `tests/responses/current-turn-tool-catalog-namespace.test.ts` on both delivery lanes.
+
+`tests/responses/turn-membership.test.ts` covers token and scope controls;
+`tests/responses/turn-membership-ingress.test.ts` proves actual ingress-to-supplier
+request equality against the buffered reference and refusal of keyless ownership.
+`src/server/responses/adapter-delivery.ts` passes a per-response item-ID factory into
+`src/bridge/sse.ts` only for the negotiated canonical Chat streaming path. Each message,
+reasoning, function, custom, or client tool-search item receives its identity at creation;
+all later frames and the final output retain that identity. Hosted-search cell IDs,
+Anthropic progress carriers, compaction, native and sidecar output retain their existing owners.
+Client tool-search membership requires a client-executed call with object arguments and one
+matching client output with a tools array; missing, wrong or duplicate results refuse normalization.
+
+The trusted `completedToolBlocks` build metadata is set only for authenticated own-thread
+streaming Responses requests with durable membership and without compaction. It reaches initial,
+retry and queued rebuilds through `src/server/responses/adapter-dispatch.ts` and
+`src/server/responses/request-transport.ts`; missing metadata keeps earlier tool delivery off.
+`src/server/responses/request-transport.ts` also records eligible key rate-limit headers through the process-local passive observation owner, without changing routing. This structural mechanism does not alter supplier bodies, reasoning effort, retry policy,
+settlement or provider-opaque replay scope.
+
+The route-independent Claude bridge pool key agrees with final Codex selection; see [Claude affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch).
+
+Right after continuation expansion, and only for a request that carries a Remote Link turn observer (a link WebSocket turn, or a relayed request with the link relay's internal token header), `request-prepare.ts` reports the expanded input to `src/server/link-turn.ts`; an expansion miss reports a failure. A request without an observer runs no code there, and the header is removed before anything is forwarded (`structure/remote-link.md`). The same seam receives the chain outcome (expanded, unexpanded or none) and, at the two refusals of an unexpanded continuation, marks the row's link continuation as a miss with reason missing.
+
+When the selected route targets canonical ChatGPT and its continuation cannot be expanded, request preparation logs the selected provider and model with `previous_response_not_found` and synthetic provenance. If preparation made no inference send, the row has `local-refusal` and no physical attempt. Opt-in encrypted-task recovery can send before a reroute to native fallback. In that case the row preserves the recovery attempts with their own model, status, and any reported usage. A client resend carrying the full history is a separate request.
+
+Translated union Combo admission and final child preparation share the hosted Advisor destination check. This operates on scoped tool declarations independently of response-turn membership.
+
+A combo bridge child inherits the intersection of the ingress scope and the current
+configured-key scope at dispatch.
+
+A strict replay miss ends preparation before recovery or upstream dispatch. For a direct canonical ChatGPT route, request preparation records the requested model and effort, provider, and route trace using request metadata and a route preview. `tests/codex-integration/issue-702-expired-replay-state.test.ts` covers the resulting zero-send log row.

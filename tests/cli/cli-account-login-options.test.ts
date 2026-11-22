@@ -1,0 +1,556 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { Readable } from "node:stream";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { handleLogin, loginUsageMessage } from "../../src/oauth/login-cli";
+import { KEY_LOGIN_PROVIDERS, validateApiKey } from "../../src/oauth/key-providers";
+import { handleAccountAuthCommand } from "../../src/cli/account-auth";
+import { cmdAccount } from "../../src/cli/account";
+import { noteCredentialArgv, scrubCredentialOperands } from "../../src/cli/secret-args";
+import type { RuntimeApiDeps } from "../../src/cli/runtime-api";
+import { createTempHome, type TempHome } from "../helpers/temp-home";
+import { repoPath } from "../helpers/repo-root";
+import { pathToFileURL } from "node:url";
+
+const SECRET = "synthetic-private-value";
+let home: TempHome;
+let log: ReturnType<typeof spyOn>, error: ReturnType<typeof spyOn>, network: ReturnType<typeof spyOn>, sleep: ReturnType<typeof spyOn>;
+let oldToken: string | undefined;
+beforeEach(() => {
+  home = createTempHome("epx-login-options-");
+  writeFileSync(home.path("auth.json"), "untouched-store");
+  oldToken = process.env.EASYPROXY_ADMIN_AUTH_TOKEN;
+  delete process.env.EASYPROXY_ADMIN_AUTH_TOKEN;
+  log = spyOn(console, "log").mockImplementation(() => {});
+  error = spyOn(console, "error").mockImplementation(() => {});
+  network = spyOn(globalThis, "fetch").mockImplementation(async () => { throw new Error("Network forbidden"); });
+  sleep = spyOn(Bun, "sleep").mockResolvedValue(undefined);
+});
+afterEach(() => {
+  expect(network).not.toHaveBeenCalled();
+  expect(readFileSync(home.path("auth.json"), "utf8")).toBe("untouched-store");
+  expect(JSON.stringify([log.mock.calls, error.mock.calls])).not.toContain(SECRET);
+  log.mockRestore(); error.mockRestore(); network.mockRestore(); sleep.mockRestore();
+  if (oldToken === undefined) delete process.env.EASYPROXY_ADMIN_AUTH_TOKEN;
+  else process.env.EASYPROXY_ADMIN_AUTH_TOKEN = oldToken;
+  home.remove();
+});
+type Call = { url: string; method: string; redirect?: RequestRedirect; body?: unknown };
+function fixture(replies: unknown[] = [{ url: "https://example.test/auth", flowId: "flow-1", browserLaunch: "skipped" }], httpStatus = 200) {
+  const calls: Call[] = [];
+  let probes = 0, reads = 0;
+  const deps: RuntimeApiDeps = {
+    // Pinned: this suite runs under coding agents and CI, which the Antigravity gate refuses.
+    antigravityRisk: { agentDriven: () => false, promptVisible: () => true },
+    stdinImpl: new Readable({ read() { reads++; this.push(`${SECRET}\n`); this.push(null); } }),
+    findLiveProxy: async () => { probes++; return { port: 32000 + probes, hostname: "127.0.0.1", pid: 1, source: "runtime" }; },
+    fetchImpl: (async (input, init) => {
+      calls.push({ url: String(input), method: init?.method ?? "GET", redirect: init?.redirect, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      const reply = replies[calls.length - 1];
+      if (reply instanceof Error) throw reply;
+      if (reply === undefined) throw new Error("Unexpected request");
+      return Response.json(reply, { status: httpStatus });
+    }) as typeof fetch,
+  };
+  return { deps, calls, probes: () => probes, reads: () => reads };
+}
+const output = () => JSON.parse(log.mock.calls[0]![0] as string);
+
+describe("account argument redaction", () => {
+  for (const target of [["list", "openai"], ["current", "openai"], ["main", "list"]]) {
+    for (const option of ["--code", "--token", "--api-key", "--key", "--secret", "--password", "--admin-token"]) {
+      test(`${target.join(" ")} redacts leftover ${option} values`, async () => {
+        const f = fixture();
+        for (const args of [[`${option}=${SECRET}`], [option, SECRET], [option, `--${SECRET}`], [option, "--", SECRET]]) {
+          error.mockClear();
+          expect(await cmdAccount([...target, ...args, "--json"], { ...f.deps, baseUrl: "http://127.0.0.1:32100" })).toBe(1);
+          const printed = JSON.stringify(error.mock.calls);
+          expect(printed).toContain(option);
+          expect(printed).toContain("<redacted>");
+          expect(printed).not.toContain(SECRET);
+        }
+        expect(f.calls).toEqual([]);
+        expect(f.probes()).toBe(0);
+        expect(f.reads()).toBe(0);
+      });
+    }
+  }
+  for (const args of [
+    ["list", "openai", "--code", "--token", SECRET],
+    ["list", "--token", SECRET, "--bogus"],
+    ["current", "--token", SECRET],
+    ["list", "openai", "--code", "--api-key=" + SECRET],
+  ]) {
+    test(`${args.join(" ")} never prints a credential operand`, async () => {
+      const f = fixture();
+      error.mockClear();
+      expect(await cmdAccount([...args, "--json"], { ...f.deps, baseUrl: "http://127.0.0.1:32100" })).toBe(1);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(SECRET);
+      expect(f.calls).toEqual([]);
+    });
+  }
+  for (const args of [["use", "openai", "--token", SECRET], ["main", "register", "--token", SECRET], ["main", "switch", "--code", SECRET]]) {
+    test(`${args.join(" ")} redacts an operand whose option a positional consumed`, async () => {
+      const f = fixture();
+      error.mockClear();
+      noteCredentialArgv(["account", ...args]);
+      try {
+        await cmdAccount([...args, "--json"], { ...f.deps, baseUrl: "http://127.0.0.1:32100" });
+      } finally { noteCredentialArgv([]); }
+      expect(JSON.stringify(error.mock.calls)).not.toContain(SECRET);
+    });
+  }
+});
+
+test("ACP login prints host sign-in guidance without opening a browser or reading a key", async () => {
+  const ask = async () => { throw new Error("Unexpected key prompt"); };
+  const openUrl = async () => { throw new Error("Unexpected browser launch"); };
+  await handleLogin("antigravity-acp", { ask, openUrl });
+  expect(log.mock.calls).toEqual([["Sign in on the proxy host with: agy acp --login"]]);
+  expect(loginUsageMessage()).not.toContain("antigravity-acp");
+  expect(KEY_LOGIN_PROVIDERS.litellm?.adapter).toBe("openai-chat");
+});
+
+test("API key validation refuses ACP by adapter or canonical provider ID without fetching", async () => {
+  const provider = { label: "ACP", baseUrl: "https://example.test/docs", dashboardUrl: "https://example.test/docs" };
+  expect(await validateApiKey("custom-agy", { ...provider, adapter: "agy-acp" }, SECRET)).toBe(false);
+  expect(await validateApiKey("antigravity-acp", { ...provider, adapter: "openai-chat" }, SECRET)).toBe(false);
+});
+
+describe("login flow-specific options", () => {
+  for (const provider of ["anthropic", "kiro", "kimi", "nous", "github-copilot"]) {
+    for (const add of [undefined, "on", "off"]) test(`${provider} fresh add-account ${add ?? "omitted"}`, async () => {
+      const f = fixture();
+      expect(await handleAccountAuthCommand("login", [provider, ...(add ? ["--add-account", add] : []), "--no-wait", "--json"], f.deps)).toBe(0);
+      expect(f.calls[0]?.body).toEqual({ provider, addAccount: add !== "off" });
+      expect(f.reads()).toBe(0);
+      expect(f.probes()).toBe(1);
+      expect(f.calls[0]?.redirect).toBe("error");
+    });
+  }
+  for (const browser of [undefined, "on", "off"]) {
+    for (const provider of ["openai", "codex", "chatgpt", "anthropic"]) test(`${provider} browser ${browser ?? "omitted"}`, async () => {
+      const f = fixture();
+      expect(await handleAccountAuthCommand("login", [provider, ...(browser ? ["--open-browser", browser] : []), "--no-wait", "--json"], f.deps)).toBe(0);
+      expect(f.calls[0]?.body).toEqual({ ...(provider === "anthropic" ? { provider, addAccount: true } : {}), ...(browser ? { openBrowser: browser === "on" } : {}) });
+    });
+  }
+  test("reauth omission preserves its original payload", async () => {
+    const f = fixture();
+    expect(await handleAccountAuthCommand("reauth", ["anthropic", "--id", "account-1", "--no-wait", "--json"], f.deps)).toBe(0);
+    expect(f.calls[0]?.body).toEqual({ provider: "anthropic", addAccount: false, accountId: "account-1", reauth: true });
+  });
+  const invalid = [
+    ["openai", "--add-account", "on"], ["codex", "--add-account", "off"],
+    ["anthropic", "--reauth", "--add-account", "off"],
+    ...["on", "off"].flatMap(value => [
+      ["openai", "--device", "--open-browser", value],
+      ...["kimi", "nous", "github-copilot"].map(p => [p, "--open-browser", value]),
+      ["kiro", "--method", "google", "--open-browser", value],
+      ["kiro", "--method", "builder-id", "--add-account", value],
+    ]),
+    ["anthropic", "--open-browser", "on", "--open-browser=off"],
+    ["anthropic", "--add-account", "on", "--add-account", "off"],
+    ["anthropic", "--open-browser", SECRET], ["anthropic", "--add-account", SECRET],
+    ["anthropic", "--id", "account-1"], ["anthropic", "--json", "--json"],
+  ];
+  for (const [index, args] of invalid.entries()) test(`refusal ${index} precedes stdin and target discovery`, async () => {
+    const f = fixture();
+    expect(await handleAccountAuthCommand("login", [...args, "--code", "-"], f.deps)).toBe(2);
+    expect(f.calls).toHaveLength(0); expect(f.probes()).toBe(0); expect(f.reads()).toBe(0);
+  });
+  test("xAI waiting JSON is refused before target discovery", async () => {
+    const f = fixture();
+    expect(await handleAccountAuthCommand("login", ["xai", "--device", "--json"], f.deps)).toBe(2);
+    expect(f.probes()).toBe(0); expect(f.calls).toEqual([]); expect(f.reads()).toBe(0);
+    expect(JSON.stringify(error.mock.calls)).toContain("--no-wait");
+  });
+  for (const flags of [["--no-wait"], ["--no-wait", "--json"], []]) test(`xAI rejects an old proxy handoff ${flags.join(" ")}`, async () => {
+    const f = fixture([{ url: "https://example.test/callback", instructions: "callback" }, { ok: true }]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--device", ...flags], f.deps)).not.toBe(0);
+    expect(log).not.toHaveBeenCalled();
+    expect(JSON.stringify(error.mock.calls)).toMatch(/restart|upgrade/i);
+    expect(f.calls[1]?.body).toEqual({ provider: "xai" });
+  });
+  test("xAI cancels an incomplete identified handoff by flow", async () => {
+    const f = fixture([{ flowId: "flow-1", url: "https://example.test/callback" }, { ok: true }]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--device", "--no-wait", "--json"], f.deps)).not.toBe(0);
+    expect(f.calls[1]?.body).toEqual({ provider: "xai", flowId: "flow-1" });
+  });
+  test("xAI --device asks the proxy for its device grant; a provider without one is refused", async () => {
+    const f = fixture([{ url: "https://accounts.x.ai/oauth2/device?user_code=ABCD", deviceCode: "ABCD", flowId: "flow-1", browserLaunch: "skipped" }]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--device", "--no-wait", "--json"], f.deps)).toBe(0);
+    expect(f.calls[0]?.body).toEqual({ provider: "xai", addAccount: true, device: true });
+    expect(output().deviceCode).toBe("ABCD");
+    // An already signed-in xAI provider reports loggedIn while the new device approval is pending.
+    const waiting = fixture([{ url: "https://accounts.x.ai/oauth2/device", deviceCode: "ABCD", flowId: "flow-1" },
+      { flowId: "flow-1", loggedIn: true, done: false, status: "pending" }, { flowId: "flow-1", loggedIn: true, done: true, status: "complete" }]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--device"], waiting.deps)).toBe(0);
+    expect(waiting.calls).toHaveLength(3);
+    const refused = fixture();
+    expect(await handleAccountAuthCommand("login", ["anthropic", "--device", "--no-wait"], refused.deps)).toBe(2);
+    expect(refused.calls).toHaveLength(0);
+  });
+  test("xAI device reauth succeeds for an inactive account while the active account needs reauth", async () => {
+    const f = fixture([{ flowId: "flow-1", url: "https://accounts.x.ai/oauth2/device", deviceCode: "ABCD" },
+      { flowId: "flow-1", loggedIn: false, done: true, status: "complete" }]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--device", "--reauth", "--id", "inactive"], f.deps)).toBe(0);
+    expect(f.calls[0]?.body).toEqual({ provider: "xai", addAccount: false, device: true, accountId: "inactive", reauth: true });
+    expect(f.calls[1]?.url).toContain("flowId=flow-1");
+  });
+  test("xAI device requires and polls its own flow id, refusing a replacement success", async () => {
+    const missing = fixture([{ url: "https://accounts.x.ai/oauth2/device", deviceCode: "ABCD" }, { ok: true }]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--device"], missing.deps)).not.toBe(0);
+    expect(missing.calls).toHaveLength(2);
+    const replacement = fixture([{ flowId: "first", url: "https://accounts.x.ai/oauth2/device", deviceCode: "ABCD" },
+      { flowId: "second", loggedIn: true, done: true, status: "complete" }]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--device"], replacement.deps)).not.toBe(0);
+    expect(replacement.calls[1]?.url).toContain("provider=xai&flowId=first");
+  });
+  test("M365 account login waits for its own completion and cancel sends its flow ID", async () => {
+    const provider = "m365-copilot";
+    const handoff = { flowId: "flow-1", url: "", instructions: "Fixture instructions" };
+    const waiting = fixture([handoff,
+      { flowId: "flow-1", loggedIn: true, done: false, status: "pending" },
+      { flowId: "flow-1", loggedIn: true, done: true, status: "complete" },
+    ]);
+    expect(await handleAccountAuthCommand("login", [provider, "--json"], waiting.deps)).toBe(0);
+    expect(waiting.calls.slice(1).map(call => new URL(call.url).searchParams.get("flowId"))).toEqual(["flow-1", "flow-1"]);
+    const cancellation = fixture([{ ok: true, cancelled: true }]);
+    expect(await handleAccountAuthCommand("cancel", [provider, "--json"], cancellation.deps)).toBe(2);
+    expect(cancellation.calls).toHaveLength(0);
+    expect(await handleAccountAuthCommand("cancel", [provider, "--flow", "flow-1", "--json"], cancellation.deps)).toBe(0);
+    expect(cancellation.calls[0]?.body).toEqual({ provider, flowId: "flow-1" });
+  });
+  test("Codex device omission preserves its device payload and public grant", async () => {
+    const f = fixture([{ flowId: "flow-1", deviceCode: "USER-CODE", url: "https://example.test/verify", accessToken: SECRET }]);
+    expect(await handleAccountAuthCommand("login", ["openai", "--device", "--no-wait", "--json"], f.deps)).toBe(0);
+    expect(f.calls[0]?.body).toEqual({ device: true });
+    expect(output().deviceCode).toBe("USER-CODE");
+    expect(output().accessToken).toBeUndefined();
+  });
+  for (const provider of ["xai", "openai", "kimi"]) test(`${provider} --device --code is refused before stdin, target or a grant`, async () => {
+    // A device grant has no paste step, and the proxy's code route is the code flow's. Accepting
+    // both would spend the caller's stdin and stash the paste into a flow it cannot settle.
+    const f = fixture();
+    expect(await handleAccountAuthCommand("login", [provider, "--device", "--code", "-"], f.deps)).toBe(2);
+    expect(await handleAccountAuthCommand("login", [provider, "--device", `--code=${SECRET}`], f.deps)).toBe(2);
+    expect(f.calls).toHaveLength(0); expect(f.probes()).toBe(0); expect(f.reads()).toBe(0);
+    expect(JSON.stringify(error.mock.calls)).toContain("--code cannot be combined with --device");
+  });
+  test("--code without --device still reads the code", async () => {
+    // The guard must not eat the ordinary code login it sits next to.
+    const f = fixture([{ flowId: "flow-1", url: "https://example.test/auth" }, { ok: true, input: SECRET }, { status: "done", loggedIn: true, done: true }]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--code", "-", "--json"], f.deps)).toBe(0);
+    expect(f.reads()).toBe(1);
+    expect(f.calls).toHaveLength(3);
+  });
+  test("Kiro native projection excludes its private device grant and credentials", async () => {
+    const f = fixture([{ flowId: "flow-k", method: "google", state: "pending", userCode: "USER", verificationUri: "https://example.test/verify", expiresAt: 123, deviceCode: SECRET, clientSecret: SECRET, refreshToken: SECRET, error: SECRET }]);
+    expect(await handleAccountAuthCommand("login", ["kiro", "--method", "google", "--no-wait", "--json"], f.deps)).toBe(0);
+    expect(output()).toEqual({ flowId: "flow-k", method: "google", state: "pending", userCode: "USER", verificationUri: "https://example.test/verify", expiresAt: 123 });
+  });
+  for (const provider of ["openai", "anthropic"]) test(`${provider} start/code/poll stay pinned and never echo code`, async () => {
+    const f = fixture([
+      { flowId: "flow-1", url: "https://example.test/auth", refreshToken: SECRET },
+      { ok: true, input: SECRET },
+      { status: "done", loggedIn: true, done: true, accountId: "acct-1", email: "m***@example.test", accessToken: SECRET, refreshToken: SECRET, authorization: SECRET },
+    ]);
+    expect(await handleAccountAuthCommand("login", [provider, "--code", "-", "--json"], f.deps)).toBe(0);
+    expect(f.probes()).toBe(1); expect(f.reads()).toBe(1); expect(f.calls).toHaveLength(3);
+    expect(f.calls.every(c => c.url.startsWith("http://127.0.0.1:32001/") && c.redirect === "error")).toBe(true);
+    expect(f.calls[1]?.body).toEqual(provider === "openai" ? { flowId: "flow-1", input: SECRET } : { provider, input: SECRET });
+    expect(output().accountId).toBe("acct-1");
+    if (provider === "openai") expect(output().flowId).toBe("flow-1");
+  });
+  for (const flag of ["validationPending", "catalogRefreshPending"]) test(`Codex ${flag} remains a nonzero partial result`, async () => {
+    const f = fixture([{ flowId: "flow-1" }, { status: "done", accountId: "acct-1", [flag]: true, refreshToken: SECRET }]);
+    expect(await handleAccountAuthCommand("login", ["openai", "--json"], f.deps)).toBe(1);
+    expect(output()[flag]).toBe(true); expect(output().accountId).toBe("acct-1");
+    expect(f.calls).toHaveLength(2);
+  });
+  for (const status of ["expired", "cancelled", "error"]) test(`Codex ${status} does not restart the flow`, async () => {
+    const f = fixture([{ flowId: "flow-1" }, { status, error: SECRET }]);
+    expect(await handleAccountAuthCommand("login", ["openai", "--json"], f.deps)).not.toBe(0);
+    expect(f.calls).toHaveLength(2); expect(log).not.toHaveBeenCalled();
+  });
+  for (const status of [401, 403, 409, 503]) test(`HTTP ${status} admits no retry and hides raw errors`, async () => {
+    const f = fixture([{ error: SECRET, detail: SECRET }], status);
+    expect(await handleAccountAuthCommand("login", ["anthropic", "--no-wait", "--json"], f.deps)).toBe(status === 409 ? 5 : 1);
+    expect(f.calls).toHaveLength(1); expect(log).not.toHaveBeenCalled();
+  });
+  test("transport failure is fixed and does not restart", async () => {
+    const f = fixture([new Error(SECRET)]);
+    expect(await handleAccountAuthCommand("login", ["anthropic", "--json"], f.deps)).toBe(1);
+    expect(f.calls).toHaveLength(1);
+  });
+  test("provider status projects nested accounts and omits arbitrary errors", async () => {
+    const f = fixture([{}, { loggedIn: true, done: true, activeAccountId: "a", accounts: [{ id: "a", active: true, plan: null, credential: { accessToken: SECRET }, alias: "test", needsReauthReason: SECRET }], refreshToken: SECRET }]);
+    expect(await handleAccountAuthCommand("login", ["anthropic", "--json"], f.deps)).toBe(0);
+    expect(output().accounts).toEqual([{ id: "a", alias: "test", active: true, plan: null }]);
+  });
+  test("generic terminal failure does not poll or retry again", async () => {
+    const f = fixture([{}, { loggedIn: false, done: true, error: SECRET }]);
+    expect(await handleAccountAuthCommand("login", ["anthropic", "--json"], f.deps)).toBe(1);
+    expect(f.calls).toHaveLength(2);
+  });
+});
+
+describe("login terminal and code boundaries", () => {
+  for (const state of ["done", "failed", "expired", "cancelled"]) test(`Kiro terminal ${state} preserves flow and does not restart`, async () => {
+    const f = fixture([{ flowId: "flow-k", method: "github", state: "pending" }, { flowId: "flow-k", method: "github", state, warning: "duplicate_profile_arn", deviceCode: SECRET, error: SECRET }]);
+    expect(await handleAccountAuthCommand("login", ["kiro", "--method", "github", "--json"], f.deps)).toBe(state === "done" ? 0 : 2);
+    expect(f.calls).toHaveLength(2); expect(f.probes()).toBe(1);
+    expect(f.calls[1]).toEqual({ url: "http://127.0.0.1:32001/api/oauth/status?provider=kiro&flowId=flow-k", method: "GET", redirect: "error" });
+    if (state === "done") expect(output()).toEqual({ flowId: "flow-k", method: "github", state, warning: "duplicate_profile_arn" });
+  });
+  for (const provider of ["openai", "anthropic"]) test(`${provider} code refusal prevents success/poll/retry`, async () => {
+    const f = fixture([{ flowId: "flow-1" }, { ok: false, error: SECRET }]);
+    expect(await handleAccountAuthCommand("login", [provider, "--code", "-", "--no-wait", "--json"], f.deps)).toBe(1);
+    expect(f.calls).toHaveLength(2); expect(log).not.toHaveBeenCalled();
+  });
+  test("Codex missing flow never silently discards submitted stdin code", async () => {
+    const f = fixture([{ url: "https://example.test/auth" }]);
+    expect(await handleAccountAuthCommand("login", ["openai", "--code", "-", "--no-wait", "--json"], f.deps)).toBe(1);
+    expect(f.calls).toHaveLength(1); expect(log).not.toHaveBeenCalled();
+  });
+  test("unknown login flag cannot echo credential-shaped input", async () => {
+    const f = fixture();
+    expect(await handleAccountAuthCommand("login", ["anthropic", `--unknown=${SECRET}`, "--code", "-"], f.deps)).toBe(2);
+    expect(f.calls).toHaveLength(0); expect(f.reads()).toBe(0);
+  });
+  test("xAI actual device handoff escapes injected lines while JSON remains exact", async () => {
+    const account = pathToFileURL(repoPath("src", "cli", "account-auth.ts")).href;
+    const xai = pathToFileURL(repoPath("src", "oauth", "xai.ts")).href;
+    const script = `import {handleAccountAuthCommand} from ${JSON.stringify(account)};
+      import {loginXaiDevice} from ${JSON.stringify(xai)};
+      const code = "한글\\nINJECTED\\u001b[31mفارسی\\u200c";
+      globalThis.fetch = async (url) => String(url).includes('well-known')
+        ? Response.json({authorization_endpoint:'https://auth.x.ai/a',token_endpoint:'https://auth.x.ai/t',device_authorization_endpoint:'https://auth.x.ai/d'})
+        : String(url).endsWith('/d') ? Response.json({device_code:'private-grant',user_code:code,verification_uri:'https://accounts.x.ai/verify'})
+        : Response.json({access_token:'private-token',refresh_token:'private-refresh',expires_in:3600});
+      let handoff; await loginXaiDevice({onAuth: x => handoff = x}, {sleep: async () => {}});
+      await handleAccountAuthCommand('login', ['xai','--device','--no-wait', ...(process.argv.includes('json-mode') ? ['--json'] : [])], {
+        baseUrl:'http://127.0.0.1:32100', fetchImpl: async () => Response.json({...handoff, flowId: "flow-1"})
+      });`;
+    for (const json of [false, true]) {
+      const child = Bun.spawn([process.execPath, "--eval", script, ...(json ? ["json-mode"] : [])], { cwd: home.root, env: { ...process.env, HOME: home.root, EASYPROXY_HOME: home.codexHome }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect(stderr).toBe(""); expect(exit).toBe(0);
+      expect(stdout).not.toContain("private-grant"); expect(stdout).not.toContain("private-token");
+      if (json) {
+        const raw = JSON.parse(stdout);
+        expect(raw.deviceCode).toBe("한글\nINJECTED\u001b[31mفارسی\u200c");
+        expect(raw.instructions).toContain(raw.deviceCode);
+      } else {
+        expect(stdout).not.toContain("\nINJECTED"); expect(stdout).not.toContain("\u001b");
+        expect(stdout).toContain("한글\\x0aINJECTED\\x1b[31mفارسی\u200c");
+      }
+    }
+  });
+
+  test("human instructions preserve intended lines but escape terminal controls", async () => {
+    mkdirSync(home.codexHome, { recursive: true });
+    // A file URL imports on every platform; a URL pathname is "/D:/..." on Windows.
+    const source = pathToFileURL(repoPath("src", "cli", "account-auth.ts")).href;
+    const script = `import {handleAccountAuthCommand} from ${JSON.stringify(source)};
+      globalThis.fetch = async () => { throw new Error('Network forbidden'); };
+      const result = await handleAccountAuthCommand('login', ['openai','--no-wait'], {
+        baseUrl:'http://127.0.0.1:32100',
+        fetchImpl: async () => Response.json({flowId:'flow-1',url:'https://example.test/auth',instructions:'First line\\nSecond line\\u001b[31m',accessToken:'${SECRET}'})
+      }); process.exit(result ?? 1);`;
+    const child = Bun.spawn([process.execPath, "--eval", script], { cwd: home.root, env: { ...process.env, HOME: home.root }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(stderr).toBe(""); expect(exit).toBe(0);
+    expect(stdout).toContain("First line\nSecond line");
+    expect(stdout).not.toContain("\u001b"); expect(stdout).not.toContain(SECRET);
+    expect(stdout).toContain("Flow: flow-1");
+  });
+});
+
+describe("typed public login completion", () => {
+  for (const value of [null, "false", 0, {}, []]) test(`malformed pending ${JSON.stringify(value)} cannot become completed success`, async () => {
+    const f = fixture([{ flowId: "flow-1" }, { status: "done", validationPending: value }]);
+    expect(await handleAccountAuthCommand("login", ["openai", "--json"], f.deps)).toBe(1);
+    expect(log).not.toHaveBeenCalled(); expect(f.calls).toHaveLength(2);
+  });
+  test("start cannot print a non-string handoff field", async () => {
+    const f = fixture([{ url: { accessToken: SECRET }, flowId: "flow-1" }]);
+    expect(await handleAccountAuthCommand("login", ["openai", "--no-wait", "--json"], f.deps)).toBe(1);
+    expect(log).not.toHaveBeenCalled();
+  });
+});
+
+test("console diagnostics scrub argv credential operands case-insensitively", () => {
+  noteCredentialArgv(["models", "preset", "--token=Synthetic-Value-1", "--code", "--api-key", "Synthetic-Value-2", "--secret", "abc", "--key=--api-key=Synthetic-Value-3"]);
+  try {
+    expect(scrubCredentialOperands("x '--token=synthetic-value-1' y Synthetic-Value-2")).toBe("x '--token=<redacted>' y <redacted>");
+    // An option name that followed another credential option is not an operand.
+    expect(scrubCredentialOperands("[--api-key <key>] abc")).toBe("[--api-key <key>] abc");
+    expect(scrubCredentialOperands("Unknown provider subcommand: --key=--api-key=synthetic-value-3")).toBe("Unknown provider subcommand: --key=<redacted>");
+  } finally { noteCredentialArgv([]); }
+  expect(scrubCredentialOperands("Synthetic-Value-2")).toBe("Synthetic-Value-2");
+});
+
+describe("xAI device CLI subprocess contract", () => {
+  for (const scenario of ["reject", "no-wait", "complete", "expired", "replacement"] as const) {
+    test(scenario, async () => {
+      const calls: string[] = [];
+      const handoff = { flowId: "flow-1", url: "https://example.test/verify", deviceCode: "AB\nCD", instructions: "Enter\u001b[31m code", accessToken: SECRET };
+      const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+        const url = new URL(req.url);
+        calls.push(`${req.method} ${url.pathname}${url.search}`);
+        if (url.pathname === "/api/oauth/login") return Response.json(handoff);
+        if (url.pathname === "/api/oauth/status") return Response.json(scenario === "replacement"
+          ? { flowId: "other", status: "complete", done: true, loggedIn: true, refreshToken: SECRET }
+          : scenario === "expired" ? { flowId: "flow-1", status: "expired", done: true, loggedIn: false, error: SECRET }
+          : { flowId: "flow-1", status: "complete", done: true, loggedIn: true, refreshToken: SECRET });
+        return new Response(null, { status: 404 });
+      }});
+      try {
+        const account = pathToFileURL(repoPath("src", "cli", "account.ts")).href;
+        const args = ["login", "xai", "--device", ...(scenario === "reject" ? ["--json"] : scenario === "no-wait" ? ["--no-wait", "--json"] : [])];
+        const script = `import {cmdAccount} from ${JSON.stringify(account)}; Bun.sleep = async () => {}; process.exitCode = await cmdAccount(${JSON.stringify(args)}, {baseUrl: ${JSON.stringify(`http://127.0.0.1:${server.port}`)}});`;
+        const child = Bun.spawn([process.execPath, "--eval", script], { cwd: home.root, env: { ...process.env, HOME: home.root, EASYPROXY_HOME: home.codexHome }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+        expect(stdout + stderr).not.toContain(SECRET);
+        if (scenario === "reject") {
+          expect(code).toBe(2); expect(stdout).toBe(""); expect(stderr).toContain("--no-wait"); expect(calls).toEqual([]);
+        } else if (scenario === "no-wait") {
+          expect(code).toBe(0); expect(JSON.parse(stdout)).toMatchObject({ flowId: handoff.flowId, url: handoff.url, deviceCode: handoff.deviceCode, instructions: handoff.instructions });
+          expect(calls).toEqual(["POST /api/oauth/login"]);
+        } else {
+          expect(calls).toEqual(["POST /api/oauth/login", "GET /api/oauth/status?provider=xai&flowId=flow-1"]);
+          expect(stdout).toContain("https://example.test/verify"); expect(stdout).toContain("AB\\x0aCD"); expect(stdout).not.toContain("\u001b");
+          expect(code).toBe(scenario === "complete" ? 0 : 1);
+          if (scenario !== "complete") expect(stdout).not.toContain("Logged in to xai.");
+        }
+      } finally { server.stop(true); }
+    });
+  }
+});
+
+describe("Google Antigravity login acknowledgement", () => {
+  const START = { url: "https://accounts.google.test/auth", browserLaunch: "skipped" };
+  const tty = (answer: string) => Object.assign(new Readable({ read() { this.push(answer); this.push(null); } }), { isTTY: true });
+  const stderrWrite = () => spyOn(process.stderr, "write").mockImplementation(() => true);
+
+  test("a non-interactive run without the flag is refused before stdin, the proxy or a login", async () => {
+    const f = fixture([START]);
+    expect(await handleAccountAuthCommand("login", ["google-antigravity", "--no-wait", "--json"], f.deps)).toBe(2);
+    expect(f.calls).toHaveLength(0); expect(f.probes()).toBe(0); expect(f.reads()).toBe(0);
+    const printed = JSON.stringify(error.mock.calls);
+    expect(printed).toContain("This service has been disabled in this account for violation of Terms of Service.");
+    expect(printed).toContain("antigravity_risk_not_acknowledged");
+    expect(printed).toContain("--accept-antigravity-risk");
+  });
+
+  test("the explicit flag still prints the warning and sends the acknowledgement for login and reauth", async () => {
+    const f = fixture([START]);
+    expect(await handleAccountAuthCommand("login", ["google-antigravity", "--accept-antigravity-risk", "--no-wait", "--json"], f.deps)).toBe(0);
+    expect(f.calls[0]?.body).toEqual({ provider: "google-antigravity", addAccount: true, acknowledgeAntigravityRisk: true });
+    expect(JSON.stringify(error.mock.calls)).toContain("permanently disable Gemini and Antigravity access");
+
+    const reauth = fixture([START]);
+    expect(await handleAccountAuthCommand("login", ["google-antigravity", "--reauth", "--id", "acct-1", "--accept-antigravity-risk", "--no-wait", "--json"], reauth.deps)).toBe(0);
+    expect(reauth.calls[0]?.body).toEqual({ provider: "google-antigravity", addAccount: false, accountId: "acct-1", reauth: true, acknowledgeAntigravityRisk: true });
+  });
+
+  test("a terminal must answer y; anything else cancels with nothing sent", async () => {
+    const write = stderrWrite();
+    try {
+      const yes = fixture([START]);
+      expect(await handleAccountAuthCommand("login", ["google-antigravity", "--no-wait", "--json"], { ...yes.deps, stdinImpl: tty("y\n") })).toBe(0);
+      expect(yes.calls[0]?.body).toMatchObject({ provider: "google-antigravity", acknowledgeAntigravityRisk: true });
+      expect(JSON.stringify(write.mock.calls)).toContain("[y/N]");
+      for (const answer of ["\n", "n\n", "no\n", ""]) {
+        const no = fixture([START]);
+        expect(await handleAccountAuthCommand("login", ["google-antigravity", "--no-wait", "--json"], { ...no.deps, stdinImpl: tty(answer) })).toBe(2);
+        expect(no.calls).toHaveLength(0);
+      }
+    } finally { write.mockRestore(); }
+  });
+
+  test("a coding agent or CI runner is refused even with the flag or a y answer", async () => {
+    for (const [args, stdin] of [[["--accept-antigravity-risk"], undefined], [[], tty("y\n")]] as const) {
+      const f = fixture([START]);
+      const deps = { ...f.deps, antigravityRisk: { agentDriven: () => true, promptVisible: () => true }, ...(stdin ? { stdinImpl: stdin } : {}) };
+      error.mockClear();
+      expect(await handleAccountAuthCommand("login", ["google-antigravity", ...args, "--no-wait", "--json"], deps)).toBe(2);
+      expect(f.calls).toHaveLength(0);
+      expect(JSON.stringify(error.mock.calls)).toContain("coding agent or CI runner");
+    }
+  });
+
+  test("a terminal stdin with an invisible prompt is not interactive", async () => {
+    const f = fixture([START]);
+    const deps = { ...f.deps, antigravityRisk: { agentDriven: () => false, promptVisible: () => false }, stdinImpl: tty("y\n") };
+    expect(await handleAccountAuthCommand("login", ["google-antigravity", "--no-wait", "--json"], deps)).toBe(2);
+    expect(f.calls).toHaveLength(0);
+    expect(JSON.stringify(error.mock.calls)).toContain("no interactive terminal");
+  });
+
+  test("the flag is refused for other providers, and other providers never prompt", async () => {
+    const refused = fixture([START]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--accept-antigravity-risk", "--no-wait"], refused.deps)).toBe(2);
+    expect(refused.calls).toHaveLength(0);
+    const other = fixture([START]);
+    expect(await handleAccountAuthCommand("login", ["xai", "--no-wait", "--json"], other.deps)).toBe(0);
+    expect(other.calls[0]?.body).toEqual({ provider: "xai", addAccount: true });
+    expect(JSON.stringify(error.mock.calls)).not.toContain("Antigravity");
+  });
+});
+
+
+/**
+ * `epx account import google-antigravity` carries the same account risk as a login. Moved here from
+ * cli-account.test.ts, which sits at its file-size cap; this suite already drives cmdAccount
+ * against a recording fetch.
+ */
+describe("Google Antigravity import acknowledgement", () => {
+  const IMPORTED = { totalCount: 1, importedCount: 1, updatedCount: 0, failedCount: 0, unsupportedCount: 0, results: [{ index: 0, status: "imported", code: "imported" }] };
+  const DOCUMENT = '[{"email":"user@example.com","refresh_token":"safe-fixture-token"}]';
+  const input = (value: string, isTTY: boolean) => Object.assign(new Readable({ read() { this.push(value); this.push(null); } }), { isTTY });
+  const importArgs = (...extra: string[]) => ["import", "google-antigravity", "--format", "cockpit-tools", ...extra];
+
+  test("the acknowledgement is required before the source is read", async () => {
+    const path = home.path("accounts.json");
+    writeFileSync(path, DOCUMENT);
+    const prompt = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      // --stdin: the document owns stdin, so nothing can answer a prompt; only the flag accepts.
+      const piped = fixture([IMPORTED]);
+      const pipedStdin = input(DOCUMENT, false);
+      expect(await cmdAccount(importArgs("--stdin"), { ...piped.deps, baseUrl: "http://127.0.0.1:32100", stdinImpl: pipedStdin })).toBe(1);
+      expect(piped.calls).toHaveLength(0);
+      expect(pipedStdin.readableEnded).toBe(false);
+      const refusal = JSON.stringify(error.mock.calls);
+      expect(refusal).toContain("This service has been disabled in this account for violation of Terms of Service.");
+      expect(refusal).toContain("antigravity_risk_not_acknowledged");
+      expect(refusal).toContain("--accept-antigravity-risk");
+
+      // --file on a terminal asks; only y proceeds, and the request carries the acknowledgement.
+      const declined = fixture([IMPORTED]);
+      error.mockClear();
+      expect(await cmdAccount(importArgs("--file", path), { ...declined.deps, baseUrl: "http://127.0.0.1:32100", stdinImpl: input("n\n", true) })).toBe(1);
+      expect(declined.calls).toHaveLength(0);
+      expect(JSON.stringify(error.mock.calls)).toContain("the risk was not accepted");
+
+      const accepted = fixture([IMPORTED]);
+      expect(await cmdAccount(importArgs("--file", path), { ...accepted.deps, baseUrl: "http://127.0.0.1:32100", stdinImpl: input("y\n", true) })).toBe(0);
+      expect(accepted.calls).toHaveLength(1);
+      expect(accepted.calls[0]).toMatchObject({ url: "http://127.0.0.1:32100/api/oauth/accounts/import", body: { acknowledgeAntigravityRisk: true } });
+      expect(JSON.stringify(prompt.mock.calls)).toContain("[y/N]");
+
+      // An agent-driven run is refused before the source is read, flag or not.
+      const agent = fixture([IMPORTED]);
+      error.mockClear();
+      const agentDeps = { ...agent.deps, baseUrl: "http://127.0.0.1:32100", antigravityRisk: { agentDriven: () => true } };
+      expect(await cmdAccount(importArgs("--accept-antigravity-risk", "--file", path), agentDeps)).toBe(1);
+      expect(agent.calls).toHaveLength(0);
+      expect(JSON.stringify(error.mock.calls)).toContain("coding agent or CI runner");
+    } finally {
+      prompt.mockRestore();
+    }
+  });
+});
+

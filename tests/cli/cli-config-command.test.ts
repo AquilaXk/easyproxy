@@ -1,0 +1,313 @@
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { SPAWN_BUDGET_MS } from "../helpers/test-budget";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+
+const repoRoot = dirname(fileURLToPath(new URL("../../package.json", import.meta.url)));
+const cliPath = join(repoRoot, "src", "cli", "index.ts");
+const isolatedCodexHome = mkdtempSync(join(tmpdir(), "epx-config-codex-home-"));
+
+setDefaultTimeout(SPAWN_BUDGET_MS);
+
+function runCli(args: string[], env: Record<string, string> = {}) {
+  return spawnSync(process.execPath, [cliPath, ...args], {
+    cwd: repoRoot,
+    env: { ...process.env, CODEX_HOME: isolatedCodexHome, ...env },
+    encoding: "utf8",
+    timeout: SPAWN_BUDGET_MS - 5_000,
+  });
+}
+
+function freshConfig() {
+  const dir = mkdtempSync(join(tmpdir(), "epx-config-"));
+  const config = {
+    port: 10100,
+    providers: {
+      openai: {
+        adapter: "openai-responses",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        authMode: "forward",
+        proxy: "http://route_user:route_password@egress.test:3128",
+      },
+      blsc: {
+        adapter: "openai-chat",
+        baseUrl: "https://llmapi.blsc.cn",
+        proxy: "direct",
+        modelCosts: {
+          "deepseek-v4-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+          "sk-abcdef1234567890": { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0 },
+        },
+      },
+      nocreds: {
+        adapter: "openai-chat",
+        baseUrl: "https://nocreds.example",
+        proxy: "http://127.0.0.1:7890",
+      },
+    },
+    defaultProvider: "openai",
+  };
+  writeFileSync(join(dir, "config.json"), JSON.stringify(config), "utf8");
+  return dir;
+}
+
+describe("epx config display redaction", () => {
+  test.each([
+    "providers.openai.proxy ",
+    "providers.openai.proxy.",
+    "providers..openai. proxy .",
+  ])("normalized proxy path %s keeps get and set output masked", (path) => {
+    const dir = freshConfig();
+    try {
+      const get = runCli(["config", "get", path, "--json"], { EASYPROXY_HOME: dir });
+      expect(get.status).toBe(0);
+      expect(JSON.parse(get.stdout)).toBe("http://egress.test:3128/");
+      expect(get.stdout + get.stderr).not.toContain("route_user");
+      expect(get.stdout + get.stderr).not.toContain("route_password");
+
+      const set = runCli([
+        "config", "set", path,
+        "http://next_user:next_password@egress.test:8080", "--json",
+      ], { EASYPROXY_HOME: dir });
+      expect(set.status).toBe(0);
+      expect(JSON.parse(set.stdout).value).toBe("http://egress.test:8080/");
+      expect(set.stdout + set.stderr).not.toContain("next_user");
+      expect(set.stdout + set.stderr).not.toContain("next_password");
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("provider proxy credentials stay masked in show, get, and set output", () => {
+    const dir = freshConfig();
+    const secret = "route_password";
+    try {
+      const show = runCli(["config", "show", "--json"], { EASYPROXY_HOME: dir });
+      expect(show.status).toBe(0);
+      expect(show.stdout).not.toContain(secret);
+      const shown = JSON.parse(show.stdout).providers;
+      // Credentialed URL: userinfo stripped, host/port kept for diagnostics.
+      expect(shown.openai.proxy).toBe("http://egress.test:3128/");
+      expect(show.stdout).not.toContain("route_user");
+      // "direct" and credential-less URLs carry no secret and stay readable.
+      expect(shown.blsc.proxy).toBe("direct");
+      expect(shown.nocreds.proxy).toBe("http://127.0.0.1:7890");
+
+      const get = runCli(["config", "get", "providers.openai.proxy"], { EASYPROXY_HOME: dir });
+      expect(get.status).toBe(0);
+      expect(get.stdout.trim()).toBe("http://egress.test:3128/");
+
+      const getDirect = runCli(["config", "get", "providers.blsc.proxy"], { EASYPROXY_HOME: dir });
+      expect(getDirect.status).toBe(0);
+      expect(getDirect.stdout.trim()).toBe("direct");
+
+      const set = runCli([
+        "config", "set", "providers.openai.proxy",
+        "http://next_user:next_password@egress.test:8080", "--json",
+      ], { EASYPROXY_HOME: dir });
+      expect(set.status).toBe(0);
+      expect(set.stdout).not.toContain("next_password");
+      expect(JSON.parse(set.stdout).value).toBe("http://egress.test:8080/");
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("#8319: a key the running proxy reads only at startup says a restart is needed", () => {
+    const dir = freshConfig();
+    try {
+      const cors = runCli(["config", "set", "corsAllowOrigins", '["http://localhost:10100"]'], { EASYPROXY_HOME: dir });
+      expect(cors.status).toBe(0);
+      expect(cors.stdout).toContain("Set corsAllowOrigins.");
+      expect(cors.stdout).toContain("restart");
+
+      const hub = runCli(["config", "set", "hub", '{"managementPublicOrigin":"https://hub.test"}'], { EASYPROXY_HOME: dir });
+      expect(hub.status).toBe(0);
+      expect(hub.stdout).toContain("restart");
+      // The nested paths take the same note (#8495 review): the management listener and its origin
+      // are created when the hub starts.
+      const origin = runCli(["config", "set", "hub.managementPublicOrigin", '"https://hub2.test"'], { EASYPROXY_HOME: dir });
+      expect(origin.status).toBe(0);
+      expect(origin.stdout).toContain("restart");
+      const ingress = runCli(["config", "set", "hub.managementIngress", '{"enabled":false}'], { EASYPROXY_HOME: dir });
+      expect(ingress.status).toBe(0);
+      expect(ingress.stdout).toContain("restart");
+      // #8082: the Codex login route reads the running config, so the login policy needs a restart too.
+      for (const args of [["set", "codexAuthMethod", '"device-only"'], ["unset", "codexAuthMethod"]]) {
+        const login = runCli(["config", ...args], { EASYPROXY_HOME: dir });
+        expect(login.status).toBe(0);
+        expect(login.stdout).toContain("restart");
+      }
+
+      // The JSON payload keeps its shape; the note is for people reading the terminal.
+      const json = runCli(["config", "set", "corsAllowOrigins", '["http://localhost:9999"]', "--json"], { EASYPROXY_HOME: dir });
+      expect(json.status).toBe(0);
+      expect(Object.keys(JSON.parse(json.stdout)).sort()).toEqual(["ok", "path", "value"]);
+
+      // Nothing is said for an unchanged value or for an unrelated key.
+      const again = runCli(["config", "set", "corsAllowOrigins", '["http://localhost:9999"]'], { EASYPROXY_HOME: dir });
+      expect(again.stdout).not.toContain("restart");
+      const other = runCli(["config", "set", "defaultProvider", '"blsc"'], { EASYPROXY_HOME: dir });
+      expect(other.status).toBe(0);
+      expect(other.stdout).not.toContain("restart");
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("config show --json never prints secret-shaped modelCosts keys", () => {
+    const dir = freshConfig();
+    try {
+      const result = runCli(["config", "show", "--json"], { EASYPROXY_HOME: dir });
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toContain("sk-abcdef1234567890");
+      const parsed = JSON.parse(result.stdout);
+      expect(parsed.providers.blsc.modelCosts).toEqual({
+        "deepseek-v4-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+      });
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("config get providers.<name>.modelCosts --json drops secret-shaped keys", () => {
+    const dir = freshConfig();
+    try {
+      const result = runCli(["config", "get", "providers.blsc.modelCosts", "--json"], { EASYPROXY_HOME: dir });
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toContain("sk-abcdef1234567890");
+      const parsed = JSON.parse(result.stdout);
+      expect(parsed).toEqual({
+        "deepseek-v4-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+      });
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+});
+
+
+test.each([false, true])("raw config export to stdout JSON=%s remains the config document", json => {
+  const dir = freshConfig();
+  try {
+    const result = runCli(["config", "export", "-", ...(json ? ["--json"] : [])], { EASYPROXY_HOME: dir });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    const config = JSON.parse(result.stdout);
+    expect(config.providers.openai.proxy).toBe("http://route_user:route_password@egress.test:3128");
+    expect(config.ok).toBeUndefined();
+  } finally { removeTreeWithRetry(dir); }
+});
+
+
+test("config validate stdin exits 1 with a single JSON failure payload", () => {
+  const dir = freshConfig();
+  try {
+    const result = spawnSync(process.execPath, [cliPath, "config", "validate", "-", "--json"], {
+      cwd: repoRoot,
+      env: { ...process.env, EASYPROXY_HOME: dir, CODEX_HOME: isolatedCodexHome },
+      encoding: "utf8", input: '{"port":"invalid"}', timeout: SPAWN_BUDGET_MS - 5_000,
+    });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false });
+    expect(result.stderr).toBe("");
+  } finally { removeTreeWithRetry(dir); }
+});
+
+test("config validate warns when the installed Codex login policy falls back to auto", () => {
+  const dir = freshConfig();
+  try {
+    const path = join(dir, "config.json");
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...config, codexAuthMethod: "DEVICE-ONLY" }));
+    const result = runCli(["config", "validate", "--json"], { EASYPROXY_HOME: dir });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      warnings: [expect.stringContaining('codexAuthMethod ignored: using "auto"')],
+    });
+    expect(result.stdout + result.stderr).not.toContain("DEVICE-ONLY");
+  } finally {
+    removeTreeWithRetry(dir);
+  }
+});
+
+test.each(["auto", "DEVICE-ONLY"])("config validate only reports the fixed policy warning for %s", codexAuthMethod => {
+  const dir = freshConfig();
+  try {
+    const path = join(dir, "config.json");
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    const fakeSecret = "fixture-secret-url-fragment";
+    config.providers.nocreds.baseUrl = `https://nocreds.example/{${fakeSecret}}`;
+    writeFileSync(path, JSON.stringify({ ...config, codexAuthMethod }));
+
+    const result = runCli(["config", "validate", "--json"], { EASYPROXY_HOME: dir });
+    expect(result.status).toBe(0);
+    expect(result.stdout + result.stderr).not.toContain(fakeSecret);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      source: path,
+      ...(codexAuthMethod === "auto" ? {} : {
+        warnings: ['codexAuthMethod ignored: using "auto" for Codex pool logins. Expected "auto", "device-only", or omission.'],
+      }),
+    });
+  } finally {
+    removeTreeWithRetry(dir);
+  }
+});
+
+test.each(["set", "normalized set", "import"])("config %s cannot enter plaintext mode without the dedicated transition", action => {
+  const dir = freshConfig();
+  const configPath = join(dir, "config.json");
+  const importPath = join(dir, "restore.json");
+  try {
+    const before = readFileSync(configPath, "utf8");
+    const candidate = { ...JSON.parse(before), multiAgentMode: "v2-plaintext", plaintextV2AgentMessages: true };
+    writeFileSync(importPath, JSON.stringify(candidate));
+    const args = action === "import" ? ["import", importPath, "--yes"]
+      : ["set", action === "normalized set" ? " . multiAgentMode . " : "multiAgentMode", "v2-plaintext"];
+    const refused = runCli(["config", ...args, "--json"], { EASYPROXY_HOME: dir });
+    expect(refused.status).toBe(2);
+    expect(refused.stdout + refused.stderr).toContain("epx v2 mode v2-plaintext --acknowledge-plaintext-agent-messages");
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+
+    // A previously acknowledged mode remains editable/restorable without a new transition.
+    writeFileSync(configPath, JSON.stringify(candidate));
+    const repeated = runCli(["config", ...args, "--json"], { EASYPROXY_HOME: dir });
+    expect(repeated.status).toBe(0);
+    expect(JSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({
+      multiAgentMode: "v2-plaintext", plaintextV2AgentMessages: true,
+    });
+    expect(runCli(["config", "set", "port", "10123", "--json"], { EASYPROXY_HOME: dir }).status).toBe(0);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).port).toBe(10123);
+
+    // Leaving the mode never needs consent and never rewrites the independent legacy flag.
+    expect(runCli(["config", "unset", "multiAgentMode", "--json"], { EASYPROXY_HOME: dir }).status).toBe(0);
+    const exited = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(exited.multiAgentMode).toBeUndefined();
+    expect(exited.plaintextV2AgentMessages).toBe(true);
+    expect(runCli(["config", "set", "multiAgentMode", "v2", "--json"], { EASYPROXY_HOME: dir }).status).toBe(0);
+  } finally { removeTreeWithRetry(dir); }
+});
+
+test("epx config validates, stores and displays the subscription reserve policy", () => {
+  const dir = freshConfig();
+  try {
+    const env = { EASYPROXY_HOME: dir };
+    const policy = { enabled: true, soft: 0.55, hard: 0.85, targets: ["blsc/deepseek-v4-flash"] };
+    const set = runCli(["config", "set", "subscriptionReserve", JSON.stringify(policy), "--json"], env);
+    expect(set.status).toBe(0);
+    const get = runCli(["config", "get", "subscriptionReserve", "--json"], env);
+    expect(get.status).toBe(0);
+    expect(JSON.parse(get.stdout)).toEqual(policy);
+    const invalid = runCli(["config", "set", "subscriptionReserve.hard", "0.5", "--json"], env);
+    expect(invalid.status).not.toBe(0);
+    expect(invalid.stdout + invalid.stderr).toContain("subscriptionReserve.hard");
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).subscriptionReserve).toEqual(policy);
+  } finally {
+    removeTreeWithRetry(dir);
+  }
+});

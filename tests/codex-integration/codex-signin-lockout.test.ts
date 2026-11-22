@@ -1,0 +1,193 @@
+/**
+ * #5261: easyproxy must not be able to lock a user out of Codex.
+ *
+ * The reported machine was a Windows 11 install whose proxy had stopped. The routing
+ * easyproxy had written to `~/.codex/config.toml` stayed on disk across a reboot, so Codex's
+ * own built-in openai provider kept resolving to a loopback port nothing was listening on,
+ * and the user was stopped at sign-in with no mention of easyproxy on screen.
+ *
+ * Nothing here starts a proxy, binds a port, or touches a real Codex home. That is the point:
+ * these are exactly the transforms recovery must be able to run while the proxy is dead, so a
+ * test that needed one running would be testing the wrong state.
+ */
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  EPX_ROUTING_MARKER_LINE,
+  EPX_SECTION_MARKER,
+  hasInjectedCodexRouting,
+  hasInjectedOpenaiBaseUrl,
+} from "../../src/codex/injected-marker";
+import { missingOwnedCatalogPath, setRootOpenaiBaseUrl, setRootRealtimeWsBaseUrl } from "../../src/codex/inject/config-toml";
+import { stripEasyproxyConfig } from "../../src/codex/inject/remove";
+import { DEFAULT_CATALOG_PATH } from "../../src/codex/paths";
+import { deadProxyRoutingAdviceLines, missingCodexCatalogLines } from "../../src/cli/status";
+import { findCommand } from "../../src/cli/registry";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+
+/** The loopback target the reported install was on. */
+const TARGET = {
+  baseUrl: "http://127.0.0.1:10100/v1",
+  requiresAdmissionToken: false,
+  tokenEnv: "EASYPROXY_API_AUTH_TOKEN",
+} as const;
+
+/** The reported file, reconstructed: routing on disk, proxy gone. `marker` is the ownership line. */
+function lockedOutConfig(marker: string): string {
+  return [
+    'model = "gpt-5.5"',
+    `model_catalog_json = ${JSON.stringify(DEFAULT_CATALOG_PATH)}`,
+    marker,
+    'openai_base_url = "http://127.0.0.1:10100/v1"',
+    marker,
+    'experimental_realtime_ws_base_url = "http://127.0.0.1:10100/v1"',
+    "",
+    "[features]",
+    "fast_mode = true",
+    "",
+  ].join("\n");
+}
+
+describe("Codex sign-in lockout behind a stopped proxy (#5261)", () => {
+  test("routing written before the recovery hint existed is still recognized as ours", () => {
+    const legacy = lockedOutConfig(EPX_SECTION_MARKER);
+    expect(hasInjectedOpenaiBaseUrl(legacy)).toBe(true);
+    expect(hasInjectedCodexRouting(legacy)).toBe(true);
+  });
+
+  test("the hint changes what we write, never what we recognize or remove", () => {
+    const hinted = lockedOutConfig(EPX_ROUTING_MARKER_LINE);
+    expect(hasInjectedOpenaiBaseUrl(hinted)).toBe(true);
+    expect(hasInjectedCodexRouting(hinted)).toBe(true);
+    // Byte-identical recovery from either marker: the two forms must not diverge, or an
+    // install that upgraded mid-incident would restore differently from one that did not.
+    expect(stripEasyproxyConfig(hinted)).toBe(stripEasyproxyConfig(lockedOutConfig(EPX_SECTION_MARKER)));
+  });
+
+  test("recovery removes every dead endpoint without a proxy, and keeps the user's own keys", () => {
+    const restored = stripEasyproxyConfig(lockedOutConfig(EPX_ROUTING_MARKER_LINE));
+    expect(restored).not.toContain("openai_base_url");
+    expect(restored).not.toContain("experimental_realtime_ws_base_url");
+    // The catalog pointer has to go with the routing. Left behind, it names a file only
+    // easyproxy maintains, and Codex fails on a missing model_catalog_json target.
+    expect(restored).not.toContain("easyproxy-catalog.json");
+    expect(restored).not.toContain("Auto-injected by easyproxy");
+    expect(restored).toContain('model = "gpt-5.5"');
+    expect(restored).toContain("[features]");
+    expect(restored).toContain("fast_mode = true");
+  });
+
+  test("an install that predates the hint gains it on the next injection, and stays idempotent", () => {
+    const legacy = lockedOutConfig(EPX_SECTION_MARKER);
+    const markers = (content: string) => content.split("\n").filter(line => line.includes(EPX_SECTION_MARKER));
+    expect(markers(legacy)).toEqual([EPX_SECTION_MARKER, EPX_SECTION_MARKER]);
+
+    const first = setRootOpenaiBaseUrl(legacy, 10100);
+    expect(first.keptUserBaseUrl).toBe(false);
+    // Each writer refreshes only the marker it owns, so after the routing key alone the
+    // realtime marker is still the legacy line. Refreshed in place, never appended.
+    expect(markers(first.content)).toEqual([EPX_ROUTING_MARKER_LINE, EPX_SECTION_MARKER]);
+    expect(setRootOpenaiBaseUrl(first.content, 10100).content).toBe(first.content);
+
+    const both = setRootRealtimeWsBaseUrl(first.content, TARGET);
+    expect(both.keptUserRealtimeWsBaseUrl).toBe(false);
+    expect(markers(both.content)).toEqual([EPX_ROUTING_MARKER_LINE, EPX_ROUTING_MARKER_LINE]);
+    expect(setRootRealtimeWsBaseUrl(both.content, TARGET).content).toBe(both.content);
+  });
+
+  test("a user's own root override is still left alone and gains no hint", () => {
+    const userOwned = 'model = "gpt-5.5"\nopenai_base_url = "https://gateway.example/v1"\n';
+    const result = setRootOpenaiBaseUrl(userOwned, 10100);
+    expect(result.keptUserBaseUrl).toBe(true);
+    expect(result.content).toBe(userOwned);
+    expect(result.content).not.toContain("undo:");
+  });
+
+  test("a dead proxy on our own routing is told how to get Codex back without one", () => {
+    const advice = deadProxyRoutingAdviceLines({ proxyUp: false, routingKind: "easyproxy-local" });
+    expect(advice.length).toBeGreaterThan(0);
+    expect(advice.join(" ")).toContain("sign-in");
+    expect(advice.join(" ")).toContain("epx restore");
+  });
+
+  test("the advice stays silent when it would be wrong or unactionable", () => {
+    // A live proxy is not this failure.
+    expect(deadProxyRoutingAdviceLines({ proxyUp: true, routingKind: "easyproxy-local" })).toEqual([]);
+    // Routing we do not own: `epx restore` would not remove it, so promising it would mislead.
+    for (const routingKind of ["native", "custom-local", "custom-remote", "unknown"] as const) {
+      expect(deadProxyRoutingAdviceLines({ proxyUp: false, routingKind })).toEqual([]);
+    }
+  });
+
+  test("both recovery surfaces name a command the CLI actually has", () => {
+    // Derived from the marker rather than restated, so renaming the command in one place and
+    // not the other fails here instead of shipping a config file that names nothing.
+    const named = /epx ([a-z][a-z-]*)/.exec(EPX_ROUTING_MARKER_LINE)?.[1];
+    expect(named).toBeTruthy();
+    expect(findCommand(named!)).toBeDefined();
+    expect(deadProxyRoutingAdviceLines({ proxyUp: false, routingKind: "easyproxy-local" }).join(" "))
+      .toContain(`epx ${named}`);
+  });
+});
+
+describe("a Codex catalog pointer whose file is gone (#5261)", () => {
+  /** Builds a root config naming `catalogPath`, in the escaped form TOML actually stores. */
+  const configNaming = (catalogPath: string) =>
+    `model = "gpt-5.5"\nmodel_catalog_json = ${JSON.stringify(catalogPath)}\n`;
+
+  test("an owned catalog that is missing is reported, and one that exists is not", () => {
+    const dir = mkdtempSync(join(tmpdir(), "epx-catalog-pointer-"));
+    try {
+      const configPath = join(dir, "config.toml");
+      const catalog = join(dir, "easyproxy-catalog.json");
+      expect(missingOwnedCatalogPath(configNaming(catalog), configPath)).toBe(catalog);
+      writeFileSync(catalog, "{}");
+      expect(missingOwnedCatalogPath(configNaming(catalog), configPath)).toBeNull();
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("a relative owned catalog is diagnosed against the inspected config", () => {
+    const dir = mkdtempSync(join(tmpdir(), "epx-catalog-pointer-"));
+    try {
+      const content = configNaming("easyproxy-catalog.json");
+      const configPath = join(dir, "config.toml");
+      const catalogPath = join(dir, "easyproxy-catalog.json");
+      expect(missingOwnedCatalogPath(content, configPath)).toBe(catalogPath);
+      writeFileSync(catalogPath, "{}");
+      expect(missingOwnedCatalogPath(content, configPath)).toBeNull();
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("a catalog the user named is theirs, present or not", () => {
+    const dir = mkdtempSync(join(tmpdir(), "epx-catalog-user-"));
+    try {
+      const configPath = join(dir, "config.toml");
+      const userOwned = join(dir, "gone", "easyproxy-catalog.json");
+      expect(missingOwnedCatalogPath(configNaming(userOwned), configPath)).toBeNull();
+      expect(missingOwnedCatalogPath('model = "gpt-5.5"\n')).toBeNull();
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("the report names the file and both ways out", () => {
+    const lines = missingCodexCatalogLines("/somewhere/easyproxy-catalog.json");
+    expect(lines.length).toBeGreaterThan(0);
+    const joined = lines.join(" ");
+    expect(joined).toContain("/somewhere/easyproxy-catalog.json");
+    // Regenerating and removing are different outcomes; the user picks, so both are offered.
+    expect(joined).toContain("epx start");
+    expect(joined).toContain("epx restore");
+    expect(missingCodexCatalogLines(null)).toEqual([]);
+  });
+
+  test("the commands it names are real", () => {
+    for (const name of ["start", "restore"]) expect(findCommand(name)).toBeDefined();
+  });
+});

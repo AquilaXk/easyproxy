@@ -1,0 +1,102 @@
+import { markAnthropicFamilyEnumeration } from "./quota/anthropic-family-headers";
+import { rawAnthropicUsageWindows } from "./quota/anthropic-decision-windows";
+import { anthropicExtraUsageMonthlyPercent, anthropicUsageBuckets, parseAnthropicExtraUsage, type AnthropicUsageBucket } from "./quota/anthropic-usage-windows";
+import { bindRawDecisionWindows } from "./quota-decision-publication";
+import { decisionQuotaSinkActive } from "../lib/decision-quota-sink";
+import { CLAUDE_CLI_USER_AGENT } from "./claude-cli-identity";
+import { asRecord, normalizePercent, normalizeResetAt, readQuotaJson, REQUEST_TIMEOUT_MS } from "./quota-wire";
+import type { ProviderQuota, ProviderQuotaWindow, QuotaFailureCode } from "./quota-types";
+import { httpQuotaFailure } from "./quota/failure-codes";
+const hasQuotaRows = (q: ProviderQuota) =>
+  q.fiveHourPercent !== undefined || q.weeklyPercent !== undefined || q.monthlyPercent !== undefined || Boolean(q.customWindows?.length);
+
+const FAMILY_LABELS: Partial<Record<AnthropicUsageBucket["window"], string>> = { fable: "Fable", opus: "Opus", sonnet: "Sonnet" };
+
+/** Project a model-family bucket into a quota window; shared buckets and unusable percents yield none. */
+function familyWindow({ window, row, percentField, weeklyAllowancePercent }: AnthropicUsageBucket): ProviderQuotaWindow | undefined {
+  const label = FAMILY_LABELS[window];
+  const percent = normalizePercent(row[percentField]);
+  if (!label || percent === undefined) {
+    return undefined;
+  }
+  const resetAt = normalizeResetAt(row.resets_at);
+  return { label, scope: "model", percent, ...(resetAt !== undefined ? { resetAt } : {}),
+    ...(weeklyAllowancePercent !== undefined ? { weeklyAllowancePercent } : {}) };
+}
+
+/** Read the Anthropic OAuth usage endpoint for an access token and return the parsed quota, or null on a non-OK or malformed response. */
+export async function readAnthropicUsageQuota(accessToken: string): Promise<ProviderQuota | null> {
+  return (await probeAnthropicUsageQuota(accessToken)).quota;
+}
+
+/** Read quota with the paid-usage state that Claude CLI admission needs. */
+export async function readClaudeCliUsageQuota(accessToken: string): Promise<ProviderQuota | null> {
+  return (await probeAnthropicUsageQuota(accessToken, { includeClaudeExtraUsage: true })).quota;
+}
+
+/** A usage read with a closed failure when no quota was usable, and optional monthly retirement evidence. A thrown fetch still throws. */
+export interface AnthropicUsageProbe {
+  quota: ProviderQuota | null;
+  retireMonthlyFallback?: true;
+  failure?: QuotaFailureCode;
+}
+
+export async function probeAnthropicUsageQuota(
+  accessToken: string,
+  { includeClaudeExtraUsage = false }: { includeClaudeExtraUsage?: boolean } = {},
+): Promise<AnthropicUsageProbe> {
+  const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
+    // Like the profile probe: a redirect must never carry the bearer to another host.
+    redirect: "error",
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      "Content-Type": "application/json",
+      "User-Agent": CLAUDE_CLI_USER_AGENT,
+      "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    try { await response.body?.cancel(); } catch { /* Best-effort release; the status is the diagnosis. */ }
+    return { quota: null, failure: httpQuotaFailure(response.status) };
+  }
+  const body = asRecord(await readQuotaJson(response));
+  if (!body) return { quota: null, failure: "response_unusable" };
+  const windows = anthropicUsageBuckets(body);
+  const { buckets, displayBuckets, familyEnumeration } = windows;
+  const shared: Partial<ProviderQuota> = {};
+  const customWindows: ProviderQuotaWindow[] = [];
+  for (const bucket of buckets) {
+    const { window, row, percentField } = bucket;
+    if (window === "5h" || window === "weekly") {
+      const percent = normalizePercent(row[percentField]);
+      const resetAt = normalizeResetAt(row.resets_at);
+      if (percent !== undefined) shared[window === "5h" ? "fiveHourPercent" : "weeklyPercent"] = percent;
+      if (resetAt !== undefined) shared[window === "5h" ? "fiveHourResetAt" : "weeklyResetAt"] = resetAt;
+    } else {
+      const custom = familyWindow(bucket);
+      if (custom) {
+        customWindows.push(custom);
+      }
+    }
+  }
+  const displayWindows = displayBuckets.flatMap(bucket => familyWindow(bucket) ?? []);
+  const paidUsage = parseAnthropicExtraUsage(body.extra_usage)?.state;
+  const monthlyPercent = anthropicExtraUsageMonthlyPercent(body, windows);
+  if (monthlyPercent !== undefined) shared.monthlyPercent = monthlyPercent;
+  const quota: ProviderQuota = {
+    ...shared,
+    ...(includeClaudeExtraUsage && paidUsage !== undefined ? { claudeExtraUsage: paidUsage } : {}),
+    ...(customWindows.length > 0 ? { customWindows } : {}),
+    ...(displayWindows.length > 0 ? { displayWindows } : {}),
+    updatedAt: Date.now(),
+  };
+  if (!hasQuotaRows(quota)) {
+    const retireMonthlyFallback = windows.hasPlanWindow || paidUsage === "disabled";
+    return { quota: null, failure: "response_unusable", ...(retireMonthlyFallback ? { retireMonthlyFallback: true } : {}) };
+  }
+  if (decisionQuotaSinkActive()) bindRawDecisionWindows(quota, rawAnthropicUsageWindows(body, quota.updatedAt));
+  return { quota: markAnthropicFamilyEnumeration(quota, familyEnumeration) };
+}
+

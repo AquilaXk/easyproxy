@@ -1,0 +1,299 @@
+import { beginCodexWriteSection, publishCodexConfigIfUnchanged, removeCodexProfileEntry } from "./config-write-section";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { normalizeStructuralWhitespace, rootAssignmentKey, rootSourceLines, sourceAssignment, sourceText } from "../toml-source-lines";
+import { ConfigWriteLockRefusal, configWriteLockFailureMessage, withConfigWriteLockHeld, withConfigWriteRecovery } from "../config-write-lock";
+import type { LockHandle } from "../config-write-lock";
+import {
+  REALTIME_WS_BASE_URL_KEY,
+  hasInjectedOpenaiBaseUrl,
+  rootTomlString,
+  stripJournaledOpenaiBaseUrl,
+} from "../injected-marker";
+import { HISTORY_RELABEL_STANDS_DOWN, preflightCodexHistoryInjection } from "../history-provider";
+import {
+  journaledInjectedRootValues,
+  journaledInjectedRootWebSearch,
+  journaledInjectedSubagentDefaults,
+  journaledOwnedCatalogBinding,
+  journaledReplacedRootWebSearch,
+} from "../journal";
+import { CODEX_CONFIG_PATH, CODEX_PROFILE_PATH } from "../paths";
+import { getCodexHome } from "../paths";
+import { codexHomeIsAbsent } from "../codex-home-owner";
+import { transformManagedSubagentDefaults, type WrittenSubagentDefaults } from "../subagent-defaults";
+import {
+  applyEol,
+  dominantEol,
+  ensureRootWebSearchDisabled,
+  removeProfileSection,
+  stripInjectedOpenaiBaseUrl,
+  stripEasyproxyCatalogPath,
+  stripRootRoutedModel,
+} from "./config-toml";
+
+import { appendOcxProviderTableBlock, extractEpxProviderTableBlock, hasEpxProviderTable, removeEpxSection } from "./provider-table";
+export { appendOcxProviderTableBlock, extractEpxProviderTableBlock, hasEpxProviderTable, removeEpxSection } from "./provider-table";
+
+/** Read the provider table straight off disk, before anything has transformed it. */
+export function readManagedProviderTableBlock(): string | null {
+  if (!existsSync(CODEX_CONFIG_PATH)) return null;
+  return extractEpxProviderTableBlock(applyEol(readFileSync(CODEX_CONFIG_PATH, "utf-8"), "\n"));
+}
+
+/**
+ * Re-attach a captured provider table after an exact journal restore.
+ *
+ * This is the one place retention needs a second write, because the journal replays whole
+ * pre-injection bytes rather than transforming the current file. The intermediate state is
+ * the safe one: the journal's config is the user's own, so it carries no
+ * `model_provider = "easyproxy"` for a missing table to strand. A crash between the two
+ * writes leaves a fully native config, which is the direction this whole change is trying
+ * to reach anyway.
+ */
+export function retainEpxProviderTableOnDisk(block: string, heldConfigWriteLock?: LockHandle): string[] | null {
+  // The read, the append, and the rename are one section under the shared
+  // write lock; an unlocked read+rename here could discard a concurrent
+  // scalar or projection write.
+  const locked = withConfigWriteLockHeld(CODEX_CONFIG_PATH, heldConfigWriteLock, held => {
+    beginCodexWriteSection(held);
+    if (!existsSync(CODEX_CONFIG_PATH)) return null;
+    const rawContent = readFileSync(CODEX_CONFIG_PATH, "utf-8");
+    const eol = dominantEol(rawContent);
+    const content = applyEol(rawContent, "\n");
+    const next = appendOcxProviderTableBlock(content, block);
+    if (next !== content) publishCodexConfigIfUnchanged(held, "retain", rawContent, applyEol(next, eol));
+    return block.replace(/\n+$/, "").split("\n");
+  });
+  if (!locked.ok) throw new ConfigWriteLockRefusal(locked);
+  return locked.value;
+}
+
+interface StripEasyproxyConfigResult {
+  content: string;
+  managedDefaultsError: string | null;
+}
+
+function hasRootEpxProvider(content: string): boolean {
+  const { lines, rootEnd } = rootSourceLines(content);
+  return lines.slice(0, rootEnd).some((line, index) => {
+    if (!line.structural || rootAssignmentKey(line.text) !== "model_provider") return false;
+    const value = sourceAssignment(lines, index, rootEnd)?.value;
+    return typeof value === "string" && value.trim() === "easyproxy";
+  });
+}
+
+/**
+ * Detailed form used by the on-disk restore path. A damaged ownership marker is
+ * ambiguous: keep the associated value, but return the transform error so the
+ * caller cannot report a complete restore.
+ */
+function stripEasyproxyConfigResult(
+  content: string,
+  journaledBaseUrls: readonly string[] = [],
+  journaledRealtimeWsBaseUrls: readonly string[] = [],
+  journaledRootWebSearch: string | null = null,
+  journaledReplacedWebSearch: string | null = null,
+  journaledSubagentDefaults: WrittenSubagentDefaults | null = null,
+  journaledCatalogBinding: string | null = null,
+): StripEasyproxyConfigResult {
+  let out = content;
+  const hadRootEpxProvider =
+    hasRootEpxProvider(out);
+  // #1798: marker adjacency is FORMATTING evidence, and a Codex app rewrite keeps values
+  // while dropping comments. Fall back to VALUE evidence -- the exact URL we recorded
+  // writing, any injection under this journal -- so an app-rewritten config is still recognized as ours.
+  const rootBaseUrl = rootTomlString(out, "openai_base_url");
+  const hadInjectedBaseUrl = hasInjectedOpenaiBaseUrl(out) || (rootBaseUrl !== null && journaledBaseUrls.includes(rootBaseUrl));
+  out = stripInjectedOpenaiBaseUrl(out); // before removeEpxSection — it keys on the marker line too
+  // The enabled direction of the web-search transform is also the purge: it drops our pair, drops a
+  // marker-less `disabled` the journal proves we wrote, and puts back the operator line we had to
+  // remove for as long as the switch was off. Nothing of ours is written here.
+  out = ensureRootWebSearchDisabled(out, false, {
+    injectedValue: journaledRootWebSearch,
+    replacedUserLine: journaledReplacedWebSearch,
+  }).content;
+  for (const url of journaledBaseUrls) out = stripJournaledOpenaiBaseUrl(out, url, null);
+  for (const url of journaledRealtimeWsBaseUrls) out = stripJournaledOpenaiBaseUrl(out, null, url);
+  if (hasEpxProviderTable(out)) {
+    out = removeEpxSection(out);
+  }
+  out = removeProfileSection(out);
+  // Regex (not exact-string) removal so compact `model_provider="easyproxy"` is stripped too —
+  // must match the detection regex above, or a detected line could survive un-removed.
+  const routingSource = rootSourceLines(out);
+  const providerLines = new Set<number>();
+  routingSource.lines.forEach((line, index) => {
+    if (!line.structural || rootAssignmentKey(line.text) !== "model_provider") return;
+    const assignment = sourceAssignment(routingSource.lines, index);
+    if (!assignment || typeof assignment.value !== "string" || assignment.value.trim() !== "easyproxy") return;
+    for (let at = index; at < assignment.end; at++) providerLines.add(at);
+  });
+  out = routingSource.bom + sourceText(routingSource.lines.filter((_, index) => !providerLines.has(index)));
+  // Routed root model ids (`model = "provider/slug"`) only make sense while the proxy serves
+  // them — strip on both the legacy re-tag form and the Design B injected-base-url form.
+  if (hadRootEpxProvider || hadInjectedBaseUrl) out = stripRootRoutedModel(out);
+  // A marked value the user edited after injection is theirs (#7425) and survives restore.
+  const managedDefaults = transformManagedSubagentDefaults(out, null, journaledSubagentDefaults);
+  if (managedDefaults.ok) out = managedDefaults.content;
+  out = stripEasyproxyCatalogPath(out, { journaledPath: journaledCatalogBinding });
+  return {
+    content: normalizeStructuralWhitespace(out),
+    managedDefaultsError: !managedDefaults.ok ? managedDefaults.error : null,
+  };
+}
+
+/** Pure transform: strip the easyproxy provider block + `model_provider = "easyproxy"` lines. */
+export function stripEasyproxyConfig(content: string): string {
+  return stripEasyproxyConfigResult(content).content;
+}
+
+function hasEasyproxyRouting(content: string): boolean {
+  return (
+    hasEpxProviderTable(content) ||
+    hasRootEpxProvider(content) ||
+    hasInjectedOpenaiBaseUrl(content)
+  );
+}
+
+/**
+ * What the caller already decided about conversation history before calling.
+ *
+ * - `refuse-on-any` — nothing was decided, so re-derive and refuse on any refusal reason.
+ *   This is the default, and it is what a direct caller gets.
+ * - `stand-down-retain` — a stand-down was accepted and `[model_providers.easyproxy]` must
+ *   survive, because the rows this home tagged `easyproxy` stay tagged and resolve only
+ *   through that table. Those conversations still open; their requests fail against a
+ *   stopped proxy, which is an ordinary connection error.
+ * - `stand-down-remove` — a stand-down was accepted and the user explicitly asked for the
+ *   table to go too, accepting that those conversations stop opening.
+ *
+ * One option rather than two booleans: retention and the refusal are the same decision seen
+ * from two sides, and splitting them is how the explicit-removal path ended up refused by a
+ * preflight its caller had already answered.
+ */
+export type RemoveCodexConfigHistoryDisposition =
+  | "refuse-on-any"
+  | "stand-down-retain"
+  | "stand-down-remove";
+
+export interface RemoveCodexConfigOptions {
+  preserveProfile?: boolean;
+  historyDisposition?: RemoveCodexConfigHistoryDisposition;
+  /** Run under a config write lock this process already holds (restore's single section). */
+  heldConfigWriteLock?: LockHandle;
+}
+
+export interface RemoveCodexConfigResult {
+  retryable?: boolean;
+  success: boolean;
+  message: string;
+  /** The exact lines left on disk when the disposition was `stand-down-retain`. */
+  retainedProviderTable?: string[];
+}
+
+export function removeCodexConfig(
+  options: RemoveCodexConfigOptions = {},
+): RemoveCodexConfigResult {
+  if (codexHomeIsAbsent(getCodexHome())) return {
+    success: true,
+    message: `Codex config not found; no native restore was needed${options.preserveProfile ? "." : ", and the easyproxy profile was removed if present."}`,
+  };
+  const historyDisposition = options.historyDisposition ?? "refuse-on-any";
+  const historyError = preflightCodexHistoryInjection(false, false);
+  // The preflight answers "may I rewrite conversation history?". Routing removal is a
+  // different question, and treating one answer as both is what left `epx uninstall`
+  // pointing a live config at a port it had just removed (#4812). Only the stand-down
+  // reason is separable; every other reason still means something is wrong with the
+  // history state itself, and those keep the hard refusal even for a caller that decided.
+  if (historyError && !(historyDisposition !== "refuse-on-any" && historyError === HISTORY_RELABEL_STANDS_DOWN)) {
+    return { success: false, message: `Codex configuration preserved: ${historyError}. Native writer coordination is required.` };
+  }
+  const locked = withConfigWriteLockHeld(CODEX_CONFIG_PATH, options.heldConfigWriteLock, held => {
+  beginCodexWriteSection(held);
+  if (!options.preserveProfile) {
+    try {
+      if (lstatSync(CODEX_PROFILE_PATH).isSymbolicLink()) {
+        return { success: false, message: "Codex profile is a symbolic link; configuration and recovery evidence were preserved." };
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  if (!existsSync(CODEX_CONFIG_PATH)) {
+    if (!options.preserveProfile && existsSync(CODEX_PROFILE_PATH))
+      removeCodexProfileEntry(held);
+    return {
+      success: true,
+      message: `Codex config not found; no native restore was needed${options.preserveProfile ? "." : ", and the easyproxy profile was removed if present."}`,
+    };
+  }
+  const preimage = readFileSync(CODEX_CONFIG_PATH);
+  return withConfigWriteRecovery(CODEX_CONFIG_PATH, held, () => {
+  const rawContent = preimage.toString("utf-8");
+  // Same EOL boundary as inject: strip in LF space, write back in the file's own ending.
+  // The unchanged fast path compares in LF space so an untouched file is never rewritten.
+  const eol = dominantEol(rawContent);
+  const content = applyEol(rawContent, "\n");
+  // Read the recorded injection once: the strip below consumes it, and so does the
+  // ownership verdict, which must agree with what was actually removed.
+  const journaledBaseUrls = journaledInjectedRootValues("openai_base_url");
+  const journaledRealtimeWsBaseUrls = journaledInjectedRootValues(REALTIME_WS_BASE_URL_KEY);
+  const journaledRootWebSearch = journaledInjectedRootWebSearch();
+  const journaledReplaced = journaledReplacedRootWebSearch();
+  const ownedRoot = (key: string, owned: readonly string[]) => {
+    const value = rootTomlString(content, key);
+    return value !== null && owned.includes(value);
+  };
+  const had = hasEasyproxyRouting(content)
+    || ownedRoot("openai_base_url", journaledBaseUrls)
+    || ownedRoot(REALTIME_WS_BASE_URL_KEY, journaledRealtimeWsBaseUrls);
+  const stripped = stripEasyproxyConfigResult(
+    content,
+    journaledBaseUrls,
+    journaledRealtimeWsBaseUrls,
+    journaledRootWebSearch,
+    journaledReplaced,
+    journaledInjectedSubagentDefaults(),
+    journaledOwnedCatalogBinding(),
+  );
+  // Captured from the pre-strip bytes: the strip is what removes the table, so reading it
+  // afterwards would find nothing.
+  const retainedBlock = historyDisposition === "stand-down-retain"
+    ? extractEpxProviderTableBlock(content)
+    : null;
+  const finalContent = retainedBlock === null
+    ? stripped.content
+    : appendOcxProviderTableBlock(stripped.content, retainedBlock);
+  if (had || finalContent !== content) {
+    publishCodexConfigIfUnchanged(held, "remove", rawContent, applyEol(finalContent, eol));
+  }
+  if (!options.preserveProfile && existsSync(CODEX_PROFILE_PATH))
+    removeCodexProfileEntry(held);
+  const retainedNote = retainedBlock === null
+    ? ""
+    : " Kept [model_providers.easyproxy] so conversations already tagged easyproxy still open;"
+      + " remove it with 'epx restore --remove-codex-provider-table' (those conversations stop opening).";
+  const removedMessage = had
+    ? `Removed easyproxy routing from Codex config${options.preserveProfile ? "." : " + profile."}${retainedNote}`
+    : "easyproxy not present in Codex config.";
+  if (stripped.managedDefaultsError) {
+    const routingMessage = had
+      ? removedMessage
+      : "No easyproxy routing was present in Codex config.";
+    return {
+      success: false,
+      message:
+        `${routingMessage} Native Codex sub-agent defaults could not be safely removed: ${stripped.managedDefaultsError}. ` +
+        "The ambiguous marker and adjacent value were preserved; inspect $CODEX_HOME/config.toml before using native Codex.",
+    };
+  }
+  return {
+    success: true,
+    message: removedMessage,
+    ...(retainedBlock === null ? {} : { retainedProviderTable: retainedBlock.replace(/\n+$/, "").split("\n") }),
+  };
+  }, { preimage, requireMatchingPreimage: true });
+  });
+  if (!locked.ok) return { success: false, retryable: locked.error === "locked", message: configWriteLockFailureMessage(locked) };
+  return locked.value;
+}

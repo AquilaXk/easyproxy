@@ -1,0 +1,263 @@
+import { describe, expect, test } from "bun:test";
+import { Readable } from "node:stream";
+import { runLinkCommand, type LinkCliDeps } from "../../src/cli/link";
+
+const fingerprint = "SHA256:abcdefghijklmnop";
+const probe = { alias: "child-a", fingerprint, keyType: "ED25519", epxVersion: "2.83.0" };
+const confirm = { alias: probe.alias, fingerprint, epxVersion: probe.epxVersion };
+const linkId = "lnk_0123456789abcdef";
+// Written out here, not imported: the test pins the sentences an operator reads. The Child's step is bound to the attempt's link
+// id the answer names, so it never removes a link the machine joined since (#8691 final review).
+const FULL_STEP = "Run epx disconnect --expect-link " + linkId + " on the Child and, if it disconnected, epx restart, before retrying: it disconnects only while the Child is connected to this attempt's link (" + linkId + ").";
+const LIGHT_STEP = "Run ~/.cache/easyproxy/bin/epx-child detach --expect-link " + linkId + " on the Child before retrying (on Windows, in Command Prompt, \"%LOCALAPPDATA%\\easyproxy\\bin\\epx-child.exe\" detach --expect-link " + linkId;
+const NO_LINK = "This answer does not name the attempt's link id, so no step on the Child can be bound to it: leave the Child as it is.";
+function harness(bodies: unknown[] = [probe, confirm, { linkId }], status = 200) {
+  const calls: { url: string; init?: RequestInit }[] = [], out: string[] = [], err: string[] = [];
+  const log = console.log, error = console.error;
+  console.log = (...args) => out.push(args.map(String).join(" "));
+  console.error = (...args) => err.push(args.map(String).join(" "));
+  const deps: LinkCliDeps = { baseUrl: "http://127.0.0.1:10100", readAdminToken: () => "epx_admin_test",
+    stdinImpl: Object.assign(Readable.from([]), { isTTY: false }),
+    fetchImpl: async (url, init) => { calls.push({ url: String(url), init }); return Response.json(bodies.shift(), { status }); } };
+  return { calls, out, err, deps, restore: () => { console.log = log; console.error = error; } };
+}
+describe("CLI Remote Link enrollment", () => {
+  test("probe reports the offered version without confirming or issuing a key", async () => {
+    const h = harness(); try {
+      expect(await runLinkCommand(["probe", "child-a", "--json"], h.deps)).toBe(0);
+      expect(h.out).toHaveLength(1); expect(JSON.parse(h.out[0]!)).toEqual(probe);
+      expect(h.calls.map(x => new URL(x.url).pathname)).toEqual(["/api/link/probe"]);
+      expect(JSON.parse(String(h.calls[0]?.init?.body))).toEqual({ alias: "child-a", includeVersion: true });
+    } finally { h.restore(); }
+  });
+  test("non-TTY add refuses before discovery or network when no fingerprint is supplied", async () => {
+    const h = harness(); try {
+      let discovered = false;
+      h.deps.findLiveProxy = async () => { discovered = true; return null; }; delete h.deps.baseUrl;
+      expect(await runLinkCommand(["add", "child-a"], h.deps)).not.toBe(0);
+      expect(discovered).toBe(false); expect(h.calls).toHaveLength(0);
+    } finally { h.restore(); }
+  });
+  test("exact fingerprint binds one discovery and all three requests, without a key in output", async () => {
+    const h = harness(); try {
+      delete h.deps.baseUrl; let discovered = 0;
+      h.deps.findLiveProxy = async () => { discovered++; return { pid: 123, port: 10100, source: "runtime" }; };
+      expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint, "--json"], h.deps)).toBe(0);
+      expect(discovered).toBe(1);
+      expect(h.out).toHaveLength(1); expect(JSON.parse(h.out[0]!)).toEqual({ linkId, alias: "child-a", state: "connected", childRole: "client" });
+      expect(h.calls.map(x => new URL(x.url).pathname)).toEqual(["/api/link/probe", "/api/link/confirm-host", "/api/link/apply"]);
+      for (const c of h.calls) { expect(new URL(c.url).origin).toBe("http://127.0.0.1:10100"); expect(c.init?.redirect).toBe("error"); expect(c.init?.signal).toBeInstanceOf(AbortSignal); expect(new Headers(c.init?.headers).get("x-easyproxy-api-key")).toBe("epx_admin_test"); }
+      expect(JSON.parse(String(h.calls[2]?.init?.body))).toEqual({ alias: "child-a", fingerprint });
+      expect(h.err).toEqual([]);
+    } finally { h.restore(); }
+  });
+  test("mismatched fingerprint refuses before durable confirmation", async () => {
+    const h = harness(); try {
+      expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", "SHA256:xxxxxxxxxxxxxxxx"], h.deps)).not.toBe(0);
+      expect(h.calls).toHaveLength(1); expect(h.out).toEqual([]);
+    } finally { h.restore(); }
+  });
+  test.each([false, true])("TTY requires explicit confirmation: %s", async approved => {
+    const h = harness(); try {
+      h.deps.stdinImpl = Object.assign(Readable.from([]), { isTTY: true });
+      h.deps.confirmFingerprint = async offered => { expect(offered).toEqual(probe); return approved; };
+      expect(await runLinkCommand(["add", "child-a"], h.deps)).toBe(approved ? 0 : 2);
+      expect(h.calls).toHaveLength(approved ? 3 : 1);
+    } finally { h.restore(); }
+  });
+  test.each([["-bad"], ["child-a", "--unknown"], ["child-a", "--expect-fingerprint", "bad"], ["child-a", "--expect-fingerprint", fingerprint, "--expect-fingerprint", fingerprint]])("bad arguments refuse before network: %j", async args => {
+    const h = harness(); try { expect(await runLinkCommand(["add", ...args], h.deps)).not.toBe(0); expect(h.calls).toHaveLength(0); } finally { h.restore(); }
+  });
+  test.each(["probe", "confirm", "apply"])("malformed %s response never prints a credential", async stage => {
+    const secret = "epx_data_" + "a".repeat(40);
+    const bodies = stage === "probe" ? [{ ...probe, key: secret }] : stage === "confirm" ? [probe, { ...confirm, key: secret }] : [probe, confirm, { linkId, key: secret }];
+    const h = harness(bodies); try {
+      expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint], h.deps)).toBe(1);
+      expect(h.out).toEqual([]); expect(h.err.join("\n")).not.toContain(secret);
+      expect(h.calls).toHaveLength(stage === "probe" ? 1 : stage === "confirm" ? 2 : 3);
+    } finally { h.restore(); }
+  });
+  test("an unsupported remote shell reports an upgrade action without a second request", async () => {
+    const h = harness([{ error: { code: "remote_platform_unsupported", message: "ignored server text" } }], 409); try {
+      expect(await runLinkCommand(["add", "mini", "--expect-fingerprint", fingerprint], h.deps)).toBe(1);
+      expect(h.calls.map(x => new URL(x.url).pathname)).toEqual(["/api/link/probe"]);
+      const message = h.err.join("\n");
+      expect(message).toContain("Update EasyProxy on Home");
+      expect(message).toContain("PowerShell on the Child");
+      expect(message).not.toContain("epx hub invite");
+      expect(h.out).toEqual([]);
+    } finally { h.restore(); }
+  });
+  test("a residual Windows refusal after key issuance keeps the Child recovery", async () => {
+    const h = harness(); try {
+      let i = 0;
+      h.deps.fetchImpl = async () => ++i < 3 ? Response.json(i === 1 ? probe : confirm) : Response.json({ error: { code: "remote_platform_unsupported" }, residual: true }, { status: 409 });
+      expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint], h.deps)).toBe(1);
+      const message = h.err.join("\n");
+      // No link id in the answer: nothing can be bound, so the Child is left.
+      expect(message).toContain(NO_LINK);
+      expect(message).not.toContain("Run epx disconnect");
+      expect(message).not.toContain("no link key was issued");
+    } finally { h.restore(); }
+  });
+  test("residual failures retain fixed Child recovery without remote error text", async () => {
+    const h = harness(); try {
+      let i = 0;
+      h.deps.fetchImpl = async () => ++i < 3 ? Response.json(i === 1 ? probe : confirm) : Response.json({ error: { code: "child_restart_failed", message: "epx_data_secret", hint: "epx_data_secret" }, residual: true, residualKind: "enrollment", residualInstall: "full", linkId, recovery: "epx_data_secret" }, { status: 502 });
+      expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint], h.deps)).toBe(1);
+      // The step can be read long after the attempt, when the Child may belong to another link: it is bound to this attempt's link.
+      expect(h.err.join("\n")).toContain(FULL_STEP);
+      expect(h.err.join("\n")).not.toContain("Before the next step");
+      expect(h.err.join("\n")).not.toContain("epx_data_secret"); expect(h.out).toEqual([]);
+    } finally { h.restore(); }
+  });
+  test("whole deadline bounds an unfinished response body and prevents later apply", async () => {
+    const h = harness(); try {
+      h.deps.enrollmentTimeoutMs = 15;
+      let body!: ReadableStreamDefaultController<Uint8Array>;
+      h.deps.fetchImpl = async (url, init) => { h.calls.push({ url: String(url), init }); return new Response(new ReadableStream({ start(c) { body = c; } })); };
+      const code = await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint], h.deps);
+      expect(code).toBe(1); expect(h.calls).toHaveLength(1); expect(h.err.join("\n")).toContain("outcome is uncertain");
+      body.enqueue(new TextEncoder().encode(JSON.stringify(probe))); body.close();
+      await new Promise(resolve => setTimeout(resolve, 5));
+      expect(h.calls).toHaveLength(1); expect(h.out).toEqual([]);
+    } finally { h.restore(); }
+  });
+  test("offline Child uses config identity and supplied tunnel failure despite an empty Home store", async () => {
+    const h = harness(); try {
+      delete h.deps.baseUrl; h.deps.findLiveProxy = async () => null;
+      h.deps.readStore = () => ({ version: 1, listenerPort: null, links: [] });
+      h.deps.readConfig = () => ({ runtimeRole: "client", client: { transport: "link", serverUrl: "http://127.0.0.1:19200", connectedAt: "2026-10-11T00:00:00Z", link: { linkId, tunnelPort: 19200 } } });
+      h.deps.readClientLinkIdentity = () => ({ direction: "hub-initiated" });
+      h.deps.readChildStatus = () => ({ alias: "Home", state: "failed", since: "2026-10-11T01:00:00Z", reason: "sidecar_invalid" });
+      expect(await runLinkCommand(["status", "--json"], h.deps)).toBe(0);
+      const value = JSON.parse(h.out[0]!); expect(value.role).toBe("child"); expect(value.links[0]).toMatchObject({ id: linkId, tunnelPort: 19200, state: "failed" }); expect(value.child.state).toBe("failed");
+    } finally { h.restore(); }
+  });
+
+  test("bare host refuses non-TTY add without --plant, succeeds with --plant, and prompts once on TTY", async () => {
+    const bareProbe = { alias: "bare-a", fingerprint, keyType: "ED25519", epxVersion: null, runtimeKind: "missing", targetTriple: "linux-x64", plantable: true, binarySizeBytes: 943_718 };
+    const bareConfirm = { alias: "bare-a", fingerprint, epxVersion: null, runtimeKind: "missing", targetTriple: "linux-x64", plantable: true, binarySizeBytes: 943_718 };
+    const hRefuse = harness([bareProbe]);
+    try {
+      expect(await runLinkCommand(["add", "bare-a", "--expect-fingerprint", fingerprint], hRefuse.deps)).toBe(2);
+      expect(hRefuse.calls).toHaveLength(1);
+      expect(hRefuse.err.join("\n")).toContain("--plant");
+    } finally { hRefuse.restore(); }
+
+    const hPlant = harness([bareProbe, bareConfirm, { linkId }]);
+    try {
+      expect(await runLinkCommand(["add", "bare-a", "--plant", "--expect-fingerprint", fingerprint, "--json"], hPlant.deps)).toBe(0);
+      expect(JSON.parse(String(hPlant.calls[1]?.init?.body))).toEqual({ alias: "bare-a", fingerprint, allowMissing: true });
+      expect(JSON.parse(String(hPlant.calls[2]?.init?.body))).toEqual({ alias: "bare-a", fingerprint, plant: true });
+      expect(JSON.parse(hPlant.out[0]!)).toEqual({ linkId, alias: "bare-a", state: "connected", childRole: "client", planted: true });
+    } finally { hPlant.restore(); }
+
+    const hTty = harness([bareProbe, bareConfirm, { linkId }]);
+    try {
+      hTty.deps.stdinImpl = Object.assign(Readable.from(["yes\n"]), { isTTY: true });
+      expect(await runLinkCommand(["add", "bare-a", "--json"], hTty.deps)).toBe(0);
+      expect(JSON.parse(String(hTty.calls[2]?.init?.body))).toEqual({ alias: "bare-a", fingerprint, plant: true });
+    } finally { hTty.restore(); }
+  });
+
+  test("surfaces actionable messages for child_port_busy and child_external_provider_conflict", async () => {
+    for (const [code, snippet] of [
+      ["child_port_busy", "already in use"],
+      ["child_external_provider_conflict", "~/.codex/config.toml"],
+    ] as const) {
+      let step = 0;
+      const h = harness();
+      try {
+        h.deps.fetchImpl = async () => ++step < 3 ? Response.json(step === 1 ? probe : confirm) : Response.json({ error: { code } }, { status: 409 });
+        expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint], h.deps)).not.toBe(0);
+        expect(h.err.join("\n")).toContain(snippet);
+      } finally { h.restore(); }
+    }
+  });
+
+  test("a Home cleanup that left the issued key prints fixed recovery steps, the code and any Child step", async () => {
+    const bareProbe = { alias: "child-a", fingerprint, keyType: "ED25519", epxVersion: null, runtimeKind: "missing", targetTriple: "linux-x64", plantable: true, binarySizeBytes: 943_718 };
+    const bareConfirm = { alias: "child-a", fingerprint, epxVersion: null, runtimeKind: "missing", targetTriple: "linux-x64", plantable: true, binarySizeBytes: 943_718 };
+    for (const [code, snippets, residual, bare] of [
+      ["key_cleanup_failed", ["Enrollment did not complete", "revoke the leftover link key under API keys"], false, false],
+      ["link_cleanup_uncertain", ["whether the link is stored is unknown", "epx link status", "epx link revoke", "revoke the leftover link key under API keys"], false, false],
+      ["link_cleanup_uncertain", ["whether the link is stored is unknown", "The Child may still be connected.", FULL_STEP], true, false],
+      ["link_cleanup_uncertain", ["whether the link is stored is unknown", "The Child may still be connected.", LIGHT_STEP], true, true],
+    ] as const) {
+      let step = 0;
+      const h = harness();
+      try {
+        const [first, second] = bare ? [bareProbe, bareConfirm] : [probe, confirm];
+        h.deps.fetchImpl = async () => ++step < 3 ? Response.json(step === 1 ? first : second) : Response.json({ error: { code, message: "epx_data_secret server prose" }, ...(residual ? { residual: true, linkId } : {}) }, { status: 500 });
+        expect(await runLinkCommand(["add", "child-a", ...(bare ? ["--plant"] : []), "--expect-fingerprint", fingerprint], h.deps)).toBe(1);
+        const message = h.err.join("\n");
+        for (const snippet of snippets) expect(message).toContain(snippet);
+        // A Child that may still be connected was not shown as unlinked.
+        expect(message).not.toContain("was not linked");
+        if (!residual) expect(message).not.toContain("may still be connected");
+        if (residual) expect(message).toContain("--expect-link " + linkId);
+        else expect(message).not.toContain("--expect-link");
+        expect(message).not.toContain("Before the next step");
+        expect(message).toContain("(code " + code + ")");
+        expect(message).not.toContain("epx_data_secret");
+        expect(message).not.toContain("Link management request failed");
+        expect(h.out).toEqual([]);
+      } finally { h.restore(); }
+    }
+  });
+
+  test("a phase failure prints the server's bounded cause, not only the phase name (#8357)", async () => {
+    let step = 0;
+    const h = harness();
+    try {
+      const hint = "Error: defaultProvider must exist in providers";
+      h.deps.fetchImpl = async () => ++step < 3 ? Response.json(step === 1 ? probe : confirm) : Response.json({ error: { code: "child_preflight_failed", message: "The Child effective configuration could not be read.", hint } }, { status: 502 });
+      expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint], h.deps)).not.toBe(0);
+      const message = h.err.join("\n");
+      expect(message).toContain("Remote Link failed during Child preflight");
+      expect(message).toContain(hint);
+    } finally { h.restore(); }
+  });
+
+  test("a Child restart preflight refusal names the condition, the fix and the code", async () => {
+    let step = 0;
+    const h = harness();
+    try {
+      const hint = "The Child still serves a client runtime (/healthz role client on port 10100). On the Child run: epx restart.";
+      h.deps.fetchImpl = async () => ++step < 3 ? Response.json(step === 1 ? probe : confirm) : Response.json({ error: { code: "child_restart_unsupported", message: "x", hint } }, { status: 409 });
+      expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint], h.deps)).not.toBe(0);
+      const message = h.err.join("\n");
+      expect(message).toContain("Remote Link failed during Child restart preflight: " + hint);
+      expect(message).toContain("(code child_restart_unsupported)");
+    } finally { h.restore(); }
+  });
+
+  test("only the bounded, redacted hint survives from an error body (#8357)", async () => {
+    let step = 0;
+    const h = harness();
+    try {
+      const secret = "epx_data_" + "a".repeat(40);
+      h.deps.fetchImpl = async () => ++step < 3 ? Response.json(step === 1 ? probe : confirm)
+        : Response.json({ error: { code: "remote_connect_failed", message: "leak " + secret, hint: "connect said " + secret }, key: secret }, { status: 502 });
+      expect(await runLinkCommand(["add", "child-a", "--expect-fingerprint", fingerprint], h.deps)).not.toBe(0);
+      const message = h.err.join("\n");
+      expect(message).toContain("Remote Link failed during Child enrollment: connect said epx_");
+      expect(message).not.toContain(secret);
+    } finally { h.restore(); }
+  });
+
+  test("a bare host without a local epx-child build names where Home looks for one", async () => {
+    const missing = { alias: "bare-b", fingerprint, keyType: "ED25519", epxVersion: null, runtimeKind: "missing", targetTriple: "linux-arm64", plantable: false, plantUnavailableReason: "artifact_not_found" };
+    const h = harness([missing]);
+    try {
+      expect(await runLinkCommand(["add", "bare-b", "--plant", "--expect-fingerprint", fingerprint], h.deps)).not.toBe(0);
+      const message = h.err.join("\n");
+      expect(message).toContain("EASYPROXY_CHILD_BIN_DIR");
+      expect(message).toContain("epx-child-linux-arm64");
+      expect(message).toContain("SHA256SUMS");
+      expect(message).toContain("cache/epx-child/");
+      expect(h.calls).toHaveLength(1);
+    } finally { h.restore(); }
+  });
+});

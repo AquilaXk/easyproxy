@@ -1,0 +1,119 @@
+---
+title: 為什麼 v1 是預設子代理介面
+description: v2 加密任務限制會造成什麼問題、EasyProxy 為何改以 v1 發布，以及仍想使用 v2 時的選擇。
+---
+
+EasyProxy 安裝後，子代理介面預設為 **v1**。Dashboard、Models 與 Subagents 頁面在切換至 **base** 或 **v2** 前都會要求確認，並連結至本頁說明。CLI 不會提示。
+
+原因很明確：在未變更的加密 v2 路徑上，ChatGPT 原生模型交給路由模型的任務可能無法被後者讀取。例如 GPT 父代理啟動 Grok、Claude 或 GLM 子代理時，無法讀取的加密任務會在邊界失敗。下述實驗選項改變新任務訊息的產生方式，但不解密既有密文。
+
+## 選用以明文傳遞任務訊息的 V2
+
+**V2 · 明文任務**（`v2-plaintext`）為新聊天選擇 V2 目錄 pin，且不啟用全域 V2 強制。它保留 V2 任務名稱、層級、後續訊息、取消與並行功能，並對符合條件的標準 ChatGPT Responses 請求使用實驗性明文編譯器。既有聊天保留其記錄的介面選擇；更新不會自動選取此模式。目錄 pin 適用於新工作階段，但編譯器依目前設定處理每個合格請求，包括既有 V2 工作階段的後續請求。
+
+此模式下，本機 response ID 續接需要相同的獲准 easyproxy API 金鑰身分和請求自身的 `thread-id`；父執行緒 ID 不能存取子任務。缺少任一身分、代理重啟後或使用舊的未綁定快取項目時，請省略 `previous_response_id` 並重新傳送完整對話。此模式保留的狀態在切換模式後仍維持綁定；預設 `v1` 對未綁定狀態保留既有的父執行緒範圍續接行為，包括 loopback 呼叫方。
+
+儀表板要求確認任務文字可能保留在 Codex 歷史、所選 provider 請求及本機回應／除錯狀態，包括磁碟上的續接快照或溢出檔案。HTTPS 與驗證保持啟用，不會新增恢復模型呼叫。既有密文不會被解密，已儲存歷史不會改寫；停用也不會刪除已保留的副本。不支援的後端或用戶端行為仍可能失敗。一般 v1 與原生 v1／路由 v2 混合模式仍可使用。
+
+```bash
+epx v2 mode v2-plaintext --live --acknowledge-plaintext-agent-messages
+```
+
+使用 `epx v2 status --live --json` 查看即時目標。設定本機目標時，兩個指令都省略 `--live`，並使用 `epx v2 status --json` 查看；設定狀態和目錄收斂不代表實際委派成功。若要離開此模式，請明確選擇其他模式；獨立設定的 `plaintextV2AgentMessages` 值會保留。
+
+## 發生時會看到什麼
+
+系統會拒絕啟動，而非悄悄產生空白的子任務：
+
+```json
+{
+  "error": {
+    "code": "unreadable_encrypted_agent_task",
+    "message": "Routed V2 worker task is encrypted for the native ChatGPT backend and cannot be read by the selected provider. Use plaintext V2 agent-message delivery or select a native ChatGPT model."
+  }
+}
+```
+
+結果是 HTTP 400，而且密文絕不回顯。刻意採取失敗關閉：轉送無法讀取的內容，會讓子代理收到空白指令，卻給出看似肯定的錯誤答案。
+
+## 原因
+
+![兩條路徑比較相同的委派。v1 中 ChatGPT 父代理透過 EasyProxy 傳送明文任務，跨過供應商邊界後，路由子代理能讀取。v2 中父代理傳送由 ChatGPT 後端產生的 encrypted_content；EasyProxy 無法解密，任務停在供應商邊界，請求以 unreadable_encrypted_agent_task 失敗。](../../../../assets/subagent-v2-encrypted-task.svg)
+
+在 v1 上，父代理會以純文字送出子代理任務。EasyProxy 能讀取並路由，子代理也能收到可執行的內容。
+
+在未變更的加密 v2 路徑上，父代理送出的任務是由 ChatGPT 後端產生的 `encrypted_content`。金鑰留在該後端；EasyProxy 從未持有，所以代理無從解密或重寫。這個值是真正的密文，而非旗標掩蓋下的明文。因此既有密文的不可讀性是結構性限制；明文選項改變的是新任務的產生方式。
+
+代理設定無法啟用本機解密。實驗性 `agentTaskRecovery` 可以要求 ChatGPT 後端復原符合條件的任務，但不會在本機解密其密文。上述授權、適用條件和失敗處理限制仍然有效。
+
+下表比較未啟用明文編譯器時的加密 v2 路徑：
+
+| 拓撲 | v1 | v2 |
+| --- | --- | --- |
+| ChatGPT 父代理到路由子代理 | 可運作 | **失敗** |
+| 路由父代理到路由子代理 | 可運作 | 可運作 |
+| ChatGPT 父代理到 ChatGPT 子代理 | 可運作 | 可運作，後端能解密自己產生的內容 |
+
+後端始終能讀取自己產生的密文。只有跨越邊界時會失敗。
+
+## 上游修復了嗎？
+
+還沒有，至少關鍵的一半尚未修復。上游已合併 [openai/codex#35845](https://github.com/openai/codex/pull/35845)，加入明文協作訊息支援，但那是*接收端*：它能處理已產生的明文，卻不會讓 OpenAI 父代理送出明文。
+
+傳送端問題仍未解決：[＃36376](https://github.com/openai/codex/issues/36376) 已在 Windows、macOS 與 Linux 的 CLI 0.146 至 0.151 版本重現；[＃37197](https://github.com/openai/codex/issues/37197) 直接指出缺少的部分是傳送端的交付政策。維護者尚未承諾修復，也沒有預計完成時間。
+
+EasyProxy 將影響記錄於 [＃92](https://github.com/AquilaXk/easyproxy/issues/92)，並以不規劃處理結案：這個儲存庫無法修復，因此該 issue 用來指向上游工作，而非等待本專案維護者處理的任務。
+
+## 三種模式目前的行為
+
+| 模式 | 介面 | 適用情況 |
+| --- | --- | --- |
+| **v1**（預設） | 每個模型都宣告傳統的具名稱空間 spawn 工具。啟動子代理時可直接指定其他模型。 | 需要跨供應商委派的使用者。這是目前發布的預設值。 |
+| **base** | 上游模型釘選：Sol 與 Terra 使用 v2，Luna 使用 v1；未釘選的模型遵循 Codex 自身旗標。 | 想使用 Codex 預期的各模型介面，而且只在同一供應商內委派。 |
+| **v2** | 每個模型都宣告扁平化的並行工具。 | 想使用較新的並行工作階段模型，且父子代理位於邊界同一側。 |
+| **v2-plaintext** | 為新工作階段選擇 V2，關閉全域強制，並為合格請求啟用明文編譯。 | 願意確認明文任務可能被保留，並選用實驗性路徑。 |
+
+base 排在第二而非第一，因為其釘選讓大多數人用來*發起*委派的 Sol 與 Terra 採用 v2。對這個問題而言，base 不是折衷設定；從 ChatGPT 啟動路由子代理時，它的行為與 v2 相同。
+
+## 如果你已選擇 base 或 v2
+
+你的設定不會被改動。升級至採用此預設值的版本，不會重寫現有設定；儀表板只會顯示一次通知，等待你的選擇。
+
+- **Continue** 保留目前模式，並停止詢問。
+- **Switch to v1** 套用 v1，並停止詢問。
+
+兩種選擇都會被記錄，通知不會再出現。若未回答就關閉通知，下次開啟儀表板時仍會顯示。
+
+目錄 pin 變更適用於**新的** Codex 工作階段；明文編譯器依目前設定處理合格請求，包括既有 V2 工作階段的後續請求。選擇後請啟動新工作階段；若長時間執行的 App host 仍顯示舊介面，請執行 `epx sync` 並重新啟動該介面。
+
+## 如果仍想使用 v2
+
+以下四種方式依一般使用者建議嘗試的順序排列：
+
+1. **讓 ChatGPT 維持 v1。** 在 v2 模式下，`keepNativeChatGptOnV1` 開關讓 Sol 與 Terra 保持 v1 介面，仍可啟動 Grok 或 Claude；路由父代理則使用 v2。這最接近同時擁有兩者。
+2. **在同一供應商內委派。** 路由父代理在 v2 上啟動路由子代理時會使用明文，能正常運作。
+3. **信任使用金鑰直接驗證的 Responses relay。** 若明確將供應商標記為 `allowEncryptedV2AgentTasks: true`，它就會收到不透明的內容，而非 400。只在確定目的地能處理時才這麼做。
+4. **啟用 `agentTaskRecovery`。** 這是預設關閉的實驗功能。它透過 ChatGPT 後端救回無法讀取的加密 `NEW_TASK`、`MESSAGE`、`FOLLOWUP_TASK` 與 `FINAL_ANSWER` 項目，但會消耗配額、增加延遲，並依賴未記載的行為；combo 復原仍僅限於已啟動子代理的回合，而拆分權杖片段仍不受支援。
+
+各方式的完整機制請見[子代理介面](/zh-tw/guides/sub-agent-surface/)，設定項目請見[代理設定](/zh-tw/reference/configuration/agents/)。
+
+## 本頁何時不再需要
+
+當上游版本讓 ChatGPT 原生父代理以明文送出路由子代理的任務，此預設值的理由就會消失。屆時預設值會改回 base、確認提示不再出現，本頁則從建議轉為歷史紀錄。
+
+## 變更模式
+
+Dashboard、Models 與 Subagents 都提供 v1/base/v2/v2-plaintext 選擇，三個頁面在選擇 base、v2 或 v2-plaintext 前都會要求確認。CLI 指令如下：
+
+```bash
+epx v2 status
+epx v2 mode v1
+```
+
+CLI 不會提示。這是同一項設定；選擇前請理解本頁所述的影響。
+
+## 子代理並行上限
+
+在 **Models → Model settings** 中，子代理上限控制項可設定同時執行的子代理數量上限，不包括主代理。v1、base 和 v2 均可使用，包括全域 v2 旗標關閉的混合模式。介面模式與此上限分別設定。
+
+提高上限可允許更多子代理，但不會自動建立子代理，也不保證執行更快。變更後請啟動新的 Codex 工作階段。如果長時間執行的 App 主機仍使用舊上限，請重新啟動該主機。

@@ -1,0 +1,22 @@
+{
+  "schema": "epx.link.ws-state-proof/1",
+  "description": "Vectors for the Home's link WebSocket state proof (linkWebsocketStateProof in src/link/relay-auth.ts): HMAC-SHA256 under the 32 bytes decoded from the hex fingerprint over \"easyproxy-link-ws-v1\" NUL keyId NUL linkId NUL nonce NUL value. Checked by tests/clients/link-epx-child-ws-gate.test.ts (TypeScript) and native/epx-child/src/link_ws_advert.rs (Rust).",
+  "cases": [
+    {
+      "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "keyId": "key-1",
+      "linkId": "lnk_0123456789abcdef",
+      "nonce": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "value": "on",
+      "proof": "cec7842cf14e9058a6c9f35fa0d3a36e19adb2feaf7196225a0701f9a8d00733"
+    },
+    {
+      "fingerprint": "b1c4f61f6bce9cd85448b6b27f12373ac933ba2f3a652872f88e7657dac72c7e",
+      "keyId": "link:ws-test",
+      "linkId": "lnk_00000000000000ab",
+      "nonce": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "value": "on",
+      "proof": "ba2059ce9b3c491b7515b43793907cc0a51703ed0b7f6b2d9ed3c1ed3723a266"
+    }
+  ]
+}

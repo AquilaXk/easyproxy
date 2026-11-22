@@ -1,0 +1,199 @@
+---
+title: Развёртывание Remote Hub
+description: Hub с локальным контуром управления, Tailscale Serve и OAuth без локального браузера.
+---
+
+О связях машин по SSH см. [Удалённая связь](/ru/guides/remote-link/).
+
+Remote Hub хранит учётные данные провайдеров, каталог и статистику на одном хосте. Авторизованные клиенты обращаются непосредственно к его плоскости данных. Контур управления отделён: необязательный listener привязан только к `127.0.0.1` и обслуживает панель и `/api/*`, но не `/v1/*`, `/healthz`, `/readyz` или WebSocket. Не публикуйте `10101` и не используйте Tailscale Funnel.
+
+## Роли и границы доверия
+
+`standalone` объединяет всё на одной машине; `hub` владеет секретами и статистикой; `client` хранит только состояние подключения и отдельный ключ данных.
+
+```bash
+# Bash only: if using zsh, run bash first in this terminal.
+# Bash: enter the one-time code without echoing it or putting it in shell history.
+read -r -s -p 'Pairing code: ' pairing_code; printf '\n'
+printf '%s\n' "$pairing_code" | epx connect https://hub-name.tailnet-name.ts.net:8443 \
+  --management-url https://hub-name.tailnet-name.ts.net \
+  --pairing-code-stdin
+unset pairing_code
+epx connect status
+epx sync
+```
+
+В читаемой человеком диагностике готовности управляющие символы C0/C1, DEL и разделители строк и абзацев Unicode (U+2028 и U+2029) из значений каталога показываются как видимые шестнадцатеричные escape-последовательности — и при первом подключении, и когда `epx sync` отклоняет обновлённый каталог hub. В JSON-статусе исходное значение диагностики сохраняется без изменений.
+
+Ключ клиента записывается в защищённый `service-api-token`, а не в `config.json`. При подключении статистика читается с hub и фильтруется по `apiKeyId`; после отключения используется локальное хранилище. Зеркалирования нет.
+`epx service uninstall` удаляет локальную службу, но сохраняет существующий ключ, если клиент подключён, его метаданные подключения недействительны или не совпадают, либо ожидающий маркер подключения совпадает с текущим ключом. Действительный маркер для старого ключа не сохраняет посторонний ключ службы. Если маркер небезопасен, повреждён или недоступен для чтения, очистку токена проверить нельзя, поэтому команда выдаёт предупреждение вместо утверждения, что ключ сохранён. Используйте `epx disconnect`, чтобы удалить локальный ключ и состояние подключённого клиента.
+
+Admin token разрешает обычное управление, но никогда не создаёт consent session. Для действий с согласием нужны `gui-session`, совпадающий Origin и CSRF. Заголовок `Tailscale-User-Login` доверен только отдельному management ingress; точные логины задаются в `remoteGui.allowedTailscaleUsers`.
+
+## Сервис и Tailscale Serve
+
+```bash
+epx config set runtimeRole hub
+epx config set hostname 100.64.0.10
+epx config set corsAllowOrigins '["http://localhost:10100"]'
+
+# В новой standalone-конфигурации нет объектов `hub` и `remoteGui`, а `epx config set`
+# не создаёт отсутствующего родителя: вложенный путь завершится ошибкой
+# `config parent path not found: hub`. Установка `runtimeRole` его тоже не создаёт.
+# Сначала создайте каждый объект, затем задавайте его поля.
+epx config set hub '{}'
+epx config set remoteGui '{}'
+epx config set hub.managementPublicOrigin '"https://hub-name.tailnet-name.ts.net"'
+epx config set hub.managementIngress '{"enabled":true,"port":10101}'
+epx config set remoteGui.allowedTailscaleUsers '["operator@example.com"]'
+export EASYPROXY_API_AUTH_TOKEN="$(openssl rand -hex 32)"
+epx service install
+```
+
+Если конфигурация действительно пуста, каждый объект можно задать одним вызовом:
+
+```bash
+epx config set hub '{"managementPublicOrigin":"https://hub-name.tailnet-name.ts.net","managementIngress":{"enabled":true,"port":10101}}'
+epx config set remoteGui '{"allowedTailscaleUsers":["operator@example.com"]}'
+```
+
+Эта форма годится, только пока объекта нет. Присваивание объекта целиком **заменяет** его, а не сливает с прежним: выполнив строку выше над конфигурацией, где уже был `hub.managementIngress`, вы молча потеряете этот ingress. Когда вы правите существующую конфигурацию, родитель уже на месте — задавайте по одному полю вложенным путём, и остальное останется нетронутым.
+
+Принятие строки решают две детали. Значение сначала разбирается как JSON и лишь затем трактуется как обычная строка — поэтому URL пишется как `'"https://…"'`, а объекты, массивы, булевы значения и числа обязаны быть корректным JSON. Кроме того, `hub` и `remoteGui` строгие: и опечатка в ключе, и несоответствующее значение отклоняются прямо при записи ошибкой `schema_invalid`, а не превращаются в настройку, которая никогда не сработает. `managementPublicOrigin` должен быть чистым origin без пути, запроса и фрагмента.
+
+systemd/launchd читает секрет из `service-api-token`; plist и unit не содержат его значения.
+
+```bash
+curl --fail --silent http://100.64.0.10:10100/healthz
+curl --fail --silent http://100.64.0.10:10100/readyz
+tailscale serve --bg --https=443 http://127.0.0.1:10101
+tailscale serve status
+```
+
+`/healthz` подтверждает только работу процесса. Проверьте также `/readyz`, авторизованный `GET /v1/catalog` и реальный ответ модели. Собственный TLS-прокси должен использовать `tailscale cert hub-name.tailnet-name.ts.net` и проксировать только на `127.0.0.1:10101`. Не подделывайте `Tailscale-User-*`; без доверенной идентификации используйте одноразовое pairing.
+
+<a id="giving-the-data-listener-tls"></a>
+
+### TLS для слушателя данных
+
+Показанное выше сопоставление Serve публикует только **управляющий** вход. Он никогда не отдаёт `/v1/*`, `/healthz` и `/readyz`, поэтому сам по себе не даёт удалённому клиенту работоспособного плана данных. easyproxy к тому же не терминирует TLS: слушатель работает по открытому HTTP, а HTTPS всегда обеспечивает фронтенд на стороне оператора.
+
+Serve может стать таким фронтендом и для плана данных — на втором HTTPS-порту. В macOS нужен ещё один переход: Tailscale Serve проксирует только на `127.0.0.1` и не может указывать на слушателя, привязанного к собственному tailnet-адресу узла, а сборка macOS-клиента из App Store прямо отказывает удалённому назначению. Запустите на hub локальный форвардер и направьте Serve на него:
+
+```bash
+# Подойдёт любой loopback-форвардер TCP; socat — один из них. Выберите порт, который хаб
+# ещё не занял: при включённом loopback-companion 127.0.0.1:10100 принадлежит самому easyproxy.
+socat TCP-LISTEN:10110,bind=127.0.0.1,fork,reuseaddr TCP:100.64.0.10:10100 &
+
+tailscale serve --bg --https=8443 http://127.0.0.1:10110
+tailscale serve status   # ожидаются оба сопоставления: 443 -> 10101 и 8443 -> 10110
+```
+
+Serve принимает ограниченный набор HTTPS-портов; убедитесь через `tailscale serve status`, что сопоставление действительно создано, вместо того чтобы считать порт разрешённым. Дайте форвардеру тот же срок жизни, что и hub: фоновая задача оболочки умирает при перезагрузке, а служба возвращается, и остаётся работающий hub, недоступный по TLS. Запускайте форвардер из launchd или systemd рядом с `epx service install`.
+
+Затем подключайтесь, указывая оба origin по отдельности. Позиционный URL — это origin **данных**, именно оттуда берутся `/readyz` и `/v1/catalog`; `--management-url` — origin панели, который используется для pairing и выдачи ключа. Совпадение портов не требуется:
+
+```bash
+# Bash only: if using zsh, run bash first in this terminal.
+# Bash: enter the management admin token without echoing it.
+read -r -s -p 'Admin token: ' admin_token; printf '\n'
+printf '%s\n' "$admin_token" | epx connect https://hub-name.tailnet-name.ts.net:8443 \
+  --management-url https://hub-name.tailnet-name.ts.net \
+  --admin-token-stdin
+unset admin_token
+```
+
+Если `--management-url` опущен, он берётся из ответа `/readyz`, который сообщает `hub.managementPublicOrigin`. Когда origin различаются, указать его явно понятнее.
+
+**Не сокращайте путь, привязывая слушатель данных к `127.0.0.1`.** Именно по loopback-привязке easyproxy распознаёт сугубо локальное развёртывание: он перестаёт требовать ключ данных и начинает требовать, чтобы заголовок `Host` тоже был loopback. TLS-фронтенд передаёт `Host: hub-name.tailnet-name.ts.net`, поэтому `/v1/catalog` отвечает `403 origin_rejected`, а `/readyz`, где этой проверки нет, по-прежнему возвращает `200`. Развёртывание выглядит здоровым и не может отдать модель. Ничто в тракте запроса не читает `X-Forwarded-Host`, так что фронтенд это не исправит. Оставьте слушатель на tailnet-адресе: проверка ключа останется включённой, а проверка `Host` не применяется.
+
+Привязка к `0.0.0.0` тоже работает и снимает нужду в форвардере, так как слушатель становится доступен и по loopback. Она публикует порт данных на всех интерфейсах, поэтому выбирайте её только там, где другие сети вас не волнуют.
+
+Когда Serve поднят, повторите приёмочные проверки для HTTPS-origin данных: `/readyz`, авторизованный `GET /v1/catalog` и один реальный маршрутизированный ответ.
+
+## OAuth, ротация и отключение
+
+```bash
+# Bash only: if using zsh, run bash first in this terminal.
+# Bash: choose one authority source.
+read -r -s -p 'Pairing code: ' pairing_code; printf '\n'
+printf '%s\n' "$pairing_code" | epx connect rotate --pairing-code-stdin
+unset pairing_code
+
+# Alternatively, only over HTTPS, use the management admin token:
+read -r -s -p 'Admin token: ' admin_token; printf '\n'
+printf '%s\n' "$admin_token" | epx connect rotate --admin-token-stdin
+unset admin_token
+```
+
+OAuth запускается через `POST /api/oauth/login`. Если callback недоступен, передайте итоговый URL или код как `{provider,input}` в `POST /api/oauth/login/code`. Не помещайте код в argv или логи.
+
+При ротации старый и новый ключи действуют под одним `apiKeyId` не более десяти минут. Старый ключ сохраняется в `service-api-token.prev`, новый устанавливается атомарно и проверяется через `/v1/catalog`, затем подтверждается. При неопределённом результате повторите команду с временными полномочиями и не удаляйте кандидаты до проверки.
+
+`epx disconnect` восстанавливает локальное состояние даже без hub, но не отзывает удалённый ключ. После отключения отзыв возможен только на странице hub **Подключение → API-ключи**. `epx connect revoke --admin-token-stdin` доступен только пока клиент подключён.
+
+## Docker и устранение неполадок
+
+При откате сохраняйте оба тома и их точки монтирования. Владельцы и права существующих томов не исправляются автоматически. Именованные тома вне Compose и отдельные пути состояния описаны в [основном руководстве](/guides/remote-hub/#docker-compose).
+
+Состояние хранится в двух отдельных томах: `epx-state` для
+`EASYPROXY_HOME=/home/bun/.easyproxy` и `codex-state` для
+`CODEX_HOME=/home/bun/.codex`. Форматы `auth.json` у двух продуктов несовместимы,
+поэтому не объединяйте их домашние каталоги. Оба тома доступны для записи при
+корневой файловой системе только для чтения.
+
+Каталог моделей автоматически не создаётся. Перед проверкой авторизованного
+`/v1/catalog` создайте или импортируйте корректный файл
+`/home/bun/.codex/easyproxy-catalog.json`. Для пустого каталога состояния ответ
+404 `catalog_not_found` ожидаем. Обновление сохраняет `epx-state` и добавляет
+`codex-state`, но не переносит файлы автоматически. Если обходное решение хранило
+каталог моделей в `.easyproxy`, сначала сделайте резервную копию, затем перенесите
+только каталог моделей с доступом лишь для владельца. Не перезаписывайте один
+`auth.json` другим. При переопределении `CODEX_HOME` монтируйте именно эту директорию
+для записи и сохраняйте каталог по умолчанию в `${CODEX_HOME}/easyproxy-catalog.json`.
+Если `model_catalog_json` задаёт другой файл, его разрешённый путь также должен
+храниться постоянно. До явного переноса сохраняйте прежнее соответствие переменных
+окружения и томов. `docker compose down` сохраняет оба тома, а
+`docker compose down --volumes` удаляет и `epx-state`, и `codex-state`, включая
+учётные данные, историю использования, ключ данных, состояние и каталог Codex.
+Это разрушительная операция, а не способ обновления или перезапуска.
+
+Официального Docker-образа нет, но репозиторий содержит поддерживаемые `Dockerfile` и `compose.yaml` для локальной сборки Bun-образа, закреплённого по digest. Перед первым запуском один раз передайте ключ данных через stdin; он не выводится и сохраняется с доступом только для владельца в volume `epx-state`.
+
+Для локального checkout на хосте нужны Git и Docker Compose, а для удалённого Git-контекста достаточно Docker Compose. Bun и ручная подготовка больше не требуются. Отдельный этап сборки создаёт канонический манифест из выбранного Git-снимка и проверяет его до копирования исходников. Метаданные `.git` доступны только через монтирование для чтения и не копируются ни в один слой образа. Ранее созданный на хосте манифест по-прежнему используется после успешной проверки. По умолчанию порт хоста привязан к `127.0.0.1`. Для удалённого доступа явно задайте `EASYPROXY_BIND_ADDRESS=<LAN-или-Tailscale-IP> docker compose up -d`; `0.0.0.0` открывает все интерфейсы. Защитите доступ брандмауэром и аутентифицированным TLS/tailnet-фронтендом.
+
+Сборка отклоняет устаревший манифест, сверяя каждый SHA-256 с файлами контекста и затем образа. Отсутствующие или изменённые файлы, лишние исходники и символические ссылки запрещены. Обязательны `package.json`, `bun.lock` и единственный включаемый файл из `scripts/` — `scripts/model-metadata.source.json`.
+
+```bash
+git clone https://github.com/AquilaXk/easyproxy.git
+cd easyproxy
+docker compose build
+openssl rand -hex 32 | docker compose run --rm -T hub bun run docker/bootstrap-token.ts
+docker compose up -d
+```
+
+Для прямой сборки из удалённого Git-контекста сохраните Git-метаданные встроенным аргументом BuildKit:
+
+```yaml
+services:
+  hub:
+    pull_policy: build
+    build:
+      context: https://github.com/AquilaXk/easyproxy.git#main
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"
+```
+
+Контейнер работает от непривилегированного пользователя `bun`, с корневой файловой системой только для чтения и публикует только `10100`. Не публикуйте `10101` и не помещайте секреты в `ARG`, `ENV`, `COPY`, Compose, историю образа или argv. После healthcheck отдельно проверьте readiness, аутентифицированный каталог и реальный запрос. `docker compose down` сохраняет volume; `docker compose down --volumes` удаляет также конфигурацию, учётные данные и ключ.
+
+- При недоступном hub можно отключиться офлайн, но отзыв ключа останется незавершённым.
+- LKG сохраняется только при временном сбое; при ошибке auth, схемы, размера или протокола локального fallback нет.
+- Для `.prev` сохраните оба файла и повторите ротацию с временными полномочиями.
+- `hub-too-new`/`hub-too-old` указывает, какую сторону обновить; локальные записи ещё не сделаны.
+- Pairing одноразовый, попытки ограничены 429; потерянный код создайте заново.
+- Pairing по не-loopback HTTP отклоняется сразу, и флага-исключения нет. Поставьте управляющий origin за HTTPS или выполняйте pairing по loopback; admin token по HTTP не отправляется.
+- `/readyz` отвечает `200`, а `/v1/catalog` — `403 origin_rejected`: слушатель данных привязан к loopback за TLS-фронтендом, см. «TLS для слушателя данных» выше.
+- Logout/expiry браузерной сессии не отзывает ключ данных.
+- Перед `tailscale serve reset` просмотрите все mappings через `tailscale serve status`.

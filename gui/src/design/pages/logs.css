@@ -1,0 +1,336 @@
+/* v2 styles for the Logs & Debug, Storage page. Imported by design/theme.css into the `bridge`
+   layer, after bridge.css: above every v1 sheet, below Tailwind utilities. Prefer
+   Tailwind classes in the components; keep this file for what utilities cannot say. */
+
+/* ---- Logs: request rows ------------------------------------------------------
+   Badges inside a row (intercepted helper, surface, speed tier, protocol path) become quiet
+   6px tags in the UI face, so the provider · model line stays the loudest thing in the cell. */
+.logs-page .logs-table .badge {
+  height: 20px;
+  padding: 0 7px;
+  gap: 4px;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+  background: var(--epx-surface-2);
+  color: var(--epx-fg-muted);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+.logs-page .logs-table .badge-amber {
+  background: var(--epx-warning-soft);
+  color: var(--epx-warning);
+  box-shadow: none;
+}
+.logs-page .logs-table .mono { font-weight: 400; }
+.logs-page .log-reasoning-cell { color: var(--epx-fg-muted); font-size: 13px; }
+.logs-page .logs-decode-rate { font-size: 12px; line-height: 1.25; }
+
+.logs-page .logs-table-wrap { container-type: inline-size; }
+.logs-page .logs-table { min-width: 960px; }
+.logs-page .logs-table th,
+.logs-page .logs-table td { padding-inline: 12px; }
+.logs-page col.logs-col-client { width: 48px; }
+.logs-page col.logs-col-time { width: 120px; }
+.logs-page col.logs-col-status { width: 80px; }
+.logs-page col.logs-col-model { width: 280px; }
+.logs-page col.logs-col-effort { width: 104px; }
+.logs-page col.logs-col-tokens,
+.logs-page col.logs-col-rate,
+.logs-page col.logs-col-cost,
+.logs-page col.logs-col-duration { width: 84px; }
+.logs-page col.logs-col-actions { width: 40px; }
+
+@container (max-width: 880px) {
+  .logs-page .logs-table { min-width: 0; width: 100%; }
+  .logs-page .logs-table th,
+  .logs-page .logs-table td { padding-inline: 8px; }
+  .logs-page .logs-table th:first-child,
+  .logs-page .logs-table td:first-child { padding-inline: 6px; }
+  .logs-page col.logs-col-client { width: 44px; }
+  .logs-page col.logs-col-time { width: 104px; }
+  .logs-page col.logs-col-status { width: 76px; }
+  .logs-page col.logs-col-model { width: auto !important; }
+  .logs-page col.logs-col-tokens { width: 84px; }
+  .logs-page col.logs-col-cost { width: 80px; }
+  .logs-page col.logs-col-duration { width: 80px; }
+  .logs-page col.logs-col-actions { width: 36px; }
+  .logs-page colgroup col.logs-col-effort,
+  .logs-page colgroup col.logs-col-rate,
+  .logs-page .logs-table th.log-col-effort,
+  .logs-page .logs-table th.log-col-rate,
+  .logs-page .logs-table td.log-reasoning-cell,
+  .logs-page .logs-table td.log-col-rate {
+    display: none;
+  }
+}
+
+@container (max-width: 620px) {
+  .logs-page colgroup col.logs-col-tokens,
+  .logs-page colgroup col.logs-col-cost,
+  .logs-page colgroup col.logs-col-duration,
+  .logs-page .logs-table th.log-col-tokens,
+  .logs-page .logs-table th.log-col-cost,
+  .logs-page .logs-table th.log-col-duration,
+  .logs-page .logs-table td.log-col-tokens,
+  .logs-page .logs-table td.log-col-cost,
+  .logs-page .logs-table td.log-col-duration {
+    display: none;
+  }
+}
+
+/* The empty state already sits in the panel's inset body: no second frame. */
+.logs-page .empty,
+.debug-v2 .empty {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 44px 24px;
+}
+
+/* Notices inside a panel header line up with the toolbar. */
+.logs-page .notice,
+.debug-v2 .notice { margin: 0; border-radius: 10px; }
+
+/* ---- Logs: request detail dialog ---------------------------------------------
+   The v1 frosted sheet becomes a React Bits card: a hairline 12px card, sections as quiet
+   blocks separated by a hairline, labels in the muted face beside mono values. */
+dialog.log-detail-drawer {
+  padding: 0;
+  justify-content: flex-end;
+  align-items: stretch;
+  background: light-dark(rgb(15 23 42 / 0.18), rgb(4 7 13 / 0.48));
+}
+dialog.log-detail-drawer::backdrop {
+  background: light-dark(rgb(15 23 42 / 0.18), rgb(4 7 13 / 0.48));
+}
+dialog.log-detail-drawer > .log-detail-card {
+  width: min(580px, 94vw);
+  max-width: none;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  border-radius: 0;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 1px solid var(--epx-line-strong);
+  overflow-y: auto;
+  background: var(--epx-surface);
+  box-shadow: var(--epx-shadow-lg);
+  padding: 20px 24px;
+  font-family: var(--font-ui);
+}
+@media (min-width: 1024px) {
+  .logs-page:has(dialog.log-detail-drawer[open]) {
+    padding-right: min(404px, 38vw);
+  }
+  dialog.log-detail-drawer[open] {
+    position: fixed;
+    inset: 0 0 0 auto;
+    left: auto;
+    width: min(396px, 37vw);
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    z-index: 30;
+    display: flex;
+  }
+  dialog.log-detail-drawer[open] > .modal-backdrop-dismiss { display: none; }
+  dialog.log-detail-drawer[open] > .log-detail-card { width: 100%; }
+}
+@media (min-width: 1280px) {
+  .logs-page:has(dialog.log-detail-drawer[open]) {
+    padding-right: min(468px, 41vw);
+  }
+  dialog.log-detail-drawer[open] {
+    width: min(460px, 40vw);
+  }
+}
+.log-detail-card {
+  border-radius: 14px;
+  border: 0;
+  background: var(--epx-raised);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 0 0 1px var(--epx-line), var(--epx-shadow-lg);
+  padding: 20px 22px;
+  font-family: var(--font-ui);
+}
+.log-detail-card .modal-head { margin-bottom: 12px; gap: 12px; }
+.log-detail-card .modal-head h3 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.log-detail-card .logs-detail-info { color: var(--epx-fg-muted); font-weight: 500; font-size: 13px; }
+.log-detail-card .modal-desc { color: var(--epx-fg-muted); font-size: 13px; }
+.log-detail-card .log-detail-section { padding: 14px 0; border-top: 1px solid var(--epx-line); }
+.log-detail-card .log-detail-section:first-of-type { border-top: 0; padding-top: 4px; }
+.log-detail-card .log-detail-section-title {
+  margin: 0 0 10px;
+  color: var(--epx-fg);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-transform: none;
+}
+.log-detail-card .log-detail-grid { gap: 7px 16px; font-size: 13px; }
+.log-detail-card .log-detail-grid > .muted { color: var(--epx-fg-muted); }
+.log-detail-card .log-detail-grid > .mono { font-size: 13px; color: var(--epx-fg); }
+/* The billing basis reads as a sentence ("1.95 credits x $0.04 per credit"), so it keeps a
+   readable measure and wraps rather than truncating the multiplier. */
+.log-detail-card .log-detail-grid > .log-detail-credit-billing {
+  font-size: 13px;
+  color: var(--epx-fg);
+  overflow-wrap: anywhere;
+}
+.log-detail-card .log-detail-notes,
+.log-detail-card .log-detail-notes-line { color: var(--epx-fg-muted); font-size: 12px; }
+.log-detail-card .log-detail-attempts-wrap {
+  border: 0;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+  background: var(--epx-inset);
+}
+.log-detail-card .log-detail-attempts thead th { color: var(--epx-fg-subtle); font-size: 12px; border-bottom-color: var(--epx-line); }
+.log-detail-card .log-detail-attempts tbody td { border-bottom-color: var(--epx-line); font-size: 13px; }
+.log-detail-card .log-detail-raw > summary { color: var(--epx-fg-muted); font-size: 13px; }
+.log-detail-card .log-detail-json {
+  border: 0;
+  border-radius: 8px;
+  background: var(--epx-inset);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+
+/* ---- Debug: the live tail lines ----------------------------------------------- */
+.debug-v2 .debug-tail-lines {
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--epx-fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.debug-v2 .debug-inbound-table th {
+  height: 34px;
+  padding: 0 12px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--epx-fg-subtle);
+  border-bottom: 1px solid var(--epx-line);
+  white-space: nowrap;
+}
+.debug-v2 .debug-inbound-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--epx-line);
+  font-size: 12px;
+}
+.debug-v2 .debug-inbound-table tbody tr:last-child td { border-bottom: 0; }
+.debug-v2 .debug-inbound-table td:first-child { white-space: nowrap; }
+
+/* ---- Storage -------------------------------------------------------------------
+   The workspace (bucket rail + overview) and the cleanup card become two hairline 12px
+   cards. Inside, the summary tiles and each section are inset 10px blocks on the page
+   colour, the bucket rail selects with a raised plate, and section titles lose the v1
+   small caps. Structure and behaviour stay in the v1 sheet; this only repaints it. */
+.storage-v2 .storage-page-meta { color: var(--epx-fg-subtle); font-size: 12px; }
+.storage-v2 .storage-page-meta__home { color: var(--epx-fg-muted); }
+
+.storage-v2 .storage-workspace-root,
+.storage-v2 .storage-cleanup-card {
+  margin: 0;
+  padding: 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--epx-surface);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+@media (min-width: 1024px) {
+  .storage-v2 .storage-workspace-root {
+    grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
+    align-items: start;
+    gap: 16px;
+  }
+  .storage-v2 .storage-workspace-rail { border-bottom: 0; padding-bottom: 0; }
+  .storage-v2 .storage-workspace-rail-list { max-height: none; }
+}
+.storage-v2 .storage-workspace-rail { border-bottom-color: var(--epx-line); }
+.storage-v2 .storage-workspace-rail-header { padding: 2px 6px 4px; }
+.storage-v2 .storage-workspace-rail-title { font-size: 13px; font-weight: 600; color: var(--epx-fg); }
+.storage-v2 .storage-workspace-rail-count { color: var(--epx-fg-subtle); }
+.storage-v2 .storage-workspace-rail-row { border-radius: 8px; transition: background-color 0.15s; }
+.storage-v2 .storage-workspace-rail-row:hover { background: var(--epx-accent-soft); }
+.storage-v2 .storage-workspace-rail-row--selected,
+.storage-v2 .storage-workspace-rail-row--selected:hover {
+  background: var(--epx-raised);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.06), inset 0 0 0 1px var(--epx-line);
+}
+.storage-v2 .storage-workspace-rail-row:focus-visible { outline-color: var(--epx-highlight); }
+.storage-v2 .storage-workspace-rail-name { font-size: 13px; color: var(--epx-fg); }
+.storage-v2 .storage-workspace-rail-meta { color: var(--epx-fg-subtle); }
+.storage-v2 .storage-workspace-rail-size { color: var(--epx-fg-muted); }
+
+.storage-v2 .stw-summary-card {
+  border: 0;
+  border-radius: 10px;
+  background: var(--epx-inset);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+.storage-v2 .stw-summary-label { color: var(--epx-fg-subtle); font-size: 12px; }
+.storage-v2 .stw-summary-value { font-size: 18px; letter-spacing: -0.02em; }
+.storage-v2 .stw-summary-value.mono { font-size: 13px; letter-spacing: 0; }
+
+.storage-v2 .stw-section {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--epx-inset);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+.storage-v2 .stw-section:last-child { margin-bottom: 0; }
+/* A section nested in a section (protection, compaction) is a divided block, not a box. */
+.storage-v2 .stw-section .stw-section {
+  margin: 12px 0 0;
+  padding: 12px 0 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: inset 0 1px 0 var(--epx-line);
+}
+.storage-v2 .stw-section-title {
+  margin: 0 0 10px;
+  color: var(--epx-fg);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-transform: none;
+}
+.storage-v2 .stw-kv-row dt { color: var(--epx-fg-muted); }
+.storage-v2 .stw-file-row { border-bottom-color: var(--epx-line); padding: 7px 0; }
+.storage-v2 .stw-file-bucket { color: var(--epx-fg-subtle); }
+.storage-v2 .stw-hint { color: var(--epx-fg-muted); }
+.storage-v2 .stw-detail-toolbar { border-bottom-color: var(--epx-line); }
+
+/* cleanup card: the Policy / Quarantine tabs read as the segmented track */
+.storage-v2 .storage-cleanup-card__tabs {
+  display: inline-flex;
+  width: fit-content;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  background: var(--epx-inset);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+.storage-v2 .storage-cleanup-card__tabs .page-tab { padding: 4px 12px; border-radius: 8px; font-size: 13px; }
+.storage-v2 .storage-cleanup-card__tabs .page-tab--active {
+  background: var(--epx-raised);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.08), 0 0 0 1px var(--epx-line);
+}
+.storage-v2 .storage-cleanup-card .panel-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.storage-v2 .storage-cleanup-card :is(.storage-policy-meta, .storage-cleanup-manual) { border-color: var(--epx-line); }
+.storage-v2 .storage-cleanup-manual__title { font-size: 13px; font-weight: 600; color: var(--epx-fg); }

@@ -1,0 +1,62 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+
+# Generated CL compatibility identity embedded by prepare:package. It must stay
+# untracked so the manifest cannot hash itself.
+src/generated/compatibility-version.json
+
+# Scratch space for local investigation and pre-disclosure security working notes.
+.tmp/
+.opencode/
+
+# Capability probes from the trusted-artifact directory check
+# (src/lab/artifacts/secure-fs.ts detectArtifactIoMode).
+.dirfd-probe-*
+
+# Local agent/session artifacts and machine-local agent configuration
+.codexclaw/
+**/.codexclaw/
+.agents/
+.gemini/
+.claude/
+.codex/
+.omo/
+**/.omo/
+AGENTS.md
+GEMINI.md
+CLAUDE.md
+CLAUDE.local.md
+
+# Bun's on-disk build cache
+*.bun-build
+
+# Local development worktrees
+.worktrees/
+
+# Test-generated artifacts
+tests/.tmp-*
+tests/**/.tmp-*
+
+# Retired directories
+go/
+devlog/
+/docs/
+/.github/pr-assets/
+/.github/scripts/
+/assets/pr-screenshots/
+/assets/sponsors/
+/docs-site/public/pr-screenshots/
+
+# Rust native helpers and desktop build outputs
+native/**/target/
+dist/macos/
+dist/release/
+desktop/src-tauri/binaries/
+desktop/src-tauri/resources/
+desktop/src-tauri/widget/
+desktop/src-tauri/gen/
+desktop/src-tauri/target/
+desktop/bun.lock

@@ -1,0 +1,23 @@
+# OAuth Preset Reconciliation
+
+`src/oauth/index.ts` refreshes registry-owned model rosters and capability lists at startup
+and OAuth upsert. Saved `contextWindow` and `defaultMaxOutputTokens` are operator limits;
+presets fill them only when absent. Saved `modelContextWindows`, `modelMaxOutputTokens`,
+`modelInputModalities` and effort translation maps override preset
+entries, with missing keys filled from the preset. Model keys match case-insensitively;
+array values, including `[]`, replace the seeded value. A saved per-model effort translation
+map is retained as one entry; request-time static policy fills missing inner aliases separately.
+Preset-owned reasoning ladders refresh seeded model rows; unseeded rows and provider tiers
+without preset defaults survive. `modelReasoningEffortsAuthoritative: true` explicitly makes
+saved model ladders operator-owned, so their entries win over preset tiers too.
+`modelContextTiers` and other operator policy remain outside catalog replacement. This keeps
+Copilot long-context evidence and xAI window overrides through restarts and re-login.
+Saved seeds have no provenance separate from operator edits, so existing entries are retained;
+only missing operator-map defaults refresh. Live discovery and request-time admission keep their own limits.
+Regression coverage: `tests/oauth/oauth-reconcile-operator-maps.test.ts`.
+
+The pool login uses the internal `startLoginFlow` credential callback to receive its own grant after the OAuth store write. The credential stays out of public flow status. Automatic cleanup preserves the exact OAuth outcome until the pool owner settles. See [pool login policy and cancellation](openai-accounts.md#pool-login-policy-and-cancellation).
+
+## Microsoft 365 Copilot
+
+`src/oauth/m365-copilot.ts` participates in the existing protected account store, login publication and lazy-only refresh flow. Login produces an instructions-only hint because its managed browser captures the nativeclient callback directly. Its maintained alias catalog remains static across reconciliation. See [the provider contract](m365-copilot.md).

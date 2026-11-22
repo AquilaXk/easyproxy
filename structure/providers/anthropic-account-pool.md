@@ -1,0 +1,599 @@
+# Anthropic Account Pool
+
+## Instance identity and credential registration
+
+`src/providers/anthropic-instance-id.ts` owns the fixed `anthropic` and `anthropic2`
+identifiers. The registry declares both as Anthropic OAuth family members; they share
+one adapter and model metadata. `src/providers/anthropic-instance.ts` distinguishes
+instance identity from configured admission. Pool 2 requires an enabled Anthropic
+OAuth row with its own `anthropicOAuthInstance: "anthropic2"` marker. Explicit
+builtin creation supplies the marker; load, enrichment and reconciliation never
+adopt an existing unmarked row, even at the canonical endpoint. Both pools retain
+the existing endpoint override behavior. The marker records configuration intent,
+not a cryptographic or OS boundary.
+
+`src/types/anthropic-account-pool.ts` defines the shared configuration shape.
+`src/oauth/anthropic-pool-config.ts` reads the primary pool from the top-level
+`anthropicAccountPool` and Pool 2 from its provider row, without inheriting the
+primary pool's settings. Malformed native preference remains false on tolerant load;
+strict write diagnostics reject unsupported field locations.
+
+`src/oauth/anthropic-oauth-definitions.ts` shares the OAuth engine while Pool 2
+disables local Claude CLI import and continuity. `src/oauth/store-anthropic-instance.ts`
+checks cross-instance token fingerprints and bearer-bound UUID proofs inside the
+existing auth-store write lock. Display identities do not establish a duplicate.
+Refresh intent paths and credential-owner checks retain the actual instance.
+Pool 2 config publication rechecks the latest provider row under the config mutation
+lock; a collision preserves the custom row and reports any already-written orphan
+credential. No default-provider change accompanies that publication. CLI preflight checks raw
+config ownership before tolerant loading and reports a custom-row collision or unreadable/malformed
+config through the fixed `configuration_error` reporter before prompting.
+
+Regression coverage: `tests/providers/provider-anthropic-instance.test.ts`,
+`tests/config/config-anthropic-instance-pool.test.ts`,
+`tests/oauth/oauth-anthropic-instance-registration.test.ts`, and
+`tests/oauth/oauth-anthropic-instance-refresh.test.ts`.
+
+## Subscription labels
+
+`src/oauth/anthropic-identity.ts` reads organization tiers from the authenticated profile
+without changing bearer-bound UUID proof. Browser login, refresh, local import and proven
+CLI rotation persist a validated display-only `plan`; both Anthropic instances project it
+through `src/oauth/index.ts`. Known tiers strip `default_claude_` or `claude_`, with organization
+kinds as fallback. Safe future tier strings retain their original spelling; malformed
+or absent tiers project null and never come from quota percentages. Same-account refreshes
+retain an unobserved plan; an observed invalid tier clears it.
+Refresh gives the profile read a 2-second deadline because a refresh can sit on a request path;
+a missed read leaves the stored label in place.
+An account replacement cannot inherit another account's label. `src/providers/anthropic-subscription.ts`
+projects optional management `planLabel`: Pro, Max 5x, Ultra (both `ultra` and `max_20x`),
+or the original unfamiliar validated tier. Dashboard OAuth rows prefer a user alias, then the
+management roster's `accountLabel`, then its always-masked `maskedLabel`, then a localized
+ordinal. `accountLabel` follows `privacy.maskEmails` (#8286): the validated masked identity by
+default, the trimmed stored email when the operator sets the flag to `false`. The same
+policy in `gui/src/provider-workspace/auth.ts` covers reset-grant dialogs and account mutation
+confirmations/notifications through `gui/src/hooks/useProviderAccountPools.ts`. The roster label
+`maskedLabel`, which tray surfaces read, never follows the unmasked email projection; malformed
+identities are omitted from both labels in masked mode.
+`gui/src/pages/providers-page-utils.ts` also strips
+Claude email metadata from the catalog/Add Provider account-status projection without mutating
+the source OAuth status; generic/custom account-status labels remain intact. The current quota section keeps
+that label even if usage is unavailable. Pro, Max 5x and Team retain measured five-hour and
+weekly windows regardless of which is binding. An explicitly null five-hour bucket permits
+a session meter only when its finite measurement is explicitly active.
+
+`src/oauth/google-antigravity.ts` persists `loadCodeAssist`'s `paidTier.id`, falling back
+to `currentTier.id` (paid accounts report `free-tier` there), alongside the discovered project
+on login and refresh. An unanswered `loadCodeAssist` observes nothing and keeps the stored label;
+only a parsed body can clear it. `src/oauth/plan.ts` accepts only trimmed lowercase labels of at
+most 64 characters in `[a-z0-9_.-]`. `src/oauth/store.ts` preserves this allowlisted metadata and
+`src/oauth/index.ts` projects validated stored labels for every provider, with explicit null for
+an unknown subscription. Subscription labels never establish identity, entitlement or quota capacity.
+
+Antigravity failed-login text includes a content-free discovery summary from
+`src/oauth/antigravity-discovery-diagnostics.ts`: stage, HTTP status, root category, done/error
+presence and types of only the three known project fields at the root and fixed `response` container.
+Only the last response per stage is retained; values and arbitrary keys never enter the summary.
+`AntigravityProjectDiscoveryError` constructs this public text only from sanitizer outputs;
+the public OAuth mapper preserves it for CLI reporting and background login/status settlement.
+Project-required admission, import codes, polling and request budgets remain unchanged.
+
+## Discovery credential ownership
+
+`src/oauth/model-discovery-auth.ts` checks the configured Pool 2 row before a
+catalog resolver observes or refreshes its OAuth credential. Observed gathers use
+their captured provider snapshot. `src/oauth/index.ts` applies the same policy
+when building the final models request; Pool 2 OAuth authorization is scoped to
+the target authorized by its marked configuration. Connection probes capture the
+provider row and recheck live ownership and target before sending. A custom key provider named `anthropic2`
+continues to use its own configured key, including legacy rows with no auth mode.
+Coverage: `tests/oauth/anthropic2-discovery-ownership.test.ts`.
+
+## Instance-scoped runtime
+
+Pool 2 is reached only by an explicit `anthropic2/<model>` selector, its alias, or
+`defaultProvider: "anthropic2"`. `activeProviderEntries` in `src/router.ts` leaves the marked
+builtin row out of bare-model fallback (configured default model, model lists, model
+aliases), so a bare `claude-*` never resolves to Pool 2 whatever the row order or the
+primary row's state; an unmarked custom `anthropic2` row keeps ordinary fallback. A
+Pool 2 selector leaves `anthropic2` only through an operator blocked-model redirect.
+
+`anthropicRoutingFor(instance)` in `src/oauth/anthropic-routing.ts` binds account
+selection, affinity, quorum, manual preference, cooldown and rotation to one
+instance. Legacy named exports mean the primary pool. Model routes widen only
+within that instance's roster. Pure protocol/model transformations remain shared.
+Responses dispatch, continuation, sidecar and native Messages share the [finite funded-roster
+and physical-send intersection](../transports/responses-spend.md#credential-hop-reservations).
+Cooldown writes cannot shrink that request's snapshot; new accounts cannot enlarge it.
+`tests/adapters/anthropic/anthropic-funded-roster.test.ts` exercises local HTTP dispatch and native Messages;
+`tests/adapters/anthropic/anthropic-sidecar-account-failover.test.ts` covers the sidecar hook.
+Pause, policy and selection notifications affect only the matching existing state.
+
+`src/oauth/anthropic-model-quota.ts`, `src/oauth/anthropic-rate-limit-policy.ts` and `src/providers/quota/anthropic-cooldown-recovery.ts`
+expose corresponding instance-bound owners. Family leases, admission pauses and probe generations include the instance and
+account. Clear/removal fences prevent an older claim from becoming current after the same account ID is re-added.
+`src/lib/state-store-registrations.ts` sweeps and reconciles existing instance buckets without starting dormant pools. On that
+sweep `src/providers/quota/anthropic-cooldown-recovery-worker.ts` forces the usage read that lifts a claimable 429 quota cooldown
+(#6989) on enabled OAuth instances only; a windowless `Retry-After` cooldown is unclaimable and waits for its deadline. Retained
+reads back off per account (one sweep, doubling to ten minutes); a newer refusal resets it; a deadline due first is never read for.
+
+Responses and native Messages retain the configured instance and authorized
+target through preparation, retries and continuations. Named Pool 2 OAuth routes
+that fail configured admission refuse before generic OAuth resolution.
+Physical response attribution checks the sent provider, bearer and credential
+generation; native also checks its UUID. The header writer's numeric config
+generation is separate from the credential-generation string and preserves the
+existing live-roster exception. Explicit combos retain their declared targets;
+direct Pool 2 account recovery never selects the primary pool.
+Translated Responses [hosted Advisor ceiling checks](../transports/responses-spend.md#prepaid-initial-sends) use the admitted credential snapshot's provider and account ID, independently of display tags and the ambient active account; equal account IDs in different instances retain separate identities. Every selected adapter builder checks the captured hosted-work policy again after an admitted account replacement, including sidecar request copies; an earlier withholding remains in force for the turn. This read-only binding does not change ordinary main-model accounting scopes.
+
+`src/oauth/anthropic-send-ownership.ts` captures the account incarnation and
+credential revision before the physical fetch. Header publication and refusal binding
+retain that same owner after the await; response arrival cannot adopt a newly
+registered row with identical credentials. Ordinary cooldown observations do not
+invalidate the send incarnation. Numeric config generation remains a separate
+roster fence.
+
+`src/server/responses/request-prepare.ts` preserves explicit Pool 2 intent before
+default routing can discard an unavailable qualifier. Exact configured provider
+keys precede aliases; unrelated uppercase custom keys retain their own meaning.
+Messages ingress and protocol preview share the corresponding selector rule.
+`src/router.ts` also reserves unavailable literal Pool 2 selectors before the
+default-provider path. Its dedicated refusal maps to authentication errors in Chat
+and Responses ingress, including native Chat, which may bypass the Responses
+preparation pipeline. The router uses the import-free identity leaf.
+
+## Pool-bound helpers
+
+Vision and web search choose their backend family first, by the existing rules:
+web search defaults to OpenAI and vision keeps its automatic order.
+Only an Anthropic family result consults a pool. `resolveAnthropicHelperInstance` in
+`src/sidecar/auth.ts` takes the explicit `anthropicInstance` of `webSearchSidecar`,
+`visionSidecar` or the matching `claudeCode` override, then the parent request's
+builtin instance, resolved through `inheritedAnthropicInstance`: a present custom unmarked
+`anthropic2` row is never inherited as Pool 2, while a parent pool whose row was removed or
+disabled mid-request is still inherited, so its helper refuses instead of discovering
+another pool. A target is available when it is
+configured and holds any account that is neither paused nor awaiting reauth; which
+account sends is decided at snapshot time. An explicit or inherited target that is
+unavailable raises `AnthropicHelperUnavailableError` (`anthropic_helper_unavailable`).
+The planners (`planWebSearch`, `planVisionSidecar`, the passthrough bridge) convert
+that refusal into "no helper plan" through `withAnthropicHelperRefusal`, so the main
+request proceeds exactly as it does when no helper is configured, and nothing
+discovers another pool. With neither target, legacy discovery keeps its order and
+never adds Pool 2. `resolveAnthropicSidecarAuth` is an exact instance lookup with no
+fallback.
+
+`src/sidecar/anthropic-binding.ts` gives builtin helpers the selected instance's
+model-route admission, account selection and credential snapshot through
+`resolveAnthropicHelperSnapshot`. Like the legacy helper token path, it reads the
+pool's selection without promoting the active account, so a helper never moves the
+active pointer or spends a one-dispatch manual preference. `fetchAnthropicHelper`
+rechecks the configured row, captured target, live account and bearer before each
+physical send, so a removed, paused or replaced account refuses rather than sending. Primary-pool
+quota headers carry the validated send owner's credential generation to the advisory snapshot.
+Callers and the send fence build the Messages URL with the same
+`anthropicHelperMessagesUrl`, so a trailing slash on `baseUrl` cannot split them.
+Generated image descriptions are cached per resolved pool, model and reasoning;
+settings that do not change the description (`enabled`, `timeoutMs`) leave the
+cache intact. Custom helper providers keep
+their own credential path. `src/vision/plan.ts`, `src/vision/anthropic-describe.ts`
+and `src/web-search/` consume this binding; account-refusal recovery in
+`src/web-search/loop.ts` and `src/images/loop.ts` stays within the sending instance.
+Compatibility Lab live probes (`src/lib/lab-live-route-production.ts`) fetch an `anthropic2`
+bearer only for the marked builtin row; an unmarked or orphaned row refuses before any credential
+lookup.
+
+`src/config/schema/anthropic-account-pool.ts` accepts `anthropicInstance` only as
+`anthropic` or `anthropic2`, only with an Anthropic backend, and rejects a
+provider-qualified helper model naming the other instance. Claude Code overrides are
+validated after inheriting the global helper fields; an inherited pool is checked only
+while the merged backend is Anthropic. In
+`src/server/management/config-routes.ts` and `agent-settings-routes.ts` a missing field
+preserves, `null` deletes and an instance sets; an unset choice is never written as
+`anthropic`. The option DTOs in `web-search-sidecar-options.ts` and
+`vision-sidecar-options.ts` report the selected, parent, mixed and available pools.
+
+## Pool-bound quota and reset grants
+
+`src/providers/quota/anthropic-usage-windows.ts` selects windows for both `src/providers/claude-cli-usage.ts`
+and the raw advisory projection in `src/providers/quota/anthropic-decision-windows.ts`. Recognized `limits`
+rows (`session`, `weekly_all`, and model-scoped `weekly_scoped`) supersede legacy counterparts before selection.
+Duplicates, malformed shared measurements, unknown kinds or families, and non-boolean active flags make family
+enumeration incomplete. Finite shared readings inform routing and cooldown recovery even when inactive.
+With explicit legacy `five_hour: null`, a five-hour meter requires a finite session marked active.
+
+Usage-based seats such as Enterprise can report an undated monthly fallback from enabled `extra_usage`.
+Any recognized plan row, including an inactive or skipped row, suppresses the fallback. The bar shows the
+higher of reported utilization and the share of a positive monthly credit cap consumed, clamped to 0–100.
+Plan evidence from usage probes or serving headers retires the fallback. A recognized row without a meter or
+explicit `extra_usage.is_enabled: false` retires only monthly. Without either signal, an unusable response keeps
+the last good reading. A monthly-only response replaces older plan bars, yields to later plan commits, and
+supersedes older probes. It informs display and advisory ranking. Plan admission and wallet availability are independent.
+
+Only active scoped rows inform routing. Inactive rows go into `AccountQuota.displayWindows` for display
+alone, with routed labels taking precedence. `gui/src/components/QuotaBars.tsx` marks them as not in
+effect (`gui/tests/quota-display-only-window.test.tsx`). An authoritative inactive family row can retire
+a previous passive family refusal. Shared cooldown recovery requires finite headroom for each rejected window.
+
+`weekly_scoped_shares[]` identifies a routed or display-only scoped row by its raw `limits` index and
+gives its share of the weekly limit. The bar shows the family's own `percent` with the allowance
+(`weeklyAllowancePercent`) below the label. Shares come from upstream. Conflicting shares, shares outside
+(0, 100], and shares without a recognized scoped row are ignored.
+`tests/providers/provider-anthropic-usage-windows.test.ts` covers source precedence, scoped admission, raw precision, pool projection, weekly shares and legacy compatibility.
+
+Profile tiers in `src/oauth/anthropic-identity.ts` accept both `default_claude_`
+and `claude_` prefixes and the Ultra display spelling. `max_20x` remains the legacy
+Ultra alias. Unknown safe tier strings remain display metadata and never grant
+quota, reset eligibility, billing credit or routing capacity.
+
+`src/providers/quota/anthropic-account-quota.ts` probes per-account usage for either
+instance. It refuses an unconfigured instance, resolves token renewal before keying its
+flight on the credential actually dispatched, and publishes only while the instance's
+quota epoch, configured row, account incarnation and credential revision are unchanged. `src/oauth/store.ts` advances the persisted revision under the auth store lock when a login or credential replacement changes its owner. Alias edits preserve the revision.
+`captureProviderAccountQuotaEpoch(instance)` and the cache keys in
+`src/providers/quota/account-cache.ts` are per instance, so clearing Pool 2 quota never
+invalidates the primary pool. With the pool on and two or more accounts, `fetchAnthropicQuota` (`src/providers/quota/vendor-probes-oauth.ts`) reports a display-only estimate via `aggregateCodexPoolCapacity`: seats weigh 1, inactive seats use their last-good row (no extra probes), paused, reauth or stale seats count as incomplete coverage. Report ownership includes the pool switch, each seat's credential revision and routing status, and the active selection. Quota reset detection observes the active seat's own reading (`observedQuotaFor`), never the estimate, which has no reset times (`tests/providers/provider-anthropic-pool-capacity.test.ts`).
+
+Each failed probe names one closed `quotaFailure` code from `src/providers/quota/failure-codes.ts`: `account_unavailable` if a credential is unusable (no request is sent), the HTTP status class (`access_denied`, `rate_limited`, `upstream_error`, `redirect_blocked`), `response_unusable` for a body without usable quota, or `timeout` or `transport_error` for a thrown dispatch.
+Both probe writers cache `unavailable: true` and `quotaFailure: "response_unusable"` on retirement-only responses.
+Ownership and cooldown refusals set no code. The code requires a current flight, carries no upstream text and never changes account health or `needsReauth`.
+Live bars kept after a failed or retirement-only probe retain their original credential fence. The disk cache drops owned rows whose opaque revision binding differs from the current auth store. Legacy display rows carry no weighted routing evidence.
+A retirement-only result preserves the original observation times of unchanged plan bars for
+[weighted routing](reset-near-weighted.md).
+
+`src/providers/anthropic-reset-grant-ledger.ts` names the journal by instance:
+`anthropic-reset-grant-ledger.json` keeps the primary pool's existing bytes and records,
+and Pool 2 uses `anthropic2-reset-grant-ledger.json`.
+`src/server/management/anthropic-reset-grant-routes.ts` reads `provider` from the GET
+query and the consume body, treats omission as the primary pool, echoes the provider and
+returns `invalid_provider` for an unconfigured instance. Account, grant and operation IDs,
+unknown-outcome retry ownership and session consent stay bound to that instance.
+
+## Pool-bound management surfaces
+
+`src/server/management/anthropic-pool-settings.ts` owns Anthropic pool persistence.
+`writeAnthropicPoolSettings` writes exactly one location (top-level for the primary pool,
+the provider row for Pool 2) and never recreates a deleted Pool 2 row.
+`persistAnthropicPoolPatch` takes a required instance for the durable mutation, the
+uncertain-save comparison and live publication; an unknown outcome returns 409
+`config_save_state_unknown`. `src/server/management/oauth-account-routes.ts` serves
+`/api/oauth/accounts/pool` and `/api/pool/settings` for both instances with DTO kind
+`anthropic` and the actual provider. An unconfigured Pool 2 is refused: 409 from
+`/api/oauth/accounts/pool` and 400 from `/api/pool/settings`, which has no pool kind for it.
+
+`src/cli/account.ts` and its siblings accept `anthropic2` for pool, auto-switch, routes
+and account selection; `epx account anthropic-reset-grants` keeps its syntax and adds
+`--provider anthropic|anthropic2`. `src/codex/catalog/provider-models.ts` discovers Pool 2
+like the primary pool. `src/providers/label.ts` and `src/usage/cost.ts` keep Pool 2's own
+label and grouping while pricing it from the shared Anthropic family metadata.
+`gui/src/provider-icons.ts` maps `anthropic2` to the green Claude mark, mirrored by
+`desktop/src-tauri/src/provider_icons.rs`; GUI query keys and mutation state carry the
+provider.
+
+Regression coverage: `tests/vision/vision-anthropic-instance-sidecar.test.ts`,
+`tests/web-search/web-search-anthropic-instance.test.ts`,
+`tests/providers/provider-anthropic-instance-quota.test.ts`,
+`tests/server/anthropic2-management.test.ts`,
+`tests/server/management-sidecar-anthropic-instance.test.ts`,
+`tests/cli/cli-anthropic2-account.test.ts`, `tests/codex-integration/anthropic2-catalog.test.ts`,
+`tests/usage/anthropic2-usage-attribution.test.ts`, `gui/tests/anthropic2-provider-mark.test.ts`
+and `gui/tests/anthropic-instance-helper-controls.test.tsx`.
+
+## Anthropic account pause
+
+Anthropic OAuth shares `ProviderAccount.paused` in the protected auth store with generic
+OAuth, not a second list in provider config. `setAccountPaused` serializes pause/resume
+with credential and selection writes, advances the selection revision, and only publishes
+invalidation after persistence. Removing an account removes its pause; reauthentication
+preserves it. The store moves active selection to an unpaused, non-reauth row if available.
+For Anthropic, automatic fallback preserves ring order, including source-less legacy rows,
+and skips background local-CLI rows expiring within 60 seconds, including still-valid credentials.
+`src/oauth/refresh-policy.ts` shares that skew between pause fallback, routing and token refresh.
+Claude Code credential adoption follows the [bearer identity contract](#claude-credential-identity).
+A legacy row selected by pause fallback or explicitly can use its own valid bearer for quota/model
+discovery and refresh its stored token normally. Missing or invalid provenance normalizes to no
+source, which never permits CLI-disk adoption. With no permitted fallback, active-account probes
+stay closed until a usable account is selected or resumed.
+Pause does not clear cooldowns, quota, or credentials and does not cancel an already-sent turn.
+
+`src/oauth/anthropic-routing.ts` excludes paused rows from quota, round-robin, fill-first,
+manual, affinity, model-route and reactive 429 candidates, including when proactive pooling
+is off. All-paused requests return 403 with resume guidance. Quorum is invalidated on pause
+and resume; a sent account paused before its 429 may still recover on its sole unpaused
+successor. Credential resolution, refresh-lock acquisition, selection commit and physical
+dispatch recheck live eligibility after asynchronous waits. Responses and native Messages
+preserve typed 401 authentication, 403 pause and 429 cooldown refusals after pacing, including pool-off recovery;
+they do not report local rejection as 502. Only cooled usable survivors of a strict route
+produce its scoped 429 and Retry-After, not a login error. An already-dispatched refresh
+retains a successful rotated credential without unpausing; a late failure cannot mark the
+paused row for reauthentication. Token Guardian and Anthropic quota probes recheck live
+pause, selection and bearer ownership after token resolution and before each usage send;
+a newly paused account makes no auxiliary request. An account switch during a usage probe still seeds the probed account's quota cache but suppresses its stale provider report and reset observation. Pool-off keeps a healthy active account;
+pause/prior-429 recovery uses `only-eligible`, and logs name the committed account.
+
+> Decision record: [ADR-6013](../decisions/ADR-6013-anthropic-account-pause.md)
+
+Regression coverage: `tests/adapters/anthropic/anthropic-account-pause.test.ts`,
+`tests/oauth/local-token-detect.test.ts`, `tests/oauth/oauth-refresh.test.ts`,
+`tests/adapters/anthropic/anthropic-model-routes.test.ts`, `tests/oauth/oauth-accounts-api.test.ts`,
+`tests/cli/cli-account-pool-verbs.test.ts`, and `gui/tests/provider-quota-refresh-controls.test.tsx`.
+
+## Claude credential identity
+
+`src/oauth/anthropic-identity.ts` binds authenticated `account.uuid` to the access bearer's SHA-256. The fixed-origin profile rejects redirects
+and applies a ten-second deadline and 64 KiB body limit. `src/oauth/store.ts` drops invalid or stale proofs, and summaries omit the proof.
+Each grant serves one organization. Its proof may carry `organizationUuid` (a lowercase UUID) as slot scope. Browser login and refresh in
+`src/oauth/anthropic.ts` fill missing token-response proof from the same bearer's profile. The exchange's validated organization constrains enrichment even when the exchange omits the account UUID. A conflicting account or organization leaves token evidence and labels untouched. If the exchange attests an organization without an account UUID and the profile attests a different organization, browser login fails before account selection and refresh keeps the rotated grant with the exchange scope. Both paths keep private, bearer-bound exchange scope when the profile is unavailable and the exchange supplies only organization proof.
+For an identified account, `src/oauth/anthropic-login-slot.ts` prefers a row in the same organization for login and CLI import, with an unknown row as a fallback. A proven other organization gets a new row.
+When browser login provides email and proven organization scope without an account UUID, a unique email match within that proven organization reuses its row without carrying over account UUID proof. The matcher trims surrounding whitespace, compares the local part and internationalized domains exactly, and ignores ASCII case in other domains. With no proven match, sign-in appends a slot and preserves legacy rows, including an unidentified active row. Multiple matches in the proven organization are refused under the store lock. A later login with account UUID proof can recover a unique UUID-less slot with matching email and proven organization if it shares a refresh token or the slot's own bearer proves the same account UUID. The writer rechecks the slot and bearer under lock, including the token match when used. Unavailable, conflicting or stale continuity preserves the existing slot and permits an append with a distinct token. Sign-in and explicit reauthentication check refresh-token ownership under the writer lock. If another slot in the same pool holds the incoming token, the write stops and asks the user to sign in again.
+For a normal login without an account UUID or email, `src/oauth/store.ts` checks the active row under the writer lock. Different proven organizations get separate rows. The login can still replace the active row when the organizations agree or either scope is unknown.
+`src/oauth/reauth-precheck.ts` checks account identity before observation. Login, CLI import and reauth probe unknown same-account rows with their own unexpired bearers before the store lock. Each write checks observations against
+the current bearer and account and stops if a relevant observation goes stale and current proof cannot resolve it. Reauth refuses a different proven organization or one a sibling proves. With a scoped email-only grant, reauth also probes a target with a stored account UUID, matching email and no organization through its own bearer. Under the writer lock it requires the target's current email to match by the same rules, the target's organization to be proven and equal, and no other row of that organization to share the email. Own-grant refresh retains scope until fresh proof names one.
+
+`src/oauth/anthropic-continuity.ts` accepts usable changed CLI generations with a shared nonempty token. Full rotation requires matching authenticated account UUIDs.
+The old bearer uses stored or fresh proof. Independent old/new reads run in parallel, and stored proof missing its organization may prompt one profile read.
+Full rotation requires matching organizations whenever either pool has a same-account sibling. The writer checks both current rosters and refuses adoption when a sibling already proves the incoming organization or the other pool's registration rule refuses the new grant.
+Shared-refresh adoption cannot copy proof to a new bearer. Provider refresh needs new bearer proof and refuses a conflicting authenticated account UUID.
+
+The refresh owner captures login ID, token generation and identity metadata before observation.
+It rechecks them, pause/removal and selection revision after observation and inside serialized persistence.
+The CLI generation is re-read by an awaited `claudeCredentialGenerationCurrent`. A `different` or `unresolved` observation re-reads it once right after observation. Adoption skips that read and checks the generation only inside the serialized writer through `afterPrePersistRead`, so a rotation while the writer was queued is caught (the read is async, so the synchronous predicate only consumes its result and fails closed on a missing, unreadable, near-expiry or different generation). A read that arrives while a metadata probe holds the Keychain slot waits for that probe instead of reading as absent. Superseding writes win. An unresolved full rotation leaves the row and
+pending intent intact, without replaying a possibly consumed refresh or setting reauthentication solely from the identity failure.
+A proven different account may use its own stored refresh only when no pending intent blocks it. Intent cleanup follows successful durable adoption.
+An unsent token request proven by structured `getaddrinfo` `ENOTFOUND` for the token host,
+with no outbound proxy configured in either the startup or current environment and a single
+HTTP/1.1 attempt without keep-alive reuse or redirect following, releases its intent as
+`pre-dispatch`. So does a refused first connection (#8577), in either transport's exact shape:
+Bun fetch's `ECONNREFUSED` naming this token URL in `path` (direct or through an HTTP proxy that
+is not listening), or the SOCKS5 transport's node `ECONNREFUSED` on `syscall: "connect"` to its
+proxy. Redirects, message text, a refusal for another URL or outside connect, and every other
+transport failure keep the intent. `tests/oauth/oauth-refresh.test.ts` and
+`tests/oauth/oauth-refresh-connection-refused.test.ts` cover this boundary.
+An already-expired identityless row whose old bearer no longer authenticates cannot establish
+continuity to a fully rotated pair automatically; explicit import can create a separate slot.
+
+Explicit local import observes the bearer when usable and enriches only a shared-token or
+verified-UUID slot, retaining that slot's ID and selection. It preserves unrelated identityless
+slots. If profile evidence is unavailable, import remains identityless with the same automatic
+recovery limitation. These rules do not authenticate the local host owner who can edit the store.
+
+Regression coverage: `tests/oauth/oauth-anthropic-identity.test.ts`, `tests/oauth/oauth-refresh.test.ts`.
+
+On macOS the local Claude Code credential is read from the Keychain with `security -w`, and `src/oauth/claude-keychain-read.ts` never signals that child: killing `security` while an unlock prompt is pending can crash `securityd` and re-lock the keychain (#8161).
+Every lookup is asynchronous, because a synchronous child can only be bounded by killing it. A credential read resolves null after five seconds and leaves the child to exit on its own, keeps one child per process, and backs off for sixty seconds after a timeout; a child that never exits keeps that slot, so the process stays on the credentials file rather than raising a second prompt. Only the child's own close frees the slot once it has a process: an error event after spawn does not prove it ended.
+The metadata probe (`probe()`, no `-w` or `-g`, output discarded) shares that slot and backoff: exit 0 is `present`, 44 is `absent`, and a 1.5-second deadline, busy slot, active backoff or other failure is `unknown`, never `absent`. `resolveClaudeKeychainPresence` in `src/claude/auth-detect.ts` runs it once per asynchronous boundary (`GET /api/claude-code`, system-env injection and its shell env file, `epx claude`) and hands the result to the synchronous detector through `defaultAuthDetectDeps`, which reads `unknown` on macOS when none was resolved. Every null falls back to the credentials file.
+`tests/oauth/claude-keychain-read.test.ts`, `tests/oauth/local-token-detect.test.ts` and `tests/claude-integration/claude-auth-detect.test.ts` cover the reader and detectors; `tests/claude-integration/claude-keychain-healthz.test.ts` holds a probe open in a separate server process and requires `/healthz` to answer within 750 ms.
+
+## Model routes
+
+For Anthropic OAuth, `src/oauth/anthropic-routing.ts` applies the first matching `anthropicAccountPool.routes` rule to every eligible pick. The declared account order is stable while its candidates remain eligible. Active, manual, affinity, quota and strategy preferences, including [reset-near-weighted](reset-near-weighted.md), choose inside that set. A healthy session affinity outside a model route is ignored for that request and retained for later unrouted or differently routed models; the routed commit does not overwrite it. An explicit fallback widens an empty route to the ordinary pool, and fill-first then advances in ordinary pool order from the active account. A missing eligible route fails locally without that fallback. The rules are operator allowlists, not provider entitlement evidence. Request logs use `route:#<n>` for the 1-based rule position, not the operator name.
+
+## Quota labels
+
+Anthropic model-scoped quota labels in `src/providers/quota/vendor-probes-oauth.ts` publish
+only canonical Fable, Opus, or Sonnet labels after removing terminal controls; unknown upstream display names are omitted.
+
+## Account entitlement refusal recovery
+
+`src/oauth/anthropic-account-refusal.ts` accepts an HTTP 403 only when a complete bounded
+JSON `error` envelope has `permission_error` or `billing_error` and a whole-message
+account subscription/Claude Code entitlement or Anthropic credit-balance refusal, or when
+the envelope carries the structured `oauth_org_not_allowed` type or code (organization disabled
+Claude subscription access; also matched by its whole message under `permission_error`).
+Generic permission, resource/model access, content policy, quoted diagnostics, conflicting
+error codes and incomplete/malformed bodies remain terminal. The shared physical dispatch
+in `src/server/responses/request-transport.ts` binds the refusal to the stored bearer it sent;
+overridden headers, additional API keys and replaced credentials cannot cool that account.
+Combo 402 credit-balance refusals carry that immutable send proof across bounded error
+normalization in `src/server/responses/core-combo-failure.ts`. The combo rechecks instance,
+account incarnation, credential generation and pause/reauth state before recording entitlement cooldown.
+
+`src/oauth/anthropic-routing.ts` records a process-local cooldown, clears account affinity,
+and applies the existing strategy, pause/reauth exclusions, model route and selection commit.
+Retry-After wins; an undated account 403 uses ten minutes, independently of quota resets.
+A usage probe cannot clear this non-reset-derived cooldown. Plan renewal therefore requires
+no permanent reauthentication flag, though a renewed account waits for cooldown expiry.
+The main dispatch, pre-output empty-completion retry, web-search and image bridge use the
+same bounded recovery and record the final refusal even when no retry sends remain.
+Each records the rotated send as `oauth-account-403` (cause `credential-rejected`), not the
+quota recovery `anthropic-oauth-429`, as the native Messages path already did.
+A streamed terminal continuation after assistant output and search after live output or a
+published search call cannot rotate on 403. Non-streaming buffered continuations may recover.
+No eligible replacement preserves the upstream 403; generic 401 handling is unchanged.
+Reactive recovery also works with proactive pooling disabled when multiple accounts are stored.
+
+Regression coverage: `tests/adapters/anthropic/anthropic-quota-dispatch.test.ts`.
+
+## Revoked OAuth access-token recovery
+
+`src/oauth/anthropic-account-refusal.ts` treats only pre-output HTTP 401 with a complete bounded
+JSON error envelope, root type error, authentication_error type, and the exact message
+“OAuth access token has been revoked.” as terminal for the sent OAuth account.
+Other 401 responses retain their existing behavior. The matching credential is marked
+needsReauth through the generation-fenced writer in `src/oauth/store.ts`;
+a new login is preserved. Successful marking clears all affinities for the account and
+invalidates that instance's cached quorum, even when no retry send remains.
+This is durable reauthentication state rather than a subscription/quota cooldown.
+
+Native Messages, translated Responses, pre-output continuations and fetch search/image
+bridges may select an eligible sibling within the same instance under existing send
+and failover limits. Model routes and exclusions remain binding. Pool-off reactive
+recovery uses quota ordering. No eligible sibling preserves the original 401.
+Native `src/server/messages-native-oauth.ts` validates captured selection/revision and model route before admitting a proposed recovery sibling; ordinary active admission is retained when those proposal fences no longer match. Credential usability and selection CAS still precede physical dispatch.
+Committed output disables this account-refusal branch. A new login clears the flag
+through existing registration. Recovery sends use the existing oauth-401 telemetry.
+
+Regression coverage: `tests/adapters/anthropic/anthropic-revoked-token.test.ts` and
+`tests/claude-integration/messages-revoked-token.test.ts`.
+
+## Classified 429 admission
+
+`src/oauth/anthropic-rate-limit-policy.ts` classifies trusted unified headers before
+`src/oauth/anthropic-account-refusal.ts` changes health. Shared 5h/7d rejection or an
+aggregate unified rejection without a family-specific rejection cools only the sending
+credential's account, including the final budget refusal. An aggregate-only refusal uses
+its unified reset or the sixty-second default; Retry-After retains precedence. Family-only
+rejection does not assert shared exhaustion. A transient Retry-After pauses account admission
+without clearing affinity; a request gets one same-account wait up to one second and at most
+one eligible sibling detour. Timer rounding at the captured retry deadline permits that
+retry, while a concurrent admission-pause extension still blocks it. Headerless/invalid-hint
+refusals get at most one short same-account retry and never cool the roster or invent a
+client Retry-After. Main, pre-output continuation and sidecars share the request-local
+allowance and physical-send budget. Cancellation, ambiguous-send markers, replaced credentials
+and committed streaming output forbid replay. Inline retries add a send to the current attempt.
+Native Messages, translated Responses, continuations and sidecars split the attempt on a credential change.
+Default single-account users acquire no new retry or admission pause.
+
+Regression coverage: `tests/adapters/anthropic/anthropic-429-policy.test.ts`.
+
+## Quota exhaustion answer and fresh-read recovery
+
+`anthropicPoolCooldownError` in `src/oauth/anthropic-routing.ts` builds the local refusal for a
+pool or model route with no admissible account. Per account, the latest hold decides: a 429 health
+entry is spent quota whatever its deadline source (only a shared-quota classification records one),
+a 403 entry is an entitlement refusal, an admission pause is a transient throttle, and a family
+exclusion is spent quota unless its revalidation send is in flight. Ties go to the transient hold.
+The refusal carries `usageLimit` only when no route candidate is eligible and every held account is
+on spent quota. Its `resetsAt` is computed apart from admission order: an account reopens when the
+last of its quota holds' upstream windows resets (`quotaResetAt`, recorded only when every rejected
+window carried a reset, even when Retry-After set the deadline; or the family window reset), and the
+pool reports the earliest such account. It is null when any held account's reset is unknown.
+Retry-After remains the admission deadline.
+
+`anthropicPoolCooldownResponse` in `src/server/responses/core-errors.ts` answers a usage limit with
+`formatUsageLimitReachedResponse` (`src/bridge/errors.ts`): 429, `usage_limit_reached` type and
+code, optional `resets_at` in epoch seconds, no `plan_type`, Retry-After, and the
+`usage_limit_reached` request-log code. Codex treats that class as final. The local sites are the
+pool-enabled selection refusal in `request-transport.ts`, both `AnthropicAccountCooldownError`
+catches in `adapter-dispatch.ts` and the passthrough catch; the final non-combo upstream 429 in
+`adapter-dispatch.ts` and the first-iteration 429 of a routed web-search loop in `sidecar-execution.ts`
+use `anthropicPoolUsageLimitAfterRefusal` after recovery found no replacement.
+Combo children keep the earlier `rate_limit_error` body and wording, so combo hop and target-cooldown
+classification are unchanged. Native Messages keeps Anthropic's `rate_limit_error` type. The image
+bridge terminal, opt-in empty-completion continuations and Chat Completions translation keep their
+existing rate-limit identity.
+
+`captureAnthropicCooldownRecovery` claims any live 429 refusal that named a rejected window, plus a
+reset-derived aggregate refusal, regardless of deadline source. Settlement still requires the
+claimed generation, a read no older than the claim, and every named window below 100 percent; a
+claim forces a fresh usage dispatch, and a refusal recorded while a read is in flight moves the
+generation so that read settles nothing. Entitlement 403 cooldowns and windowless Retry-After
+refusals are never claimed.
+
+Regression coverage: `tests/adapters/anthropic/anthropic-pool-usage-limit.test.ts` and
+`tests/adapters/anthropic/anthropic-quota-cooldown-recovery.test.ts`.
+
+## Family weekly admission
+
+`src/providers/quota/anthropic-family-headers.ts` attributes 7d_oi only to fixture-confirmed
+Fable 5 models. It preserves independent shared and model windows, including rejection-only
+family evidence only on HTTP 429, without advancing the usage-probe clock. Other response
+statuses retain soft utilization without creating a hard family refusal.
+`src/oauth/anthropic-model-quota.ts` reads shared 5h/weekly and only the requested family's scoped weekly. Manual, affinity,
+strategy, reactive selection and physical dispatch use that model. A family-only refusal
+preserves unrelated sessions and account-wide health. Numeric thresholds stay soft: zero
+and the all-drained fallback remain preferences, with no hard billing cap introduced.
+Under the `weekly` and `max-utilization` windows, lowest-usage ranking restates a family window
+that carries a weekly allowance on the shared weekly scale (`anthropicModelRankPercent`): Fable
+at 60% of a 50% allowance ranks at 80, because it has 20 weekly points left. The default
+`five-hour` window has no five-hour tie-break, so it keeps the family's own percent rather than
+let a fresh seat's 50 mask lower five-hour readings. Auto-switch thresholds keep it too, so
+a fresh Fable seat does not read as half spent. Exhaustion is unchanged, since both scales
+reach 100 together, and a passive header reading keeps the allowance the last usage probe read.
+`tests/adapters/anthropic/anthropic-account-threshold.test.ts` covers both sides.
+
+Passive family evidence expires after thirty minutes or its known reset. An expired
+exclusion admits one request-driven revalidation send at a time, released at response
+headers or error, without a background probe. An owned 2xx retires the requested family
+exclusion even without family headers, restoring concurrent sends. Family mutations use a
+separate generation fence: a newer family observation preserves its own evidence while an
+in-flight usage probe may still recover shared cooldown and publish shared utilization.
+Credential replacement discards old passive ownership. Active non-enumerating probes preserve absent family windows; an authoritative
+limits array retires absent families. Shared rejection and family rejection keep independent
+resets, so Fable must wait for both relevant windows while Sonnet need only wait for shared quota.
+
+Regression coverage: `tests/adapters/anthropic/anthropic-model-weekly-admission.test.ts`.
+
+## Native Messages dispatch
+
+`src/server/messages-native-oauth.ts` binds native Claude Messages through the same session,
+model-route and generation-fenced account authority as Responses. It rechecks current model routes
+across asynchronous preparation and before sending. Concurrent affine sessions retain their own
+account while a manual selection revokes stale affinity authority.
+`src/server/messages-native.ts` preserves caller message/cache structure while substituting the
+committed credential and provider UUID. Physical sends acquire family admission before spend/send
+accounting, release the lease on every exit and attribute quota only to the actual sending generation.
+Bounded pre-output refusal recovery uses `src/oauth/anthropic-account-refusal.ts`; optional tried-account
+exclusions apply only to alternate selection, preserving the permitted same-account throttle retry.
+Rejected bodies are disposed before rebinding; output consumption never re-enters account recovery.
+Account changes may start a cold cache. The proxy does not share caches across accounts.
+
+## Native request preference
+
+`anthropicAccountPool.nativeMessages` is an optional per-instance boolean, defaulting to true.
+`src/protocols/settings.ts` applies this default to the settled builtin Anthropic instance with
+the pool enabled and only to absent native rollout flags. Explicit false or malformed present
+flags stay off; a false/malformed pool preference vetoes pooled native dispatch, and OAuth requires
+managed native. Pool-off and other providers retain explicit settings. Policy revisions include
+normalized input states as well as effective policy, so masked setting changes invalidate previews.
+The config schema salvages malformed present native policy conservatively without discarding
+unrelated providers. Validated writes reject malformed input.
+
+`src/server/management/oauth-account-routes.ts` exposes the preference through unified and legacy
+pool settings. Anthropic writes patch the latest persisted config through its mutation owner before
+updating live state. A confirmed published write followed by bookkeeping failure adopts the saved
+pool and returns a fixed warning; an unpublished failure keeps old state. Unknown outcomes require
+reload and are not represented as a successful save. The GUI checkbox is a saved preference rather
+than a promise that a route is eligible; explicit rollout opt-outs still apply.
+
+The shared conversation-key precedence is implemented by `src/oauth/session-affinity-key.ts` and re-exported as `anthropicSessionKeyFromParts`; Anthropic routing semantics remain owned here. [Generic OAuth affinity](generic-account-pool.md#conversation-affinity) uses independent request-local receipts.
+
+### Durable session affinity
+
+`src/oauth/anthropic-session-affinity-store.ts` lazily hydrates a versioned `anthropic-affinity-<instance-digest>.json`
+under the current config home before affinity selection. Each row contains only a domain-separated SHA-256
+session digest, opaque account ID, last-use timestamp and hashed persistent login identity. Legacy accounts
+without `loginId` retain runtime-only affinity. Token refresh preserves the fence; replacement login,
+removal/re-add, pause and reauthentication invalidate it. Invalid, oversized, future and expired rows are ignored;
+the newest 2,000 entries survive, with a 24-hour idle lifetime. A restored binding precedes the startup active
+preference; a confirmed management selection clears bindings and persists the reset.
+
+Temporary throttle and model-route/family detours retain a valid original binding and refresh its idle timestamp.
+Commit preserves a binding excluded by the route, an active admission pause or family rejection, or a transient
+pause recorded within `ANTHROPIC_DETOUR_GRACE_MS` (five minutes), even if that pause expired during preparation.
+Measured shared or model-specific exhaustion rebinds to the committed replacement; shared-quota and entitlement
+refusals explicitly invalidate bindings. Hydration and pause, selection, removal and reconciliation events validate
+rows against one auth snapshot, deriving each account's login fence once. Hot reads and writes validate only the
+touched row; ordinary publication does not reread auth or revalidate every binding. Structural writes use the config
+ACL settlement barrier and private no-follow atomic publisher; bounded hydration rejects final-entry symlinks,
+junctions and non-regular files with identifier-free warnings. Aliases above the config root remain supported.
+Memory and pending writes belong to the resolved config home; reset or an observed home change retires that scope.
+Ordinary routing mutations coalesce behind a one-second publication timer so caller-selected session keys cannot trigger
+synchronous snapshot writes. Manual management selection and pause-induced selection changes explicitly await confirmed
+reset publication before reporting success. Inactive management pauses hydrate and confirm targeted invalidation as well,
+preserving unrelated eligible bindings even when no routing owner observed the pause event. A failed publication leaves the account mutation committed and returns
+503 `affinity_reset_not_persisted` with `selectionCommitted` or `pauseCommitted` and `retryable: true`; repeating the
+selection request finishes the pending reset; pause retries preserve the account and desired state and add `retryAffinityReset: true` to rebuild reset intent even after restart. Without an active-account change, this uses reset-only confirmation and creates no manual one-dispatch preference or rotation-ring seed. The synchronous routing-reset API is preserved. Account deletion with that explicit retry flag and the provider-only affinity-reset endpoint re-arm and confirm a global reset independently of the removed account, including an empty roster; failure after deletion reports `deletionCommitted` while retaining a retryable warning. This explicit retry also clears bindings formed since the first failure but never selects or resumes an account. Plain deletion preserves surviving bindings and only flushes an already pending reset. UI absence is not proof of durable publication, and a reset-only response must carry `affinityResetConfirmed: true` before its warning clears.
+Explicit best-effort and shutdown flushes remain distinct from confirmed operator publication. Failures emit identifier-free
+warnings and preserve the previous snapshot. `tests/adapters/anthropic/anthropic-affinity-restart.test.ts` and
+`tests/adapters/anthropic/anthropic-affinity-store.test.ts` exercise routing and persistence boundaries.
+Responses captures the routing-reset generation before credential resolution and checks it before and after the asynchronous OAuth commit. A changed generation rejects obsolete admission or recovery rather than restoring an old session binding; a fresh request can admit under the new generation. This does not roll back a completed OAuth selection commit or cancel sends already admitted to transport. `tests/adapters/anthropic/anthropic-quota-dispatch.test.ts` covers reset interleavings during credentials, commit and refusal recovery.
+
+## JEV advisory publication
+
+While a live JEV combo enables quota signals, auth-store load/persist and accepted quota producer
+boundaries hand bounded secret-free rosters/windows to the core slot `src/lib/decision-quota-sink.ts`,
+which forwards them to the activation-owned snapshot; otherwise those calls are no-ops
+([activation](jev-decision.md#loaded-advisory-quota)). These owner-observed generations are separate from display caches and serving-account selection. Request decisions consume only
+loaded evidence; cold or mismatched generations remain unknown. Usability, partial-window clocks
+and late-writer fences follow [loaded advisory quota](jev-decision.md#loaded-advisory-quota). Only the primary `anthropic` pool publishes. The `anthropic2` pool stays unknown.
+
+## Permanent refusal auto-pause
+
+The separate `providers.<instance>.accountAutoPause` policy is default off. Physical
+Responses and native Messages sends observe their captured bearer before recovery. Exact
+organization/OAuth or subscription refusals can persist `pauseDetails` with a fixed reason
+and timestamp through `src/oauth/store.ts`, with a sibling `pauseEvidence` (`statusCode` plus an optional redacted message of at most 300 characters) stored beside it. `pauseRevision` changes on resume, so late
+pre-resume responses cannot pause the resumed account. The existing selectors rebuild an
+eligible sibling within their send budgets; proactive-pool activation is not required.

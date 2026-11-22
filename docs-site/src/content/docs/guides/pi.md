@@ -1,0 +1,176 @@
+---
+title: Pi
+description: Use any routed model from Pi — epx export writes a custom provider block for Pi's models.json, wired to the running proxy.
+---
+
+Pi reads its providers from a single global JSON file rather than environment variables, so
+easyproxy does not launch it. Instead, `epx export` serializes the `easyproxy` provider block —
+base URL, model list, and a non-secret loopback key placeholder — and you merge it into your own
+config.
+
+## Quickstart
+
+Start the proxy, then print the config:
+
+```bash
+epx start
+```
+
+Leave that process running. In a second terminal, print the configuration:
+
+```bash
+epx export --client pi
+```
+
+The output leads with the JSON, then prints the destination path, the merge warning, a loopback
+usage hint, and how many models carry authoritative context limits. This export supports only
+an unauthenticated loopback proxy; it does not configure remote admission.
+
+```json
+{
+  "providers": {
+    "easyproxy": {
+      "baseUrl": "http://127.0.0.1:10100/v1",
+      "api": "openai-completions",
+      "apiKey": "easyproxy-loopback",
+      "compat": {
+        "sendSessionAffinityHeaders": true,
+        "supportsDeveloperRole": false
+      },
+      "models": [
+        {
+          "id": "anthropic/claude-opus-5",
+          "name": "Claude Opus 5 (anthropic)",
+          "input": ["text"],
+          "contextWindow": 200000,
+          "maxTokens": 128000
+        }
+      ]
+    }
+  }
+}
+```
+
+Generated Pi providers enable `compat.sendSessionAffinityHeaders`. Keep this flag when merging or manually editing the provider: Pi supplies a stable session identity and EasyProxy derives canonical OpenCode Go affinity from it. Pi may omit the identity when `cacheRetention` is `none`.
+
+Generated Pi providers also set `compat.supportsDeveloperRole` to `false`, so Pi sends its system prompt as `system` instead of `developer`. EasyProxy forwards Chat Completions roles as sent, and several OpenAI-compatible upstreams reject `developer` with a 400; every upstream accepts `system`.
+
+Model ids are the proxy's canonical selectors, so routed models appear as `provider/model`
+(`anthropic/claude-opus-5`) and native OpenAI slugs stay unprefixed (`gpt-5.6-sol`). The `name`
+suffix — `(anthropic)`, `(native)`, `(routed)` — is what makes two same-named models from
+different upstreams distinguishable in Pi's picker.
+
+For a nested upstream model ID, Pi's export uses the raw selector with its slashes once the
+running proxy proves that it reaches the same model: for example, `openrouter/openrouter/free`
+selects OpenRouter's `openrouter/free` model, and its Fast row is `openrouter/openrouter/free--fast`.
+A model the proxy cannot prove that way, such as one its inventory has not loaded yet or one whose
+raw spelling another model already owns, keeps its encoded selector. Custom aliases keep their names.
+When the running proxy uses Codex Direct mode, native OpenAI models are left out of Pi's export:
+Direct mode forwards each caller's own OpenAI credential, and Pi sends a placeholder key.
+
+## Where it goes
+
+Pi's global model config is:
+
+```text
+~/.pi/agent/models.json
+```
+
+:::caution[Merge, never replace]
+`epx export` never writes that file. Merge the `providers.easyproxy` block into it — replacing the
+file destroys every other provider you have configured there. `--out` exists for a scratch path
+and refuses to overwrite an existing file without `--force`:
+
+```bash
+epx export --client pi --out ~/easyproxy-pi-models.json
+epx export --client pi --json > ~/easyproxy-pi-models.json   # or redirect the byte-exact JSON
+```
+:::
+
+The exported block is a static snapshot, not a live view. Re-run `epx export` after adding a
+provider or changing model visibility, and merge the new block over the old one.
+
+## The admission key
+
+The exported `apiKey` is the non-secret placeholder `easyproxy-loopback`. No
+`EASYPROXY_API_KEY` export is emitted or required. This exporter supports only an
+unauthenticated loopback proxy and refuses a remote or token-protected listener.
+Provider credentials remain in easyproxy's own configuration, as described in
+[Providers](/guides/providers/); never put an upstream provider key in this Pi block.
+For remote access, use a client integration that supports proxy admission credentials;
+changing this placeholder does not enable remote Pi export.
+
+## Model metadata
+
+`contextWindow` and `maxTokens` are emitted only when the catalog reports an authoritative context
+window. When it does not, both fields are omitted for that model and Pi applies its own defaults;
+`epx export` prints how many rows fell into that case.
+
+Output limits use the model’s known maximum from catalog or generated metadata. Only unknown limits fall back to `32000`. The output limit is always clamped to the context window, including known limits below `32000`.
+
+`cost` is deliberately absent. It requires all four price fields and easyproxy has no
+price data for routed models — emitting zeros would assert that every model is free.
+
+`reasoning` is the one field that used to be absent and now is not: Pi stores a boolean while the
+catalog carries an effort ladder, and mapping one onto the other used to be a guess. Since the
+catalog's ladder is the proxy's own statement about whether a model accepts reasoning parameters
+(adapters honor `reasoning_effort`), an export row with a **non-empty** ladder now emits
+`"reasoning": true`, and a row without one (or with an explicitly empty ladder) stays
+reasoning-free. Pi then offers its effort control for exactly the models easyproxy will accept it
+on. The export also emits a `thinkingLevelMap` that hides every pi level with no declared target
+(`null`), so pi never offers — and never sends — an effort the ladder does not contain. One
+fallback keeps the model usable: when `ultra` is declared without `max`, pi's `max` level maps
+to `ultra` (still a ladder member).
+If you need a different mapping, hand-edit `thinkingLevelMap` afterward as documented by Pi.
+
+Treat `reasoning` as Pi-UI metadata: it is derived from the catalog ladder, not proof that the
+upstream natively supports a reasoning parameter. What the proxy actually sends for a given
+`reasoning_effort` value depends on the provider's adapter and model — it may pass the value
+through, translate it (wire aliases), clamp it to the configured ladder, emulate it, or omit it
+entirely (e.g. `noReasoningModels`). The boolean only controls whether Pi offers the control at
+all.
+
+## Attachment and request compatibility
+
+:::note[Pending development behavior]
+The provider-parity changes described here are on the development PR stack; an older installed
+release may still have the previous conversion behavior.
+:::
+
+EasyProxy normalizes Pi/MCP and Anthropic-shaped user images before choosing the native Chat
+or translated route. Images returned by tools use a translated user-message carrier after the
+paired tool results; ordinary user images and text-only tool results can keep the native path.
+Use modern `tool_calls` and `role: "tool"` with `tool_call_id`: legacy `function`-result image
+translation is rejected instead of silently discarding the result.
+
+An explicit reasoning effort of `none` survives Chat conversion. Output limits and sampling
+controls are preserved for generic API-key Responses targets; the canonical ChatGPT target
+still applies its own restrictions. This does not make all providers' controls equivalent.
+
+Inline WAV/MP3 audio in a user message or tool result survives translation to OpenAI Chat as an
+`input_audio` content part; tool-result audio is promoted into a follow-up user message after
+the paired tool results because Chat tool messages are text-only. A document that carries its
+own base64 bytes in a user message is also carried: it reaches the Anthropic, OpenAI Chat and
+Google wires as a native document, file part and inline data part. Everything else still
+returns an explicit error rather than succeeding without the attachment — remote or
+unsupported audio, a file-ID or remote reference the proxy cannot dereference, an attachment
+in a system message, a document in a tool result, and a document routed to a wire with no byte
+carrier. File-ID-only images have the same restriction because translated adapters cannot
+resolve those IDs. Convert the attachment to text first, or use a native wire and model that
+support it. Native Chat and raw Responses (including Azure) retain their existing behavior;
+this is not a promise of every model's upstream media support. Video conversion limits remain
+adapter-specific.
+
+## Schema status
+
+:::note[Unverified against a real install]
+The shape above follows Pi's published custom-provider documentation. It has **not** been verified
+against a real `~/.pi/agent/models.json` on a machine with Pi installed. If Pi rejects the exported
+block, the mismatch is on our side — please
+[open an issue](https://github.com/AquilaXk/easyproxy/issues) with what Pi reported.
+:::
+
+## Requirements
+
+A running easyproxy proxy (`epx start`) and Pi installed. `epx export` reads the live catalog
+through the proxy's management API, so a config can never be emitted with an empty model list.

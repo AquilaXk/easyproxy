@@ -1,0 +1,745 @@
+/* ============================================================================
+   v1 -> v2 bridge
+   Repaints the v1 stylesheet with design system v2 while pages migrate to the
+   ui-v2 components. Lives in the `bridge` layer: above `legacy`, below
+   `components`/`utilities`, so a migrated component always wins.
+   Delete a rule here once nothing renders its v1 class any more.
+   ============================================================================ */
+
+/* ---- v1 tokens, re-pointed at the v2 palette ------------------------------ */
+:root {
+  --bg: var(--epx-bg);
+  --rail: var(--epx-rail);
+  --surface: var(--epx-surface);
+  --raised: var(--epx-raised);
+  --raised-hover: var(--epx-surface-2);
+  --bg-secondary: var(--epx-surface);
+  --border: var(--epx-line-strong);
+  --border-soft: var(--epx-line);
+  --hover: light-dark(rgb(15 23 42 / 0.04), rgb(148 163 184 / 0.06));
+  --text: var(--epx-fg);
+  --muted: var(--epx-fg-muted);
+  --fg-muted: var(--epx-fg-muted);
+  --faint: var(--epx-fg-subtle);
+
+  /* primary cobalt action tokens; focus rings take high-contrast highlight */
+  --accent: var(--epx-accent);
+  --accent-hover: light-dark(#1e40af, #3b82f6);
+  --accent-ink: var(--epx-on-accent);
+  --accent-soft: var(--epx-accent-soft);
+  --accent-ring: var(--epx-highlight);
+
+  --green: var(--epx-success);
+  --green-soft: var(--epx-success-soft);
+  --red: var(--epx-danger);
+  --red-soft: var(--epx-danger-soft);
+  --amber: var(--epx-warning);
+  --amber-soft: var(--epx-warning-soft);
+  --yellow: var(--epx-warning);
+  --blue: var(--epx-highlight);
+  --blue-soft: var(--epx-highlight-soft);
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius: 10px;
+  --radius-lg: 12px;
+
+  --font-ui: "Geist Variable", "Wanted Sans Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-code: "Geist Mono Variable", "Wanted Sans Variable", ui-monospace, monospace;
+
+  --toggle-off-bg: light-dark(#cbd5e1, #475569);
+  --toggle-on-bg: var(--epx-accent);
+  --toggle-dot-color: var(--epx-on-accent);
+
+  --shadow-sm: var(--epx-shadow-sm);
+  --shadow: var(--epx-shadow-md);
+  --glass-rail: light-dark(rgb(241 245 249 / 0.8), rgb(9 12 18 / 0.8));
+  --glass-panel: light-dark(rgb(255 255 255 / 0.9), rgb(21 27 40 / 0.9));
+}
+/* per-locale v1 stacks pinned OpenAI Sans first; keep CJK fallbacks after Latin web fonts */
+:root:lang(zh), :root:lang(zh-CN), :root:lang(zh-TW) {
+  --font-ui: "Geist Variable", "Wanted Sans Variable", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-code: "Geist Mono Variable", "Wanted Sans Variable", "PingFang SC", "Microsoft YaHei", ui-monospace, monospace;
+}
+
+:root:lang(ja) {
+  --font-ui: "Geist Variable", "Wanted Sans Variable", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", "Noto Sans CJK JP", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-code: "Geist Mono Variable", "Wanted Sans Variable", "Hiragino Sans", "Yu Gothic UI", ui-monospace, monospace;
+}
+
+:root:lang(ko) {
+  --font-ui: "Geist Variable", "Wanted Sans Variable", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-code: "Geist Mono Variable", "Wanted Sans Variable", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", ui-monospace, monospace;
+}
+
+/* ---- surfaces: borderless soft cards ------------------------------------- */
+.card,
+.panel {
+  border: 1px solid var(--epx-line);
+  background: var(--epx-surface);
+  border-radius: var(--radius-lg);
+}
+.panel-accent {
+  border-color: transparent;
+  background: var(--epx-accent-soft);
+}
+
+/* ---- buttons: Aceternity primary, quiet neutrals ------------------------- */
+.btn {
+  border-radius: 0.625rem;
+  transition: background-color 0.2s, box-shadow 0.2s, color 0.2s, scale 0.15s;
+}
+.btn:active:not(:disabled) { scale: 0.97; }
+.btn-primary {
+  background: var(--epx-accent);
+  color: var(--epx-on-accent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+}
+.btn-primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--epx-accent) 88%, var(--epx-bg));
+}
+
+/* ---- segmented controls: recessed track, raised selected pill ------------- */
+:is(.segmented, .usage-segmented, .daybar-seg, .cwi-strategy-seg) {
+  gap: 2px;
+  padding: 2px;
+  border: 0;
+  border-radius: 0.625rem;
+  background: var(--epx-surface);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+:is(.segmented, .usage-segmented, .daybar-seg, .cwi-strategy-seg) > :is(button, .btn) {
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--epx-fg-subtle);
+  font-weight: 500;
+  transition: color 0.2s, background-color 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s;
+}
+:is(.segmented, .usage-segmented, .daybar-seg, .cwi-strategy-seg) > :is(button, .btn):hover {
+  color: var(--epx-fg-muted);
+}
+:is(.segmented, .usage-segmented, .daybar-seg, .cwi-strategy-seg) > :is(button, .btn):is(.active, [aria-pressed="true"], [aria-checked="true"], [aria-selected="true"]) {
+  background: var(--epx-raised);
+  color: var(--epx-fg);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.08), 0 0 0 1px var(--epx-line);
+}
+
+/* The v2 SegmentedControl slides its thumb with motion. The v1 groups get the same
+   motion without a markup change: the checked option names itself the anchor, and one
+   pill per track follows whichever option holds the name. Without anchor positioning
+   the raised option above is the fallback. */
+@supports (anchor-name: --a) and (anchor-scope: --a) {
+  :is(.segmented, .usage-segmented, .cwi-strategy-seg, .section-switcher) {
+    position: relative;
+    isolation: isolate;
+    anchor-scope: --epx-seg;
+  }
+  :is(.segmented, .usage-segmented, .cwi-strategy-seg, .section-switcher)::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    position-anchor: --epx-seg;
+    top: anchor(top);
+    bottom: anchor(bottom);
+    left: anchor(left);
+    right: anchor(right);
+    border-radius: 0.5rem;
+    background: var(--epx-raised);
+    box-shadow: 0 1px 2px rgb(16 24 40 / 0.08), 0 0 0 1px var(--epx-line);
+    transition: left 0.32s cubic-bezier(0.22, 1, 0.36, 1), right 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* no option checked: no anchor, so the pill must not paint at a stale place */
+  :is(.segmented, .usage-segmented, .cwi-strategy-seg, .section-switcher):not(:has(> :is(.active, [aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [aria-current="page"])))::before {
+    display: none;
+  }
+  :is(.segmented, .usage-segmented, .cwi-strategy-seg) > :is(button, .btn):is(.active, [aria-pressed="true"], [aria-checked="true"], [aria-selected="true"]),
+  .section-switcher > .section-switcher-btn[aria-current="page"] {
+    anchor-name: --epx-seg;
+    background: transparent;
+    box-shadow: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.segmented, .usage-segmented, .cwi-strategy-seg, .section-switcher)::before { transition: none; }
+}
+
+/* ---- page heads: the same title scale as the v2 hubs ---------------------- */
+.page-head > :is(h1, h2) {
+  font-size: 20px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+@media (max-width: 640px) {
+  .page-head > :is(h1, h2) { font-size: 18px; }
+}
+
+/* ---- page tabs: pill tabs instead of an underline ------------------------- */
+.page-tabs {
+  gap: 4px;
+  border-bottom: 0;
+  margin-bottom: 18px;
+}
+.page-tab {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding: 6px 12px;
+  border-radius: 0.625rem;
+  color: var(--epx-fg-subtle);
+  transition: color 0.2s, background-color 0.2s;
+}
+.page-tab:hover { color: var(--epx-fg); background: var(--epx-surface); }
+.page-tab:focus-visible { outline: 2px solid var(--epx-highlight); outline-offset: -2px; }
+.page-tab--active {
+  color: var(--epx-fg);
+  background: var(--epx-surface);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+:is(.segmented, .usage-segmented, .daybar-seg, .cwi-strategy-seg) > :is(button, .btn):focus-visible {
+  outline: 2px solid var(--epx-highlight);
+  outline-offset: -2px;
+}
+
+/* ---- sidebar: a tool's navigation, not a stack of buttons ------------------------
+   Rows are 32px, 13px medium text in the muted ink with a 16px icon; hover and the
+   current page are a faint tone step, no raised plate, ring or shadow. Tier labels are
+   small and quiet, in sentence case. The foot shares the same row rhythm and sits
+   under a hairline (foundations.md, "Sidebar"). */
+.sidebar nav { gap: 1px; }
+.nav-item {
+  min-height: 32px;
+  padding: 0 8px;
+  gap: 10px;
+  border-radius: 6px;
+  color: var(--epx-fg-muted);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.15s, color 0.15s;
+}
+.nav-item svg { width: 16px; height: 16px; color: var(--epx-fg-subtle); }
+.nav-item:hover { background: light-dark(rgb(15 23 42 / 0.05), rgb(148 163 184 / 0.08)); color: var(--epx-fg); }
+.nav-item.active {
+  background: light-dark(rgb(37 99 235 / 0.09), rgb(96 165 250 / 0.14));
+  color: var(--epx-fg);
+  font-weight: 500;
+  box-shadow: none;
+}
+.nav-item.active svg { color: var(--epx-accent); }
+
+.nav-tier { display: flex; flex-direction: column; gap: 1px; }
+.nav-tier + .nav-tier { margin-top: 18px; }
+.nav-tier-label {
+  padding: 0 8px 4px;
+  color: var(--epx-fg-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.app--nav-collapsed .nav-tier-label { visibility: hidden; }
+
+/* ---- Antigravity quick-open Command Palette (⌘K) bar & centered modal ---- */
+.nav-search-open {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; height: 32px; padding: 0 8px; margin: 0 0 14px;
+  border: 1px solid var(--epx-line); border-radius: 8px;
+  background: light-dark(#ffffff, rgb(148 163 184 / 0.05));
+  color: var(--epx-fg-muted); cursor: pointer;
+  font-size: 12px; text-align: left;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+.nav-search-open svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--epx-fg-subtle); }
+.nav-search-open-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-search-open:hover {
+  border-color: var(--epx-line-strong);
+  background: var(--epx-surface);
+  color: var(--epx-fg);
+}
+.nav-search-open:focus-visible { outline: 2px solid var(--epx-highlight); outline-offset: 1px; }
+.nav-search-open:focus:not(:focus-visible) { outline: none; }
+.app--nav-collapsed .nav-search-open-text,
+.app--nav-collapsed .nav-kbd--search { display: none; }
+.app--nav-collapsed .nav-search-open { justify-content: center; padding: 0; }
+
+dialog.cmdk-dialog {
+  position: fixed;
+  inset: 0;
+  margin: min(13vh, 96px) auto auto;
+  width: min(560px, calc(100vw - 32px));
+  max-width: none;
+  padding: 0;
+  border: 1px solid var(--epx-line-strong);
+  border-radius: var(--radius-panel);
+  background: var(--epx-raised);
+  color: var(--epx-fg);
+  box-shadow: var(--epx-shadow-lg);
+  overflow: hidden;
+}
+dialog.cmdk-dialog::backdrop {
+  background: light-dark(rgb(15 23 42 / 0.34), rgb(4 7 13 / 0.64));
+  backdrop-filter: blur(3px);
+}
+.cmdk-surface { display: flex; flex-direction: column; min-width: 0; }
+.nav-search {
+  display: flex; align-items: center; gap: 10px;
+  height: 44px; margin: 0; padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--epx-line);
+  background: transparent;
+  box-shadow: none;
+}
+.nav-search:focus-within { box-shadow: none; }
+.nav-search > svg { width: 16px; height: 16px; flex: 0 0 auto; color: var(--epx-fg-subtle); }
+.nav-search .nav-search-input {
+  flex: 1 1 auto; min-width: 0; height: 100%;
+  margin: 0; padding: 0;
+  border: 0; border-radius: 0; outline: 0; box-shadow: none; background: transparent;
+  -webkit-appearance: none; appearance: none;
+  color: var(--epx-fg); font: inherit; font-size: 14px;
+}
+.nav-search .nav-search-input:focus, .nav-search .nav-search-input:focus-visible { outline: 0; box-shadow: none; border: 0; }
+.nav-search-input::-webkit-search-cancel-button { display: none; }
+.nav-search-close {
+  display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto;
+  border: 0; border-radius: 6px; background: none; color: var(--epx-fg-subtle); cursor: pointer;
+}
+.nav-search-close svg { width: 14px; height: 14px; }
+.nav-search-close:hover { color: var(--epx-fg); background: var(--epx-surface-2); }
+.nav-search-close:focus-visible { outline: 2px solid var(--epx-highlight); outline-offset: 1px; }
+.nav-search-results { display: flex; flex-direction: column; gap: 2px; max-height: min(420px, 56dvh); overflow-y: auto; padding: 6px 6px 10px; scroll-padding-block: 10px; }
+.cmdk-group-heading { padding: 6px 10px 4px; font-size: 12px; font-weight: 500; color: var(--epx-fg-subtle); }
+.nav-search-result { min-height: 36px; padding: 6px 10px; border-radius: 8px; }
+.nav-search-result .nav-kbd--search { margin-left: auto; }
+.nav-search-result .nav-search-context + .nav-kbd--search { margin-left: 8px; }
+.nav-search-result.is-highlighted { background: var(--epx-accent-soft); color: var(--epx-fg); }
+.nav-search-result.is-highlighted svg { color: var(--epx-highlight); }
+.nav-search-result .nav-item-label { flex-shrink: 0; max-width: 65%; }
+.nav-search-context { min-width: 0; margin-left: auto; padding-left: 8px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--epx-fg-subtle); white-space: nowrap; }
+.nav-search-empty { padding: 20px 14px; font-size: 13px; text-align: center; color: var(--epx-fg-muted); }
+.cmdk-footer {
+  display: flex; align-items: center; gap: 14px; min-height: 28px; padding: 4px 12px;
+  border-top: 1px solid var(--epx-line); background: var(--epx-surface);
+  font-size: 12px; color: var(--epx-fg-subtle);
+}
+.cmdk-footer-item { display: inline-flex; align-items: center; gap: 5px; }
+.cmdk-footer kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 4px; border-radius: 4px;
+  font: 500 12px/1 var(--font-sans, inherit);
+  color: var(--epx-fg-muted); background: var(--epx-surface-2);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+
+/* Row shortcuts stay out of sight until the row is hovered or focused: a quiet sidebar. */
+.nav-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-kbd {
+  margin-left: auto; padding: 0 4px;
+  font: 500 12px/18px var(--font-sans, inherit); font-variant-numeric: tabular-nums;
+  color: var(--epx-fg-subtle); border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+  opacity: 0; transition: opacity var(--motion-fast, 120ms);
+}
+.nav-item:hover .nav-kbd, .nav-item:focus-visible .nav-kbd { opacity: 1; }
+.nav-kbd--search { margin-left: 0; opacity: 1; box-shadow: inset 0 0 0 1px var(--epx-line); padding: 0 5px; font-size: 12px; line-height: 18px; background: var(--epx-surface-2); }
+.nav-search-result .nav-item-label + .nav-kbd--search { margin-left: auto; }
+
+/* ---- Fine-tuning folds by default ---------------------------------------- */
+.nav-tier-toggle {
+  display: flex; align-items: center; gap: 4px; width: 100%;
+  padding: 0; border: 0; background: none; text-align: left; cursor: pointer;
+  border-radius: 6px;
+}
+.nav-tier-toggle .nav-tier-label { padding-bottom: 4px; }
+.nav-tier-toggle:hover .nav-tier-label { color: var(--epx-fg-muted); }
+.nav-tier-toggle:focus-visible { outline: 2px solid var(--epx-highlight); outline-offset: 1px; }
+.nav-tier-chevron { width: 12px; height: 12px; margin-bottom: 4px; color: var(--epx-fg-subtle); transition: transform var(--motion-fast, 120ms); }
+.nav-tier--folding.is-open .nav-tier-chevron { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .nav-kbd, .nav-tier-chevron { transition: none; } }
+
+/* ---- sidebar strip: wordmark with the collapse toggle beside it ----------- */
+.sidebar-top { justify-content: space-between; gap: 8px; }
+.sidebar-top .brand--strip {
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 8px;
+  padding: 4px 6px 4px 2px;
+  border-radius: 0.5rem;
+}
+.sidebar-top .brand--strip .name {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.sidebar-top .brand--strip:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+/* collapsed: only the toggle floats over the main strip */
+.app--nav-collapsed .sidebar-top .brand--strip { display: none; }
+/* macOS: the traffic lights take the strip's lead, so the mark goes without its name */
+.app--macos .sidebar-top .brand--strip .name { display: none; }
+@media (min-width: 761px) {
+  /* the strip carries the brand on wide screens; the drawer head is the phone drawer's */
+  .sidebar .drawer-head { display: none; }
+  .sidebar { padding-top: calc(var(--titlebar-h, 40px) + 12px); }
+}
+
+/* ---- sidebar foot: proxy capsule, language + theme, GitHub + version ------ */
+.sidebar-foot {
+  gap: 0;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--epx-line);
+}
+.sidebar-foot :is(.lang-toggle, .sidebar-github-link) { min-height: 32px; padding: 0 8px 0 10px; font-size: 13px; color: var(--epx-fg-muted); }
+.sidebar-foot :is(.lang-toggle, .sidebar-github-link):hover { color: var(--epx-fg); }
+.sidebar-foot :is(.lang-toggle, .sidebar-github-link) svg { width: 16px; height: 16px; }
+.sidebar-pref-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding-right: 10px;
+}
+.sidebar-pref-row > .lang-toggle { flex: 1 1 auto; min-width: 0; }
+.sidebar-github-row > .sidebar-github-link { flex: 0 0 auto; padding-right: 3px; }
+/* one line beside "GitHub": a long prerelease id ellipsizes, and the tooltip holds it whole */
+.sidebar-version {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sidebar-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 28px;
+  padding: 2px 10px 0;
+}
+/* phone drawer: the drawer head already shows the full version */
+@media (max-width: 760px) {
+  .sidebar-version { display: none; }
+}
+
+/* ---- links: the sky highlight marks what is clickable ---------------------- */
+a:hover { text-decoration-color: var(--epx-highlight); }
+.link-btn { color: var(--epx-highlight); text-decoration-color: color-mix(in oklab, var(--epx-highlight) 40%, transparent); }
+.link-btn:hover { text-decoration-color: var(--epx-highlight); }
+
+/* ---- the strip is part of the rail: no own glass, no rule under it ---------
+   The strip floats over the sidebar's top padding, so with its own background
+   and border gone the rail shows through and the wordmark reads as the first
+   line of the sidebar. The nav scrolls in its own box below, never under it. */
+.sidebar-top {
+  border-bottom-color: transparent;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* ---- scrollbars: a slim pill that shows itself when you reach for it -------
+   No track. The thumb is faint at rest inside a hovered scroller, firms up
+   under the pointer, and takes the sky highlight while it is dragged. */
+@supports selector(::-webkit-scrollbar) {
+  *::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+  *::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    min-height: 40px;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    background-clip: padding-box;
+  }
+  *:hover::-webkit-scrollbar-thumb { background-color: light-dark(rgb(15 23 42 / 0.16), rgb(148 163 184 / 0.18)); }
+  *::-webkit-scrollbar-thumb:hover { border-width: 2px; background-color: light-dark(rgb(15 23 42 / 0.32), rgb(148 163 184 / 0.34)); }
+  *::-webkit-scrollbar-thumb:active { border-width: 2px; background-color: var(--epx-highlight); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: light-dark(rgb(15 23 42 / 0.22), rgb(148 163 184 / 0.24)) transparent; }
+}
+
+/* ---- sidebar foot orbs: bare icons, a soft plate only on hover -------------
+   Theme, star, update and terminal sit in text rows, so at rest they are icons
+   like the globe and GitHub mark beside them. The phone top bar keeps its
+   bordered 44px targets (it is not in .sidebar-foot). */
+.sidebar-foot .sidebar-orb,
+.sidebar-foot .sidebar-orb--update {
+  border-color: transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+}
+.sidebar-foot .sidebar-orb:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--epx-accent-soft);
+  color: var(--epx-fg);
+  filter: none;
+}
+.sidebar-foot .sidebar-orb--update:hover:not(:disabled) { color: var(--blue); }
+.sidebar-foot .sidebar-orb svg { width: 15px; height: 15px; }
+
+/* ---- shadow-call source levers: the same switch as every other lever -------
+   Each source used to sit in its own green-outlined pill, and a disabled group
+   faded only the switch, so its track and knob turned grey and stopped looking
+   like the switches around it. Now a source is a bare switch + name; while the
+   master switch is off only the name dims and the switch keeps its usual look. */
+.shadow-source-toggle-list { gap: 6px 18px; }
+.shadow-source-toggle,
+.shadow-source-toggle.on {
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.shadow-source-toggle .switch:disabled { opacity: 1; cursor: not-allowed; }
+.shadow-source-toggle:has(> .switch:disabled) > :not(.switch) { opacity: 0.45; }
+.shadow-source-id { font-size: 12px; }
+
+
+/* ---- page chrome shared by every v1 page (React Bits application-UI form) -----
+   Controls are rounded rectangles like the proxy panel, not pills; the section
+   switcher is the same recessed track as the segmented controls, with the pill
+   sliding to the current page; empty states are a quiet framed card. */
+
+/* text fields, native selects and the custom select trigger (the sidebar language
+   picker is a bare text row by design, so it stays out) */
+:is(.input, .select-sm, .select-trigger):not(.lang-toggle *) {
+  border-radius: 10px;
+  border: 1px solid var(--epx-line-strong);
+  background: light-dark(#ffffff, rgb(255 255 255 / 0.03));
+  box-shadow: 0 1px 2px -1px rgb(0 0 0 / 0.12);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+:is(.input, .select-sm, .select-trigger):not(.lang-toggle *):hover:not(:disabled, :focus) {
+  border-color: light-dark(rgb(15 23 42 / 0.3), rgb(148 163 184 / 0.32));
+  box-shadow: 0 1px 2px -1px rgb(0 0 0 / 0.12);
+}
+:is(.input, .select-sm, .select-trigger):not(.lang-toggle *):focus:not(:focus-visible) {
+  outline: none;
+}
+:is(.input, .select-sm, .select-trigger):not(.lang-toggle *):focus-visible {
+  border-color: var(--epx-highlight);
+  outline: 2px solid var(--epx-highlight);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px var(--epx-highlight-soft);
+}
+.input::placeholder { color: var(--epx-fg-subtle); }
+
+/* section switcher: one recessed track, the current page raised */
+.section-switcher {
+  gap: 2px;
+  padding: 2px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--epx-surface);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+.section-switcher-btn {
+  padding: 5px 14px;
+  border-radius: 8px;
+  color: var(--epx-fg-subtle);
+  font-weight: 500;
+  transition: color 0.2s, background-color 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s;
+}
+.section-switcher-btn:hover { color: var(--epx-fg-muted); }
+.section-switcher-btn[aria-current="page"] {
+  background: var(--epx-raised);
+  color: var(--epx-fg);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.08), 0 0 0 1px var(--epx-line);
+}
+@supports (anchor-name: --a) and (anchor-scope: --a) {
+  .section-switcher > .section-switcher-btn[aria-current="page"] { background: transparent; box-shadow: none; }
+}
+
+/* page tabs: rounded rectangles to match */
+.page-tab { border-radius: 8px; }
+
+/* empty states: a quiet framed card, centred, no dashed outline */
+.empty {
+  padding: 48px 24px;
+  border: 1px solid var(--epx-line);
+  border-radius: 12px;
+  background: light-dark(#ffffff, rgb(255 255 255 / 0.015));
+  color: var(--epx-fg-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+.empty svg { width: 20px; height: 20px; margin-bottom: 12px; color: var(--epx-fg-muted); }
+.empty .title { color: var(--epx-fg); font-size: 14px; line-height: 20px; font-weight: 600; letter-spacing: -0.01em; }
+
+/* page intro under a title */
+.page-sub { color: var(--epx-fg-muted); font-size: 13px; line-height: 1.55; }
+
+/* ---- sticky section strip: glass, not a painted band ------------------------
+   The strip stays reachable while the page scrolls, so it must hide the rows
+   that pass under it. An opaque --bg read as a dark band over the page's
+   gradient even at rest; a blur does the same job and lets the gradient through. */
+.section-tabs {
+  background: transparent;
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+
+/* ---- disclosure summaries: long text wraps cleanly, marker on line one -------
+   A summary is often a whole sentence. Centred in a flex row, the chevron
+   floated between two wrapped lines. Rule: the marker sits on the first line
+   and the text wraps evenly (text-wrap: pretty) whatever the summary's length. */
+details > summary { align-items: flex-start; text-wrap: pretty; }
+details > summary::before { flex-shrink: 0; margin-top: calc((1lh - 8px) / 2); }
+
+/* ---- vertical rhythm inside cards: nothing sits flush against the block above -
+   v1 zeroes every heading margin, so a heading or a section that follows a
+   form row or a button stuck to it. Inside a panel or card, a sub-section or a
+   heading that is not the first thing gets room above it. Header rows (flex)
+   carry their own spacing and are left alone. */
+:is(.panel, .card, section) > section:not(:first-child) { margin-top: 24px; }
+:is(.panel, .card, section) > :is(h2, h3, h4):not(:first-child) { margin-top: 24px; }
+:is(.panel, .card, section) > :is(h2, h3, h4) + :is(p, .muted) { margin-top: 6px; }
+
+/* ---- a .btn with no variant is a secondary button, not a bare label --------
+   It had no background or text colour of its own, so it inherited whatever the
+   platform gave a <button> and nearly vanished in dark mode once disabled. */
+.btn:not(.btn-primary, .btn-ghost, .btn-danger, .btn-icon, .btn-link) {
+  border-color: var(--epx-line-strong);
+  background: light-dark(#ffffff, rgb(255 255 255 / 0.04));
+  color: var(--epx-fg);
+}
+.btn:not(.btn-primary, .btn-ghost, .btn-danger, .btn-icon, .btn-link):hover:not(:disabled) {
+  border-color: light-dark(rgb(15 23 42 / 0.3), rgb(148 163 184 / 0.32));
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Native select popup safety net (see base.css): the opt-in has to outrank any v1 rule
+   that sets `appearance` on a select, so it lives here; the menu look stays in base. */
+@supports (appearance: base-select) {
+  select, select::picker(select) { appearance: base-select; }
+}
+
+/* ---- type: monospace is for machine text only --------------------------------
+   A monospace space is a full cell wide, so a Korean label in Geist Mono reads as
+   "네이티브   라우팅". Badges carry words (status, plan, role), so they use the UI
+   face; ids, commands and numbers keep monospace through .mono / <code>. */
+.badge { font-family: var(--font-ui); letter-spacing: 0; }
+
+/* ---- one switch ----------------------------------------------------------------
+   v1 grew three switch drawings (.switch with a knob span, .toggle with a
+   .toggle-knob or an input + .slider, and Remote Link's own ::after switch), each
+   with its own size and knob colour. All of them draw the .switch spec now:
+   34×20 track, 14px knob, raised track with a hairline when off, the primary
+   track with a contrasting knob when on. gui/tests/switch-rule.test.ts keeps new
+   switches on one of these three classes. */
+:is(.switch:where(:not(.switch-labeled)), .toggle, .remote-link-switch) {
+  width: 34px;
+  height: 20px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--raised);
+}
+/* On and mixed states for every drawing. The spec above sits in the bridge layer, so it
+   outranks v1's own `.switch.on` fill: each state has to be restated here, or an "on"
+   switch keeps the off track (dark on dark). switch-rule.test.ts checks all three. */
+:is(.switch.on:where(:not(.switch-labeled)), .toggle.on, .remote-link-switch[aria-checked="true"]) { background: var(--toggle-on-bg); border-color: var(--toggle-on-bg); }
+.switch.mixed:where(:not(.switch-labeled)) { background: var(--amber-soft); border-color: var(--amber); }
+.toggle-knob { width: 14px; height: 14px; left: 2px; background: light-dark(#ffffff, #f8fafc); box-shadow: 0 0 0 1px rgb(16 24 40 / 0.08), 0 1px 1px rgb(16 24 40 / 0.18); }
+.toggle.on .toggle-knob { left: 16px; background: var(--toggle-dot-color); }
+.toggle:has(> input) { border: 0; background: transparent; }
+.toggle .slider { border: 1px solid var(--border); background: var(--raised); }
+.toggle .slider::after { left: 2px; width: 14px; height: 14px; background: light-dark(#ffffff, #f8fafc); }
+.toggle input:checked + .slider { background: var(--toggle-on-bg); border-color: var(--toggle-on-bg); }
+.toggle input:checked + .slider::after { transform: translate(14px, -50%); background: var(--toggle-dot-color); }
+.remote-link-switch { display: inline-flex; align-items: center; padding: 2px; }
+.remote-link-switch::after { width: 14px; height: 14px; background: light-dark(#ffffff, #f8fafc); box-shadow: 0 0 0 1px rgb(16 24 40 / 0.08), 0 1px 1px rgb(16 24 40 / 0.18); }
+.remote-link-switch[aria-checked="true"]::after { transform: translateX(14px); background: var(--toggle-dot-color); }
+
+/* ---- control sizes: two heights, and neighbours match ------------------------
+   Every button, field, select and segmented track is 34px (md) or 28px (sm);
+   see foundations.md "Control sizes". v1 padded its controls to whatever their
+   text produced (31.5px selects, 26px small buttons, 35.5px buttons), so a select
+   and the button beside it never lined up. Heights are now set, padding-block is
+   zero and content centres. Pairing rule: a small button that shares a row with a
+   field or a select grows to md, because the row reads as one control. */
+:root { --control-md: var(--epx-control-h); --control-sm: var(--epx-control-h-sm); }
+.btn { min-height: var(--epx-control-h); padding-block: 0; }
+.btn.btn-sm { min-height: var(--epx-control-h-sm); }
+:is(.select-trigger, .input:not(textarea)):not(.lang-toggle *) { min-height: var(--epx-control-h); padding-block: 0; }
+.select-sm { min-height: var(--epx-control-h-sm); padding-block: 0; }
+:has(> :is(.custom-select, .input, select, input:not([type="checkbox"], [type="radio"]))) > .btn.btn-sm {
+  min-height: var(--epx-control-h);
+}
+/* The same pairing for v2 (Tailwind-sized) buttons: the row's direct children get the md
+   height in a non-inheriting property, which Button's sm size reads before its own token.
+   Universal syntax on purpose: a typed syntax requires an initial-value, and any initial
+   value would stop Button's fallback (the sm token) from ever applying. */
+@property --epx-row-control-h { syntax: "*"; inherits: false; }
+:has(> :is(.custom-select, .input, select, input:not([type="checkbox"], [type="radio"]))) > * {
+  --epx-row-control-h: var(--epx-control-h);
+}
+/* segmented tracks: 2px padding + (control - 4px) children = one control height */
+:is(.segmented, .usage-segmented, .cwi-strategy-seg, .section-switcher) > :is(button, .btn, .section-switcher-btn) {
+  min-height: calc(var(--epx-control-h) - 4px);
+  padding-block: 0;
+}
+
+/* ---- flat canvas -------------------------------------------------------------
+   No ambient gradient wash behind the app (removed from styles.css): the page is
+   one flat --bg, and surfaces separate by a step in tone and a hairline, not by
+   colour blooms. With nothing to refract, the sidebar's glass becomes a solid
+   rail with a hairline edge. */
+body {
+  background: var(--epx-bg);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.sidebar {
+  background: var(--rail);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right-color: var(--epx-line);
+}
+
+/* ---- figures: tabular numerals in the UI face ----------------------------------
+   Stat values used Geist Mono, so "2.96.0" or "0시간 32분" read as code and their
+   width jumped between tiles. Figures are the UI face with tabular numerals; mono
+   stays for ids and commands (foundations.md, "Type"). */
+:is(.stat .value, .stat .value.mono, .stat-value) {
+  font-family: var(--font-ui);
+  font-size: 1.375rem; /* text-stat */
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Mixed-script prose + inline code spans: normalize optical x-height to parent UI font */
+:is(p, li, .page-sub, .setting-label .desc, .callout, .endpoint-strip) :is(code, .mono, .font-mono) {
+  font-size: 0.92em;
+}
+@supports (font-size-adjust: from-font) {
+  :is(p, li, .page-sub, .setting-label .desc, .callout, .endpoint-strip) :is(code, .mono, .font-mono) {
+    font-size: 1em;
+    font-size-adjust: from-font;
+  }
+}
+
+/* ---- unified modal overlay & ghost chrome ---------------------------------- */
+.modal-overlay {
+  background: light-dark(rgb(15 23 42 / 0.34), rgb(4 7 13 / 0.64));
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.modal-card {
+  background: var(--epx-raised);
+  border: 1px solid var(--epx-line-strong);
+  box-shadow: var(--epx-shadow-lg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.modal-head .btn-ghost { border-color: transparent; background: transparent; }
+.modal-head .btn-ghost:hover:not(:disabled) { border-color: transparent; background: var(--epx-surface-2); }

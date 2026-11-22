@@ -1,0 +1,144 @@
+---
+title: Codex Cannot Sign In or Load
+description: What to do when Codex fails at sign-in or every request errors after easyproxy was applied, and how to hand Codex back to its own account without starting the proxy.
+---
+
+If Codex stops at a sign-in screen, reports that it cannot load sign-in
+requirements, or fails every model request after you set up easyproxy, the most
+likely cause is that Codex is still pointed at the easyproxy proxy while the
+proxy is not running. This was reported as
+[#5261](https://github.com/AquilaXk/easyproxy/issues/5261).
+
+## Why this happens
+
+On the default loopback setup, easyproxy does not give Codex a separate
+provider. It points Codex's own built-in `openai` provider at the proxy, by
+writing a root override into `$CODEX_HOME/config.toml` (`%USERPROFILE%\.codex`
+on Windows):
+
+```toml
+model_catalog_json = "/absolute/path/to/easyproxy-catalog.json"
+# Auto-injected by easyproxy (undo: epx restore)
+openai_base_url = "http://127.0.0.1:10100/v1"
+# Auto-injected by easyproxy (undo: epx restore)
+experimental_realtime_ws_base_url = "http://127.0.0.1:10100/v1"
+```
+
+Those lines are on disk, so they survive a reboot. If the proxy is not running
+when Codex starts, that address answers nothing, and Codex has no second
+endpoint to fall back to. The screen you get says nothing about easyproxy,
+which is why the state is easy to misread as a Codex problem.
+
+The proxy can be absent for ordinary reasons. Applying the Codex integration
+does not install a background service — that is a separate `epx service install`
+step — so after a restart there may be nothing to bring the proxy back. A
+registered Windows scheduled task starts at logon rather than at boot, and it
+can also be disabled, fail to launch, or lose the port to another process.
+
+## Get Codex working again
+
+Pick whichever outcome you want. Both are safe to run while the proxy is down.
+
+**Hand Codex back to its own account and endpoints:**
+
+```bash
+epx restore
+```
+
+This removes the injected routing, the realtime override and the easyproxy
+catalog pointer, and needs no running proxy, no dashboard session and no
+network. Codex signs in and runs normally afterwards. When you want easyproxy
+back, `epx restore back` re-points Codex at the proxy.
+
+**Or bring the proxy back instead:**
+
+In one terminal, start the foreground proxy and leave that terminal open:
+
+```bash
+epx start
+```
+
+In a second terminal, confirm that `epx ready --json` reports `ready: true` before installing the service. Then repeat the checks to verify the resulting service:
+
+```bash
+epx ready --json
+epx status --json
+epx service install   # keep it running across restarts
+epx ready --json
+epx status --json
+epx service status --json
+```
+
+An explicit service install stops the tracked foreground proxy before starting the managed service, so the first terminal may exit during installation. It refuses installation if that cleanup cannot be completed safely, then checks that an EasyProxy runtime answers on the installed service port. The pre-install readiness check only verifies the foreground proxy; use the post-install readiness, proxy status and service status together to check the handover.
+
+`epx status` reports whether the proxy is answering and whether Codex is
+currently routed through it. `epx doctor` explains the same state in more
+detail and names the repair it recommends.
+
+## If epx is not available
+
+You can undo the routing by hand. Open `$CODEX_HOME/config.toml` and delete
+three things: the `openai_base_url` line, the
+`experimental_realtime_ws_base_url` line, and any `model_catalog_json` line
+ending in `easyproxy-catalog.json`. Remove the
+`# Auto-injected by easyproxy` comment sitting directly above each of the first
+two along with them.
+
+Go by the key name, not by the comment. easyproxy uses the same ownership
+comment above other keys it manages, such as an injected
+`developer_instructions`, and deleting those will not help you sign in while
+costing you configuration you may want back.
+
+Repeated standalone ownership comments do not change TOML values or routing.
+Provider-table reinjection and removal consume the exact bare marker or its
+`(undo: epx restore)` form immediately above `[model_providers.easyproxy]`.
+Marker text inside another user comment or a multiline string is preserved;
+existing comments separated from the table are not claimed by that transform.
+Root routing ownership uses an exact adjacent marker at a structural root
+assignment. A matching injected value recorded in the journal also proves
+ownership after a Codex app rewrite drops comments. Quoting the marker in a
+user comment or a multiline string does not prove ownership. Managed
+`web_search` replacements record the complete original assignment, including
+multiline values, so switching it back on or fallback restore can put it back.
+Removal and capture validate complete assignments without converting a valid
+64-bit integer into a JavaScript number. Value-based ownership still requires
+successful value decoding; invalid or incomplete assignments are refused.
+Fallback removal compacts document
+blank lines outside multiline values, preserving blank lines within those values.
+
+Delete the `model_catalog_json` line **with** the routing, not on its own. A
+`model_catalog_json` that names a file which no longer exists makes Codex fail
+to load its configuration at all, which looks like the same lockout for a
+different reason.
+
+## Accounts that would not add or display
+
+Failures adding accounts to the pool, or added accounts not appearing, are a
+separate matter from the lockout above, even when they happen in the same
+session. The account pool is served by the proxy's management API, so both the
+`epx account login openai` flow and the dashboard list need a running proxy
+before anything else can work. The browser sign-in also returns to
+`http://localhost:1455/auth/callback`, a fixed address that cannot move to
+another port. If something else holds port 1455, or a browser cannot be
+launched, use the device flow instead:
+
+```bash
+epx account login openai --device
+```
+
+See [Codex Integration](/guides/codex-integration/) for what the injection
+writes and how routing is chosen.
+
+## OAuth refresh capacity reached
+
+If a Responses request reports `OAuth token refresh capacity reached`, wait at
+least one second before retrying. The proxy limits pending OAuth refresh work
+to 256 consumers per process, including requests waiting on the same refresh.
+A disconnected request keeps its refresh reservation until that work settles;
+requests using fresh cached credentials can still proceed.
+
+Before a response starts, this temporary refusal returns HTTP 503 with
+`Retry-After: 1`. A stream that has already started instead ends with a server
+error. Capacity refusal does not mark the account as needing reauthentication,
+so signing in again is unnecessary for this error. A refresh that never settles
+can continue occupying capacity; the limit does not impose a refresh deadline.

@@ -1,0 +1,1320 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { managementFetch as fetch } from "../helpers/management-auth";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+import {
+  cancelLoginFlow,
+  clearLoginState,
+  getLoginStatus,
+  startLoginFlow,
+  submitLoginCode,
+  submitManualLoginCode,
+  supportsCodeLoginMode,
+  waitForLoginSettled,
+} from "../../src/oauth";
+import { getAccountSet, removeCredential, resetOAuthReauthReconcileStateForTests } from "../../src/oauth/store";
+import { admitLoginFlow, classifyLoginCodeError, loginFlowKeys, loginState, resetOAuthFlowReconcileStateForTests } from "../../src/oauth/login-flow-state";
+import { ANTHROPIC_CODE_REDIRECT_URI, AnthropicOAuthFlow, AnthropicTokenError } from "../../src/oauth/anthropic";
+import { saveConfig } from "../../src/config";
+import { startServer } from "../../src/server";
+import type { EpxConfig } from "../../src/types";
+import { flushConfigDirHardeningForTests } from "../../src/config/paths";
+import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
+
+// Same scratch-home + icacls stubbing as tests/oauth/oauth-manual-code.test.ts: this file tests
+// the code-display flow, not Windows ACLs, and a real icacls makes the credential persist fail.
+let TEST_DIR = "";
+const ICACLS_OK = { success: true, exitCode: 0, timedOut: false, stdout: "" };
+let previousEasyproxyHome: string | undefined;
+
+const TOKEN_URL = "https://api.anthropic.com/v1/oauth/token";
+
+function b64url(input: Buffer | string): string {
+  return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function challengeOf(verifier: string): string {
+  return b64url(createHash("sha256").update(verifier).digest());
+}
+
+interface TokenRequest {
+  code: string;
+  state: string;
+  redirect_uri: string;
+  code_verifier: string;
+  grant_type: string;
+}
+
+type TokenReply =
+  | { kind: "ok"; uuid: string; email: string }
+  | { kind: "error"; status: number; body: string };
+
+/** Mock Anthropic's token endpoint; records every request body it is given. */
+function installTokenMock(reply: (request: TokenRequest) => TokenReply): {
+  requests: TokenRequest[];
+  restore: () => void;
+} {
+  const originalFetch = globalThis.fetch;
+  const requests: TokenRequest[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    // Token-exchange assertions do not depend on optional live profile enrichment.
+    if (String(input).startsWith("https://api.anthropic.com/api/oauth/profile")) return new Response("{}", { status: 401 });
+    if (!String(input).startsWith(TOKEN_URL)) return originalFetch(input, init);
+    const request = JSON.parse(String(init?.body ?? "{}")) as TokenRequest;
+    requests.push(request);
+    const answer = reply(request);
+    if (answer.kind === "error") {
+      return new Response(answer.body, { status: answer.status, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(
+      JSON.stringify({
+        access_token: `access-${answer.uuid}`,
+        refresh_token: `refresh-${answer.uuid}`,
+        expires_in: 3600,
+        account: { uuid: answer.uuid, email_address: answer.email },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+  return { requests, restore: () => { globalThis.fetch = originalFetch; } };
+}
+
+const okReply = (uuid = "account-1", email = "one@example.com") => (): TokenReply => ({ kind: "ok", uuid, email });
+
+function anthropicConfig(): EpxConfig {
+  return {
+    port: 0,
+    hostname: "127.0.0.1",
+    oauthOpenBrowser: false,
+    defaultProvider: "anthropic",
+    providers: { anthropic: { adapter: "anthropic", baseUrl: "https://api.anthropic.com", authMode: "oauth" } },
+  } as EpxConfig;
+}
+
+/** Start a code-mode login and return the authorize URL's parameters. */
+async function startCodeLogin(): Promise<{ url: URL; state: string; challenge: string; expiresAt?: number }> {
+  const started = await startLoginFlow("anthropic", { forceLogin: true, codeMode: true });
+  const url = new URL(started.url);
+  return {
+    url,
+    state: url.searchParams.get("state")!,
+    challenge: url.searchParams.get("code_challenge")!,
+    expiresAt: started.expiresAt,
+  };
+}
+
+/** Start a code-mode login under a caller-chosen flow id, as the management route does. */
+async function startCodeFlow(flowId: string): Promise<{ flowId: string; state: string; challenge: string }> {
+  const started = await startLoginFlow("anthropic", { forceLogin: true, codeMode: true }, { flowId });
+  const url = new URL(started.url);
+  return { flowId, state: url.searchParams.get("state")!, challenge: url.searchParams.get("code_challenge")! };
+}
+
+async function postCode(body: unknown, server: { url: string | URL }): Promise<Response> {
+  return await fetch(new URL("/api/oauth/login/code", server.url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+const spyOnServe = () => spyOn(Bun, "serve");
+type ServeSpy = ReturnType<typeof spyOnServe>;
+
+/**
+ * The callback login prefers port 54545 and moves to a free port when anything already holds it
+ * (src/oauth/callback-server.ts). This file does not own 54545: a management server started on
+ * port 0 can be handed it, because macOS assigns ephemeral ports in sequence, and CI then saw the
+ * redirect on 54547. So assert what holds either way: 54545 is tried first, another port is used
+ * only after a bind on 54545 failed, and the advertised redirect names the port that is listening.
+ */
+function expectLocalhostCallbackRedirect(authUrl: string, serve: ServeSpy): void {
+  const redirect = new URL(new URL(authUrl).searchParams.get("redirect_uri")!);
+  expect(redirect.protocol).toBe("http:");
+  expect(redirect.hostname).toBe("localhost");
+  expect(redirect.pathname).toBe("/callback");
+  const attempts = serve.mock.calls.map((call, index) => {
+    const options = call[0] as { hostname?: string; port?: number };
+    return { hostname: options.hostname, port: options.port, result: serve.mock.results[index] };
+  });
+  const ipv4 = attempts.filter(attempt => attempt.hostname === "127.0.0.1");
+  expect(ipv4[0]?.port).toBe(54545);
+  const listening = ipv4.filter(attempt => attempt.result?.type === "return").at(-1);
+  const listeningPort = (listening?.result?.value as { port?: number } | undefined)?.port;
+  expect(listeningPort).toBeGreaterThan(0);
+  expect(Number(redirect.port)).toBe(listeningPort!);
+  if (listeningPort !== 54545) {
+    expect(attempts.some(attempt => attempt.port === 54545 && attempt.result?.type === "throw")).toBe(true);
+  }
+}
+
+describe("OAuth code-display login", () => {
+  beforeEach(() => {
+    previousEasyproxyHome = process.env.EASYPROXY_HOME;
+    setIcaclsRunnerForTests(() => ICACLS_OK);
+    setAsyncIcaclsRunnerForTests(async () => ICACLS_OK);
+    TEST_DIR = mkdtempSync(join(tmpdir(), "epx-oauth-code-login-"));
+    process.env.EASYPROXY_HOME = TEST_DIR;
+    clearLoginState("anthropic");
+    saveConfig(anthropicConfig());
+  });
+
+  afterEach(async () => {
+    cancelLoginFlow("anthropic");
+    clearLoginState("anthropic");
+    // The credential store caches per provider in module state, which outlives this file's
+    // scratch home — leave no anthropic account behind for the next test file.
+    await removeCredential("anthropic");
+    // Completing a login through the management route runs a real state-store reconciliation,
+    // which leaves a generation high-water mark in module state. Left behind, it outranks the
+    // next file's counter and silently disables its needsReauth writes.
+    resetOAuthReauthReconcileStateForTests();
+    resetOAuthFlowReconcileStateForTests();
+    await flushConfigDirHardeningForTests();
+    setIcaclsRunnerForTests(null);
+    setAsyncIcaclsRunnerForTests(null);
+    if (previousEasyproxyHome === undefined) delete process.env.EASYPROXY_HOME;
+    else process.env.EASYPROXY_HOME = previousEasyproxyHome;
+    if (TEST_DIR && existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    TEST_DIR = "";
+  });
+
+  // Spec test 1.
+  test("code mode advertises the platform code redirect and mentions no localhost anywhere", async () => {
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/api/oauth/login", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "anthropic", mode: "code", addAccount: true, openBrowser: false }),
+      });
+      expect(response.status).toBe(200);
+      const raw = await response.text();
+      const body = JSON.parse(raw) as { url: string; mode: string; flowId: string; expiresAt: number };
+      const authUrl = new URL(body.url);
+      expect(authUrl.origin + authUrl.pathname).toBe("https://claude.ai/oauth/authorize");
+      expect(authUrl.searchParams.get("redirect_uri")).toBe(ANTHROPIC_CODE_REDIRECT_URI);
+      expect(authUrl.searchParams.get("code")).toBe("true");
+      expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
+      expect(authUrl.searchParams.get("code_challenge")).toBeTruthy();
+      expect(authUrl.searchParams.get("state")).toBeTruthy();
+      expect(body.mode).toBe("code");
+      expect(body.flowId).toBeTruthy();
+      expect(body.expiresAt).toBeGreaterThan(Date.now());
+      // Not "the redirect is right" but "no localhost leaked into the response at all",
+      // including any instructions text.
+      expect(raw.toLowerCase()).not.toContain("localhost");
+      expect(raw).not.toContain("127.0.0.1");
+      // The callback port as a port: the random state, challenge or expiry can contain the digits.
+      expect(raw).not.toMatch(/(?::|%3a)54545(?!\d)/i);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  // Spec test 2. Bun.serve is the ONLY way this process can open a listener, so counting its
+  // calls across the whole login is the property itself, not a proxy for it.
+  test("code mode opens no listening socket, while the default mode does", async () => {
+    const serve = spyOn(Bun, "serve");
+    try {
+      await startCodeLogin();
+      expect(serve.mock.calls.length).toBe(0);
+      cancelLoginFlow("anthropic");
+      clearLoginState("anthropic");
+
+      // Contrast: the default flow DOES bind, so the assertion above is not vacuous.
+      serve.mockClear();
+      const callback = await startLoginFlow("anthropic", { forceLogin: true });
+      expect(serve.mock.calls.length).toBeGreaterThan(0);
+      expectLocalhostCallbackRedirect(callback.url, serve);
+    } finally {
+      serve.mockRestore();
+      cancelLoginFlow("anthropic");
+      clearLoginState("anthropic");
+    }
+  });
+
+  // Spec test 3.
+  test("a code#state paste exchanges with the platform redirect and this flow's verifier", async () => {
+    const mock = installTokenMock(okReply());
+    const server = startServer(0);
+    try {
+      const { state, challenge, expiresAt } = await startCodeLogin();
+      const flowId = getLoginStatus("anthropic").flowId;
+      expect(getLoginStatus("anthropic").status).toBe("pending");
+      expect(expiresAt).toBeGreaterThan(Date.now());
+
+      const response = await postCode({ provider: "anthropic", flowId, input: `displayed-code#${state}` }, server);
+      expect(response.status).toBe(200);
+      // The email follows the operator's privacy.maskEmails policy, masked by default, exactly
+      // as /api/oauth/status reports it — this route must not become the unmasked way to read it.
+      expect(await response.json()).toEqual({
+        ok: true,
+        account: { id: getAccountSet("anthropic")!.activeAccountId, email: "o***e@example.com" },
+      });
+
+      expect(mock.requests).toHaveLength(1);
+      const exchanged = mock.requests[0]!;
+      expect(exchanged.grant_type).toBe("authorization_code");
+      expect(exchanged.code).toBe("displayed-code");
+      expect(exchanged.state).toBe(state);
+      expect(exchanged.redirect_uri).toBe(ANTHROPIC_CODE_REDIRECT_URI);
+      expect(challengeOf(exchanged.code_verifier)).toBe(challenge);
+
+      const status = getLoginStatus("anthropic");
+      expect(status.status).toBe("complete");
+      expect(status.loggedIn).toBe(true);
+      expect(status.email).toBe("o***e@example.com");
+      expect(status.errorCode).toBeUndefined();
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  // Spec test 4.
+  test("a mismatched state is refused without ever calling the token endpoint", async () => {
+    const mock = installTokenMock(okReply());
+    const server = startServer(0);
+    try {
+      const { state } = await startCodeLogin();
+      const flowId = getLoginStatus("anthropic").flowId;
+      const response = await postCode({ provider: "anthropic", flowId, input: "stolen-code#NOT-THE-STATE" }, server);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ ok: false, error: "state_mismatch" });
+      expect(mock.requests).toHaveLength(0);
+      // The flow survives a bad paste, so the correct one still completes it.
+      expect(getLoginStatus("anthropic").status).toBe("pending");
+      const good = await postCode({ provider: "anthropic", flowId, input: `real-code#${state}` }, server);
+      expect(good.status).toBe(200);
+      expect(mock.requests).toHaveLength(1);
+      expect(mock.requests[0]!.code).toBe("real-code");
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  // Spec test 5.
+  test("invalid_grant from the token endpoint answers invalid_or_expired_code", async () => {
+    const mock = installTokenMock(() => ({
+      kind: "error",
+      status: 400,
+      body: JSON.stringify({ error: "invalid_grant", error_description: "code expired" }),
+    }));
+    const server = startServer(0);
+    try {
+      const { state } = await startCodeLogin();
+      const flowId = getLoginStatus("anthropic").flowId;
+      const response = await postCode({ provider: "anthropic", flowId, input: `stale-code#${state}` }, server);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ ok: false, error: "invalid_or_expired_code" });
+      expect(getLoginStatus("anthropic").status).toBe("error");
+      expect(getLoginStatus("anthropic").errorCode).toBe("invalid_or_expired_code");
+      expect(getLoginStatus("anthropic").loggedIn).toBe(false);
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  test("a 5xx from the token endpoint answers provider_unreachable", async () => {
+    const mock = installTokenMock(() => ({ kind: "error", status: 503, body: "upstream down" }));
+    const server = startServer(0);
+    try {
+      const { state } = await startCodeLogin();
+      const flowId = getLoginStatus("anthropic").flowId;
+      const response = await postCode({ provider: "anthropic", flowId, input: `code#${state}` }, server);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ ok: false, error: "provider_unreachable" });
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  test("a successful paste answers with the account this flow wrote, not the active one", async () => {
+    const mock = installTokenMock(request => ({ kind: "ok", uuid: request.code, email: `${request.code}@example.com` }));
+    const server = startServer(0);
+    try {
+      for (const code of ["account-a", "account-b"]) {
+        const { state } = await startCodeLogin();
+        const ok = await postCode({ provider: "anthropic", flowId: getLoginStatus("anthropic").flowId, input: `${code}#${state}` }, server);
+        expect(ok.status).toBe(200);
+      }
+      const set = getAccountSet("anthropic")!;
+      const idA = set.accounts.find(account => account.credential.email === "account-a@example.com")!.id;
+      const idB = set.accounts.find(account => account.credential.email === "account-b@example.com")!.id;
+      expect(set.activeAccountId).toBe(idB);
+      const started = await startLoginFlow("anthropic", { forceLogin: true, codeMode: true, reauthAccountId: idA });
+      const state = new URL(started.url).searchParams.get("state")!;
+      const reauth = await postCode({ provider: "anthropic", flowId: getLoginStatus("anthropic").flowId, input: `account-a#${state}` }, server);
+      expect(reauth.status).toBe(200);
+      const body = await reauth.json() as { ok: boolean; account?: { id: string } };
+      expect(body.ok).toBe(true);
+      expect(body.account?.id).toBe(idA);
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  test("concurrent logins of one account each answer with that account", async () => {
+    const originalFetch = globalThis.fetch;
+    let issued = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      // No profile enrichment over the network: it would reorder the two saves at random.
+      if (String(input).startsWith("https://api.anthropic.com/api/oauth/profile")) return new Response("{}", { status: 401 });
+      if (!String(input).startsWith(TOKEN_URL)) return originalFetch(input, init);
+      issued += 1;
+      // Same account, a fresh refresh token per exchange: the later write rotates the row's token.
+      return new Response(JSON.stringify({
+        access_token: `access-${issued}`, refresh_token: `refresh-${issued}`, expires_in: 3600,
+        account: { uuid: "account-1", email_address: "one@example.com" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    const server = startServer(0);
+    try {
+      // Flow A has saved but not yet settled when flow B saves: A's settle is held until B is done.
+      const startedA = await startLoginFlow("anthropic", { forceLogin: true, codeMode: true }, {
+        flowId: "flow-a",
+        onSettled: async () => { await waitForLoginSettled("anthropic", 5_000, "flow-b"); },
+      });
+      const stateA = new URL(startedA.url).searchParams.get("state")!;
+      const b = await startCodeFlow("flow-b");
+      const pendingA = postCode({ provider: "anthropic", flowId: "flow-a", input: `code-a#${stateA}` }, server);
+      while (!getAccountSet("anthropic")?.accounts.length) await Bun.sleep(5);
+      const answerB = await postCode({ provider: "anthropic", flowId: "flow-b", input: `code-b#${b.state}` }, server);
+      const answers = [await pendingA, answerB];
+      const set = getAccountSet("anthropic")!;
+      expect(set.accounts).toHaveLength(1);
+      for (const answer of answers) {
+        expect(answer.status).toBe(200);
+        expect(((await answer.json()) as { account?: { id: string } }).account?.id).toBe(set.accounts[0]!.id);
+      }
+    } finally {
+      await server.stop(true);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("a flow cleared while its exchange runs answers no_pending_login, not success", async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const originalFetch = globalThis.fetch;
+    let tokenCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).startsWith(TOKEN_URL)) return originalFetch(input, init);
+      tokenCalls += 1;
+      await held;
+      return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    const server = startServer(0);
+    try {
+      const { state } = await startCodeLogin();
+      const pending = postCode({ provider: "anthropic", flowId: getLoginStatus("anthropic").flowId, input: `code#${state}` }, server);
+      while (tokenCalls === 0) await Bun.sleep(5);
+      clearLoginState("anthropic");
+      const response = await pending;
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ ok: false, error: "no_pending_login" });
+    } finally {
+      release();
+      await server.stop(true);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("a paste racing the start is refused without spending the flow", async () => {
+    const mock = installTokenMock(okReply());
+    try {
+      const starting = startLoginFlow("anthropic", { forceLogin: true, codeMode: true });
+      const flowId = getLoginStatus("anthropic").flowId!;
+      const early = submitLoginCode("anthropic", "code#not-the-state", flowId);
+      expect(early).toMatchObject({ ok: false, code: "no_pending_login" });
+      const state = new URL((await starting).url).searchParams.get("state")!;
+      expect(submitLoginCode("anthropic", `real-code#${state}`, flowId)).toMatchObject({ ok: true, flowId });
+      expect(await waitForLoginSettled("anthropic", 5_000, flowId)).toBe(true);
+      expect(getLoginStatus("anthropic", true, flowId).status).toBe("complete");
+      expect(mock.requests.map(request => request.code)).toEqual(["real-code"]);
+    } finally {
+      mock.restore();
+    }
+  });
+
+  test("a flow id is only usable with its own provider and only for a code flow", async () => {
+    const server = startServer(0);
+    try {
+      const { state } = await startCodeLogin();
+      const flowId = getLoginStatus("anthropic").flowId!;
+      const foreign = getLoginStatus("xai", true, flowId);
+      expect(foreign.status).toBe("idle");
+      expect(foreign.hint).toBeUndefined();
+      expect(foreign).not.toHaveProperty("flowId");
+      const crossed = await postCode({ provider: "xai", flowId, input: `code#${state}` }, server);
+      expect(crossed.status).toBe(409);
+      expect(await crossed.json()).toEqual({ ok: false, error: "no_pending_login" });
+      clearLoginState("anthropic");
+      // A callback flow has a flow id too, but no outcome-waiting paste contract.
+      await startLoginFlow("anthropic", { forceLogin: true }, { flowId: "callback-flow" });
+      const callback = await postCode({ provider: "anthropic", flowId: "callback-flow", input: "code" }, server);
+      expect(callback.status).toBe(409);
+      expect(await callback.json()).toEqual({ ok: false, error: "no_pending_login" });
+      expect(getLoginStatus("anthropic", true, "callback-flow").status).toBe("pending");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("a failed headless CLI login prints only the fixed reason, never the provider body", async () => {
+    const { handleLogin } = await import("../../src/oauth/login-cli");
+    const { AnthropicTokenError } = await import("../../src/oauth/anthropic");
+    let stderr = "";
+    const errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => { stderr += args.join(" "); });
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = spyOn(process, "exit").mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
+    try {
+      await expect(handleLogin("anthropic", {
+        ask: async () => "secret-code#state",
+        runLogin: async () => {
+          throw new AnthropicTokenError('token exchange failed: {"code":"secret-code","code_verifier":"secret-verifier"}', 400, "invalid_grant");
+        },
+      }, { codeMode: true })).rejects.toThrow("exit 1");
+    } finally {
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+    expect(stderr).toContain("invalid_or_expired_code");
+    expect(stderr).not.toContain("secret-code");
+    expect(stderr).not.toContain("secret-verifier");
+  });
+
+  test("a code flow is single-use: a second paste during the exchange is refused", async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const originalFetch = globalThis.fetch;
+    let tokenCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).startsWith(TOKEN_URL)) return originalFetch(input, init);
+      tokenCalls += 1;
+      await held;
+      return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    const server = startServer(0);
+    try {
+      const { state } = await startCodeLogin();
+      const flowId = getLoginStatus("anthropic").flowId;
+      const first = postCode({ provider: "anthropic", flowId, input: `first-code#${state}` }, server);
+      while (tokenCalls === 0) await Bun.sleep(5);
+      const second = await postCode({ provider: "anthropic", flowId, input: `second-code#${state}` }, server);
+      expect(second.status).toBe(409);
+      expect(await second.json()).toEqual({ ok: false, error: "no_pending_login" });
+      release();
+      const firstResponse = await first;
+      expect(await firstResponse.json()).toEqual({ ok: false, error: "invalid_or_expired_code" });
+      expect(tokenCalls).toBe(1);
+      // A failed exchange settles the flow: it cannot be retried with another paste.
+      const retry = await postCode({ provider: "anthropic", flowId, input: `third-code#${state}` }, server);
+      expect(retry.status).toBe(409);
+      expect(tokenCalls).toBe(1);
+    } finally {
+      release();
+      await server.stop(true);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // Spec test 6. Two flows run at once, each pasting its OWN code, and neither exchange may
+  // carry the other's verifier. Driven at the flow object because the management API keys an
+  // in-flight login by provider and refuses a second concurrent anthropic login outright —
+  // which this also asserts, since that guard is what the API relies on.
+  test("two concurrent code flows each exchange with their own verifier", async () => {
+    const mock = installTokenMock(request => ({
+      kind: "ok",
+      uuid: `account-${request.code}`,
+      email: `${request.code}@example.com`,
+    }));
+    try {
+      const pastes = new Map<string, (value: string) => void>();
+      const makeFlow = (label: string) => {
+        let captured: { url: string } | undefined;
+        const ready = Promise.withResolvers<string>();
+        const flow = new AnthropicOAuthFlow({
+          onAuth: info => { captured = info; ready.resolve(info.url); },
+          onManualCodeInput: () => new Promise<string>(resolve => { pastes.set(label, resolve); }),
+        }, { codeMode: true });
+        return { flow, ready: ready.promise, url: () => captured!.url };
+      };
+
+      const first = makeFlow("first");
+      const second = makeFlow("second");
+      const firstLogin = first.flow.login();
+      const secondLogin = second.flow.login();
+      const firstUrl = new URL(await first.ready);
+      const secondUrl = new URL(await second.ready);
+      const firstChallenge = firstUrl.searchParams.get("code_challenge")!;
+      const secondChallenge = secondUrl.searchParams.get("code_challenge")!;
+      expect(firstChallenge).not.toBe(secondChallenge);
+
+      // Paste out of order: the SECOND flow completes first, so a shared verifier would be
+      // the one this paste finds.
+      pastes.get("second")!(`code-second#${secondUrl.searchParams.get("state")}`);
+      const secondCred = await secondLogin;
+      pastes.get("first")!(`code-first#${firstUrl.searchParams.get("state")}`);
+      const firstCred = await firstLogin;
+
+      expect(secondCred.email).toBe("code-second@example.com");
+      expect(firstCred.email).toBe("code-first@example.com");
+      const byCode = new Map(mock.requests.map(request => [request.code, request]));
+      expect(challengeOf(byCode.get("code-first")!.code_verifier)).toBe(firstChallenge);
+      expect(challengeOf(byCode.get("code-second")!.code_verifier)).toBe(secondChallenge);
+      expect(byCode.get("code-first")!.code_verifier).not.toBe(byCode.get("code-second")!.code_verifier);
+
+      // The other half of the guarantee at the API level: a second concurrent CODE login is
+      // ALLOWED (each gets its own flow slot), because a code flow binds nothing. The callback
+      // flow binds the fixed loopback port, so it still refuses to overlap — in either order.
+      await startCodeLogin();
+      const concurrent = await startLoginFlow("anthropic", { forceLogin: true, codeMode: true });
+      expect(new URL(concurrent.url).searchParams.get("code_challenge")).not.toBe(firstChallenge);
+      await expect(startLoginFlow("anthropic", { forceLogin: true }))
+        .rejects.toThrow("already in progress");
+    } finally {
+      mock.restore();
+      cancelLoginFlow("anthropic");
+      clearLoginState("anthropic");
+    }
+  });
+
+  // Spec test 7.
+  test("re-login refreshes one account in place; a different account is appended", async () => {
+    const server = startServer(0);
+    const accounts = ["account-1", "account-1", "account-2"];
+    const mock = installTokenMock(() => {
+      const uuid = accounts.shift() ?? "account-2";
+      return { kind: "ok", uuid, email: `${uuid}@example.com` };
+    });
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        clearLoginState("anthropic");
+        const { state } = await startCodeLogin();
+        const flowId = getLoginStatus("anthropic").flowId;
+        const response = await postCode({ provider: "anthropic", flowId, input: `code-${attempt}#${state}` }, server);
+        expect(response.status).toBe(200);
+        // 1 after the first login, still 1 after the SAME account logs in again, 2 after a
+        // different one.
+        expect(getAccountSet("anthropic")!.accounts).toHaveLength(attempt === 2 ? 2 : 1);
+      }
+      const emails = getAccountSet("anthropic")!.accounts.map(account => account.credential.email).sort();
+      expect(emails).toEqual(["account-1@example.com", "account-2@example.com"]);
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  // Spec test 8.
+  test("omitting mode keeps the callback response shape and the localhost redirect", async () => {
+    const server = startServer(0);
+    const serve = spyOnServe();
+    try {
+      const response = await fetch(new URL("/api/oauth/login", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "anthropic", addAccount: true, openBrowser: false }),
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as Record<string, unknown>;
+      expectLocalhostCallbackRedirect(String(body.url), serve);
+      // The code-mode fields are absent, not null: an old caller sees exactly today's keys.
+      expect(body).not.toHaveProperty("mode");
+      expect(body).not.toHaveProperty("flowId");
+      expect(body).not.toHaveProperty("expiresAt");
+      expect(getLoginStatus("anthropic").mode).toBeUndefined();
+    } finally {
+      serve.mockRestore();
+      await server.stop(true);
+    }
+  });
+
+  // Spec test 9.
+  test("code mode on a provider with no code redirect is refused, not downgraded", async () => {
+    expect(supportsCodeLoginMode("anthropic")).toBe(true);
+    // Pool 2 shares the Anthropic OAuth client, so it gets the same headless path.
+    expect(supportsCodeLoginMode("anthropic2")).toBe(true);
+    expect(supportsCodeLoginMode("xai")).toBe(false);
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/api/oauth/login", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "xai", mode: "code", openBrowser: false }),
+      });
+      expect(response.status).toBe(400);
+      const raw = await response.text();
+      expect(JSON.parse(raw)).toEqual({ error: "code_mode_unsupported" });
+      expect(raw).not.toContain("127.0.0.1");
+      expect(raw.toLowerCase()).not.toContain("localhost");
+      expect(getLoginStatus("xai").status).toBe("idle");
+    } finally {
+      await server.stop(true);
+      clearLoginState("xai");
+    }
+  });
+
+  test("device: true starts xAI's device grant and opens nothing; anywhere else it is refused", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "https://auth.x.ai/.well-known/openid-configuration") {
+        return Response.json({ authorization_endpoint: "https://auth.x.ai/oauth2/authorize", token_endpoint: "https://auth.x.ai/oauth2/token", device_authorization_endpoint: "https://auth.x.ai/oauth2/device/code" });
+      }
+      if (url === "https://auth.x.ai/oauth2/device/code") {
+        return Response.json({ device_code: "dev", user_code: "ABCD-EFGH", verification_uri: "https://accounts.x.ai/oauth2/device", expires_in: 60, interval: 0.01 });
+      }
+      if (url === "https://auth.x.ai/oauth2/token") return Response.json({ error: "access_denied" }, { status: 400 });
+      return originalFetch(input, init);
+    }) as typeof fetch;
+    const server = startServer(0);
+    const login = async (body: unknown) => await fetch(new URL("/api/oauth/login", server.url), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    try {
+      for (const body of [
+        { provider: "anthropic", device: true },
+        { provider: "xai", device: true, mode: "code" },
+        { provider: "xai", device: "yes" },
+      ]) expect((await login(body)).status).toBe(400);
+      expect(getLoginStatus("xai").status).toBe("idle");
+      const response = await login({ provider: "xai", device: true, openBrowser: true });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ url: "https://accounts.x.ai/oauth2/device", deviceCode: "ABCD-EFGH", browserLaunch: "skipped" });
+      expect(await waitForLoginSettled("xai", 2_000)).toBe(true);
+      expect(getLoginStatus("xai").loggedIn).not.toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await server.stop(true);
+      clearLoginState("xai");
+    }
+  });
+
+  test("epx login xai --headless runs the device grant and asks for nothing", async () => {
+    const { handleLogin } = await import("../../src/oauth/login-cli");
+    const asked: string[] = [];
+    let seenOpts: { codeMode?: boolean; flow?: string } | undefined;
+    let printed = "";
+    const logSpy = spyOn(console, "log").mockImplementation((...args: unknown[]) => { printed += `${args.join(" ")}\n`; });
+    try {
+      await handleLogin("xai", {
+        openUrl: async () => { throw new Error("must not launch"); },
+        ask: async (question: string) => { asked.push(question); return ""; },
+        runLogin: async (_provider, ctrl, opts) => {
+          seenOpts = opts;
+          ctrl.onAuth?.({ url: "https://accounts.x.ai/oauth2/device?user_code=ABCD", instructions: "confirm the code ABCD", deviceCode: "ABCD" });
+          return { refresh: "r", access: "a", expires: Date.now() + 3600_000 };
+        },
+      }, { codeMode: true });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(seenOpts).toEqual({ flow: "device" });
+    expect(asked).toEqual([]);
+    expect(printed).toContain("https://accounts.x.ai/oauth2/device?user_code=ABCD");
+    expect(printed).toContain("confirm the code ABCD");
+  });
+
+  // The refusal used to name only a code-display login, so it read as if xAI's device grant were
+  // unsupported — the same mistake the docs made. The message names both modes and the list still
+  // comes from the roster.
+  test("a --headless refusal names device login as well as code-display", async () => {
+    const { handleLogin, listCodeLoginProviders } = await import("../../src/oauth/login-cli");
+    let stderr = "";
+    const errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => { stderr += args.join(" "); });
+    const exitSpy = spyOn(process, "exit").mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
+    try {
+      await expect(handleLogin("not-a-provider", {}, { codeMode: true })).rejects.toThrow("exit 1");
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+    expect(stderr).toContain("code-display or device login");
+    expect(stderr).not.toMatch(/needs a provider with a code-display login:/);
+    expect(stderr).toContain(listCodeLoginProviders().join(", "));
+    expect(listCodeLoginProviders()).toContain("xai");
+  });
+
+  // A refused redirect must reach API callers with its own reason. The management status route is
+  // the surface a dashboard polls, and it reports `errorCode` straight from the classifier that
+  // `startLoginFlow` settles with; before this, that classifier fell through to
+  // `invalid_or_expired_code`, telling a caller its device code was bad when the client had
+  // deliberately refused to follow a redirect.
+  describe("xAI device flow reason over the status API", () => {
+    const original = globalThis.fetch;
+    /** The error this runtime really throws for `redirect: "error"`, from a live loopback server. */
+    async function realRedirectRefusal(): Promise<Error> {
+      const server = Bun.serve({
+        hostname: "127.0.0.1", port: 0,
+        fetch: () => new Response(null, { status: 307, headers: { location: "https://auth.x.ai/oauth2/token" } }),
+      });
+      try {
+        await fetch(`http://127.0.0.1:${server.port}/redirect`, { method: "POST", redirect: "error", body: "x=1" });
+        throw new Error("fixture server did not redirect");
+      } catch (error) {
+        return error as Error;
+      } finally {
+        await server.stop(true);
+      }
+    }
+
+    /**
+     * Discovery and device authorization always succeed; the token poll is `poll`. The grant
+     * interval is the smallest the client accepts (1s), so this costs one real interval and no
+     * arbitrary wait: `waitForLoginSettled` is what bounds the assertions.
+     */
+    function mockDevicePoll(poll: (url: string, init?: RequestInit) => Response | Promise<Response>): string[] {
+      const originalFetch = globalThis.fetch;
+      const tokenCalls: string[] = [];
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "https://auth.x.ai/.well-known/openid-configuration") {
+          return Response.json({
+            authorization_endpoint: "https://auth.x.ai/oauth2/authorize",
+            token_endpoint: "https://auth.x.ai/oauth2/token",
+            device_authorization_endpoint: "https://auth.x.ai/oauth2/device/code",
+          });
+        }
+        if (url === "https://auth.x.ai/oauth2/device/code") {
+          return Response.json({
+            device_code: "device-secret-code", user_code: "ABCD-EFGH",
+            verification_uri: "https://accounts.x.ai/oauth2/device", expires_in: 60, interval: 0.01,
+          });
+        }
+        if (url === "https://auth.x.ai/oauth2/token") {
+          tokenCalls.push(url);
+          return poll(url, init);
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+      return tokenCalls;
+    }
+
+    test("a granted device login completes, and status carries no reason or secret", async () => {
+      const tokenCalls = mockDevicePoll(() => Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600 }));
+      const server = startServer(0);
+      try {
+        const started = await startLoginFlow("xai", { forceLogin: true, flow: "device" });
+        expect(started.deviceCode).toBe("ABCD-EFGH");
+        expect(await waitForLoginSettled("xai", 10_000)).toBe(true);
+        const response = await fetch(new URL("/api/oauth/status?provider=xai", server.url));
+        const raw = await response.text();
+        const body = JSON.parse(raw) as { status: string; loggedIn: boolean; errorCode?: string; error?: string };
+        expect(body).toMatchObject({ status: "complete", loggedIn: true });
+        expect(body.errorCode).toBeUndefined();
+        expect(body.error).toBeUndefined();
+        expect(tokenCalls).toHaveLength(1);
+        expect(raw).not.toContain("device-secret-code");
+        expect(raw).not.toContain("ABCD-EFGH");
+        expect(raw).not.toContain("oauth2/token");
+      } finally {
+        await server.stop(true);
+        cancelLoginFlow("xai");
+        clearLoginState("xai");
+        globalThis.fetch = original;
+      }
+    });
+
+    test("a redirect refused by the client settles as oauth_authentication_failed, not a bad code", async () => {
+      const refusal = await realRedirectRefusal();
+      const tokenCalls = mockDevicePoll(() => { throw refusal; });
+      const server = startServer(0);
+      try {
+        const started = await startLoginFlow("xai", { forceLogin: true, flow: "device" });
+        expect(started.deviceCode).toBe("ABCD-EFGH");
+        expect(await waitForLoginSettled("xai", 10_000)).toBe(true);
+        const response = await fetch(new URL("/api/oauth/status?provider=xai", server.url));
+        const raw = await response.text();
+        const body = JSON.parse(raw) as { status: string; loggedIn: boolean; errorCode?: string; error?: string; done: boolean };
+        expect(body).toMatchObject({ status: "error", done: true, errorCode: "oauth_authentication_failed" });
+        expect(body.loggedIn).not.toBe(true);
+        // The public message is the fixed one; the runtime's redirect text embeds the target URL
+        // and the poll body carries the device code, so neither may surface here.
+        expect(body.error).toBe("OAuth authentication failed. Check the EasyProxy account status and retry.");
+        expect(raw).not.toContain("device-secret-code");
+        expect(raw).not.toContain("UnexpectedRedirect");
+        expect(raw).not.toContain("oauth2/token");
+        expect(raw).not.toContain("invalid_or_expired_code");
+        expect(raw).not.toContain("provider_unreachable");
+        // One poll, then the terminal refusal: the refusal is not retried as a network fault.
+        expect(tokenCalls).toHaveLength(1);
+      } finally {
+        await server.stop(true);
+        cancelLoginFlow("xai");
+        clearLoginState("xai");
+        globalThis.fetch = original;
+      }
+    });
+
+    test("account CLI does not adopt a replacement device login after cancellation", async () => {
+      const { handleAccountAuthCommand } = await import("../../src/cli/account-auth");
+      let releaseFirst: (() => void) | undefined;
+      let polls = 0;
+      mockDevicePoll(() => ++polls === 1
+        ? new Promise<Response>(resolve => { releaseFirst = () => resolve(Response.json({ error: "authorization_pending" }, { status: 400 })); })
+        : Response.json({ access_token: "synthetic-access", refresh_token: "synthetic-refresh", expires_in: 3600 }));
+      const server = startServer(0);
+      let firstId: string | undefined, secondId: string | undefined, statusUrl = "";
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const cliFetch: typeof globalThis.fetch = async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === "/api/oauth/login") {
+            const response = await fetch(input, init);
+            firstId = (await response.clone().json() as { flowId?: string }).flowId;
+            return response;
+          }
+          if (url.pathname === "/api/oauth/status") {
+            statusUrl = url.href;
+            const cancelled = await fetch(new URL("/api/oauth/login/cancel", server.url), {
+              method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "xai" }),
+            });
+            expect(await cancelled.json()).toMatchObject({ cancelled: true });
+            releaseFirst?.();
+            const replacement = await fetch(new URL("/api/oauth/login", server.url), {
+              method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "xai", device: true, addAccount: true }),
+            });
+            expect(replacement.ok).toBe(true);
+            secondId = (await replacement.json() as { flowId?: string }).flowId;
+            expect(await waitForLoginSettled("xai", 10_000)).toBe(true);
+          }
+          return fetch(input, init);
+        };
+        // A waiting JSON device login is refused before any flow starts, so the waiting human path carries this check.
+        const result = await handleAccountAuthCommand("login", ["xai", "--device"], { baseUrl: String(server.url), fetchImpl: cliFetch });
+        expect(result).not.toBe(0);
+        expect(firstId).toBeTruthy(); expect(secondId).toBeTruthy(); expect(firstId).not.toBe(secondId);
+        expect(new URL(statusUrl).searchParams.get("flowId")).toBe(firstId);
+        const oldStatus = await (await fetch(new URL(`/api/oauth/status?provider=xai&flowId=${firstId}`, server.url))).json() as { status: string };
+        const newStatus = await (await fetch(new URL(`/api/oauth/status?provider=xai&flowId=${secondId}`, server.url))).json() as { status: string };
+        expect(oldStatus.status).toBe("error"); expect(newStatus.status).toBe("complete");
+      } finally {
+        logSpy.mockRestore(); errorSpy.mockRestore(); await server.stop(true);
+        cancelLoginFlow("xai"); clearLoginState("xai"); await removeCredential("xai"); globalThis.fetch = original;
+      }
+    }, 15_000);
+
+    for (const scenario of ["denial", "authorization-503"] as const) {
+      test(`xAI ${scenario} is classified at the headless CLI and settled status`, async () => {
+        const { handleLogin } = await import("../../src/oauth/login-cli");
+        const { loginXaiDevice } = await import("../../src/oauth/xai");
+        const originalFetch = globalThis.fetch;
+        const tokenCalls = mockDevicePoll(() => Response.json({ error: "access_denied", error_description: "synthetic-sensitive-body" }, { status: 400 }));
+        if (scenario === "authorization-503") {
+          const downstream = globalThis.fetch;
+          globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => String(input) === "https://auth.x.ai/oauth2/device/code"
+            ? Promise.resolve(Response.json({ error: "server_error", error_description: "synthetic-sensitive-body" }, { status: 503 }))
+            : downstream(input, init)) as typeof fetch;
+        }
+        const expected = scenario === "denial" ? "oauth_authentication_failed" : "provider_unreachable";
+        const server = startServer(0);
+        let stderr = "";
+        const logSpy = spyOn(console, "log").mockImplementation(() => {});
+        const errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => { stderr += args.join(" "); });
+        const exitSpy = spyOn(process, "exit").mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
+        try {
+          await expect(handleLogin("xai", { ask: async () => "", runLogin: async (_provider, ctrl) => {
+            await loginXaiDevice(ctrl, { sleep: async () => {} });
+          } }, { codeMode: true })).rejects.toThrow("exit 1");
+          const started = startLoginFlow("xai", { forceLogin: true, flow: "device" });
+          if (scenario === "authorization-503") await expect(started).rejects.toBeDefined();
+          else { await started; expect(await waitForLoginSettled("xai", 10_000)).toBe(true); }
+          const raw = await (await fetch(new URL("/api/oauth/status?provider=xai", server.url))).text();
+          expect(JSON.parse(raw)).toMatchObject({ status: "error", errorCode: expected });
+          expect(raw).not.toContain("synthetic-sensitive-body");
+          expect(raw).not.toContain("device-secret-code");
+          expect(stderr).toContain(`(${expected})`);
+          expect(stderr).not.toContain("synthetic-sensitive-body");
+          if (scenario === "denial") expect(tokenCalls.length).toBeGreaterThanOrEqual(2);
+        } finally {
+          logSpy.mockRestore(); errorSpy.mockRestore(); exitSpy.mockRestore();
+          await server.stop(true); cancelLoginFlow("xai"); clearLoginState("xai"); globalThis.fetch = originalFetch;
+        }
+      });
+    }
+
+    test("the shared classifier names the refusal, and existing code failures keep their reason", async () => {
+      const { XaiRedirectRefusedError, XaiTokenRequestError } = await import("../../src/oauth/xai");
+      expect(classifyLoginCodeError(new XaiRedirectRefusedError())).toBe("oauth_authentication_failed");
+      expect(classifyLoginCodeError(new XaiTokenRequestError(undefined, "expired_token", "expired"))).toBe("invalid_or_expired_code");
+      expect(classifyLoginCodeError(new XaiTokenRequestError(400, "invalid_grant", "rejected"))).toBe("invalid_or_expired_code");
+      expect(classifyLoginCodeError(new XaiTokenRequestError(503, "expired_token", "server failed"))).toBe("provider_unreachable");
+      // Unaffected by the new branch: a 4xx stays a code problem, a 5xx a provider problem.
+      expect(classifyLoginCodeError(new AnthropicTokenError("body", 400, "invalid_grant"))).toBe("invalid_or_expired_code");
+      expect(classifyLoginCodeError(new AnthropicTokenError("body", 503, "server_error"))).toBe("provider_unreachable");
+      expect(classifyLoginCodeError(new TypeError("Cannot read properties of undefined"))).toBe("invalid_or_expired_code");
+    });
+  });
+
+  // A refused redirect on the device grant is a definitive server answer, and the CLI surface that
+  // runs that grant reports it through `classifyLoginCodeError`, not the callback reporter. The
+  // classifier names it `oauth_authentication_failed` rather than falling through to
+  // `invalid_or_expired_code`, which would send the operator to try another code against a client
+  // that will refuse the same redirect again.
+  test("a refused xAI redirect in the headless device login is reported as an auth failure", async () => {
+    const { handleLogin } = await import("../../src/oauth/login-cli");
+    const { XaiRedirectRefusedError } = await import("../../src/oauth/xai");
+    const url = "https://auth.x.ai/oauth2/token?device_code=secret-device-code";
+    let stderr = "";
+    const errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => { stderr += args.join(" "); });
+    const exitSpy = spyOn(process, "exit").mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
+    try {
+      await expect(handleLogin("xai", {
+        openUrl: async () => { throw new Error("must not launch"); },
+        ask: async () => "",
+        runLogin: async () => {
+          const error = new XaiRedirectRefusedError();
+          // The runtime's own redirect TypeError embeds the URL: nothing of it may reach stderr.
+          Object.defineProperty(error, "cause", { value: new TypeError(`UnexpectedRedirect fetching "${url}"`) });
+          throw error;
+        },
+      }, { codeMode: true })).rejects.toThrow("exit 1");
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+    expect(stderr).toContain("(oauth_authentication_failed)");
+    expect(stderr).not.toContain("invalid_or_expired_code");
+    expect(stderr).not.toContain("secret-device-code");
+    expect(stderr).not.toContain("UnexpectedRedirect");
+  });
+
+  // The headless device path prints provider-supplied instructions quoting the user code. A bidi
+  // override or a zero-width character in that text can reorder or hide the line the operator is
+  // reading, and C0/C1 escaping alone never covered it (#8436 review).
+  test("epx login xai --headless escapes bidi and zero-width characters in provider instructions", async () => {
+    const { handleLogin } = await import("../../src/oauth/login-cli");
+    let printed = "";
+    const hostileUrl = "https://accounts.x.ai/oauth2/device?user_code=ABCD\u202e";
+    const hostileInstructions = "Confirm\u202ccode\u200bABCD\u2066-\u2069EFGH\ufeff";
+    const logSpy = spyOn(console, "log").mockImplementation((...args: unknown[]) => { printed += `${args.join(" ")}\n`; });
+    try {
+      await handleLogin("xai", {
+        openUrl: async () => { throw new Error("must not launch"); },
+        ask: async () => "",
+        runLogin: async (_provider, ctrl) => {
+          ctrl.onAuth?.({ url: hostileUrl, instructions: hostileInstructions, deviceCode: "ABCD" });
+          return { refresh: "r", access: "a", expires: Date.now() + 3600_000 };
+        },
+      }, { codeMode: true });
+    } finally {
+      logSpy.mockRestore();
+    }
+    for (const code of [0x202e, 0x202c, 0x200b, 0x2066, 0x2069, 0xfeff]) {
+      expect(printed).not.toContain(String.fromCodePoint(code));
+    }
+    // Escaped, not dropped: the bytes survive in a readable form so a pasted report reproduces it.
+    expect(printed).toContain("https://accounts.x.ai/oauth2/device?user_code=ABCD\\u202e");
+    expect(printed).toContain("Confirm\\u202ccode\\u200bABCD\\u2066-\\u2069EFGH\\ufeff");
+  });
+
+  // The headless device path prints provider-derived progress too: the Meta Muse device login's
+  // final line carries an action URL from the provider payload. That callback is a second print
+  // site from the browser one, so it needs its own pin rather than inheriting the first's.
+  test("epx login --headless escapes bidi and tag-plane characters in progress text", async () => {
+    const { handleLogin } = await import("../../src/oauth/login-cli");
+    let printed = "";
+    const hostile = "Action needed: https://pay.example.test/\u202echeckout\u061c?step=1\u206a\u{e0041}";
+    const logSpy = spyOn(console, "log").mockImplementation((...args: unknown[]) => { printed += `${args.join(" ")}\n`; });
+    try {
+      await handleLogin("xai", {
+        openUrl: async () => { throw new Error("must not launch"); },
+        ask: async () => "",
+        runLogin: async (_provider, ctrl) => {
+          ctrl.onAuth?.({ url: "https://accounts.x.ai/oauth2/device?user_code=ABCD", deviceCode: "ABCD" });
+          ctrl.onProgress?.(hostile);
+          return { refresh: "r", access: "a", expires: Date.now() + 3600_000 };
+        },
+      }, { codeMode: true });
+    } finally {
+      logSpy.mockRestore();
+    }
+    for (const code of [0x202e, 0x061c, 0x206a, 0xe0041]) expect(printed).not.toContain(String.fromCodePoint(code));
+    expect(printed).toContain("https://pay.example.test/\\u202echeckout\\u061c?step=1\\u206a\\u{e0041}");
+  });
+
+  test("an unknown mode is rejected before any flow starts", async () => {
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/api/oauth/login", server.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "anthropic", mode: "device", openBrowser: false }),
+      });
+      expect(response.status).toBe(400);
+      expect(getLoginStatus("anthropic").status).toBe("idle");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("a paste with nothing code-like in it answers malformed_input", async () => {
+    const mock = installTokenMock(okReply());
+    const server = startServer(0);
+    try {
+      await startCodeLogin();
+      const flowId = getLoginStatus("anthropic").flowId;
+      const empty = await postCode({ provider: "anthropic", flowId, input: "   " }, server);
+      expect(empty.status).toBe(400);
+      expect(await empty.json()).toEqual({ ok: false, error: "malformed_input" });
+
+      const oversized = await postCode({ provider: "anthropic", flowId, input: "x".repeat(5000) }, server);
+      expect(oversized.status).toBe(400);
+      expect(await oversized.json()).toEqual({ ok: false, error: "malformed_input" });
+      expect(mock.requests).toHaveLength(0);
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  test("a paste for a finished or expired flow answers no_pending_login", async () => {
+    const mock = installTokenMock(okReply());
+    const server = startServer(0);
+    try {
+      // Unknown flow id against a live flow.
+      await startCodeLogin();
+      const flowId = getLoginStatus("anthropic").flowId!;
+      const wrongFlow = await postCode({ provider: "anthropic", flowId: "not-this-flow", input: "code" }, server);
+      expect(wrongFlow.status).toBe(409);
+      expect(await wrongFlow.json()).toEqual({ ok: false, error: "no_pending_login" });
+
+      // Past its TTL: the flow object is still live, the paste window is not.
+      loginState.get(flowId)!.expiresAt = Date.now() - 1;
+      const expired = await postCode({ provider: "anthropic", flowId, input: "code" }, server);
+      expect(expired.status).toBe(409);
+      expect(await expired.json()).toEqual({ ok: false, error: "no_pending_login" });
+      expect(mock.requests).toHaveLength(0);
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  // The spec's CLI half: `epx login anthropic --headless`.
+  test("epx login --headless runs the code flow, launches nothing, and reads the code back", async () => {
+    const { handleLogin, listCodeLoginProviders } = await import("../../src/oauth/login-cli");
+    expect(listCodeLoginProviders()).toEqual(["xai", "anthropic", "anthropic2"]);
+
+    const launched: string[] = [];
+    const asked: string[] = [];
+    let seenOpts: { codeMode?: boolean } | undefined;
+    let printed = "";
+    const logSpy = spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      printed += `${args.join(" ")}\n`;
+    });
+    try {
+      await handleLogin("anthropic", {
+        openUrl: async (target: string) => { launched.push(target); return { kind: "opened" as const }; },
+        ask: async (question: string) => { asked.push(question); return "pasted-code#state"; },
+        runLogin: async (_provider, ctrl, opts) => {
+          seenOpts = opts;
+          ctrl.onAuth?.({ url: "https://claude.ai/oauth/authorize?code=true" });
+          expect(await ctrl.onManualCodeInput?.()).toBe("pasted-code#state");
+          return { refresh: "r", access: "a", expires: Date.now() + 3600_000, email: "cli@example.com" };
+        },
+      }, { codeMode: true });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(seenOpts?.codeMode).toBe(true);
+    // The point of --headless is that there is no browser here to open.
+    expect(launched).toEqual([]);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain("Paste the code");
+    expect(printed).toContain("https://claude.ai/oauth/authorize");
+    expect(printed).toContain("Logged in to anthropic");
+  });
+
+  // Concurrency, flow by flow. Two code logins for the SAME provider are in flight at once;
+  // each may only ever be settled by its own paste.
+  test("two concurrent code flows settle only their own paste, pasted out of order", async () => {
+    const mock = installTokenMock(request => ({
+      kind: "ok",
+      uuid: `account-${request.code}`,
+      email: `${request.code}@example.com`,
+    }));
+    const server = startServer(0);
+    try {
+      const a = await startCodeFlow("flow-a");
+      const b = await startCodeFlow("flow-b");
+      expect(a.challenge).not.toBe(b.challenge);
+      expect(getLoginStatus("anthropic", true, "flow-a").status).toBe("pending");
+      expect(getLoginStatus("anthropic", true, "flow-b").status).toBe("pending");
+
+      // Flow A's code addressed to flow B: refused, and neither flow moves.
+      const crossed = await postCode({ provider: "anthropic", flowId: "flow-b", input: `code-a#${a.state}` }, server);
+      expect(crossed.status).toBe(400);
+      expect(await crossed.json()).toEqual({ ok: false, error: "state_mismatch" });
+      expect(mock.requests).toHaveLength(0);
+      expect(getLoginStatus("anthropic", true, "flow-a").status).toBe("pending");
+      expect(getLoginStatus("anthropic", true, "flow-b").status).toBe("pending");
+
+      // Out of order: B settles first, and A is untouched by it.
+      const bDone = await postCode({ provider: "anthropic", flowId: "flow-b", input: `code-b#${b.state}` }, server);
+      expect(bDone.status).toBe(200);
+      expect(await bDone.json()).toMatchObject({ ok: true, account: { email: "c***b@example.com" } });
+      expect(getLoginStatus("anthropic", true, "flow-b").status).toBe("complete");
+      expect(getLoginStatus("anthropic", true, "flow-a").status).toBe("pending");
+
+      const aDone = await postCode({ provider: "anthropic", flowId: "flow-a", input: `code-a#${a.state}` }, server);
+      expect(aDone.status).toBe(200);
+      expect(await aDone.json()).toMatchObject({ ok: true, account: { email: "c***a@example.com" } });
+
+      // Each exchange carried its own verifier — no shared PKCE slot.
+      const byCode = new Map(mock.requests.map(request => [request.code, request]));
+      expect(challengeOf(byCode.get("code-a")!.code_verifier)).toBe(a.challenge);
+      expect(challengeOf(byCode.get("code-b")!.code_verifier)).toBe(b.challenge);
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  test("cancelling one code flow leaves the other in flight", async () => {
+    const mock = installTokenMock(request => ({
+      kind: "ok",
+      uuid: `account-${request.code}`,
+      email: `${request.code}@example.com`,
+    }));
+    const server = startServer(0);
+    try {
+      await startCodeFlow("flow-a");
+      const b = await startCodeFlow("flow-b");
+      expect(cancelLoginFlow("anthropic", "flow-a")).toBe(true);
+      expect(getLoginStatus("anthropic", true, "flow-a").status).toBe("error");
+      expect(getLoginStatus("anthropic", true, "flow-b").status).toBe("pending");
+
+      const done = await postCode({ provider: "anthropic", flowId: "flow-b", input: `code-b#${b.state}` }, server);
+      expect(done.status).toBe(200);
+      expect(getLoginStatus("anthropic", true, "flow-b").status).toBe("complete");
+      // The cancelled flow cannot be revived by a late, otherwise valid paste.
+      const late = await postCode({ provider: "anthropic", flowId: "flow-a", input: "code-a#whatever" }, server);
+      expect(late.status).toBe(409);
+      expect(await late.json()).toEqual({ ok: false, error: "no_pending_login" });
+    } finally {
+      await server.stop(true);
+      mock.restore();
+    }
+  });
+
+  // The reaper: a code flow past its paste window can never complete, so it must not sit in the
+  // table holding a verifier and an open paste promise until the process restarts.
+  test("an expired code flow is reaped when the next login for that provider starts", async () => {
+    await startCodeFlow("flow-a");
+    loginState.get("flow-a")!.expiresAt = Date.now() - 1;
+    await startCodeFlow("flow-b");
+    expect(getLoginStatus("anthropic", true, "flow-a").status).toBe("error");
+    expect(getLoginStatus("anthropic", true, "flow-a").errorCode).toBe("no_pending_login");
+    expect(getLoginStatus("anthropic", true, "flow-b").status).toBe("pending");
+  });
+
+  // The documented rule for the provider-only legacy APIs: they act on the newest flow still
+  // in progress, falling back to the newest flow overall so a just-settled login still reports.
+  test("provider-only login APIs act on the provider's newest in-flight flow", async () => {
+    const mock = installTokenMock(request => ({
+      kind: "ok",
+      uuid: `account-${request.code}`,
+      email: `${request.code}@example.com`,
+    }));
+    try {
+      await startCodeFlow("flow-a");
+      const b = await startCodeFlow("flow-b");
+      expect(getLoginStatus("anthropic").flowId).toBe("flow-b");
+
+      // A legacy paste with no flow id feeds that same flow, and only it.
+      expect(submitManualLoginCode("anthropic", `code-b#${b.state}`)).toEqual({ ok: true });
+      expect(await waitForLoginSettled("anthropic", 5_000, "flow-b")).toBe(true);
+      expect(getLoginStatus("anthropic", true, "flow-b").status).toBe("complete");
+      expect(getLoginStatus("anthropic", true, "flow-a").status).toBe("pending");
+      expect(mock.requests.map(request => request.code)).toEqual(["code-b"]);
+
+      // With B settled, the provider-only view falls back to the flow still running.
+      expect(getLoginStatus("anthropic").flowId).toBe("flow-a");
+      expect(cancelLoginFlow("anthropic")).toBe(true);
+      expect(getLoginStatus("anthropic", true, "flow-a").status).toBe("error");
+    } finally {
+      mock.restore();
+    }
+  });
+
+  test("a flow for one provider is invisible to another provider's lookups", () => {
+    // `loginFlowKeys` filters with `(state.provider ?? key) === provider`. Without the
+    // parentheses `===` binds first, the expression yields the truthy provider string for every
+    // row, and every flow matches every provider -- cross-provider status reads, cancellations
+    // and reaping, and one global 64-row cap.
+    loginState.set("flow-anthropic", { done: false, provider: "anthropic", flowId: "flow-anthropic" });
+    loginState.set("flow-xai", { done: false, provider: "xai", flowId: "flow-xai" });
+
+    expect(loginFlowKeys("anthropic")).toEqual(["flow-anthropic"]);
+    expect(loginFlowKeys("xai")).toEqual(["flow-xai"]);
+    expect(loginFlowKeys("kiro")).toEqual([]);
+
+    // And the provider-only surface acts on its own flow, not whichever was newest overall.
+    expect(getLoginStatus("anthropic").flowId).toBe("flow-anthropic");
+    expect(getLoginStatus("xai").flowId).toBe("flow-xai");
+  });
+
+  // The same isolation on the three mutating surfaces, each of which ran through the unbracketed
+  // filter: admission, cancellation and clearing. Every assertion here fails with the old
+  // precedence, because xai's rows then answer anthropic's lookups and vice versa.
+  test("admission, cancellation and clearing never cross providers", () => {
+    // A callback-mode xai login in flight must not block an anthropic code login as an overlap.
+    loginState.set("flow-xai", { done: false, provider: "xai", flowId: "flow-xai" });
+    expect(() => admitLoginFlow("anthropic", true)).not.toThrow();
+
+    // The per-provider cap counts only that provider's rows: a full xai table admits anthropic.
+    for (let i = 0; i < 64; i++) loginState.set(`xai-done-${i}`, { done: true, provider: "xai", flowId: `xai-done-${i}` });
+    expect(() => admitLoginFlow("anthropic", true)).not.toThrow();
+
+    // A flow id belonging to another provider is refused, and the other provider's flow survives.
+    loginState.set("flow-anthropic", { done: false, provider: "anthropic", flowId: "flow-anthropic" });
+    expect(cancelLoginFlow("xai", "flow-anthropic")).toBe(false);
+    expect(loginState.get("flow-anthropic")?.done).toBe(false);
+
+    // Clearing one provider drops only its own rows.
+    clearLoginState("xai");
+    expect(loginFlowKeys("xai")).toEqual([]);
+    expect(loginFlowKeys("anthropic")).toEqual(["flow-anthropic"]);
+    clearLoginState("anthropic");
+  });
+
+  // A TypeError is how fetch() reports a dead network, but it is also what any bug throws. Only
+  // the network kind carries a `code` (Bun: on the error, Node: on `cause`), so only that one may
+  // tell the user Anthropic is unreachable.
+  test("only a network TypeError is classified as provider_unreachable", () => {
+    const network = Object.assign(new TypeError("Unable to connect."), { code: "ConnectionRefused" });
+    const dns = Object.assign(new TypeError("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" });
+    const node = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+    expect(classifyLoginCodeError(network)).toBe("provider_unreachable");
+    expect(classifyLoginCodeError(dns)).toBe("provider_unreachable");
+    expect(classifyLoginCodeError(node)).toBe("provider_unreachable");
+    expect(classifyLoginCodeError(Object.assign(new Error("deadline"), { name: "TimeoutError" }))).toBe("provider_unreachable");
+    expect(classifyLoginCodeError(new TypeError("Cannot read properties of undefined"))).not.toBe("provider_unreachable");
+  });
+
+  test("the callback flow's paste route keeps its original accept-only contract", async () => {
+    const server = startServer(0);
+    try {
+      // No flowId and no code-mode flow: the legacy shape, error string and 409 are unchanged.
+      const response = await postCode({ provider: "anthropic", input: "some-code" }, server);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "no login in progress" });
+    } finally {
+      await server.stop(true);
+    }
+  });
+});

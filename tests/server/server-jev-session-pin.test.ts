@@ -1,0 +1,388 @@
+/**
+ * #7525: an opt-in JEV session pin keeps one client session on the target JEV chose for it, so the
+ * provider prompt cache stays warm, while default-off Combos keep deciding on every request.
+ */
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { coolComboTarget } from "../../src/combos";
+import { resolveProviderApiKey } from "../../src/providers/api-key-resolve";
+import { publishDecisionKeyQuota } from "../../src/providers/quota-decision-snapshot";
+import type { RequestLogContext } from "../../src/server/request-log";
+import { JEV_SESSION_PIN_ROUTE_REASON } from "../../src/server/responses/jev-session-pin";
+import { activateJevQuotaEvidence, deactivateJevQuotaEvidence } from "../helpers/jev-quota-activation";
+import { createTempHome } from "../helpers/temp-home";
+
+import { LUNA, SOL, makeConfig, modelProvider, resetState, served, turn, perTurnConfig, offered, effortOf, type Child } from "../helpers/jev-session-pin";
+
+beforeEach(resetState);
+afterEach(resetState);
+
+describe("JEV session pin (#7525)", () => {
+  test("default off: every turn of one session asks JEV again and records no pin", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, false);
+    const log: RequestLogContext = { model: "", provider: "" };
+    expect((await turn(config)).status).toBe(200);
+    expect((await turn(config, { log })).status).toBe(200);
+    expect(decisions).toHaveLength(2);
+    expect(log.jevDecision).not.toHaveProperty("pinned");
+    expect(log.jevDecision).not.toHaveProperty("pinReason");
+  });
+
+  test("a pinned session reuses JEV's target and effort without another decision call", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    const bodies: Record<string, unknown>[] = [];
+    const child: Child = (body, complete) => { bodies.push(body); return served(body, complete); };
+    expect((await turn(config, { child })).status).toBe(200);
+    const log: RequestLogContext = { model: "", provider: "" };
+    expect((await turn(config, { child, log })).status).toBe(200);
+    expect(decisions).toHaveLength(1);
+    expect(bodies.map(body => [body.model, (body.reasoning as { effort?: string } | undefined)?.effort]))
+      .toEqual([["sol/gpt-5.6-sol", "high"], ["sol/gpt-5.6-sol", "high"]]);
+    expect(log.jevDecision).toEqual({
+      version: 1,
+      comboId: "auto",
+      backend: "typesafe",
+      selected: { provider: "sol", model: SOL.model, effort: "high" },
+      gate: "apply",
+      latencyMs: 0,
+      pinned: true,
+      pinReason: "session",
+    });
+    expect(log.routeDecision?.selected.reason).toBe(JEV_SESSION_PIN_ROUTE_REASON);
+  });
+
+  test("requests without an explicit session, other sessions and other callers are decided afresh", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    const alice: DataPlaneAdmission = { kind: "configured", keyId: "alice", source: "bearer", contextPrincipalId: "p-alice" };
+    const bob: DataPlaneAdmission = { kind: "configured", keyId: "bob", source: "bearer", contextPrincipalId: "p-bob" };
+    await turn(config, { session: null });
+    await turn(config, { session: null });
+    expect(decisions).toHaveLength(2);
+    await turn(config, { admission: alice });
+    await turn(config, { admission: bob });
+    await turn(config, { admission: alice, session: "session-b" });
+    expect(decisions).toHaveLength(5);
+    await turn(config, { admission: alice });
+    expect(decisions).toHaveLength(5);
+  });
+
+  test("a failed pinned send hops over and the next turn is decided afresh", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    await turn(config);
+    const models: string[] = [];
+    const failing: Child = (body, complete) => body.model === "sol/gpt-5.6-sol"
+      ? Response.json({ error: { type: "server_error", message: "busy" } }, { status: 500 })
+      : served(body, complete);
+    expect((await turn(config, { child: failing, models })).status).toBe(200);
+    expect(models).toEqual(["sol/gpt-5.6-sol", "luna/gpt-5.6-luna"]);
+    expect(decisions).toHaveLength(1);
+    const log: RequestLogContext = { model: "", provider: "" };
+    await turn(config, { log });
+    expect(decisions).toHaveLength(2);
+    expect(log.jevDecision).not.toHaveProperty("pinned");
+  });
+
+  test("a pinned stream that ends failed, or a dispatch that throws, also ends the pin", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    await turn(config);
+    const failedStream: Child = (body, _complete, options) => {
+      options?.onNativePassthroughTerminal?.("failed");
+      return Response.json({ id: "resp-failed", object: "response", status: "completed", model: body.model, output: [] });
+    };
+    await turn(config, { child: failedStream });
+    expect(decisions).toHaveLength(1);
+    await turn(config);
+    expect(decisions).toHaveLength(2);
+    const thrown: Child = () => { throw new Error("transport exploded"); };
+    await expect(turn(config, { child: thrown })).rejects.toThrow("transport exploded");
+    expect(decisions).toHaveLength(2);
+    await turn(config);
+    expect(decisions).toHaveLength(3);
+  });
+
+  test("a stream that reports failed after the Combo committed it ends the pin", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    await turn(config);
+    let committedOptions: ChildOptions;
+    const lateFailure: Child = (body, _complete, options) => {
+      committedOptions = options;
+      return Response.json({ id: "resp-late", object: "response", status: "completed", model: body.model, output: [] });
+    };
+    expect((await turn(config, { child: lateFailure })).status).toBe(200);
+    expect(decisions).toHaveLength(1);
+    // The callback gate is committed once the Combo returned the response; the stream fails later.
+    committedOptions?.onNativePassthroughTerminal?.("failed");
+    await turn(config);
+    expect(decisions).toHaveLength(2);
+  });
+
+  test("a cancelled send neither writes nor drops the pin", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    const cancelled = () => {
+      const controller = new AbortController();
+      const child: Child = () => {
+        controller.abort(new Error("client went away"));
+        return Response.json({ error: { message: "aborted" } }, { status: 499 });
+      };
+      return { child, signal: controller.signal };
+    };
+    expect((await turn(config, cancelled())).status).toBe(499);
+    await turn(config);
+    expect(decisions).toHaveLength(2);
+    expect((await turn(config, cancelled())).status).toBe(499);
+    const log: RequestLogContext = { model: "", provider: "" };
+    await turn(config, { log });
+    expect(decisions).toHaveLength(2);
+    expect(log.jevDecision).toMatchObject({ pinned: true });
+  });
+
+  test("a fail-open decision never pins the session", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    config.providers.jev!.fetch = (async () => {
+      decisions.push("http");
+      return new Response("unavailable", { status: 503 });
+    }) as typeof fetch;
+    await turn(config);
+    await turn(config);
+    expect(decisions).toEqual(["http", "http"]);
+  });
+
+  test("a cooling pinned target releases the pin and records why", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    await turn(config);
+    coolComboTarget("auto", SOL, { cooldownMs: 60_000 });
+    const log: RequestLogContext = { model: "", provider: "" };
+    await turn(config, { log });
+    expect(decisions).toHaveLength(2);
+    expect(log.jevDecision).toMatchObject({ pinReason: "target_unavailable" });
+    expect(log.jevDecision).not.toHaveProperty("pinned");
+  });
+
+  test("a context change between turns releases the pin", async () => {
+    const decisions: string[] = [];
+    const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    config.combos!.auto!.capabilityPolicy = "union";
+    config.providers.sol!.contextWindow = 100_000;
+    expect((await turn(config)).status).toBe(200);
+
+    config.providers.sol!.contextWindow = 1;
+    const log: RequestLogContext = { model: "", provider: "" };
+    const models: string[] = [];
+    expect((await turn(config, { log, models })).status).toBe(200);
+    expect(models).toEqual(["luna/gpt-5.6-luna"]);
+    expect(log.jevDecision?.pinned).toBeUndefined();
+  });
+
+  test("opted-in quota evidence reading nearly exhausted releases the pin", async () => {
+    const home = createTempHome("epx-jev-session-pin-quota-");
+    try {
+      activateJevQuotaEvidence();
+      const decisions: string[] = [];
+      const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+      config.combos!.auto!.decisionQuotaSignals = true;
+      await turn(config);
+      const provider = config.providers.sol!;
+      resolveProviderApiKey(provider.apiKey);
+      publishDecisionKeyQuota("sol", provider, [{ window: "weekly", percent: 95, observedAt: Date.now() }]);
+      const log: RequestLogContext = { model: "", provider: "" };
+      await turn(config, { log });
+      expect(decisions).toHaveLength(2);
+      expect(log.jevDecision).toMatchObject({ pinReason: "quota_nearly_exhausted" });
+    } finally {
+      deactivateJevQuotaEvidence();
+      home.remove();
+    }
+  });
+});
+
+describe("JEV session pin per-turn effort", () => {
+  test("keeps the pinned target and asks JEV only for its effort on each pinned turn", async () => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const config = perTurnConfig(["sol/gpt-5.6-sol:high", "sol/gpt-5.6-sol:low"], payloads);
+    const bodies: Record<string, unknown>[] = [];
+    const child: Child = (body, complete) => { bodies.push(body); return served(body, complete); };
+    expect((await turn(config, { child })).status).toBe(200);
+    const log: RequestLogContext = { model: "", provider: "" };
+    expect((await turn(config, { child, log })).status).toBe(200);
+    expect(payloads).toHaveLength(2);
+    expect(offered(payloads[0])).toEqual(["luna/gpt-5.6-luna", "sol/gpt-5.6-sol"]);
+    expect(offered(payloads[1])).toEqual(["sol/gpt-5.6-sol"]);
+    expect(bodies.map(body => [body.model, effortOf(body)])).toEqual([["sol/gpt-5.6-sol", "high"], ["sol/gpt-5.6-sol", "low"]]);
+    expect(log.jevDecision).toMatchObject({
+      selected: { provider: "sol", model: SOL.model, effort: "low" },
+      gate: "apply",
+      pinned: true,
+      pinReason: "session_effort",
+    });
+    expect(log.routeDecision?.selected.reason).toBe(JEV_SESSION_PIN_ROUTE_REASON);
+  });
+
+  test.each([["medium", "medium"], ["xhigh", "high"]])("client effort mode skips per-turn decisions and sends %s as %s", async (requested, sent) => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const config = perTurnConfig(["sol/gpt-5.6-sol:high", "sol/gpt-5.6-sol:low"], payloads);
+    config.combos!.auto!.jevEffortMode = "client";
+    config.combos!.auto!.capabilityPolicy = "union";
+    config.combos!.auto!.reasoningEffortMode = "adaptive";
+    expect((await turn(config)).status).toBe(200);
+    const log: RequestLogContext = { model: "", provider: "" };
+    const child: Child = (body, complete) => {
+      expect(body.model).toBe("sol/gpt-5.6-sol");
+      expect(effortOf(body)).toBe(sent);
+      return served(body, complete);
+    };
+    expect((await turn(config, { child, log, effort: requested })).status).toBe(200);
+    expect(payloads).toHaveLength(1);
+    expect(log.jevDecision).toMatchObject({ pinned: true, pinReason: "session" });
+  });
+
+  test("an unusable effort answer or a failed decision call retains the pin and records the failed gate", async () => {
+    const payloads: Array<Record<string, unknown>> = [];
+    // Turn 2 answers a target that was not offered; turn 3 finds the service down.
+    const config = perTurnConfig(["sol/gpt-5.6-sol:high", "luna/gpt-5.6-luna:low"], payloads);
+    const bodies: Record<string, unknown>[] = [];
+    const child: Child = (body, complete) => { bodies.push(body); return served(body, complete); };
+    await turn(config, { child });
+    const logs: RequestLogContext[] = [{ model: "", provider: "" }, { model: "", provider: "" }];
+    expect((await turn(config, { child, log: logs[0] })).status).toBe(200);
+    expect((await turn(config, { child, log: logs[1] })).status).toBe(200);
+    expect(payloads).toHaveLength(3);
+    expect(payloads.slice(1).map(offered)).toEqual([["sol/gpt-5.6-sol"], ["sol/gpt-5.6-sol"]]);
+    expect(bodies.map(body => [body.model, effortOf(body)])).toEqual([
+      ["sol/gpt-5.6-sol", "high"], ["sol/gpt-5.6-sol", "high"], ["sol/gpt-5.6-sol", "high"],
+    ]);
+    expect(logs[0]?.jevDecision).toMatchObject({ pinned: true, pinReason: "session_effort", gate: "invalid",
+      usage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 } });
+    expect(logs[1]?.jevDecision).toMatchObject({ pinned: true, pinReason: "session_effort", gate: "network" });
+  });
+
+  test("a target with a single effort is reused without a decision call", async () => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const config = perTurnConfig(["sol/gpt-5.6-sol:high"], payloads);
+    config.providers.sol!.modelReasoningEfforts = { [SOL.model]: ["high"] };
+    await turn(config);
+    const log: RequestLogContext = { model: "", provider: "" };
+    await turn(config, { log });
+    expect(payloads).toHaveLength(1);
+    expect(log.jevDecision).toMatchObject({ pinned: true, pinReason: "session" });
+  });
+
+  test.each([
+    { wire: "JSON", status: "incomplete", gate: "malformed" },
+    { wire: "SSE", status: "incomplete", gate: "malformed" },
+    { wire: "JSON", status: "failed", gate: "http" },
+    { wire: "SSE", status: "failed", gate: "http" },
+  ])("records $wire $status decision usage and keeps the pinned effort", async ({ wire, status, gate }) => {
+    const config = makeConfig("unused", [], true);
+    config.combos!.auto!.sessionPin = { ttlMs: 20 * 60_000, effort: "per-turn" };
+    config.combos!.auto!.decisionModel = "judge/judge-small";
+    config.providers.judge = modelProvider("judge-small");
+    let decisions = 0;
+    const sends: unknown[][] = [];
+    const child: Child = (body, complete, options) => {
+      if (!options?.internalDecisionCall) {
+        sends.push([body.model, effortOf(body)]);
+        return served(body, complete);
+      }
+      if (++decisions === 1) return Response.json({
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: '{"choice":"sol/gpt-5.6-sol:high"}' }] }],
+      });
+      const response = {
+        status,
+        ...(status === "failed" ? { error: { message: "decision failed" } } : {}),
+        usage: { input_tokens: 8, output_tokens: 2, total_tokens: -1 },
+      };
+      return wire === "JSON" ? Response.json(response) : new Response(
+        `data: ${JSON.stringify({ type: `response.${status}`, response })}\n\n`,
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    };
+    expect((await turn(config, { child })).status).toBe(200);
+    const log: RequestLogContext = { model: "", provider: "" };
+    expect((await turn(config, { child, log })).status).toBe(200);
+    expect(decisions).toBe(2);
+    expect(sends).toEqual([["sol/gpt-5.6-sol", "high"], ["sol/gpt-5.6-sol", "high"]]);
+    expect(log.jevDecision).toMatchObject({
+      backend: "model", pinned: true, pinReason: "session_effort", gate,
+      usage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
+    });
+  });
+
+  test.each(["sol/gpt-5.6-sol:low", "luna/gpt-5.6-luna:low"])("rechecks the pinned target after effort answer %s and keeps its usage on fallback", async (answer) => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const config = perTurnConfig(["sol/gpt-5.6-sol:high", answer], payloads);
+    expect((await turn(config)).status).toBe(200);
+
+    const decisionStarted = Promise.withResolvers<void>();
+    const resumeDecision = Promise.withResolvers<void>();
+    const fetchDecision = config.providers.jev!.fetch!;
+    config.providers.jev!.fetch = (async (input, init) => {
+      decisionStarted.resolve();
+      await resumeDecision.promise;
+      return fetchDecision(input, init);
+    }) as typeof fetch;
+    const bodies: Record<string, unknown>[] = [];
+    const child: Child = (body, complete) => { bodies.push(body); return served(body, complete); };
+    const log: RequestLogContext = { model: "", provider: "" };
+    const pending = turn(config, { child, log });
+    await decisionStarted.promise;
+    coolComboTarget("auto", SOL, { cooldownMs: 60_000 });
+    resumeDecision.resolve();
+
+    expect((await pending).status).toBe(200);
+    expect(offered(payloads[1])).toEqual(["sol/gpt-5.6-sol"]);
+    expect(bodies.map(body => [body.model, effortOf(body)])).toEqual([["luna/gpt-5.6-luna", "medium"]]);
+    expect(log.jevDecision).toMatchObject({
+      selected: { provider: "luna", model: LUNA.model, effort: "medium" },
+      gate: "invalid",
+      usage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
+    });
+    expect(log.jevDecision?.pinned).toBeUndefined();
+    expect(log.jevDecision?.pinReason).toBeUndefined();
+  });
+
+  test("a late completion after a failed effort decision preserves a newer pinned effort", async () => {
+    const answers = ["sol/gpt-5.6-sol:high", "luna/gpt-5.6-luna:low", "sol/gpt-5.6-sol:low"];
+    const config = perTurnConfig(answers, []);
+    expect((await turn(config)).status).toBe(200);
+
+    const lateDispatched = Promise.withResolvers<void>();
+    const completeLate = Promise.withResolvers<void>();
+    const dispatchedEfforts: Array<string | undefined> = [];
+    const record: Child = (body, complete) => {
+      dispatchedEfforts.push(effortOf(body));
+      return served(body, complete);
+    };
+    const lateLog: RequestLogContext = { model: "", provider: "" };
+    const late = turn(config, {
+      log: lateLog,
+      child: async (body, complete) => {
+        dispatchedEfforts.push(effortOf(body));
+        lateDispatched.resolve();
+        await completeLate.promise;
+        return served(body, complete);
+      },
+    });
+    await lateDispatched.promise;
+    try {
+      expect((await turn(config, { child: record })).status).toBe(200);
+    } finally {
+      completeLate.resolve();
+      await late;
+    }
+    expect((await late).status).toBe(200);
+    expect(lateLog.jevDecision?.gate).toBe("invalid");
+
+    // Exhausted answers make this turn reuse the effort retained in the live pin.
+    expect((await turn(config, { child: record })).status).toBe(200);
+    expect(dispatchedEfforts).toEqual(["high", "low", "low"]);
+  });
+});

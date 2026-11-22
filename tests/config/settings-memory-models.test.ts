@@ -1,0 +1,144 @@
+/**
+ * `/api/settings` round-trip for per-phase memory routing.
+ *
+ * GET reports the block, PUT persists it to config.json and echoes it in its own response,
+ * and a fresh `loadConfig()` reads it back. The echo is load-bearing: the dashboard panel
+ * re-reads the response of its own save, so a response without the block would render both
+ * phases as "Off" while the server still held them.
+ */
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getConfigPath, loadConfig, saveConfig } from "../../src/config";
+import { handleManagementAPI, type ManagementApiDeps } from "../../src/server/management-api";
+import { invalidateStartupHealthCache } from "../../src/server/startup-health-cache";
+import type { EpxConfig } from "../../src/types";
+import { startupHealthFixture } from "../helpers/startup-health";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+
+let home = "";
+let previousHome: string | undefined;
+
+const baseConfig = (): EpxConfig => ({
+  port: 10100,
+  defaultProvider: "gateway",
+  providers: { gateway: { adapter: "openai-chat", baseUrl: "https://gateway.test/v1", apiKey: "fixture" } },
+});
+
+function settings(cfg: EpxConfig, body?: unknown) {
+  const req = new Request("http://127.0.0.1:10100/api/settings", {
+    method: body === undefined ? "GET" : "PUT",
+    headers: { host: "127.0.0.1:10100", "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const deps: Partial<ManagementApiDeps> = { getCachedStartupHealth: async () => startupHealthFixture() };
+  return handleManagementAPI(req, new URL(req.url), cfg, deps);
+}
+
+beforeEach(() => {
+  previousHome = process.env.EASYPROXY_HOME;
+  home = mkdtempSync(join(tmpdir(), "epx-memory-models-settings-"));
+  process.env.EASYPROXY_HOME = home;
+  invalidateStartupHealthCache();
+});
+
+afterEach(() => {
+  invalidateStartupHealthCache();
+  if (previousHome === undefined) delete process.env.EASYPROXY_HOME;
+  else process.env.EASYPROXY_HOME = previousHome;
+  removeTreeWithRetry(home);
+});
+
+describe("/api/settings memoryModels", () => {
+  test("an unconfigured install reports no memory routing", async () => {
+    const response = await settings(baseConfig());
+    expect(await response!.json()).toMatchObject({ memoryModels: null });
+  });
+
+  test("a save is echoed in the PUT response, persisted, and reported by GET", async () => {
+    const config = baseConfig();
+    saveConfig(config);
+    const setting = {
+      extract: { model: "gateway/cheap" },
+      consolidation: { model: "gateway/strong", reasoningEffort: "high" },
+    };
+    const put = await settings(config, { memoryModels: setting });
+    expect(put!.status).toBe(200);
+    expect(await put!.json()).toMatchObject({ ok: true, memoryModels: setting });
+    expect(config.memoryModels).toEqual(setting);
+    expect(loadConfig().memoryModels).toEqual(setting);
+    expect(await (await settings(config))!.json()).toMatchObject({ memoryModels: setting });
+  });
+
+  test("null clears the block from the file and from the response", async () => {
+    const config = baseConfig();
+    config.memoryModels = { extract: { model: "gateway/cheap" } };
+    saveConfig(config);
+    const put = await settings(config, { memoryModels: null });
+    expect(put!.status).toBe(200);
+    expect(await put!.json()).toMatchObject({ memoryModels: null });
+    expect(config.memoryModels).toBeUndefined();
+    expect(loadConfig().memoryModels).toBeUndefined();
+    const raw = JSON.parse(readFileSync(getConfigPath(), "utf8")) as Record<string, unknown>;
+    expect(Object.hasOwn(raw, "memoryModels")).toBe(false);
+  });
+
+  test("a malformed phase is rejected before any mutation", async () => {
+    const config = baseConfig();
+    config.memoryModels = { extract: { model: "gateway/cheap" } };
+    saveConfig(config);
+    const before = structuredClone(config);
+    for (const value of [{ extract: { model: " " } }, { extract: { model: "m", reasoningEffort: "bogus" } },
+      { extract: { model: "m", extra: true } }, { extract: "gateway/cheap" }]) {
+      const response = await settings(config, { memoryModels: value });
+      expect(response!.status).toBe(400);
+      expect(config).toEqual(before);
+    }
+  });
+
+  test("an ACP memory target rejects the complete settings write before publication", async () => {
+    const config = baseConfig();
+    config.providers["antigravity-acp"] = { adapter: "agy-acp", baseUrl: "https://antigravity.google/docs/cli/acp" };
+    config.memoryModels = { extract: { model: "gateway/cheap" } };
+    saveConfig(config);
+    const before = readFileSync(getConfigPath(), "utf8");
+    const response = await settings(config, {
+      memoryModels: { extract: { model: "antigravity-acp/gemini-3.8-flash" } },
+      showCodexCredits: true,
+    });
+    expect(response!.status).toBe(400);
+    expect((await response!.json()).error).toContain("memoryModels.extract.model");
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(before);
+    expect(config.memoryModels).toEqual({ extract: { model: "gateway/cheap" } });
+    expect(config.showCodexCredits).not.toBe(true);
+  });
+
+  test.each(["merged defaults", "salvaged profile"])("warns about a degraded phase after %s", route => {
+    const raw: Record<string, unknown> = { ...baseConfig(), memoryModels: { extract: { model: " " } } };
+    if (route === "merged defaults") delete raw.defaultProvider;
+    else raw.routingProfiles = { bad: { candidates: [] } };
+    writeFileSync(getConfigPath(), JSON.stringify(raw));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const loaded = loadConfig();
+      expect(loaded.providers.gateway).toBeDefined();
+      expect(loaded.memoryModels?.extract).toBeUndefined();
+      expect(warn.mock.calls.flat().join("\n")).toContain("memoryModels.extract is invalid");
+    } finally { warn.mockRestore(); }
+  });
+});
+
+
+test("settings refuses an ACP auto-compaction override before publishing any setting", async () => {
+  const config = baseConfig();
+  config.providers["antigravity-acp"] = { adapter: "agy-acp", baseUrl: "https://antigravity.google/docs/cli/acp" };
+  saveConfig(config);
+  const model = "antigravity-acp/gemini-3.8-flash";
+  const response = await settings(config, { compactionRouting: { model, triggers: ["manual", "auto"] }, fastRows: false });
+  expect(response!.status).toBe(400);
+  expect(await response!.json()).toMatchObject({ error: expect.stringContaining("compactionRouting.model") });
+  expect(config.compactionRouting).toBeUndefined();
+  expect(config.fastRows).toBeUndefined();
+  expect(loadConfig().compactionRouting).toBeUndefined();
+});

@@ -1,0 +1,463 @@
+import { execFileSync } from "node:child_process";
+import { isIP } from "node:net";
+import { loadConfig } from "../config";
+import { readRuntimePort } from "../config/process-state";
+import { directLocalHttpFetch } from "../server/direct-local-http";
+import { configuredAdminToken } from "./admin-secrets";
+import { PROXY_STOP_EXIT_GRACE_MS } from "./shutdown-budget";
+
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function waitForExit(pid: number, timeoutMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  const marker = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    Atomics.wait(marker, 0, 0, 50);
+  }
+  return !isProcessAlive(pid);
+}
+
+/** Injectable seams so the graceful-stop flow is unit-testable without a live proxy. */
+export interface GracefulStopIo {
+  fetchFn?: typeof fetch;
+  readRuntime?: (pid: number) => { port: number; hostname?: string } | null;
+  waitExit?: (pid: number, timeoutMs: number) => boolean;
+  env?: Record<string, string | undefined>;
+  exitTimeoutMs?: number;
+  /**
+   * Nonce of the pending-teardown receipt this caller claimed.
+   *
+   * `epx stop` sets it because it restores shared client config itself, only after
+   * proving a stopped Task Scheduler did not respawn the proxy (#3008). The nonce is what
+   * makes the deferral an owned obligation rather than a flag anyone can set: the proxy
+   * honours it only when it names the receipt actually on disk. Direct callers omit it
+   * and keep the self-contained behaviour.
+   */
+  deferSharedTeardownNonce?: string;
+  /**
+   * Whether a `sharedTeardown: "not-owned"` answer confirms this stop's teardown.
+   *
+   * A sibling's `not-owned` is a truthful final answer: it owns no shared teardown, so
+   * nothing is left for this caller either. `epx stop` of a connected Link Child sets this
+   * false — only an old build answers `not-owned` for a link connection, and it says so
+   * while preserving the loopback route this caller must restore itself. The caller decides
+   * from the connection state read at the POST: a connect or disconnect committed mid-stop
+   * changes what the answer means for it. Defaults to true; the option only narrows a stop
+   * that sent no deferral nonce.
+   */
+  acceptNotOwnedTeardown?: boolean;
+  /**
+   * Endpoint the caller already resolved for this pid.
+   *
+   * `epx stop` records this same snapshot in its pending-teardown receipt. Re-reading the
+   * runtime file here could pick up a different one, which would make the receipt name an
+   * endpoint the stop never contacted — and recovery probes exactly that endpoint.
+   */
+  runtimeEndpoint?: { hostname: string; port: number };
+  /**
+   * Send the stop only to `runtimeEndpoint`: without one, no request is sent and the runtime
+   * record is not read again. A caller whose deferral receipt names the endpoint it resolved sets
+   * this, so a record published in between cannot direct the request, and the receipt, elsewhere.
+   */
+  runtimeEndpointOnly?: boolean;
+  /**
+   * Asked again immediately before the forced-stop fallback signals `pid`; false refuses the
+   * signal (killProxy throws). A caller that proved which process it may stop rechecks that here,
+   * so a pid reused after the graceful attempt is never signalled.
+   */
+  mayTerminate?: () => boolean;
+  /**
+   * Windows checked stop (#7771): Part B confirms the port after this stop returns and
+   * owns the wait, so the 15 s waitForStoppedPort here is skipped (030 "Time budget").
+   */
+  skipPortWait?: boolean;
+  /**
+   * Whether a graceful stop that did not confirm may fall back to the platform kill ladder.
+   *
+   * `epx uninstall` sets this false when its Part A did not end stopped/absent: a manager
+   * that would not stop can respawn the proxy, and `taskkill /T /F` under it is exactly the
+   * forced stop the checked Windows stop exists to prevent. A 409 refusal never reaches the
+   * fallback either way. Defaults to true, which is every other caller's behaviour.
+   */
+  allowForcedFallback?: boolean;
+  /**
+   * The forced ladder, injectable so the rule above can be proven without signalling a
+   * process. Production callers omit it and get {@link killProxy}.
+   */
+  forceKill?: (pid: number) => void;
+  /**
+   * The post-stop port wait, injectable so a test can present a verified listener without
+   * starting one. Production callers omit it and get `reclaimListenPort`.
+   */
+  reclaimPort?: (
+    port: number,
+    hostname: string,
+    opts: { timeoutMs?: number; intervalMs?: number; scanIntervalMs?: number; killEpxHolders?: boolean; onlyKillPids?: number[] },
+  ) => Promise<boolean>;
+}
+
+/**
+ * Host to POST /api/stop against: follow the recorded bind hostname only when it is
+ * an IP literal (a proxy bound to ::1 or a LAN IP is unreachable on 127.0.0.1).
+ * DNS names are not safe here because resolution may change between bind and stop,
+ * while this request carries the management token. Loopback aliases, DNS names, and
+ * wildcard binds therefore all fall back to IPv4 loopback.
+ */
+export function gracefulStopHost(hostname: string | undefined): string {
+  const trimmed = (hostname ?? "").trim();
+  const lower = trimmed.toLowerCase();
+  if (!trimmed || lower === "localhost" || trimmed === "127.0.0.1" || trimmed === "0.0.0.0" || trimmed === "::" || trimmed === "[::]") {
+    return "127.0.0.1";
+  }
+  if (lower === "::1" || lower === "[::1]") return "[::1]";
+  const unbracketed = trimmed.startsWith("[") && trimmed.endsWith("]")
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  const ipVersion = isIP(unbracketed);
+  if (ipVersion === 6) return `[${unbracketed}]`;
+  if (ipVersion === 4) return unbracketed;
+  return "127.0.0.1";
+}
+
+/**
+ * `"refused"` forbids forced stop. `"teardown-unconfirmed"` means the process exited,
+ * but its assigned shared teardown was not confirmed; callers must not kill it again.
+ */
+export type GracefulStopResult = boolean | "refused" | "teardown-unconfirmed";
+
+/**
+ * The server's own explanation for the most recent 409, captured so `stopProxy` can report
+ * the real reason. There is more than one: a scheduler wrapper under another home, or the
+ * proxy being the installed service itself (#4023). Module-scoped because
+ * `GracefulStopResult` is a public contract with several callers, and widening it to carry
+ * the text would change every one of them for a message only this file reports.
+ */
+let lastRefusalMessage: string | null = null;
+
+/**
+ * The server's machine-readable reason for the most recent 409, captured alongside the
+ * message so a refusal that arrives without a body still names the right cause. Without it
+ * the fallback has to guess, and guessing "ownership" sent operators to re-check
+ * CODEX_HOME for a refusal the scheduler wrapper had issued (#4169).
+ */
+let lastRefusalCode: string | null = null;
+
+/** The server's explanation for the most recent 409, or `null` when it sent none. */
+export function lastStopRefusalMessage(): string | null {
+  return lastRefusalMessage;
+}
+
+/** The server's `code` for the most recent 409, or `null` when it sent none. */
+export function lastStopRefusalCode(): string | null {
+  return lastRefusalCode;
+}
+
+/**
+ * Wording for a refusal whose body carried no message. Each branch mirrors a refusal the
+ * management API can return from `POST /api/stop`; the default stays cause-neutral because
+ * naming the wrong cause is worse than naming none — it costs the operator the time they
+ * spend acting on it.
+ *
+ * These name the cause only. The command belongs to {@link refusalNextStep}, because the
+ * only callers of `stopProxy` are `epx stop` and the service manager's own cleanup, and a
+ * message that told either of them to run `epx stop` would be the #4169 loop again.
+ */
+function refusalFallbackMessage(code: string | null): string {
+  switch (code) {
+    case "respawnable_service":
+      return "The running proxy refused to stop: a service manager that can respawn it owns "
+        + "the process.";
+    case "self_unload_service":
+      return "The running proxy refused to stop: it is the installed service itself, so "
+        + "stopping the manager from inside it would end the process before native Codex is "
+        + "restored.";
+    case "service_state_unknown":
+      return "The running proxy refused to stop: the service manager state could not be read, "
+        + "so it cannot tell whether a wrapper would respawn it.";
+    default:
+      return "The running proxy refused to stop and sent no reason.";
+  }
+}
+
+/**
+ * What is actually left to do when `epx stop` is the command that received the refusal.
+ *
+ * Every refusal `POST /api/stop` produces is written for an API client, so it recommends
+ * `epx stop` — which is the command already running when the CLI prints it. That is the
+ * loop #4169 reports: the endpoint points at `epx stop`, `epx stop` repeats the endpoint,
+ * and neither names the wrapper that is refusing. `epx stop` has already asked the service
+ * manager to stop by the time this is reached, so the remaining question is always what the
+ * service manager is doing, and no branch may answer with the command that just failed.
+ */
+export function refusalNextStep(code: string | null): string {
+  switch (code) {
+    case "respawnable_service":
+      return "This stop already asked the service manager to stop, so running `epx stop` "
+        + "again is not the missing step. Run `epx service status` to see whether a wrapper "
+        + "is still installed and able to respawn the proxy.";
+    case "self_unload_service":
+      return "This stop already asked the service manager to stop, so running `epx stop` "
+        + "again is not the missing step. Run `epx service status` to see whether the service "
+        + "is still registered.";
+    case "service_state_unknown":
+      return "Run `epx service status` to see the query error, repair the service manager "
+        + "access, then retry.";
+    default:
+      return "Run `epx service status` to inspect the service state.";
+  }
+}
+
+/**
+ * A proxy declined shutdown (HTTP 409). There is more than one reason it can say no — a
+ * scheduler wrapper under another home, or the proxy being the installed service itself
+ * (#4023) — so the server's own message is carried through rather than guessed at.
+ *
+ * The refusal's `code` travels on the error because the reporting caller has to act on the
+ * cause, not re-parse prose: the message is the server's, and it recommends a command the
+ * CLI has already run.
+ */
+export class ProxyOwnershipRefusedError extends Error {
+  readonly code: string | null;
+
+  constructor(message: string, code: string | null = null) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/**
+ * Ask a running proxy to stop itself via the management API (`POST /api/stop`), which
+ * drains in-flight turns, restores native Codex, and cleans its pid/runtime files.
+ * This is the only way to get a GRACEFUL stop on Windows, where the POSIX
+ * SIGTERM-then-SIGKILL ladder does not exist and `taskkill /F` gives the proxy no
+ * chance to run its shutdown handlers. Returns false when the proxy can't be reached
+ * or doesn't exit in time — callers fall back to {@link killProxy}. Returns `"refused"`
+ * when the proxy declines the stop (HTTP 409), which callers must NOT force past.
+ * True requires the expected shared-teardown response and an observed exit. It does not
+ * attest the process exit code or completion of every drain/shutdown hook.
+ */
+export async function stopProxyGracefully(pid: number, io: GracefulStopIo = {}): Promise<GracefulStopResult> {
+  return (await stopProxyGracefullyDetailed(pid, io)).result;
+}
+
+/**
+ * The refusal a single stop attempt received, carried back to that attempt's caller.
+ *
+ * Module-scoped state cannot do this job: two overlapping stops race, and the first would
+ * report the second's cause. The exported accessors stay as observational state for callers
+ * that only want the last refusal, but the error text is built from this per-call value.
+ */
+type StopRefusal = { message: string | null; code: string | null };
+
+export async function stopRequestFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  let status: number | undefined;
+  try {
+    return await directLocalHttpFetch(input, init, { onResponseStatus: value => { status = value; } });
+  } catch (error) {
+    // A received refusal forbids forced stop even if its explanatory body fails.
+    if (status === 409) return new Response(null, { status });
+    throw error;
+  }
+}
+
+async function stopProxyGracefullyDetailed(
+  pid: number,
+  io: GracefulStopIo = {},
+): Promise<{ result: GracefulStopResult; refusal: StopRefusal }> {
+  const refusal: StopRefusal = { message: null, code: null };
+  const done = (result: GracefulStopResult): { result: GracefulStopResult; refusal: StopRefusal } =>
+    ({ result, refusal });
+  const readRuntime = io.readRuntime ?? readRuntimePort;
+  const runtime = io.runtimeEndpoint ?? (io.runtimeEndpointOnly ? null : readRuntime(pid));
+  if (!runtime?.port) return done(false);
+  const env = io.env ?? process.env;
+  const headers: Record<string, string> = {};
+  const token = configuredAdminToken(env.EASYPROXY_HOME?.trim() || undefined, env as NodeJS.ProcessEnv);
+  if (token) headers["x-easyproxy-api-key"] = token;
+  const fetchFn = io.fetchFn ?? stopRequestFetch;
+  let sharedTeardownConfirmed = false;
+  try {
+    // `epx stop` asks the proxy NOT to restore shared client config: it does that itself,
+    // after verifying a stopped Task Scheduler did not respawn the proxy (#3008). Letting
+    // the child do it means a survivor found seconds later has already lost its config.
+    const stopUrl = `http://${gracefulStopHost(runtime.hostname)}:${runtime.port}/api/stop`
+      + (io.deferSharedTeardownNonce
+        ? `?deferSharedTeardown=1&teardownNonce=${encodeURIComponent(io.deferSharedTeardownNonce)}`
+        : "");
+    const res = await fetchFn(stopUrl, {
+      method: "POST",
+      headers,
+      // Hung proxies with many CLOSE_WAIT clients can be slow to accept; give them
+      // longer than a health poll so we prefer drain over taskkill /F.
+      signal: AbortSignal.timeout(io.exitTimeoutMs ? Math.min(io.exitTimeoutMs, 10_000) : 10_000),
+    });
+    // 409 is the proxy REFUSING to stop. There is more than one reason it can say no — a
+    // respawning service manager, the proxy being the installed service itself, or an
+    // unreadable scheduler state — so both the message and the code are captured rather
+    // than assumed. That is a policy answer, not a dead endpoint — escalating to SIGTERM
+    // here would run the daemon's cleanup and strip shared config out from under the
+    // still-running service. Report the refusal instead of forcing.
+    if (res.status === 409) {
+      const parsed = await res.json()
+        .then(body => {
+          const record = body as { message?: unknown; code?: unknown } | null;
+          const message = record?.message;
+          const code = record?.code;
+          return {
+            message: typeof message === "string" && message.trim() ? message.trim() : null,
+            code: typeof code === "string" && code.trim() ? code.trim() : null,
+          };
+        })
+        .catch(() => ({ message: null, code: null }));
+      refusal.message = parsed.message;
+      refusal.code = parsed.code;
+      lastRefusalMessage = parsed.message;
+      lastRefusalCode = parsed.code;
+      return done("refused");
+    }
+    if (!res.ok) return done(false);
+    const body: unknown = await res.json().catch(() => null);
+    const expectedTeardown = io.deferSharedTeardownNonce ? "deferred" : "performed";
+    // A sibling instance answers `not-owned`: it has no shared teardown to perform, so there is
+    // nothing left over for this caller either. A deferral it was sent is still not confirmed.
+    // A connected Link Child's stop refuses the same answer: only an old build sends it for a
+    // link connection, and it preserves the route this caller must restore.
+    sharedTeardownConfirmed = body !== null
+      && typeof body === "object"
+      && !Array.isArray(body)
+      && "success" in body && body.success === true
+      && "sharedTeardown" in body && (body.sharedTeardown === expectedTeardown
+        || (!io.deferSharedTeardownNonce
+          && (io.acceptNotOwnedTeardown ?? true)
+          && body.sharedTeardown === "not-owned"));
+  } catch {
+    return done(false);
+  }
+  const waitExit = io.waitExit ?? waitForExit;
+  // Honor the server's own drain window: /api/stop answers 200 first, then drains for
+  // config.shutdownTimeoutMs. Waiting less than that hard-kills mid-drain.
+  const exitTimeoutMs = io.exitTimeoutMs ?? drainDeadlineMs();
+  if (!waitExit(pid, exitTimeoutMs)) return done(false);
+  return done(sharedTeardownConfirmed ? true : "teardown-unconfirmed");
+}
+
+function drainDeadlineMs(): number {
+  try {
+    return Math.max(0, loadConfig().shutdownTimeoutMs ?? 5000) + PROXY_STOP_EXIT_GRACE_MS;
+  } catch {
+    return 5000 + PROXY_STOP_EXIT_GRACE_MS;
+  }
+}
+
+/** Graceful-first stop: management-API drain, then the platform kill ladder. */
+export async function stopProxy(pid: number, io: GracefulStopIo = {}): Promise<boolean> {
+  if (!isProcessAlive(pid)) return false;
+  const runtime = io.skipPortWait ? null : io.runtimeEndpoint ?? (io.runtimeEndpointOnly ? null : readRuntimePort(pid));
+  const { result: graceful, refusal } = await stopProxyGracefullyDetailed(pid, io);
+  if (graceful === "refused") {
+    // The proxy refused on purpose. Forcing would strip shared config while whatever owns
+    // the process keeps it alive. The server's own message is preferred; the fallback is
+    // selected from its code so an empty body still names the right cause. Both come from
+    // THIS attempt, so an overlapping stop cannot lend it the wrong reason.
+    throw new ProxyOwnershipRefusedError(
+      refusal.message ?? refusalFallbackMessage(refusal.code),
+      refusal.code,
+    );
+  }
+  if (graceful === "teardown-unconfirmed") {
+    // Exit was observed, so do not enter the forced-stop fallback. Returning false keeps
+    // shared restoration with `epx stop` instead of claiming that the proxy completed it.
+    await waitForStoppedPort(runtime, pid, io);
+    return false;
+  }
+  if (graceful) {
+    await waitForStoppedPort(runtime, pid, io);
+    return true;
+  }
+  if (io.allowForcedFallback === false) {
+    // The caller forbade the forced ladder (a manager that would not stop may respawn the
+    // proxy). Report the unconfirmed stop; the caller keeps its failure recorded.
+    await waitForStoppedPort(runtime, pid, io);
+    return false;
+  }
+  // Written as a literal killProxy(pid, ...) call so the refusal-before-kill ordering stays
+  // checkable in source (tests/providers/xai/grok-lifecycle.test.ts); the seam only swaps it.
+  if (io.forceKill) io.forceKill(pid);
+  else killProxy(pid, io.mayTerminate);
+  await waitForStoppedPort(runtime, pid, io);
+  return false;
+}
+
+/**
+ * After stop/kill, wait for the former listen port to become bindable (Windows drain).
+ *
+ * The wait is OBSERVATIONAL whenever the caller forbade the forced ladder
+ * (`allowForcedFallback === false`). Reclaiming with `killEpxHolders` would terminate a
+ * verified listener through `killProxy`, which is the forced stop that refusal exists to
+ * prevent: a manager that would not stop may respawn the proxy, so a survivor must be
+ * reported rather than killed. The wait still runs and still returns; it only stops being
+ * allowed to change anything.
+ */
+async function waitForStoppedPort(
+  runtime: { port: number; hostname?: string } | null | undefined,
+  stoppedPid?: number,
+  io: GracefulStopIo = {},
+): Promise<void> {
+  if (!runtime?.port) return;
+  const mayKill = io.allowForcedFallback !== false;
+  try {
+    const reclaim = io.reclaimPort ?? (await import("../server/port-reclaim")).reclaimListenPort;
+    await reclaim(runtime.port, runtime.hostname ?? "127.0.0.1", {
+      timeoutMs: 15_000,
+      intervalMs: 100,
+      scanIntervalMs: 500,
+      // Only the process we just stopped — never kill a newly started twin proxy.
+      killEpxHolders: mayKill && !!(stoppedPid && stoppedPid > 0),
+      onlyKillPids: mayKill && stoppedPid && stoppedPid > 0 ? [stoppedPid] : [],
+      ...(io.forceKill ? { killFn: io.forceKill } : io.mayTerminate ? { killFn: (pid: number) => killProxy(pid, io.mayTerminate) } : {}),
+    });
+  } catch {
+    /* best-effort — callers that need a hard guarantee reclaim again before bind */
+  }
+}
+
+/** taskkill in the forced fallback; it had no timeout before #7771. */
+export const FORCED_TASKKILL_TIMEOUT_MS = 5_000;
+
+export function killProxy(pid: number, mayTerminate?: () => boolean): void {
+  if (!isProcessAlive(pid)) return;
+  const authorize = () => {
+    if (mayTerminate && mayTerminate() !== true) throw Object.assign(new Error("Process termination refused"), { code: "EUPDATEAUTHORITY" });
+  };
+  if (process.platform === "win32") {
+    // Windows process.kill(SIGTERM/SIGINT) is TerminateProcess — not a graceful signal.
+    // Graceful drain happens only via stopProxyGracefully() (POST /api/stop). This path
+    // is the hard fallback: taskkill /T /F so the process tree exits (ghost LISTEN /
+    // CLOSE_WAIT are then cleared by reclaimListenPort / SetTcpEntry).
+    const taskkill = `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\taskkill.exe`;
+    const args = ["/PID", String(pid), "/T", "/F"];
+    authorize();
+    try {
+      // Capped (#7771): the checked stop's budget counts the forced kill at 5 s.
+      execFileSync(taskkill, args, { stdio: "pipe", windowsHide: true, timeout: FORCED_TASKKILL_TIMEOUT_MS });
+    } catch (err) {
+      if (isProcessAlive(pid)) throw err;
+    }
+  } else {
+    authorize();
+    process.kill(pid, "SIGTERM");
+    if (!waitForExit(pid, 5000)) {
+      authorize();
+      process.kill(pid, "SIGKILL");
+    }
+  }
+  if (!waitForExit(pid, 5000)) throw new Error(`process ${pid} did not exit`);
+}

@@ -1,0 +1,108 @@
+/**
+ * Config-surface drift detection for the injected Codex config.
+ *
+ * The Codex desktop app rewrites `~/.codex/config.toml` on its own schedule — app updates,
+ * settings changes, reserializations — and a 26.924-era rewrite strips the injected root keys
+ * (`openai_base_url`, `model_catalog_json`, the realtime sideband) that carry proxy routing
+ * and the model list. Nothing else notices: the catalog file survives, so the catalog-only
+ * converge funnel reports "no change", and the app keeps serving its native model picker.
+ * Startup sync re-injects, but the proxy may run for days between restarts.
+ *
+ * This module answers the one question the journal was built to answer and nobody asked in
+ * the background: are the bytes on disk still the bytes easyproxy injected? The journal
+ * records the values the last injection wrote (`injectedOpenaiBaseUrl`,
+ * `injectedRealtimeWsBaseUrl`). A caller polls `codexConfigDrift()`; when a journaled root
+ * key is absent while the journal says it should be present, the caller re-runs the standard
+ * injection, which rewrites the keys and re-journals the new baseline.
+ *
+ * Deliberately not a filesystem watcher: launchd/FSWatcher coverage for an arbitrary home
+ * adds an agent surface for a file that also changes for legitimate reasons (the user's own
+ * edits, `epx restore`). Polling at the auto-refresh cadence bounds staleness to one interval
+ * and reuses an already-armed timer.
+ */
+
+import { existsSync, readFileSync } from "node:fs";
+import { CODEX_CONFIG_PATH } from "./paths";
+import { REALTIME_WS_BASE_URL_KEY } from "./injected-marker";
+
+export interface CodexConfigDrift {
+  /**
+   * An injected routing key is absent from the on-disk config while the journal says the
+   * last injection wrote it: the surface was rewritten underneath easyproxy.
+   */
+  readonly drifted: boolean;
+  /** Which injected keys went missing. Empty when not drifted. */
+  readonly missingKeys: readonly string[];
+}
+
+/**
+ * Compare the on-disk config against what the journal says the last injection wrote.
+ *
+ * The journal is the only authority: a config that never was injected (no journal, or a
+ * journal without recorded URLs) reports no drift, because there is nothing to heal. A
+ * PRESENT key always satisfies the check regardless of its value — the injector's own
+ * user-ownership rules (a user's `openai_base_url` without the marker is kept, reported as
+ * `keptUserBaseUrl`, and re-journaled as null) own that case, so a heal triggered on a
+ * missing key runs into them and stops on its own rather than stomping a user's routing.
+ */
+export interface JournaledCodexConfigKeys {
+  injectedOpenaiBaseUrl?: string | null;
+  injectedRealtimeWsBaseUrl?: string | null;
+  /** The catalog path the last injection wrote; its root key going missing is drift too. */
+  injectedCatalogPath?: string | null;
+  /** Every URL injections under this journal wrote per root key, so a write-back of an older one is drift. */
+  injectedRootValues?: Partial<Record<"openai_base_url" | typeof REALTIME_WS_BASE_URL_KEY, readonly string[]>>;
+}
+
+export function codexConfigDrift(
+  readJournal: () => JournaledCodexConfigKeys | null,
+  configPath: string = CODEX_CONFIG_PATH,
+  readFile: (path: string) => string = path => readFileSync(path, "utf-8"),
+  fileExists: (path: string) => boolean = existsSync,
+): CodexConfigDrift {
+  const journal = readJournal();
+  const journaledBaseUrl = journal?.injectedOpenaiBaseUrl;
+  const journaledRealtimeWsUrl = journal?.injectedRealtimeWsBaseUrl;
+  const journaledCatalogPath = journal?.injectedCatalogPath;
+  if (!journaledBaseUrl && !journaledRealtimeWsUrl && !journaledCatalogPath) {
+    return { drifted: false, missingKeys: [] };
+  }
+  if (!fileExists(configPath)) {
+    return { drifted: false, missingKeys: [] };
+  }
+  let content: string;
+  try {
+    content = readFile(configPath);
+  } catch {
+    return { drifted: false, missingKeys: [] };
+  }
+  // Presence comes from the parsed document, so a multiline assignment counts as present. A file
+  // that does not parse is present-unknown: nothing is reported missing and no heal is started.
+  let root: Record<string, unknown>;
+  try { root = Bun.TOML.parse(content.replace(/^\uFEFF/, "")) as Record<string, unknown>; }
+  catch { return { drifted: false, missingKeys: [] }; }
+  const missingKeys: string[] = [];
+  // Missing, or rewritten back to a value an EARLIER injection wrote (the Codex app restoring its
+  // own older copy). Another value is the user's and stays out of this check.
+  const drifted = (key: "openai_base_url" | typeof REALTIME_WS_BASE_URL_KEY, latest: string) => {
+    if (!Object.hasOwn(root, key)) return true;
+    const value = root[key];
+    return typeof value === "string" && value !== latest && (journal?.injectedRootValues?.[key] ?? []).includes(value);
+  };
+  if (journaledBaseUrl && drifted("openai_base_url", journaledBaseUrl)) missingKeys.push("openai_base_url");
+  if (journaledRealtimeWsUrl && drifted(REALTIME_WS_BASE_URL_KEY, journaledRealtimeWsUrl)) missingKeys.push(REALTIME_WS_BASE_URL_KEY);
+  if (journaledCatalogPath && !Object.hasOwn(root, "model_catalog_json")) missingKeys.push("model_catalog_json");
+  return { drifted: missingKeys.length > 0, missingKeys };
+}
+
+/**
+ * What to print after a heal. The first heal in a process says what happened and what was kept;
+ * later ones are one quiet line, so an app that keeps rewriting the file is explained once instead
+ * of on every tick.
+ */
+export function codexConfigHealNotice(missingKeys: readonly string[], firstReport: boolean): string {
+  if (!firstReport) return "[catalog-auto-refresh] injected Codex config keys were rewritten externally; re-injected";
+  return "[catalog-auto-refresh] Codex rewrote config.toml without EasyProxy's " + missingKeys.join(", ")
+    + "; re-injected only those keys and other settings were kept. If this repeats, the Codex app is"
+    + " rewriting config.toml from its own copy; run 'epx sync' once it settles.";
+}

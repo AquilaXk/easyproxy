@@ -1,0 +1,569 @@
+import { describe, expect, test } from "bun:test";
+import {
+  ADMISSION_TOLERANCE,
+  checkComboTargetInputAdmission,
+  checkInputAdmission,
+  estimateInputTokens,
+  resolveInputCeiling,
+  resolveOutputCeiling,
+} from "../../src/server/responses/input-admission";
+import { modelRecordValue } from "../../src/reasoning-effort";
+import { messagesToChatFormat } from "../../src/adapters/openai-chat/messages";
+import type { EpxMessage, EpxParsedRequest, EpxProviderConfig, EpxTool } from "../../src/types";
+
+const CANONICAL_NATIVE: EpxProviderConfig = {
+  adapter: "openai-responses",
+  baseUrl: "https://chatgpt.com/backend-api/codex",
+  authMode: "forward",
+};
+
+function request(messages: EpxMessage[], tools?: EpxTool[]): EpxParsedRequest {
+  return {
+    modelId: "test-model",
+    context: { messages, ...(tools ? { tools } : {}) },
+    stream: false,
+    options: {},
+  } as EpxParsedRequest;
+}
+
+function userText(text: string): EpxMessage {
+  return { role: "user", content: text, timestamp: 0 };
+}
+
+/** Create a replay whose thinking alone exceeds the test model's context window. */
+function replayedThinking(): EpxParsedRequest {
+  return {
+    ...request([
+      userText("Continue."),
+      { role: "assistant", timestamp: 0, content: [
+        { type: "thinking", thinking: asciiTokens(30_000) },
+        { type: "text", text: "Done." },
+      ] },
+    ]),
+    modelId: "m",
+  };
+}
+
+/** Roughly `tokens` worth of plain ASCII at the default 4 chars/token ratio. */
+function asciiTokens(tokens: number): string {
+  return "a".repeat(tokens * 4);
+}
+
+describe("resolveInputCeiling", () => {
+  test("prefers the per-model window over the provider-wide one", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://example.test/v1",
+      contextWindow: 8_000,
+      modelContextWindows: { "m": 32_000 },
+    };
+    expect(resolveInputCeiling(provider, "custom", "m")).toBe(32_000);
+    expect(resolveInputCeiling(provider, "custom", "other")).toBe(8_000);
+  });
+
+  test("modelMaxInputTokens can only tighten the window", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://example.test/v1",
+      modelContextWindows: { "m": 32_000 },
+      modelMaxInputTokens: { "m": 20_000 },
+    };
+    expect(resolveInputCeiling(provider, "custom", "m")).toBe(20_000);
+  });
+
+  test("a looser modelMaxInputTokens never widens the window", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://example.test/v1",
+      modelContextWindows: { "m": 32_000 },
+      modelMaxInputTokens: { "m": 90_000 },
+    };
+    expect(resolveInputCeiling(provider, "custom", "m")).toBe(32_000);
+  });
+
+  test("returns null when nothing is configured", () => {
+    const provider: EpxProviderConfig = { adapter: "openai-chat", baseUrl: "https://example.test/v1" };
+    expect(resolveInputCeiling(provider, "custom", "m")).toBeNull();
+  });
+
+  test("resolves the native window from static metadata for a canonical route", () => {
+    // The `openai` registry entry carries no context fields, so without the native
+    // fallback the gate would be inert on the default Codex route.
+    expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.6-sol")).toBe(272_000);
+  });
+
+  test("a custom provider merely NAMED openai does not inherit native limits", () => {
+    const impostor: EpxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://impostor.test/v1",
+      authMode: "key",
+    };
+    expect(resolveInputCeiling(impostor, "openai", "gpt-5.6-sol")).toBeNull();
+  });
+
+  test("a routed provider/model id does not take the native fallback", () => {
+    expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "vendor/gpt-5.6-sol")).toBeNull();
+  });
+
+  test("an explicit user window still wins over native metadata", () => {
+    const pinned: EpxProviderConfig = { ...CANONICAL_NATIVE, modelContextWindows: { "gpt-5.6-sol": 50_000 } };
+    expect(resolveInputCeiling(pinned, "openai", "gpt-5.6-sol")).toBe(50_000);
+  });
+
+  test("a family entry covers its tagged siblings, like the catalog", () => {
+    // The catalog resolves modelContextWindows through modelRecordValue, so it advertises
+    // 131_072 for gpt-oss:120b off this config. A bare lookup here resolved nothing and
+    // fell back to contextWindow, leaving the gate refusing turns the model can hold.
+    const provider: EpxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://example.test/v1",
+      contextWindow: 8_000,
+      modelContextWindows: { "gpt-oss": 131_072 },
+    };
+    expect(modelRecordValue(provider.modelContextWindows, "gpt-oss:120b")).toBe(131_072);
+    expect(resolveInputCeiling(provider, "custom", "gpt-oss:120b")).toBe(131_072);
+    // An id with no tag and no entry still falls back to the provider-wide window.
+    expect(resolveInputCeiling(provider, "custom", "other")).toBe(8_000);
+  });
+
+  test("an exact entry still beats the family entry", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://example.test/v1",
+      modelContextWindows: { "gpt-oss": 131_072, "gpt-oss:20b": 32_000 },
+    };
+    expect(resolveInputCeiling(provider, "custom", "gpt-oss:20b")).toBe(32_000);
+    expect(resolveInputCeiling(provider, "custom", "gpt-oss:120b")).toBe(131_072);
+  });
+
+  test("a family modelMaxInputTokens tightens its tagged siblings", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://example.test/v1",
+      modelContextWindows: { "gpt-oss": 131_072 },
+      modelMaxInputTokens: { "gpt-oss": 40_000 },
+    };
+    expect(resolveInputCeiling(provider, "custom", "gpt-oss:120b")).toBe(40_000);
+  });
+});
+
+describe("estimateInputTokens", () => {
+  test("counts assistant thinking blocks and tool-call arguments", () => {
+    // A walk that only counted {type:"text"} would report ~0 here, which is exactly the
+    // shape of an agent conversation that triggers this gate.
+    const parsed = request([{
+      role: "assistant",
+      timestamp: 0,
+      content: [
+        { type: "thinking", thinking: asciiTokens(500) },
+        { type: "toolCall", id: "c1", name: "apply_patch", arguments: { patch: asciiTokens(500) } },
+      ],
+    }]);
+    expect(estimateInputTokens(parsed, "test-model")).toBeGreaterThan(900);
+  });
+
+  test("counts tool name, description, and parameter schema", () => {
+    const bare = estimateInputTokens(request([userText("hi")]), "test-model");
+    const withTools = estimateInputTokens(request([userText("hi")], [{
+      name: "search",
+      description: asciiTokens(300),
+      parameters: { type: "object", properties: { q: { type: "string", description: asciiTokens(300) } } },
+    }]), "test-model");
+    expect(withTools - bare).toBeGreaterThan(500);
+  });
+
+  test("charges a data: image by decoded size, not URL length", () => {
+    // base64 inflates by 4/3, so charging the string would overcount by a third.
+    const base64 = "A".repeat(75_000);
+    const parsed = request([{
+      role: "user",
+      timestamp: 0,
+      content: [{ type: "image", imageUrl: `data:image/png;base64,${base64}` }],
+    }]);
+    const decoded = Math.floor((75_000 * 3) / 4);
+    expect(estimateInputTokens(parsed, "test-model")).toBe(Math.ceil(decoded / 750));
+  });
+
+  test("charges inline audio by decoded size rather than its short marker", () => {
+    const base64 = "A".repeat(75_000);
+    const parsed = request([{
+      role: "user",
+      timestamp: 0,
+      content: [{ type: "audio", data: base64, format: "wav", text: "[audio: wav]" }],
+    }]);
+    const decoded = Math.floor((75_000 * 3) / 4);
+    expect(estimateInputTokens(parsed, "test-model")).toBe(Math.ceil(decoded / 256));
+  });
+
+  test("charges a remote image a flat cost, not its URL length", () => {
+    const short = request([{
+      role: "user",
+      timestamp: 0,
+      content: [{ type: "image", imageUrl: "https://example.test/a.png" }],
+    }]);
+    const long = request([{
+      role: "user",
+      timestamp: 0,
+      content: [{ type: "image", imageUrl: `https://example.test/${"b".repeat(4_000)}.png` }],
+    }]);
+    expect(estimateInputTokens(short, "test-model")).toBe(estimateInputTokens(long, "test-model"));
+  });
+
+  test("Korean text costs more than the same number of ASCII characters", () => {
+    const korean = estimateInputTokens(request([userText("한".repeat(4_000))]), "test-model");
+    const ascii = estimateInputTokens(request([userText("a".repeat(4_000))]), "test-model");
+    expect(korean).toBeGreaterThan(ascii);
+  });
+});
+
+describe("checkInputAdmission", () => {
+  const provider: EpxProviderConfig = {
+    adapter: "openai-chat",
+    baseUrl: "https://example.test/v1",
+    modelContextWindows: { "m": 10_000 },
+  };
+
+  /** Compare direct admission with the actual serialized reasoning payload. */
+  test("ignores reasoning that openai-chat drops but counts preserved and native reasoning", () => {
+    const parsed = replayedThinking();
+    const dropped = checkInputAdmission(parsed, provider, "custom", "m");
+    expect(dropped.admitted).toBe(true);
+    expect(dropped.estimatedTokens).toBeLessThan(100);
+    expect(JSON.stringify(messagesToChatFormat(parsed, provider))).not.toContain("reasoning_content");
+    expect(JSON.stringify(messagesToChatFormat(parsed, provider))).not.toContain(asciiTokens(30_000));
+
+    const preserved = { ...provider, preserveReasoningContentModels: ["m"] };
+    expect(JSON.stringify(messagesToChatFormat(parsed, preserved))).toContain("reasoning_content");
+    expect(JSON.stringify(messagesToChatFormat(parsed, preserved))).toContain(asciiTokens(30_000));
+    expect(checkInputAdmission(parsed, preserved, "custom", "m").admitted).toBe(false);
+    expect(checkInputAdmission(parsed, { ...provider, adapter: "openai-responses" }, "custom", "m").admitted).toBe(false);
+  });
+
+  test("admits input under the ceiling", () => {
+    const result = checkInputAdmission(request([userText(asciiTokens(5_000))]), provider, "custom", "m");
+    expect(result.admitted).toBe(true);
+    expect(result.ceiling).toBe(10_000);
+  });
+
+  test("admits input over the ceiling but inside the tolerance", () => {
+    // The estimator has a real error bar, so 1.0x-2.5x is deliberately not refused.
+    const result = checkInputAdmission(request([userText(asciiTokens(15_000))]), provider, "custom", "m");
+    expect(result.admitted).toBe(true);
+  });
+
+  test("refuses input past the tolerance", () => {
+    const result = checkInputAdmission(request([userText(asciiTokens(40_000))]), provider, "custom", "m");
+    expect(result.admitted).toBe(false);
+    expect(result.ceiling).toBe(10_000);
+    expect(result.estimatedTokens).toBeGreaterThan(10_000 * ADMISSION_TOLERANCE);
+  });
+
+  test("admits everything when no ceiling resolves", () => {
+    const unknown: EpxProviderConfig = { adapter: "openai-chat", baseUrl: "https://example.test/v1" };
+    const result = checkInputAdmission(request([userText(asciiTokens(5_000_000))]), unknown, "custom", "m");
+    expect(result.admitted).toBe(true);
+    expect(result.ceiling).toBeNull();
+  });
+
+  test("the estimator CJK sampling alias does not trip the gate", () => {
+    // cjkRatio samples every stride-th character. A payload of fixed-width records whose
+    // length aligns with the stride samples as 100% CJK while being ~1.6% CJK, inflating
+    // the estimate by 1.6x. ADMISSION_TOLERANCE exists to absorb exactly this; a payload
+    // whose HONEST size fits must still be admitted.
+    const record = "\uAC00" + "x".repeat(61);
+    const text = record.repeat(2_033);
+    const honestTokens = Math.ceil(text.length / 4);
+    const aliased: EpxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://example.test/v1",
+      modelContextWindows: { "m": honestTokens },
+    };
+    const result = checkInputAdmission(request([userText(text)]), aliased, "custom", "m");
+    expect(result.estimatedTokens).toBeGreaterThan(honestTokens); // the overshoot is real
+    expect(result.admitted).toBe(true);                            // and absorbed
+  });
+
+  test("resolving a ceiling touches no filesystem", () => {
+    // The native fallback must read static maps only; a catalog read here would put
+    // synchronous file I/O on every request.
+    const fs = require("node:fs");
+    const watched = ["readFileSync", "existsSync", "statSync"] as const;
+    const originals = watched.map(name => [name, fs[name]] as const);
+    let calls = 0;
+    for (const [name, fn] of originals) {
+      fs[name] = (...args: unknown[]) => { calls += 1; return (fn as (...a: unknown[]) => unknown)(...args); };
+    }
+    try {
+      resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.6-sol");
+    } finally {
+      for (const [name, fn] of originals) fs[name] = fn;
+    }
+    expect(calls).toBe(0);
+  });
+});
+
+describe("combo target input admission", () => {
+  const capped: EpxProviderConfig = {
+    adapter: "openai-chat",
+    baseUrl: "https://example.test/v1",
+    modelContextWindows: { m: 128_000 },
+    modelMaxOutputTokens: { m: 32_000 },
+  };
+
+  /** Verify each combo target counts only reasoning retained by its wire compiler. */
+  test("uses the target's reasoning replay policy before reserving output space", () => {
+    const parsed = { ...replayedThinking(), options: { maxOutputTokens: 1_000 } };
+    const target = { ...capped, modelContextWindows: { m: 10_000 }, modelMaxOutputTokens: { m: 1_000 } };
+    expect(checkComboTargetInputAdmission(parsed, target, "custom", "m").admitted).toBe(true);
+    expect(JSON.stringify(messagesToChatFormat(parsed, target))).not.toContain(asciiTokens(30_000));
+    const preserved = { ...target, preserveReasoningContentModels: ["m"] };
+    expect(checkComboTargetInputAdmission(parsed, preserved, "custom", "m").admitted).toBe(false);
+    expect(JSON.stringify(messagesToChatFormat(parsed, preserved))).toContain(asciiTokens(30_000));
+  });
+
+  test("counts DeepSeek thinking replay when the preserve list is unset", () => {
+    const model = "deepseek-v4-pro";
+    const parsed = { ...replayedThinking(), modelId: model, options: { maxOutputTokens: 1_000 } };
+    const target = { ...capped, modelContextWindows: { [model]: 10_000 } };
+    expect(target.preserveReasoningContentModels).toBeUndefined();
+    expect(messagesToChatFormat(parsed, target)).toContainEqual(expect.objectContaining({
+      role: "assistant", reasoning_content: asciiTokens(30_000),
+    }));
+    expect(checkComboTargetInputAdmission(parsed, target, "custom", model).admitted).toBe(false);
+  });
+
+  const withMaxOutput = (inputTokens: number, maxOutputTokens = 64_000): EpxParsedRequest => ({
+    ...request([userText(asciiTokens(inputTokens))]),
+    modelId: "m",
+    options: { maxOutputTokens },
+  });
+  // A separate builder, because passing `undefined` to the one above would silently take its
+  // default and the row below would assert the opposite of what it claims to cover.
+  const withoutMaxOutput = (inputTokens: number): EpxParsedRequest => ({
+    ...request([userText(asciiTokens(inputTokens))]),
+    modelId: "m",
+    options: {},
+  });
+
+  test("skips a target that cannot hold the turn plus its own output ceiling", () => {
+    // 100k input + 32k of reachable output does not fit 128k, so this target would have
+    // answered 200, emitted a few hundred tokens and stopped on finish_reason: length.
+    const result = checkComboTargetInputAdmission(withMaxOutput(100_000), capped, "custom", "m");
+    expect(result.admitted).toBe(false);
+    expect(result.ceiling).toBe(128_000);
+    expect(result.requiredOutputHeadroom).toBe(32_000);
+  });
+
+  test("reserves no more than the target can actually emit", () => {
+    // The caller asked for 64k, but this model tops out at 32k, so reserving the caller's
+    // number would skip a target that fits.
+    const result = checkComboTargetInputAdmission(withMaxOutput(80_000), capped, "custom", "m");
+    expect(result.admitted).toBe(true);
+    expect(result.requiredOutputHeadroom).toBe(32_000);
+  });
+
+  test("the estimate margin refuses input that only fits on the raw figure", () => {
+    // 110k estimates to 121k with the combo margin; +8k declared output overruns the 128k
+    // window even though the raw sum (118k) would have fit.
+    const result = checkComboTargetInputAdmission(withMaxOutput(110_000, 8_000), capped, "custom", "m");
+    expect(result.admitted).toBe(false);
+    expect(result.requiredOutputHeadroom).toBe(8_000);
+  });
+
+  test("admits an exact fit after applying the estimate margin and output reserve", () => {
+    const result = checkComboTargetInputAdmission(withMaxOutput(100_000, 18_000), capped, "custom", "m");
+    expect(result).toMatchObject({
+      estimatedTokens: 100_000, admissionEstimateTokens: 110_000,
+      requiredOutputHeadroom: 18_000, ceiling: 128_000, admitted: true,
+    });
+  });
+
+  test("an input-only cap is not charged the output reserve twice", () => {
+    // modelMaxInputTokens tightens the admissible INPUT; the output reserve belongs against
+    // the window. Charging both against the tightened number would refuse a turn that fits.
+    const inputCapped: EpxProviderConfig = { ...capped, modelMaxInputTokens: { m: 90_000 } };
+    const fits = checkComboTargetInputAdmission(withMaxOutput(80_000), inputCapped, "custom", "m");
+    expect(fits.admitted).toBe(true);
+    expect(fits.ceiling).toBe(90_000);
+    // The input cap itself still refuses on its own terms.
+    expect(checkComboTargetInputAdmission(withMaxOutput(95_000), inputCapped, "custom", "m").admitted).toBe(false);
+  });
+
+  test("unknown context stays fail-open", () => {
+    const unknown: EpxProviderConfig = { adapter: "openai-chat", baseUrl: "https://example.test/v1" };
+    const result = checkComboTargetInputAdmission(withMaxOutput(2_000_000), unknown, "custom", "m");
+    expect(result.admitted).toBe(true);
+    expect(result.ceiling).toBeNull();
+  });
+
+  test("an undeclared output allowance still reserves default headroom", () => {
+    // 10% of the 128k window = 12.8k, capped by the target's 32k output ceiling to 12.8k.
+    // 110k clears the ceiling on the raw figure but not once the reserve is added; 100k can.
+    const refused = checkComboTargetInputAdmission(withoutMaxOutput(110_000), capped, "custom", "m");
+    expect(refused.admitted).toBe(false);
+    expect(refused.requiredOutputHeadroom).toBe(12_800);
+    const fits = checkComboTargetInputAdmission(withoutMaxOutput(100_000), capped, "custom", "m");
+    expect(fits.admitted).toBe(true);
+    expect(fits.requiredOutputHeadroom).toBe(12_800);
+  });
+
+  test("a canonical native slug missing from the override table resolves from generated metadata", () => {
+    // Spark carries 128k/32k in the generated bundle but is absent from the narrower pinned
+    // native table, which left the gate completely blind on exactly this route. It is retired
+    // from the picker and still dispatchable when an operator names it in a combo target.
+    expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.3-codex-spark")).toBe(128_000);
+    expect(resolveOutputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.3-codex-spark")).toBe(32_000);
+    // The native Codex catalog is consulted first, and it is keyed "openai-codex" — which is NOT
+    // the routing provider id, because that one is the string "openai". `gpt-5-codex-mini` exists
+    // only in the native catalog, so resolving it proves the right key is being read.
+    expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5-codex-mini")).toBe(272_000);
+    // A slug the override table does know keeps its own pinned window.
+    expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.6-sol")).toBe(272_000);
+    // An operator cap may only narrow the generated value, never widen it.
+    expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.3-codex-spark", 64_000)).toBe(64_000);
+    // A provider merely named openai still inherits nothing.
+    const impostor: EpxProviderConfig = { adapter: "openai-chat", baseUrl: "https://impostor.test/v1", authMode: "key" };
+    expect(resolveInputCeiling(impostor, "openai", "gpt-5.3-codex-spark")).toBeNull();
+    expect(resolveOutputCeiling(impostor, "openai", "gpt-5.3-codex-spark")).toBeNull();
+  });
+});
+
+for (const headroom of [false, true]) test(`input ceiling messages retain the actual context window headroom=${headroom}`, async () => {
+  const { inputAdmissionRefusalMessage } = await import("../../src/server/responses/input-admission");
+  const { clientFacingModelLabel } = await import("../../src/lib/error-destination");
+  const parsed = request([userText("a".repeat(4000))]);
+  if (headroom) parsed.options.maxOutputTokens = 8;
+  const provider: EpxProviderConfig = { adapter: "openai-chat", baseUrl: "https://provider.example/v1", contextWindow: 200, modelMaxInputTokens: { "test-model": 16 } };
+  const result = headroom ? checkComboTargetInputAdmission(parsed, provider, "fixture", "test-model") : checkInputAdmission(parsed, provider, "fixture", "test-model");
+  expect(result.admitted).toBe(false); expect(result.ceiling).toBe(16); expect(result.contextWindow).toBe(200);
+  const message = inputAdmissionRefusalMessage(result, clientFacingModelLabel("client-model"));
+  expect(message).toContain("input limit of client-model (16 tokens; context window: 200 tokens)");
+});
+
+test("output headroom compares against the shared window after the input cap", async () => {
+  const { inputAdmissionRefusalMessage } = await import("../../src/server/responses/input-admission");
+  const { clientFacingModelLabel } = await import("../../src/lib/error-destination");
+  const parsed = request([userText("hi")]); parsed.options.maxOutputTokens = 200;
+  const result = checkComboTargetInputAdmission(parsed, { adapter: "openai-chat", baseUrl: "https://provider.example/v1", contextWindow: 100, modelMaxInputTokens: { "test-model": 16 } }, "fixture", "test-model");
+  expect(result.admitted).toBe(false); expect(result.estimatedTokens).toBeLessThanOrEqual(16);
+  expect(inputAdmissionRefusalMessage(result, clientFacingModelLabel("client-model"))).toContain("context window of client-model (100 tokens; input limit: 16 tokens)");
+});
+
+test("a margin-only input-cap refusal names the cap, not the window", async () => {
+  const { inputAdmissionRefusalMessage } = await import("../../src/server/responses/input-admission");
+  const { clientFacingModelLabel } = await import("../../src/lib/error-destination");
+  // Raw estimate sits under the 90k input cap; the 1.1x margin pushes it over, so the cap --
+  // not the 128k window -- is the binding limit and the message must say so.
+  const provider: EpxProviderConfig = {
+    adapter: "openai-chat", baseUrl: "https://provider.example/v1",
+    modelContextWindows: { m: 128_000 }, modelMaxInputTokens: { m: 90_000 },
+    modelMaxOutputTokens: { m: 32_000 },
+  };
+  const parsed = { ...request([userText(asciiTokens(85_000))]), modelId: "m", options: {} };
+  const result = checkComboTargetInputAdmission(parsed, provider, "custom", "m");
+  expect(result.admitted).toBe(false);
+  expect(result.estimatedTokens).toBeLessThanOrEqual(90_000);
+  expect(result.admissionEstimateTokens).toBeGreaterThan(90_000);
+  const message = inputAdmissionRefusalMessage(result, clientFacingModelLabel("client-model"));
+  expect(message).toContain("input limit of client-model (90000 tokens");
+  expect(message).not.toContain("cannot fit the context window");
+});
+
+describe("devin adapter window fallback", () => {
+  const devin: EpxProviderConfig = { adapter: "devin", baseUrl: "https://server.codeium.com" };
+  const devinRequest = (inputTokens: number, modelId: string): EpxParsedRequest => ({
+    ...request([userText(asciiTokens(inputTokens))]),
+    modelId,
+    options: { maxOutputTokens: 64_000 },
+  });
+
+  test("resolves the adapter window when provider config declares none", () => {
+    // swe-2-flash serves ~256KiB even though the live catalog advertises 850k;
+    // observed turns terminate at totalTokens 262,140.
+    expect(resolveInputCeiling(devin, "devin", "swe-2-flash")).toBe(262_000);
+    // Effort-suffixed catalog UIDs collapse to the base row.
+    expect(resolveInputCeiling(devin, "devin", "swe-2-flash-medium")).toBe(262_000);
+    expect(resolveInputCeiling(devin, "devin", "swe-2")).toBe(850_000);
+  });
+
+  test("a turn that cannot fit is skipped before any upstream bytes", () => {
+    // 250k estimated input + 64k declared output exceeds the 262k serving window --
+    // the shape that used to answer 200, emit a few hundred tokens and stop on
+    // max_output_tokens with output already committed and no target left to try.
+    const result = checkComboTargetInputAdmission(devinRequest(250_000, "swe-2-flash"), devin, "devin", "swe-2-flash");
+    expect(result.admitted).toBe(false);
+    expect(result.ceiling).toBe(262_000);
+  });
+
+  test("explicit provider windows still win over the adapter table", () => {
+    const wider: EpxProviderConfig = { ...devin, contextWindow: 900_000 };
+    expect(checkComboTargetInputAdmission(devinRequest(250_000, "swe-2-flash"), wider, "devin", "swe-2-flash").admitted).toBe(true);
+    const narrower: EpxProviderConfig = { ...devin, modelContextWindows: { "swe-2-flash": 200_000 } };
+    expect(resolveInputCeiling(narrower, "devin", "swe-2-flash")).toBe(200_000);
+  });
+
+  test("dotted devin ids resolve the hyphenated window", () => {
+    const provider: EpxProviderConfig = { adapter: "devin", baseUrl: "https://devin.test" };
+    expect(resolveInputCeiling(provider, "devin", "swe-1.7")).toBe(262_000);
+  });
+
+  test("dotted id honors a configured window on the normalized spelling", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "devin", baseUrl: "https://devin.test",
+      modelContextWindows: { "swe-1-7-medium": 111_000 },
+    };
+    expect(resolveInputCeiling(provider, "devin", "swe-1.7-medium")).toBe(111_000);
+  });
+
+  test("dotted id honors a configured input cap on the normalized spelling", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "devin", baseUrl: "https://devin.test",
+      modelMaxInputTokens: { "swe-1-7": 100_000 },
+    };
+    expect(resolveInputCeiling(provider, "devin", "swe-1.7")).toBe(100_000);
+  });
+
+  test("an effort-suffixed dotted id honors an override on its dotted base", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "devin", baseUrl: "https://devin.test",
+      modelContextWindows: { "swe-1.7": 111_000 },
+    };
+    expect(resolveInputCeiling(provider, "devin", "swe-1.7-medium")).toBe(111_000);
+    expect(checkComboTargetInputAdmission(devinRequest(150_000, "swe-1.7-medium"), provider, "devin", "swe-1.7-medium").admitted).toBe(false);
+  });
+
+  test("a per-model override on any devin spelling binds before the provider-wide window", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "devin", baseUrl: "https://devin.test", contextWindow: 900_000,
+      modelContextWindows: { "swe-1-7-medium": 111_000 },
+    };
+    expect(resolveInputCeiling(provider, "devin", "swe-1.7-medium")).toBe(111_000);
+    expect(checkComboTargetInputAdmission(devinRequest(200_000, "swe-1.7-medium"), provider, "devin", "swe-1.7-medium").admitted).toBe(false);
+  });
+
+  test("a hyphenated id honors overrides keyed by the dotted spelling", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "devin", baseUrl: "https://devin.test", contextWindow: 900_000,
+      modelContextWindows: { "swe-1.7": 111_000 },
+      modelMaxInputTokens: { "swe-1.7": 100_000 },
+    };
+    expect(resolveInputCeiling(provider, "devin", "swe-1-7-medium")).toBe(100_000);
+    expect(checkComboTargetInputAdmission(devinRequest(150_000, "swe-1-7-medium"), provider, "devin", "swe-1-7-medium").admitted).toBe(false);
+    const windowOnly: EpxProviderConfig = { ...provider, modelMaxInputTokens: undefined };
+    expect(resolveInputCeiling(windowOnly, "devin", "swe-1-7")).toBe(111_000);
+  });
+
+  test("the dotted-key fallback folds case like the exact-spelling lookup", () => {
+    const provider: EpxProviderConfig = {
+      adapter: "devin", baseUrl: "https://devin.test", contextWindow: 900_000,
+      modelMaxInputTokens: { "SWE-1.7": 100_000 },
+    };
+    expect(resolveInputCeiling(provider, "devin", "swe-1-7-medium")).toBe(100_000);
+    expect(resolveInputCeiling(provider, "devin", "SWE-1-7-MEDIUM")).toBe(100_000);
+  });
+
+  test("non-devin adapters stay unresolved", () => {
+    const other: EpxProviderConfig = { adapter: "openai-chat", baseUrl: "https://example.test/v1" };
+    expect(resolveInputCeiling(other, "custom", "swe-2-flash")).toBeNull();
+  });
+});

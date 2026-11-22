@@ -1,0 +1,117 @@
+import { isDeepStrictEqual } from "node:util";
+import { mutatePersistedConfig, readConfigDiagnostics, validateConfigCandidate } from "../config";
+import { fileBackedConfigPath } from "../config/rebase-provenance";
+import { getConfigPath } from "../config/paths";
+import { observeModelCacheRevision } from "../codex/model-cache";
+import { adoptPersistedModelDiscovery } from "../config/live-reconcile";
+import type { EpxConfig } from "../types";
+import { reconcileSuccessfulModelDiscoveries } from "./new-model-policy";
+
+/** Selections `admit` widened during one reconcile, keyed by provider. */
+function admitSelections(target: EpxConfig, run: () => boolean): Record<string, string[] | undefined> {
+  const before = new Map(Object.entries(target.providers).map(([name, provider]) => [name, provider.selectedModels?.length]));
+  run();
+  return Object.fromEntries(Object.entries(target.providers)
+    .filter(([name, provider]) => provider.selectedModels?.length !== before.get(name))
+    .map(([name, provider]) => [name, provider.selectedModels]));
+}
+
+function inventory(config: EpxConfig): unknown {
+  const validated = validateConfigCandidate(config);
+  if (!validated.ok) return null;
+  const providers = Object.fromEntries(Object.entries(validated.config.providers).map(([name, provider]) => [name, {
+    ...provider,
+    // Initial selection may finish during this discovery, but a re-registration is distinct.
+    initialModelSelection: provider.initialModelSelection?.registrationId,
+  }]));
+  // Compare normalized persisted data, not injected fetch functions. Never log this identity.
+  return JSON.parse(JSON.stringify({ providers, combos: validated.config.combos,
+    policy: validated.config.modelDiscovery?.newModelPolicy }));
+}
+
+export function captureModelDiscoveryBaseline(config: EpxConfig) {
+  const identity = inventory(config);
+  const disk = readConfigDiagnostics();
+  return { identity, persisted: identity !== null && disk.source === "file"
+    && isDeepStrictEqual(identity, inventory(disk.config)) };
+}
+
+function projectDiscovery(config: EpxConfig, reconcile: (target: EpxConfig) => boolean, choices = config): EpxConfig {
+  const providers = Object.fromEntries(Object.entries(config.providers).map(([name, provider]) => [name,
+    { ...provider, ...(provider.selectedModels === undefined ? {} : { selectedModels: [...provider.selectedModels] }) }]));
+  const projection = { ...config, providers, modelDiscovery: structuredClone(choices.modelDiscovery),
+    disabledModels: choices.disabledModels === undefined ? undefined : [...choices.disabledModels] };
+  reconcile(projection);
+  return projection;
+}
+
+/** Apply the request's visibility rules to caller-local rows after a newer observation wins. */
+export function projectSupersededModelDiscovery(
+  config: EpxConfig,
+  baseline: ReturnType<typeof captureModelDiscoveryBaseline>,
+  models: Iterable<{ provider: string; id: string; custom?: boolean }>,
+  authoritativeProviders: string[],
+): EpxConfig | null {
+  const filePath = fileBackedConfigPath(config);
+  if ((filePath !== undefined && filePath !== getConfigPath())
+    || !isDeepStrictEqual(baseline.identity, inventory(config))) return null;
+  const disk = baseline.persisted ? readConfigDiagnostics({ passive: true }) : null;
+  if (disk && (disk.source !== "file" || !isDeepStrictEqual(baseline.identity, inventory(disk.config)))) return null;
+  return projectDiscovery(config, target => reconcileSuccessfulModelDiscoveries({
+    config: target, models, authoritativeProviders, now: new Date().toISOString(), mode: "discovery",
+  }), disk?.config);
+}
+
+/** Publish new-arrival choices before returning discovery rows to any visibility consumer. */
+export function finalizeModelDiscovery(
+  config: EpxConfig,
+  baseline: ReturnType<typeof captureModelDiscoveryBaseline>,
+  models: Iterable<{ provider: string; id: string; custom?: boolean }>,
+  authoritativeProviders: string[],
+  revisions: Map<string, string>,
+  /** Read consumers may publish detached policy state; writers require persisted decisions. */
+  publishProjection?: (projection: EpxConfig) => void,
+): boolean {
+  const filePath = fileBackedConfigPath(config);
+  const rows = [...models];
+  const now = new Date().toISOString();
+  const current = () => (filePath === undefined || filePath === getConfigPath())
+    && isDeepStrictEqual(baseline.identity, inventory(config))
+    && [...revisions].every(([provider, revision]) => observeModelCacheRevision(provider) === revision);
+  if (!current()) return false;
+  const reconcile = (target: EpxConfig) => reconcileSuccessfulModelDiscoveries({
+    config: target, models: rows, authoritativeProviders, now, mode: "discovery",
+  });
+  if (!baseline.persisted && filePath === undefined) {
+    // Standalone/synthetic callers may project their own config, never overwrite another home.
+    reconcile(config);
+    return true;
+  }
+  if (!baseline.persisted && publishProjection) {
+    // Drift already existed at admission. Do not add unsaved disables or advance the live
+    // merge baseline: a later rebase-save must preserve the operator's on-disk choices. The
+    // provider rows are copied too, so an `admit` widens the projection's selection only.
+    publishProjection(projectDiscovery(config, reconcile));
+    return true;
+  }
+  // A file-loaded instance remains file-backed after inventory drift. The locked
+  // freshness gate below refuses stale rows without creating unsaved live disables.
+  try {
+    const result = mutatePersistedConfig(fresh => {
+      if (!current() || !isDeepStrictEqual(baseline.identity, inventory(fresh))) {
+        return { changed: false, value: null };
+      }
+      // Re-evaluate against the latest baseline and manual choices under the mutation lock.
+      // A second caller then adopts a first caller's result rather than disabling an ID twice.
+      let changed = false;
+      const selectedModels = admitSelections(fresh, () => changed = reconcile(fresh));
+      return { changed, value: { modelDiscovery: fresh.modelDiscovery, disabledModels: fresh.disabledModels, selectedModels } };
+    });
+    if (result.status === "unavailable" || !result.value) return false;
+    adoptPersistedModelDiscovery(config, result.value);
+    return true;
+  } catch {
+    // Do not publish an unrecorded arrival when persistence failed. The caller retries discovery.
+    return false;
+  }
+}

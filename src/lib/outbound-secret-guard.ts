@@ -1,0 +1,379 @@
+export type OutboundSecretGuardMode = "off" | "redact" | "block";
+
+export interface OutboundSecretGuardConfig {
+  mode?: OutboundSecretGuardMode;
+}
+
+export interface OutboundSecretGuardResult {
+  mode: OutboundSecretGuardMode;
+  blocked: boolean;
+  limitExceeded: boolean;
+  matches: number;
+  redactions: number;
+  findings: string[];
+}
+
+export const MAX_SECRET_SCAN_BYTES = 8 * 1024 * 1024;
+export const MAX_SECRET_SCAN_DEPTH = 32;
+export const MAX_SECRET_SCAN_NODES = 50_000;
+const MAX_PEM_BLOCK_BYTES = 16 * 1024;
+
+interface SecretRule {
+  kind: string;
+  mask: number;
+  pattern: RegExp;
+}
+
+const RULE_PEM       = 1 << 0;
+const RULE_OPENAI    = 1 << 1;
+const RULE_ANTHROPIC = 1 << 2;
+const RULE_GITHUB    = 1 << 3;
+const RULE_AWS       = 1 << 4;
+const RULE_GOOGLE    = 1 << 5;
+const RULE_EPX       = 1 << 6;
+const RULE_SLACK     = 1 << 7;
+
+// High-confidence token prefixes with strictly non-backtracking character classes.
+const SECRET_RULES: readonly SecretRule[] = [
+  { kind: "openai_key", mask: RULE_OPENAI, pattern: /\bsk-(?:proj|live)-[A-Za-z0-9_-]{20,}/g },
+  { kind: "anthropic_key", mask: RULE_ANTHROPIC, pattern: /\bsk-ant-api03-[A-Za-z0-9_-]{20,}/g },
+  { kind: "github_token", mask: RULE_GITHUB, pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
+  { kind: "aws_access_key", mask: RULE_AWS, pattern: /\bAKIA[0-9A-Z]{16}\b/g },
+  { kind: "google_api_key", mask: RULE_GOOGLE, pattern: /\bAIza[0-9A-Za-z_-]{35}\b/g },
+  { kind: "easyproxy_token", mask: RULE_EPX, pattern: /\bepx_data_[A-Za-z0-9_-]{16,}/g },
+  { kind: "slack_token", mask: RULE_SLACK, pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g },
+];
+
+const PEM_BEGIN_RE = /-----BEGIN [A-Z0-9 ]{0,24}PRIVATE KEY-----/;
+
+// Minimum length across all SECRET_RULES and PEM headers is 15 chars (`xox[baprs]-[A-Za-z0-9-]{10,}`).
+const MIN_SECRET_CANDIDATE_CHARS = 14;
+
+/**
+ * 16 KiB L1-resident ASCII 2-char prefix dispatch table.
+ * Stores rule hint bits for candidate 2-byte prefixes so common words ("git", "--flag", "skill")
+ * get rejected immediately by 4-byte inline verification with zero RegExp execution.
+ */
+const SECRET_PAIR_DISPATCH = (() => {
+  const table = new Uint8Array(16_384);
+  const entries: ReadonlyArray<readonly [string, number]> = [
+    ["--", RULE_PEM],
+    ["sk", RULE_OPENAI | RULE_ANTHROPIC],
+    ["gh", RULE_GITHUB],
+    ["gi", RULE_GITHUB],
+    ["AK", RULE_AWS],
+    ["AI", RULE_GOOGLE],
+    ["ep", RULE_EPX],
+    ["xo", RULE_SLACK],
+  ];
+  for (const [pair, mask] of entries) {
+    const idx = ((pair.charCodeAt(0) & 0x7f) << 7) | (pair.charCodeAt(1) & 0x7f);
+    table[idx] |= mask;
+  }
+  return table;
+})();
+
+function verifySecretPrefixMask(value: string, len: number, secondIndex: number, hint: number): number {
+  if (secondIndex + 2 >= len) return 0;
+  const c0 = value.charCodeAt(secondIndex - 1);
+  const c1 = value.charCodeAt(secondIndex);
+  const c2 = value.charCodeAt(secondIndex + 1);
+  const c3 = value.charCodeAt(secondIndex + 2);
+  if ((hint & RULE_PEM) !== 0 && c0 === 0x2d && c1 === 0x2d) {
+    return c2 === 0x2d && c3 === 0x2d ? RULE_PEM : 0;
+  }
+  if ((hint & (RULE_OPENAI | RULE_ANTHROPIC)) !== 0 && c0 === 0x73 && c1 === 0x6b) {
+    if (c2 !== 0x2d) return 0;
+    if (c3 === 0x70 || c3 === 0x6c) return RULE_OPENAI;
+    if (c3 === 0x61) return RULE_ANTHROPIC;
+    return 0;
+  }
+  if ((hint & RULE_GITHUB) !== 0) {
+    if (c0 === 0x67 && c1 === 0x68) {
+      return (c2 === 0x70 || c2 === 0x6f || c2 === 0x75 || c2 === 0x73 || c2 === 0x72) && c3 === 0x5f
+        ? RULE_GITHUB
+        : 0;
+    }
+    if (c0 === 0x67 && c1 === 0x69) {
+      return c2 === 0x74 && c3 === 0x68 && secondIndex + 3 < len && value.charCodeAt(secondIndex + 3) === 0x75
+        ? RULE_GITHUB
+        : 0;
+    }
+  }
+  if ((hint & RULE_AWS) !== 0 && c0 === 0x41 && c1 === 0x4b) {
+    return c2 === 0x49 && c3 === 0x41 ? RULE_AWS : 0;
+  }
+  if ((hint & RULE_GOOGLE) !== 0 && c0 === 0x41 && c1 === 0x49) {
+    return c2 === 0x7a && c3 === 0x61 ? RULE_GOOGLE : 0;
+  }
+  if ((hint & RULE_EPX) !== 0 && c0 === 0x65 && c1 === 0x70) {
+    return c2 === 0x78 && c3 === 0x5f ? RULE_EPX : 0;
+  }
+  if ((hint & RULE_SLACK) !== 0 && c0 === 0x78 && c1 === 0x6f) {
+    return c2 === 0x78 && (c3 === 0x62 || c3 === 0x61 || c3 === 0x70 || c3 === 0x72 || c3 === 0x73)
+      ? RULE_SLACK
+      : 0;
+  }
+  return 0;
+}
+
+function measureAndCheckSecretCandidate(value: string): { utf8Bytes: number; ruleMask: number } {
+  const len = value.length;
+  let nonAscii = 0;
+  if (len === 0) return { utf8Bytes: 0, ruleMask: 0 };
+  if (len < MIN_SECRET_CANDIDATE_CHARS) {
+    for (let i = 0; i < len; i += 1) nonAscii |= value.charCodeAt(i);
+    return {
+      utf8Bytes: (nonAscii & ~0x7f) === 0 ? len : Buffer.byteLength(value, "utf8"),
+      ruleMask: 0,
+    };
+  }
+  let ruleMask = 0;
+  let prev = value.charCodeAt(0);
+  nonAscii |= prev;
+  for (let i = 1; i < len; i += 1) {
+    const cur = value.charCodeAt(i);
+    nonAscii |= cur;
+    if (((prev | cur) & ~0x7f) === 0) {
+      const hint = SECRET_PAIR_DISPATCH[(prev << 7) | cur]!;
+      if (hint !== 0) {
+        ruleMask |= verifySecretPrefixMask(value, len, i, hint);
+      }
+    }
+    prev = cur;
+  }
+  return {
+    utf8Bytes: (nonAscii & ~0x7f) === 0 ? len : Buffer.byteLength(value, "utf8"),
+    ruleMask,
+  };
+}
+
+function scanAndTransformString(
+  input: string,
+  redact: boolean,
+  findings: Set<string>,
+  ruleMask: number,
+): { next: string; matches: number; redactions: number } {
+  let current = input;
+  let matches = 0;
+  let redactions = 0;
+
+  if ((ruleMask & RULE_PEM) !== 0 && current.includes("-----BEGIN ")) {
+    for (;;) {
+      const headerMatch = PEM_BEGIN_RE.exec(current);
+      if (!headerMatch) break;
+      matches += 1;
+      findings.add("pem_private_key");
+      if (!redact) break;
+      const start = headerMatch.index;
+      const endTagPos = current.indexOf("-----END ", start + headerMatch[0].length);
+      let sliceEnd = start + headerMatch[0].length;
+      if (endTagPos !== -1 && endTagPos - start <= MAX_PEM_BLOCK_BYTES) {
+        const closingDashes = current.indexOf("-----", endTagPos + 9);
+        if (closingDashes !== -1 && closingDashes - start <= MAX_PEM_BLOCK_BYTES) {
+          sliceEnd = closingDashes + 5;
+        }
+      }
+      current = `${current.slice(0, start)}[REDACTED:pem_private_key]${current.slice(sliceEnd)}`;
+      redactions += 1;
+    }
+  }
+
+  for (const rule of SECRET_RULES) {
+    if ((ruleMask & rule.mask) === 0) continue;
+    rule.pattern.lastIndex = 0;
+    if (!rule.pattern.test(current)) continue;
+    findings.add(rule.kind);
+    if (redact) {
+      rule.pattern.lastIndex = 0;
+      current = current.replace(rule.pattern, () => {
+        matches += 1;
+        redactions += 1;
+        return `[REDACTED:${rule.kind}]`;
+      });
+    } else {
+      rule.pattern.lastIndex = 0;
+      while (rule.pattern.exec(current) !== null) {
+        matches += 1;
+      }
+    }
+  }
+
+  return { next: current, matches, redactions };
+}
+
+/**
+ * Inspects an outbound JSON request body for leaked secrets using a bounded,
+ * non-recursive traversal. Fails closed in `"block"` mode when traversal bounds
+ * (depth, nodes, or byte budget) are exceeded.
+ */
+export function inspectAndApplyOutboundSecretGuard(
+  body: unknown,
+  config?: OutboundSecretGuardConfig,
+): OutboundSecretGuardResult {
+  const mode: OutboundSecretGuardMode = config?.mode === "redact" || config?.mode === "block"
+    ? config.mode
+    : "off";
+  if (mode === "off" || body === null || body === undefined) {
+    return { mode, blocked: false, limitExceeded: false, matches: 0, redactions: 0, findings: [] };
+  }
+
+  const redact = mode === "redact";
+  const findings = new Set<string>();
+  const visited = new WeakSet<object>();
+  const stack: Array<{ container: unknown; depth: number }> = [{ container: body, depth: 0 }];
+  let nodes = 0;
+  let scannedBytes = 0;
+  let matches = 0;
+  let redactions = 0;
+
+  while (stack.length > 0) {
+    const { container, depth } = stack.pop()!;
+    if (depth > MAX_SECRET_SCAN_DEPTH || nodes >= MAX_SECRET_SCAN_NODES || scannedBytes > MAX_SECRET_SCAN_BYTES) {
+      if (mode === "block") findings.add("scan_budget_exceeded");
+      return {
+        mode,
+        blocked: mode === "block",
+        limitExceeded: true,
+        matches,
+        redactions,
+        findings: [...findings],
+      };
+    }
+
+    if (typeof container !== "object" || container === null) continue;
+    if (visited.has(container)) continue;
+    visited.add(container);
+
+    if (Array.isArray(container)) {
+      for (let i = 0; i < container.length; i += 1) {
+        nodes += 1;
+        if (nodes > MAX_SECRET_SCAN_NODES) {
+          if (mode === "block") findings.add("scan_budget_exceeded");
+          return {
+            mode,
+            blocked: mode === "block",
+            limitExceeded: true,
+            matches,
+            redactions,
+            findings: [...findings],
+          };
+        }
+        const value = container[i];
+        if (typeof value === "string") {
+          if (scannedBytes + value.length > MAX_SECRET_SCAN_BYTES) {
+            if (mode === "block") findings.add("scan_budget_exceeded");
+            return {
+              mode,
+              blocked: mode === "block",
+              limitExceeded: true,
+              matches,
+              redactions,
+              findings: [...findings],
+            };
+          }
+          const pre = measureAndCheckSecretCandidate(value);
+          scannedBytes += pre.utf8Bytes;
+          if (scannedBytes > MAX_SECRET_SCAN_BYTES) {
+            if (mode === "block") findings.add("scan_budget_exceeded");
+            return {
+              mode,
+              blocked: mode === "block",
+              limitExceeded: true,
+              matches,
+              redactions,
+              findings: [...findings],
+            };
+          }
+          if (pre.ruleMask === 0) continue;
+          const result = scanAndTransformString(value, redact, findings, pre.ruleMask);
+          matches += result.matches;
+          redactions += result.redactions;
+          if (redact && result.next !== value) container[i] = result.next;
+          if (mode === "block" && matches > 0) {
+            return {
+              mode,
+              blocked: true,
+              limitExceeded: false,
+              matches,
+              redactions: 0,
+              findings: [...findings],
+            };
+          }
+        } else if (value && typeof value === "object") {
+          stack.push({ container: value, depth: depth + 1 });
+        }
+      }
+      continue;
+    }
+
+    const record = container as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      nodes += 1;
+      if (nodes > MAX_SECRET_SCAN_NODES) {
+        if (mode === "block") findings.add("scan_budget_exceeded");
+        return {
+          mode,
+          blocked: mode === "block",
+          limitExceeded: true,
+          matches,
+          redactions,
+          findings: [...findings],
+        };
+      }
+      const value = record[key];
+      if (typeof value === "string") {
+        if (scannedBytes + value.length > MAX_SECRET_SCAN_BYTES) {
+          if (mode === "block") findings.add("scan_budget_exceeded");
+          return {
+            mode,
+            blocked: mode === "block",
+            limitExceeded: true,
+            matches,
+            redactions,
+            findings: [...findings],
+          };
+        }
+        const pre = measureAndCheckSecretCandidate(value);
+        scannedBytes += pre.utf8Bytes;
+        if (scannedBytes > MAX_SECRET_SCAN_BYTES) {
+          if (mode === "block") findings.add("scan_budget_exceeded");
+          return {
+            mode,
+            blocked: mode === "block",
+            limitExceeded: true,
+            matches,
+            redactions,
+            findings: [...findings],
+          };
+        }
+        if (pre.ruleMask === 0) continue;
+        const result = scanAndTransformString(value, redact, findings, pre.ruleMask);
+        matches += result.matches;
+        redactions += result.redactions;
+        if (redact && result.next !== value) record[key] = result.next;
+        if (mode === "block" && matches > 0) {
+          return {
+            mode,
+            blocked: true,
+            limitExceeded: false,
+            matches,
+            redactions: 0,
+            findings: [...findings],
+          };
+        }
+      } else if (value && typeof value === "object") {
+        stack.push({ container: value, depth: depth + 1 });
+      }
+    }
+  }
+
+  return {
+    mode,
+    blocked: mode === "block" && matches > 0,
+    limitExceeded: false,
+    matches,
+    redactions,
+    findings: [...findings],
+  };
+}

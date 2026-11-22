@@ -1,0 +1,147 @@
+---
+title: 빠른 시작
+description: "easyproxy를 설치하고 첫 프로바이더를 추가한 뒤 Codex, Claude Code, Claude Desktop, Grok Build 또는 다른 지원 코딩 도구를 연결합니다."
+---
+
+이 가이드는 새 설치부터 사용 중인 코딩 도구의 첫 요청까지 안내합니다. 1, 2단계는 모든 도구에 공통이며 3단계는 도구별로 나뉩니다. [클라이언트 지원 페이지](/ko/reference/client-support/)에서 도구와 연결 방법을 확인하세요.
+
+## 독립 실행형 바이너리(npm 없음)
+
+npm 없이 Bun 런타임이 포함된 릴리스 아카이브의 `epx` 바이너리를 사용할 수도 있습니다.
+`gui/dist` 디렉터리를 바이너리 옆에 둔 채 압축을 풀고 `./epx start`를 실행하세요.
+
+## 1. 설정 마법사 실행
+
+```bash
+epx init
+```
+
+`epx init`은 다음 과정을 안내합니다:
+
+1. **프로바이더 선택** — 내장 레지스트리 프리셋 112개 중 하나를 고르거나 `custom`을 선택해 base URL과 adapter를 직접 입력합니다.
+2. **API 키** — 키를 붙여넣거나 `${ANTHROPIC_API_KEY}` 같은 환경 변수를 참조합니다.
+3. **기본 모델** — 키, 로컬, custom 프로바이더에서는 프리셋을 그대로 쓰거나 모델 ID를 직접 입력합니다.
+4. **프록시 포트** — 기본값은 `10100`입니다.
+5. **Codex에 주입할까요?** — 일반적인 루프백 구성에서는 easyproxy가 `$CODEX_HOME/config.toml`의 루트(`~/.codex/config.toml`이 기본값)에 `openai_base_url`을 추가해 Codex의 내장 `openai` 프로바이더가 프록시를 바라보게 합니다. 원격/LAN 바인딩에서는 API 인증 헤더를 포함한 전용 프로바이더 항목을 대신 사용합니다.
+6. **자동 시작 shim을 설치할까요?** — 켜 두면 `codex`를 실행할 때 먼저 `epx ensure`가 실행됩니다.
+
+결과는 `$EASYPROXY_HOME/config.json`(기본값 `~/.easyproxy/config.json`)에 저장됩니다.
+
+:::note[GPT-5.6 적용 항목]
+현재 안정 버전은 ChatGPT 패스스루, OpenAI API 키, OpenRouter, 실험 단계의 Cursor adapter에 GPT-5.6 Sol/Terra/Luna를 기본으로 넣습니다. 이 항목들은 해당 업스트림 계정에 접근 권한이 있을 때만 동작합니다. OpenAI API 키와 OpenRouter 프리셋은 사용 가능한 컨텍스트 창을 922,000토큰으로 제공합니다. Cursor는 자체 adapter 메타데이터를 유지합니다.
+:::
+
+## 2. 프록시 시작
+
+다음 두 방법 중 하나만 실행합니다. 프록시는 포그라운드에서 실행됩니다.
+
+```bash
+epx start            # defaults to port 10100
+```
+
+다른 포트를 사용하려면 다음 명령을 대신 실행합니다.
+
+```bash
+epx start --port 8080
+```
+
+이 터미널을 열어 두세요. 뒤에 나오는 상태 확인 및 대시보드 명령은 같은 `EASYPROXY_HOME`을 사용하는 두 번째 터미널에서 실행하세요.
+
+시작하면 easyproxy는:
+
+- PID를 `~/.easyproxy/epx.pid`에 기록하고 중복 시작을 거부하며,
+- 프로바이더가 지원하는 경우 실시간 모델을 찾아 네이티브와 라우팅 항목을 **Codex 모델 카탈로그에 동기화**하고,
+- `http://localhost:<port>/v1`에서 수신 대기합니다.
+
+동일한 `EASYPROXY_HOME`을 사용하는 easyproxy가 실행 중이면 빈 포트라도 두 번째로 시작할 수 없습니다. 먼저 해당 인스턴스를 `epx stop`으로 중지하거나 다른 `EASYPROXY_HOME`을 선택하세요. 형제 인스턴스는 자신의 포트에서 직접 요청을 처리하지만 Codex, Grok, Claude의 공유 라우팅은 변경하지 않습니다. 무관한 프로세스가 포트를 사용하면 `epx start`가 알립니다. `epx start --port <port>`로 빈 포트를 지정하세요. 포트는 자동으로 바뀌지 않습니다.
+
+확인:
+
+```bash
+epx status
+epx gui       # open the dashboard on the live port
+```
+
+## 3. 도구 연결
+
+사용하는 도구에 해당하는 안내를 선택하세요. 여러 도구를 연결할 수 있으며 프로바이더와 모델은 공유됩니다.
+
+### Codex
+
+1단계에서 Codex 프롬프트를 수락했다면 이제 Codex가 easyproxy와 투명하게 통신합니다. 프롬프트를 거절했거나 기존 설정이 있어 설정이 종료됐다면 Codex를 실행하기 전에 대시보드 **Connect** 페이지의 Codex 스위치를 켜세요. [Codex 통합](/ko/guides/codex-integration/)에서 변경 내용과 복원 방법을 설명합니다.
+
+```bash
+codex "Refactor this function for readability"
+```
+
+특정 라우팅 모델을 지정하려면 Codex의 모델 선택기에 보이는 `provider/model` 형식을 사용합니다:
+
+```bash
+codex -m "anthropic/claude-opus-5" "Explain this stack trace"
+codex -m "ollama-cloud/glm-5.2"      "Write a SQL migration"
+```
+
+### Claude Code
+
+`claude` CLI가 설치된 상태에서:
+
+```bash
+epx claude
+```
+
+`epx claude`는 프록시가 실행 중이 아니면 시작하고 easyproxy를 가리키는 환경으로 Claude Code를 실행합니다. 추가 인수는 그대로 전달됩니다. 계층 기본값, 다른 실행기와 사용 중지 방법은 [Claude Code](/ko/guides/claude-code/)를 참조하세요.
+
+### Claude Desktop
+
+```bash
+epx claude desktop
+```
+
+새로 설치할 때는 앱 전체에 게이트웨이 프로필을 설정합니다. 이미 first-party 모드를 사용하는 설치는 해당 모드를 유지하며, `epx claude desktop apply --gateway`를 실행해 명시적으로 전환할 수 있습니다. Desktop은 claude.ai를 유지하고 Code 탭만 라우팅하는 first-party 모드는 [Claude Code](/ko/guides/claude-code/)의 Claude Desktop 모드 항목을 참조하세요.
+
+모드를 전환한 뒤에는 Claude Desktop을 완전히 종료했다가 다시 여세요.
+
+### Grok Build
+
+로컬 리스너에서 `~/.grok`이 존재하면 `epx start`가 표시되는 모델을 `~/.grok/config.toml`에 등록합니다. Grok Build에서 `epx-*` 모델을 선택하세요. 원격 설정과 관리 블록은 [Grok Build](/ko/guides/grok-build/)를 참조하세요.
+
+프로바이더나 모델을 추가한 뒤에는 `epx ensure`를 실행하거나 프록시를 재시작해야 Grok Build에 반영됩니다.
+
+### 다른 도구
+
+관리형 통합이 있는 도구(OpenCode, Pi, Qoder, WorkBuddy, Kilo, Cline, T3 Code 등)는 대시보드의 **Connect** 페이지에서 연결하거나 다음을 사용하세요:
+
+```bash
+epx integration client enable --client <id>
+```
+
+각 도구의 설정 파일과 적용 시점은 [통합](/ko/guides/integrations/)을 참조하세요. 사용자 지정 엔드포인트를 지원하는 다른 도구는 OpenAI 호환 기본 URL `http://localhost:10100/v1` 또는 Anthropic 기본 URL `http://localhost:10100`을 사용할 수 있습니다.
+
+## Sub-agent 모델 선택(선택 사항)
+
+새 구성에는 Codex의 sub-agent 선택기에 네이티브 모델 다섯 개인 `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-6-astra`가 표시됩니다. `epx gui`를 열어 네이티브 또는 라우팅 모델을 최대 다섯 개까지 바꾸거나 순서를 다시 정할 수 있습니다. 대시보드에서는 선호하는 sub-agent 모델과 추론 강도도 설정할 수 있습니다. [Sub-agent Surface](/guides/sub-agent-surface/)에서 v1/base/v2를 고르고, guidance, 네이티브 기본값, fallback이 언제 적용되는지 확인합니다.
+
+## 키를 붙여넣는 대신 로그인하기
+
+일부 프로바이더는 실제 계정 로그인을 지원합니다(OAuth, 자동 갱신):
+
+```bash
+epx login xai          # or: anthropic, kimi, kiro, google-antigravity, cursor
+epx logout xai
+```
+
+OpenAI 자체는 **키가 필요 없습니다** — 기본 프로바이더가 기존 `codex login` 자격 증명을 그대로 전달합니다([Providers](/guides/providers/) 참고).
+
+## 중지 및 복원
+
+```bash
+epx stop          # stop the proxy and restore native Codex
+epx restore       # restore native Codex without stopping (alias: epx eject)
+epx restore back  # route Codex through the still-running proxy again
+```
+
+## 다음
+
+- [How It Works](/getting-started/how-it-works/) — 각 요청에 무슨 일이 일어나는지.
+- [Providers](/guides/providers/) — 인증하는 모든 방법.
+- [Configuration](/reference/configuration/) — 전체 `config.json` 레퍼런스.

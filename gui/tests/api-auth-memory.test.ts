@@ -1,0 +1,697 @@
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { Window } from "happy-dom";
+import { bootstrapApiSession, configureApiTargets, fetchAudioUpload, fetchDesktopSession, installApiAuthFetch, installApiSessionFromHtml, resetApiAuthFetchForTests } from "../src/api";
+import { targetsFromMachineStatus, type MachineStatusV1 } from "../src/api-targets";
+
+const LEGACY_TOKEN_KEY = "easyproxy-api-token";
+const globals = ["document", "window", "navigator", "sessionStorage", "fetch"] as const;
+let previousGlobals: Record<(typeof globals)[number], unknown>;
+let testWindow: Window;
+let originalPrompt: typeof window.prompt;
+
+beforeEach(() => {
+  previousGlobals = Object.fromEntries(globals.map((key) => [key, Reflect.get(globalThis, key)])) as typeof previousGlobals;
+  testWindow = new Window({ url: "http://localhost/" });
+  Object.defineProperties(globalThis, {
+    document: { configurable: true, value: testWindow.document },
+    window: { configurable: true, value: testWindow },
+    navigator: { configurable: true, value: testWindow.navigator },
+    sessionStorage: { configurable: true, value: testWindow.sessionStorage },
+    fetch: { configurable: true, value: testWindow.fetch.bind(testWindow) },
+  });
+  originalPrompt = window.prompt;
+  // happy-dom does not implement `prompt`, so the admin-token fallback below throws a
+  // TypeError instead of returning null the moment a test actually reaches it. Most tests
+  // never do; the ones that clear a rejected session do, and they failed on a missing
+  // function rather than on the behavior they assert. A null-returning stub is the honest
+  // stand-in for "the operator dismissed the prompt".
+  if (typeof window.prompt !== "function") {
+    Object.defineProperty(testWindow, "prompt", { configurable: true, writable: true, value: () => null });
+  }
+  resetApiAuthFetchForTests(async () => {
+    return typeof window.prompt === "function"
+      ? window.prompt("EasyProxy admin token (EASYPROXY_ADMIN_AUTH_TOKEN)")?.trim() || null
+      : null;
+  });
+  sessionStorage.clear();
+});
+
+afterEach(() => {
+  window.prompt = originalPrompt;
+  resetApiAuthFetchForTests();
+  testWindow.close();
+  for (const key of globals) {
+    Object.defineProperty(globalThis, key, { configurable: true, value: previousGlobals[key] });
+  }
+});
+
+async function installMockAuthFetch(handler: typeof fetch): Promise<void> {
+  Object.defineProperty(globalThis, "fetch", { configurable: true, value: handler });
+  Object.defineProperty(window, "fetch", { configurable: true, value: handler });
+  installApiAuthFetch();
+  // installApiAuthFetch replaces window.fetch — keep globalThis in sync for bare `fetch()`.
+  Object.defineProperty(globalThis, "fetch", { configurable: true, value: window.fetch });
+}
+
+test("Desktop POST receives a single 401 without bootstrap, admin prompt or replay", async () => {
+  const requests: string[] = []; let prompts = 0;
+  resetApiAuthFetchForTests(async () => { prompts++; return "fixture-admin"; });
+  await installMockAuthFetch((async input => { requests.push(String(input)); return Response.json({ error: "unauthorized" }, { status: 401 }); }) as typeof fetch);
+  const response = await fetchDesktopSession("/api/codex/desktop-compatibility/runtime", { method: "POST", body: "{}" });
+  expect(response.status).toBe(401); expect(requests).toEqual(["/api/codex/desktop-compatibility/runtime"]); expect(prompts).toBe(0);
+  await expect(fetchDesktopSession("http://other.example.test/api/codex/desktop-compatibility/runtime", { method: "POST" })).rejects.toThrow("desktop_target_changed");
+  expect(requests).toHaveLength(1);
+});
+
+/**
+ * Declare a bind that requires a typed credential, as `serveGuiFile` does from
+ * `isApiAuthRequired`. The admin-token prompt only exists for a non-loopback bind: a
+ * loopback dashboard mints its own session, so a refusal there is a Host/Origin
+ * misconfiguration no typed token can repair (#3353). A test that wants to observe the
+ * prompt fallback has to say it is that kind of deployment.
+ */
+function declareManagementAuthRequired(): void {
+  const meta = document.createElement("meta");
+  meta.setAttribute("name", "easyproxy-management-auth-required");
+  meta.setAttribute("content", "1");
+  document.head.append(meta);
+}
+
+test("installApiAuthFetch deletes legacy sessionStorage token without reading it", () => {
+  sessionStorage.setItem(LEGACY_TOKEN_KEY, "legacy-secret");
+  let getItemCalls = 0;
+  const storage = sessionStorage;
+  const originalGetItem = storage.getItem.bind(storage);
+  storage.getItem = ((key: string) => {
+    getItemCalls += 1;
+    return originalGetItem(key);
+  }) as typeof storage.getItem;
+
+  try {
+    installApiAuthFetch();
+    expect(getItemCalls).toBe(0);
+    expect(originalGetItem(LEGACY_TOKEN_KEY)).toBeNull();
+  } finally {
+    storage.getItem = originalGetItem;
+  }
+});
+
+test("audio uploads bypass connected management interception and 401 recovery", async () => {
+  injectSessionMeta("epx_session_audio_machine", "audio-csrf", "http://localhost");
+  const seen: Array<{ url: string; headers: Headers }> = [];
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    seen.push({ url: String(input), headers: new Headers(init?.headers) });
+    return new Response("rejected", { status: 401 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+  configureApiTargets({
+    connected: true,
+    machine: { id: "machine", baseUrl: "http://localhost", serverOrigin: "http://localhost", bootstrapPath: "/easyproxy-session", transport: "same-origin" },
+    shared: { id: "shared", baseUrl: "https://hub.example.test", serverOrigin: "https://hub.example.test", bootstrapPath: "https://hub.example.test/easyproxy-session", transport: "relay" },
+  });
+  const key = "epx_data_audio_wrapper_fixture";
+  const response = await fetchAudioUpload("https://hub.example.test/v1/audio/transcriptions", { method: "POST", headers: { "X-EasyProxy-API-Key": key }, body: new FormData() });
+  expect(response.status).toBe(401);
+  expect(seen).toHaveLength(1);
+  expect([...seen[0]!.headers]).toEqual([["x-easyproxy-api-key", key]]);
+  expect(sessionStorage.length).toBe(0);
+  await expect(fetchAudioUpload("https://hub.example.test/api/config", { method: "POST" })).rejects.toThrow();
+  expect(seen).toHaveLength(1);
+});
+
+test("prompted API tokens stay memory-only and are not written to sessionStorage", async () => {
+  declareManagementAuthRequired();
+  sessionStorage.setItem(LEGACY_TOKEN_KEY, "legacy-secret");
+
+  let authorized = false;
+  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    if (headers.get("X-EasyProxy-API-Key") === "fresh-token") {
+      authorized = true;
+      return new Response("{}", { status: 200 });
+    }
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  window.prompt = () => "fresh-token";
+
+  await installMockAuthFetch(mockFetch);
+
+  const res = await fetch("/api/config");
+  expect(res.status).toBe(200);
+  expect(authorized).toBe(true);
+  expect(sessionStorage.getItem(LEGACY_TOKEN_KEY)).toBeNull();
+  expect(sessionStorage.length).toBe(0);
+});
+
+test("validates prompted tokens with a safe read before retrying the failed request", async () => {
+  declareManagementAuthRequired();
+  const validationResults: string[] = [];
+  const seenRequests: Array<[string, string | null]> = [];
+  resetApiAuthFetchForTests(async (verifyToken) => {
+    validationResults.push(await verifyToken("wrong-token"));
+    validationResults.push(await verifyToken("fresh-token"));
+    return "fresh-token";
+  });
+
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost/");
+    const key = new Headers(init?.headers).get("X-EasyProxy-API-Key");
+    seenRequests.push([url.pathname, key]);
+    if (url.pathname === "/api/combos" && key === "fresh-token") {
+      return new Response("{}", { status: 200 });
+    }
+    if (url.pathname === "/api/config" && key === "fresh-token") {
+      return new Response("{}", { status: 200 });
+    }
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(validationResults).toEqual(["rejected", "accepted"]);
+  expect(seenRequests).toContainEqual(["/api/combos", "wrong-token"]);
+  expect(seenRequests).toContainEqual(["/api/combos", "fresh-token"]);
+  expect(seenRequests).not.toContainEqual(["/api/config", "wrong-token"]);
+  expect(sessionStorage.length).toBe(0);
+});
+
+test("cross-origin /api/* requests do not receive the API key or token prompt", async () => {
+  declareManagementAuthRequired();
+  let promptCalls = 0;
+  let phase: "seed" | "cross" = "seed";
+  const seenHeaders: Array<string | null> = [];
+  const stateful = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    seenHeaders.push(headers.get("X-EasyProxy-API-Key"));
+    if (phase === "seed") {
+      if (headers.get("X-EasyProxy-API-Key") === "local-token") return new Response("{}", { status: 200 });
+      return new Response("unauthorized", { status: 401 });
+    }
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  window.prompt = () => {
+    promptCalls += 1;
+    return "local-token";
+  };
+  await installMockAuthFetch(stateful);
+
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(promptCalls).toBe(1);
+
+  phase = "cross";
+  const beforeCrossPrompts = promptCalls;
+  seenHeaders.length = 0;
+  const cross = await fetch("https://evil.example/api/config");
+  expect(cross.status).toBe(401);
+  expect(seenHeaders).toEqual([null]);
+  expect(promptCalls).toBe(beforeCrossPrompts);
+});
+
+test("concurrent 401s share one token prompt and all retry with the stored token", async () => {
+  declareManagementAuthRequired();
+  // Repro for #647: many /api/* requests start without a token (dashboard fan-out).
+  // Delivering 401s one-by-one after each auth cycle finishes matches the browser case where
+  // window.prompt blocks the main thread: each continuation still holds a captured null token
+  // and must reuse the in-memory token from an earlier request instead of prompting again.
+  let promptCalls = 0;
+  const release401: Array<() => void> = [];
+  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    // Session re-bootstrap probe: this fixture never mints sessions, so fail it fast
+    // instead of letting it join the release queue below.
+    if (new URL(_input instanceof Request ? _input.url : String(_input), "http://localhost/").pathname === "/easyproxy-session") {
+      return new Response("unauthorized", { status: 401 });
+    }
+    if (headers.get("X-EasyProxy-API-Key") === "shared-token") {
+      return new Response("{}", { status: 200 });
+    }
+    await new Promise<void>((resolve) => {
+      release401.push(resolve);
+    });
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  window.prompt = () => {
+    promptCalls += 1;
+    return "shared-token";
+  };
+  await installMockAuthFetch(mockFetch);
+
+  const endpoints = [
+    "/api/config",
+    "/api/providers",
+    "/api/models",
+    "/api/selected-models",
+    "/api/disabled-models",
+    "/api/effort-caps",
+    "/api/sidecar-settings",
+    "/api/injection-model",
+    "/api/v2",
+    "/api/keys",
+    "/api/provider-presets",
+    "/api/key-providers",
+    "/api/oauth/providers",
+    "/api/codex-auth/accounts",
+  ];
+  const pending = endpoints.map((path) => fetch(path).then((r) => r.status));
+  // Let every request reach the 401 gate before any response is delivered.
+  for (let i = 0; i < 20 && release401.length < endpoints.length; i += 1) {
+    await Promise.resolve();
+  }
+  expect(release401.length).toBe(endpoints.length);
+
+  for (let i = 0; i < endpoints.length; i += 1) {
+    const done = pending[i]!;
+    let settled = false;
+    void done.then(() => {
+      settled = true;
+    });
+    release401.shift()!();
+    for (let spin = 0; spin < 50 && !settled; spin += 1) {
+      await Promise.resolve();
+    }
+    expect(settled).toBe(true);
+  }
+
+  const statuses = await Promise.all(pending);
+  expect(promptCalls).toBe(1);
+  expect([...new Set(statuses)]).toEqual([200]);
+});
+
+test("stale concurrent 401 does not clear a token refreshed by another request", async () => {
+  declareManagementAuthRequired();
+  // Codex/audit race: request A prompts and stores T2; request B still holding stale T1
+  // must not wipe T2 (clearTokenIfCurrent) before its re-read / shared gate join.
+  let promptCalls = 0;
+  let acceptV1 = true;
+  const release401: Array<() => void> = [];
+  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    const key = headers.get("X-EasyProxy-API-Key");
+    if (key === "token-v2") return new Response("{}", { status: 200 });
+    if (acceptV1 && key === "token-v1") return new Response("{}", { status: 200 });
+    if (key === "token-v1") {
+      await new Promise<void>((resolve) => {
+        release401.push(resolve);
+      });
+      return new Response("unauthorized", { status: 401 });
+    }
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  window.prompt = () => {
+    promptCalls += 1;
+    return "token-v1";
+  };
+  await installMockAuthFetch(mockFetch);
+  expect((await fetch("/api/config")).status).toBe(200);
+  expect(promptCalls).toBe(1);
+
+  acceptV1 = false;
+  promptCalls = 0;
+  window.prompt = () => {
+    promptCalls += 1;
+    return "token-v2";
+  };
+
+  const pending = [fetch("/api/config"), fetch("/api/providers")].map((p) => p.then((r) => r.status));
+  for (let i = 0; i < 20 && release401.length < 2; i += 1) {
+    await Promise.resolve();
+  }
+  expect(release401.length).toBe(2);
+
+  for (let i = 0; i < 2; i += 1) {
+    const done = pending[i]!;
+    let settled = false;
+    void done.then(() => {
+      settled = true;
+    });
+    release401.shift()!();
+    for (let spin = 0; spin < 50 && !settled; spin += 1) {
+      await Promise.resolve();
+    }
+    expect(settled).toBe(true);
+  }
+
+  const statuses = await Promise.all(pending);
+  expect(promptCalls).toBe(1);
+  expect([...new Set(statuses)]).toEqual([200]);
+});
+
+test("canceling the token prompt once does not reopen it for the rest of the 401 fan-out", async () => {
+  declareManagementAuthRequired();
+  let promptCalls = 0;
+  const release401: Array<() => void> = [];
+  const mockFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    if (new URL(_input instanceof Request ? _input.url : String(_input), "http://localhost/").pathname === "/easyproxy-session") {
+      return new Response("unauthorized", { status: 401 });
+    }
+    if (headers.get("X-EasyProxy-API-Key")) {
+      return new Response("{}", { status: 200 });
+    }
+    await new Promise<void>((resolve) => {
+      release401.push(resolve);
+    });
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  window.prompt = () => {
+    promptCalls += 1;
+    return null;
+  };
+  await installMockAuthFetch(mockFetch);
+
+  const endpoints = ["/api/config", "/api/providers", "/api/models", "/api/keys"];
+  const pending = endpoints.map((path) => fetch(path).then((r) => r.status));
+  for (let i = 0; i < 20 && release401.length < endpoints.length; i += 1) {
+    await Promise.resolve();
+  }
+  expect(release401.length).toBe(endpoints.length);
+
+  for (let i = 0; i < endpoints.length; i += 1) {
+    const done = pending[i]!;
+    let settled = false;
+    void done.then(() => {
+      settled = true;
+    });
+    release401.shift()!();
+    for (let spin = 0; spin < 50 && !settled; spin += 1) {
+      await Promise.resolve();
+    }
+    expect(settled).toBe(true);
+  }
+
+  const statuses = await Promise.all(pending);
+  expect(promptCalls).toBe(1);
+  expect([...new Set(statuses)]).toEqual([401]);
+});
+
+test("data-plane requests never receive the management token or prompt", async () => {
+  let promptCalls = 0;
+  let phase: "seed" | "cross" = "seed";
+  const seenHeaders: Array<string | null> = [];
+  const stateful = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    seenHeaders.push(headers.get("X-EasyProxy-API-Key"));
+    if (phase === "seed") {
+      if (headers.get("X-EasyProxy-API-Key") === "local-token") return new Response("{}", { status: 200 });
+      return new Response("unauthorized", { status: 401 });
+    }
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  window.prompt = () => {
+    promptCalls += 1;
+    return "local-token";
+  };
+  await installMockAuthFetch(stateful);
+
+  expect((await fetch("/v1/models")).status).toBe(401);
+  expect(seenHeaders).toEqual([null]);
+  expect(promptCalls).toBe(0);
+
+  phase = "cross";
+  const beforeCrossPrompts = promptCalls;
+  seenHeaders.length = 0;
+  const cross = await fetch("https://evil.example/v1/models");
+  expect(cross.status).toBe(401);
+  expect(seenHeaders).toEqual([null]);
+  expect(promptCalls).toBe(beforeCrossPrompts);
+});
+
+function injectSessionMeta(token: string, csrf: string, browserOrigin: string, serverOrigin = browserOrigin): void {
+  for (const [name, content] of [
+    ["easyproxy-session-token", token],
+    ["easyproxy-session-csrf", csrf],
+    ["easyproxy-session-origin", browserOrigin],
+    ["easyproxy-session-server-origin", serverOrigin],
+  ] as const) {
+    const meta = document.createElement("meta");
+    meta.setAttribute("name", name);
+    meta.setAttribute("content", content);
+    document.head.appendChild(meta);
+  }
+}
+
+function sessionDocumentHtml(token: string, csrf: string, browserOrigin: string, serverOrigin = browserOrigin): string {
+  return [
+    "<!doctype html><html><head>",
+    `<meta name="easyproxy-session-token" content="${token}">`,
+    `<meta name="easyproxy-session-csrf" content="${csrf}">`,
+    `<meta name="easyproxy-session-origin" content="${browserOrigin}">`,
+    `<meta name="easyproxy-session-server-origin" content="${serverOrigin}">`,
+    "</head><body></body></html>",
+  ].join("");
+}
+
+function htmlResponseAt(html: string, url: string): Response {
+  const response = new Response(html, { status: 200, headers: { "Content-Type": "text/html" } });
+  Object.defineProperty(response, "url", { configurable: true, value: url });
+  return response;
+}
+
+test("expired session silently re-bootstraps from the served document without prompting", async () => {
+  // Regression for the post-security-hardening UX bug: loopback sessions expire after the
+  // 5-minute TTL (or die on proxy restart), and the dashboard used to demand an admin token
+  // the user never chose. The fetch wrapper must renew the session from a freshly served
+  // document instead — token entry is not part of the default loopback experience.
+  injectSessionMeta("epx_session_stale", "stale-csrf", "http://localhost");
+
+  let promptCalls = 0;
+  let bootstrapFetches = 0;
+  const seenApiKeys: Array<string | null> = [];
+  const seenGuiOrigins: Array<string | null> = [];
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const raw = input instanceof Request ? input.url : String(input);
+    const url = new URL(raw, "http://localhost/");
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (url.pathname === "/easyproxy-session") {
+      bootstrapFetches += 1;
+      return htmlResponseAt(
+        sessionDocumentHtml("epx_session_fresh", "fresh-csrf", "http://localhost"),
+        "http://localhost/easyproxy-session",
+      );
+    }
+    seenApiKeys.push(headers.get("X-EasyProxy-API-Key"));
+    seenGuiOrigins.push(headers.get("X-EasyProxy-GUI-Origin"));
+    if (headers.get("X-EasyProxy-API-Key") === "epx_session_fresh"
+      && headers.get("X-EasyProxy-GUI-Origin") === "http://localhost") {
+      return new Response("{}", { status: 200 });
+    }
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  window.prompt = () => {
+    promptCalls += 1;
+    return null;
+  };
+  await installMockAuthFetch(mockFetch);
+
+  const res = await fetch("/api/config");
+  expect(res.status).toBe(200);
+  expect(promptCalls).toBe(0);
+  expect(bootstrapFetches).toBe(1);
+  expect(seenApiKeys).toEqual(["epx_session_stale", "epx_session_fresh"]);
+  expect(seenGuiOrigins).toEqual(["http://localhost", "http://localhost"]);
+});
+
+test("a session minted for another origin is rejected and the prompt fallback stays", async () => {
+  declareManagementAuthRequired();
+  // Non-loopback dashboards never get server-minted sessions; a re-bootstrap document whose
+  // origin does not match must not be trusted, and the operator-only prompt remains.
+  let promptCalls = 0;
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const raw = input instanceof Request ? input.url : String(input);
+    const url = new URL(raw, "http://localhost/");
+    const headers = new Headers(init?.headers);
+    if (url.pathname === "/easyproxy-session") {
+      return htmlResponseAt(
+        sessionDocumentHtml("epx_session_foreign", "foreign-csrf", "http://192.0.2.10:10100"),
+        "http://localhost/easyproxy-session",
+      );
+    }
+    if (headers.get("X-EasyProxy-API-Key") === "manual-admin-token") return new Response("{}", { status: 200 });
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  window.prompt = () => {
+    promptCalls += 1;
+    return "manual-admin-token";
+  };
+  await installMockAuthFetch(mockFetch);
+
+  const res = await fetch("/api/config");
+  expect(res.status).toBe(200);
+  expect(promptCalls).toBe(1);
+});
+
+test("a renewed two-origin session attaches only to its bound server and carries browser origin plus CSRF", async () => {
+  window.localStorage.setItem("easyproxy.dashboard-device-proof", `epx_proof_${"A".repeat(43)}`);
+  injectSessionMeta("epx_session_stale", "stale-csrf", "http://localhost");
+  const status: MachineStatusV1 = {
+    mode: "client", connected: true, machineBase: "http://localhost",
+    sharedBase: "https://hub.example.test", sharedServerOrigin: "https://hub.example.test",
+    managementTransport: "direct", apiKeyId: "client-key-a", protocolVersion: 1,
+    connectedAt: "2026-08-28T00:00:00.000Z", hubReachability: "unknown",
+  };
+  configureApiTargets(targetsFromMachineStatus("", status));
+  const seen = new Map<string, Headers[]>();
+  let localApiCalls = 0;
+  const record = (origin: string, headers: Headers) => {
+    const entries = seen.get(origin) ?? [];
+    entries.push(headers);
+    seen.set(origin, entries);
+  };
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost/");
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (url.origin === "https://hub.example.test" && url.pathname === "/easyproxy-session") {
+      expect(headers.has("X-EasyProxy-Device-Proof")).toBe(false);
+      return htmlResponseAt(
+        sessionDocumentHtml("epx_session_remote", "remote-csrf", "http://localhost", "https://hub.example.test"),
+        "https://hub.example.test/easyproxy-session",
+      );
+    }
+    record(url.origin, headers);
+    if (url.origin === "https://hub.example.test") {
+      localApiCalls += 1;
+      return new Response("{}", { status: localApiCalls === 1 ? 401 : 200 });
+    }
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+
+  expect((await fetch("https://hub.example.test/api/config", { method: "POST" })).status).toBe(200);
+  expect((await fetch("/api/machine/status")).status).toBe(200);
+  expect((await fetch("https://evil.example.test/api/config")).status).toBe(200);
+
+  const hubHeaders = seen.get("https://hub.example.test")?.at(-1);
+  expect(hubHeaders?.get("X-EasyProxy-API-Key")).toBe("epx_session_remote");
+  expect(hubHeaders?.get("X-EasyProxy-GUI-Origin")).toBe("http://localhost");
+  expect(hubHeaders?.get("X-EasyProxy-CSRF-Token")).toBe("remote-csrf");
+  const evilHeaders = seen.get("https://evil.example.test")?.[0];
+  expect(evilHeaders?.get("X-EasyProxy-API-Key")).toBeNull();
+  expect(evilHeaders?.get("X-EasyProxy-GUI-Origin")).toBeNull();
+  for (const entries of seen.values()) for (const headers of entries) expect(headers.has("X-EasyProxy-Device-Proof")).toBe(false);
+});
+
+test("relay requests carry independent shared and machine sessions without cross-target leakage", async () => {
+  window.localStorage.setItem("easyproxy.dashboard-device-proof", `epx_proof_${"A".repeat(43)}`);
+  let proofReads = 0;
+  const storageGet = window.localStorage.getItem.bind(window.localStorage);
+  Object.defineProperty(window.localStorage, "getItem", { configurable: true, value: (key: string) => { if (key === "easyproxy.dashboard-device-proof") proofReads++; return storageGet(key); } });
+  injectSessionMeta("epx_session_machine", "machine-csrf", "http://localhost");
+  const seen = new Map<string, Headers>();
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost/");
+    seen.set(url.pathname, new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)));
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+  const relayStatus: MachineStatusV1 = {
+    mode: "client", connected: true, machineBase: "http://localhost",
+    sharedBase: "http://localhost/api/machine/hub-relay", sharedServerOrigin: "https://hub.example.test",
+    managementTransport: "relay", apiKeyId: "client-key-a", protocolVersion: 1,
+    connectedAt: "2026-08-28T00:00:00.000Z", hubReachability: "unknown",
+  };
+  configureApiTargets(targetsFromMachineStatus("", relayStatus));
+  expect(await bootstrapApiSession("shared")).toBe(false);
+  expect(installApiSessionFromHtml("shared", sessionDocumentHtml(
+    "epx_session_hub", "hub-csrf", "http://localhost", "https://hub.example.test",
+  ))).toBe(true);
+
+  await fetch("/api/machine/status");
+  await fetch("/api/machine/hub-relay/api/config", { method: "POST" });
+  await fetch("https://evil.example/api/config");
+
+  const machine = seen.get("/api/machine/status")!;
+  expect(machine.get("x-easyproxy-api-key")).toBe("epx_session_machine");
+  expect(machine.get("x-easyproxy-machine-session")).toBeNull();
+  const relay = seen.get("/api/machine/hub-relay/api/config")!;
+  expect(relay.get("x-easyproxy-api-key")).toBe("epx_session_hub");
+  expect(relay.get("x-easyproxy-csrf-token")).toBe("hub-csrf");
+  expect(relay.get("x-easyproxy-machine-session")).toBe("epx_session_machine");
+  expect(relay.get("x-easyproxy-machine-csrf-token")).toBe("machine-csrf");
+  const unknown = seen.get("/api/config")!;
+  expect(unknown.get("x-easyproxy-api-key")).toBeNull();
+  expect(unknown.get("x-easyproxy-machine-session")).toBeNull();
+  for (const headers of seen.values()) expect(headers.has("X-EasyProxy-Device-Proof")).toBe(false);
+  expect(proofReads).toBe(0);
+});
+
+test("a mismatched bootstrap response/server origin clears every in-memory session field", async () => {
+  injectSessionMeta("epx_session_stale", "stale-csrf", "http://localhost");
+  const seenKeys: Array<string | null> = [];
+  let apiCalls = 0;
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost/");
+    if (url.pathname === "/easyproxy-session") {
+      return htmlResponseAt(
+        sessionDocumentHtml("epx_session_rejected", "new-csrf", "http://localhost", "https://evil.example.test"),
+        "https://hub.example.test/easyproxy-session",
+      );
+    }
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    seenKeys.push(headers.get("X-EasyProxy-API-Key"));
+    apiCalls += 1;
+    return new Response("unauthorized", { status: 401 });
+  }) as typeof fetch;
+  await installMockAuthFetch(mockFetch);
+
+  expect((await fetch("/api/config")).status).toBe(401);
+  expect(apiCalls).toBe(1);
+  expect((await fetch("https://hub.example.test/api/config")).status).toBe(401);
+  expect(seenKeys).toEqual(["epx_session_stale", null]);
+  expect(sessionStorage.getItem(LEGACY_TOKEN_KEY)).toBeNull();
+});
+
+test("only successful key and link inventory mutations emit a source inventory event", async () => {
+  let events = 0;
+  window.addEventListener("easyproxy:usage-source-inventory-changed", () => { events++; });
+  await installMockAuthFetch((async (input: RequestInfo | URL) => {
+    const url = String(input);
+    return new Response(null, { status: url.includes("fail=1") ? 403 : 200 });
+  }) as typeof fetch);
+  for (const [path, method] of [["/api/keys", "POST"], ["/api/keys/rotate/commit", "POST"], ["/api/link/apply", "POST"], ["/api/link/lnk_a", "DELETE"]]) {
+    await fetch(path!, { method });
+  }
+  expect(events).toBe(4);
+  await fetch("/api/keys?fail=1", { method: "DELETE" });
+  await fetch("/api/keys/reveal", { method: "POST" });
+  await fetch("/api/link/probe", { method: "POST" });
+  await fetch("/api/keys", { method: "GET" });
+  expect(events).toBe(4);
+});
+
+test("a missing event constructor does not turn a successful key mutation into failure", async () => {
+  await installMockAuthFetch((async () => new Response(null, { status: 200 })) as typeof fetch);
+  const descriptor = Object.getOwnPropertyDescriptor(window, "CustomEvent");
+  try {
+    Object.defineProperty(window, "CustomEvent", { configurable: true, value: undefined });
+    expect((await fetch("/api/keys", { method: "POST" })).status).toBe(200);
+  } finally {
+    if (descriptor) Object.defineProperty(window, "CustomEvent", descriptor);
+    else Reflect.deleteProperty(window, "CustomEvent");
+  }
+});
+
+test("a Remote Link Child sends its own link status and diagnostics reads with its machine session (#8985)", async () => {
+  injectSessionMeta("epx_session_child", "child-csrf", "http://localhost");
+  const childStatus = (link: boolean): MachineStatusV1 => ({
+    mode: "client", connected: true, machineBase: "http://localhost", sharedBase: "http://localhost/api/machine/hub-relay",
+    sharedServerOrigin: "http://localhost", managementTransport: "relay", apiKeyId: "child-key", protocolVersion: 1,
+    connectedAt: "2026-11-21T00:00:00.000Z", hubReachability: "online",
+    ...(link ? { link: { linkId: "lnk_0123456789abcdef", home: "studio", readOnly: true as const } } : {}),
+  });
+  configureApiTargets(targetsFromMachineStatus("", childStatus(true)));
+  const seen: [string, string | null][] = [];
+  await installMockAuthFetch((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost/");
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    seen.push([url.pathname, headers.get("X-EasyProxy-API-Key")]);
+    return Response.json({});
+  }) as typeof fetch);
+  await fetch("/api/link/status?children=1");
+  await fetch("/api/link/diagnostics?limit=100");
+  expect(seen).toEqual([["/api/link/status", "epx_session_child"], ["/api/link/diagnostics", "epx_session_child"]]);
+  // A hub client has no link of its own on this listener; its classification is unchanged.
+  configureApiTargets(targetsFromMachineStatus("", childStatus(false)));
+  seen.length = 0;
+  await fetch("/api/link/status");
+  expect(seen).toEqual([["/api/link/status", null]]);
+});

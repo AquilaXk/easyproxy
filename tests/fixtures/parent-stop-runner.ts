@@ -1,0 +1,501 @@
+/** Runs the real CLI/stop module graph with process and client I/O isolated in this child. */
+import { mock } from "bun:test";
+import * as childProcess from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { CodexNativeRestoreResult } from "../../src/codex/inject";
+import { createLocalAttestationProof, LOCAL_ATTESTATION_CHALLENGE_HEADER, LOCAL_ATTESTATION_PROOF_HEADER } from "../../src/lib/local-management-attestation";
+import { LOCAL_MANAGEMENT_NONCE_HEADER } from "../../src/lib/local-management-capability";
+
+const ATTESTATION_SECRET = "C".repeat(43);
+
+const options = JSON.parse(readFileSync(0, "utf8")) as {
+  receipt: boolean;
+  response: unknown;
+  restore: CodexNativeRestoreResult;
+  status?: number;
+  /** #7563: run the stop as a connected client of this transport. */
+  clientTransport?: "hub" | "link";
+  siblingRecord?: "standalone" | "link";
+  serverTeardown?: boolean;
+  json?: boolean;
+  clientServer?: "legacy" | "unknown" | "wrong-pid" | "malformed" | "oversized" | "unauthorized" | "redirect" | "body-timeout";
+  managerCascades?: boolean;
+  managerBound?: boolean;
+  discoveryMiss?: boolean;
+  standaloneRecord?: "legacy" | "current" | "stale" | "wrong-home" | "wrong-port" | "client-role";
+  legacyWindowsEvidence?: "match" | "foreign-sid" | "wrong-argv" | "wrong-pid" | "wrong-port" | "wrong-bind" | "client-role" | "serving-generation";
+  guarded?: boolean;
+  /** #7771: the guarded path on a simulated win32, with a bound scheduler manager (separate child stop). */
+  windowsGuarded?: boolean;
+  /** Run the stop through the Windows checked-stop wiring on any host (it is always on, on a Windows host). */
+  windowsStopWiring?: boolean;
+  orphan?: boolean;
+  exitCleanup?: boolean;
+  nativeSignal?: boolean;
+  apiFailure?: boolean;
+  stopBodyFailure?: boolean;
+  proxyProbePort?: number;
+  alreadyStopped?: boolean;
+  staleRuntimeRecord?: boolean;
+  absence?: "dead" | "unknown" | "live";
+  managerState?: "inactive" | "active" | "unknown";
+  /** Commit a disconnect while the capability probe is in flight. */
+  disconnectDuringProbe?: boolean;
+  /** Return an attested native Child response, then leave only its on-disk runtime record. */
+  childExitsDuringProbe?: boolean;
+  /** Commit a hub connection while orphan discovery is in flight. */
+  connectDuringDiscovery?: boolean;
+  /** Commit a hub connection while the stop POST is in flight, before server teardown reads it. */
+  connectDuringPost?: boolean;
+  /** The client lifecycle lock is held elsewhere when the parent reaches its restore boundary. */
+  lifecycleBusy?: boolean;
+  connectAfterBoundary?: boolean;
+  pendingAfterBoundary?: boolean;
+  connectDuringRestore?: boolean;
+  connectAfterExitInspection?: boolean;
+  pendingAfterExitInspection?: boolean;
+  pendingAfterGrok?: boolean;
+  receiptClearBusy?: boolean;
+  /** #7423: run the stop the way an update that restarts the proxy runs it. */
+  handover?: boolean;
+  /** The runtime-port record is missing, so the stop can only record a guessed endpoint. */
+  noRuntimeRecord?: boolean;
+  /** Like the real readPid, report no PID once the process is gone (a manager stop exited it). */
+  deadPidReadsNull?: boolean;
+  /** #7771: simulate win32 and answer Part A (and Part B) of the checked Windows stop. */
+  windowsPartA?: "stopped" | "absent" | "survived" | "denied" | "unknown" | "unverified-budget";
+  windowsPartB?: "freed" | "survived" | "port-held-by-foreign" | "unconfirmed" | "unknown";
+  /**
+   * #7771: run the REAL Part A while this stop runs under this home's wrapper, with no task and
+   * no WinSW service registered, so the own-wrapper refusal has to answer for itself.
+   */
+  windowsPartAUnderOwnWrapper?: boolean;
+  windowsWinswStopped?: boolean;
+  windowsPartAReject?: boolean;
+};
+if (options.legacyWindowsEvidence) {
+  // Fake Windows command output at the OS boundary. The production SID, argv
+  // and listener readers and the standalone proof all run in this subprocess.
+  const evidence = options.legacyWindowsEvidence;
+  const record = { pid: 4242, port: 10100, hostname: "127.0.0.1",
+    ...(evidence === "client-role" ? { role: "client" as const } : {}),
+    ...(evidence === "serving-generation" ? { servingGeneration: "a".repeat(32) } : {}),
+  };
+  const { proveStandaloneStopRecord } = await import("../../src/cli/stop-restore");
+  const { setProcessCommandLinePlatformForTests } = await import("../../src/config/process-state");
+  const { setWindowsProcessNativeForTests } = await import("../../src/service/windows-process-native");
+  setWindowsProcessNativeForTests(null); // Exercise the mocked CIM fallback on Windows too.
+  setProcessCommandLinePlatformForTests("win32");
+  const windows = await import("../../src/lib/windows-elevation");
+  mock.module("../../src/lib/windows-elevation", () => ({ ...windows,
+    resolveTrustedWindowsSystemDirectory: () => "system",
+    resolveTrustedWindowsPowerShellExe: () => "powershell.exe",
+  }));
+  mock.module("node:child_process", () => ({ ...childProcess,
+    execFileSync(file: string, args: string[]) {
+      if (file.endsWith("netstat.exe")) {
+        const host = evidence === "wrong-bind" ? "0.0.0.0" : record.hostname;
+        const pid = evidence === "wrong-pid" ? 4243 : record.pid;
+        const port = evidence === "wrong-port" ? record.port + 1 : record.port;
+        return `TCP ${host}:${port} 0.0.0.0:0 LISTENING ${pid}\r\n`;
+      }
+      if (args.at(-1)?.includes("GetOwnerSid")) {
+        return evidence === "foreign-sid" ? "" : "639000000000000000\r\n";
+      }
+      if (file.endsWith("WMIC.exe")) {
+        const verb = evidence === "wrong-argv" ? 'status "start"' : "start";
+        return `CommandLine="C:\\Program Files\\Bun\\bun.exe" run "C:\\work tree\\src\\cli\\index.ts" ${verb}\r\n`;
+      }
+      throw new Error(`Unexpected Windows evidence command: ${file}`);
+    },
+  }));
+  Object.defineProperty(process, "platform", { value: "win32" });
+  console.log(JSON.stringify({ proved: Boolean(await proveStandaloneStopRecord(record, record.pid, [])) }));
+  process.exit(0);
+}
+if (options.proxyProbePort) {
+  // Deliberately bypass every fixture mock for the real proxy-environment regression.
+  const origin = `http://127.0.0.1:${options.proxyProbePort}`;
+  const control = await fetch(`${origin}/__proxy-control`, { signal: AbortSignal.timeout(2000) }).then(r => r.json());
+  if (control.via !== "proxy") throw new Error("proxy environment control was not intercepted");
+  writeFileSync(join(process.env.EASYPROXY_HOME!, "runtime-port.json"), JSON.stringify({
+    pid: process.pid, port: options.proxyProbePort, hostname: "127.0.0.1", attestationSecret: ATTESTATION_SECRET,
+  }));
+  const { assertConnectedClientStopSupported } = await import("../../src/cli/stop-restore");
+  await assertConnectedClientStopSupported({ pid: process.pid, port: options.proxyProbePort, hostname: "127.0.0.1" });
+  const { stopProxyGracefully } = await import("../../src/lib/process-control");
+  // Exercise the CLI's shared transport default; a Link Child must stay direct too.
+  const result = await stopProxyGracefully(process.pid, {
+    runtimeEndpoint: { port: options.proxyProbePort, hostname: "127.0.0.1" },
+    waitExit: () => true,
+  });
+  if (result !== true) throw new Error("direct stop request failed");
+  console.log(JSON.stringify({ ok: true, control: control.via }));
+  process.exit(0);
+}
+const home = process.env.EASYPROXY_HOME!;
+const publishPending = () => writeFileSync(join(home, "client-connect-pending"), "b".repeat(64) + "\n");
+function writeHubConnection(): void {
+  const serverUrl = "https://hub.example.test";
+  writeFileSync(join(home, "config.json"), JSON.stringify({ runtimeRole: "client", providers: {}, defaultProvider: "openai", client: {
+    serverUrl, managementUrl: serverUrl, managementTransport: "direct", transport: "hub", selectedClients: ["codex"],
+    tokenEnv: "EASYPROXY_API_AUTH_TOKEN", apiKeyId: "fixture-client", tokenFingerprint: "a".repeat(64),
+    protocolVersion: 1, connectedAt: "2026-10-01T00:00:00.000Z",
+  } }));
+}
+// The lock's own suite covers SQLite exclusion; here only "held" versus "busy" matters, and the
+// real lock would harden a directory in the host user's runtime root.
+const lifecycle = await import("../../src/client/lifecycle-lock");
+mock.module("../../src/client/lifecycle-lock", () => ({ ...lifecycle,
+  withClientLifecycleSync: (work: Parameters<typeof lifecycle.withClientLifecycleSync>[0]) => {
+    // These scenarios target the restore boundary after termination, not the new
+    // connected-Link file preflight while its listener is still alive.
+    if (options.lifecycleBusy && !alive) throw new Error("client_lifecycle_busy");
+    calls.lifecycle += 1;
+    const value = work(Object.freeze({}) as Parameters<typeof work>[0]);
+    if (options.connectAfterBoundary && !alive) queueMicrotask(writeHubConnection);
+    if (options.pendingAfterBoundary && !alive) queueMicrotask(publishPending);
+    return value;
+  },
+}));
+const endpoint = { hostname: "127.0.0.1", port: 10100 };
+const fakePid = 4242;
+const calls = { killed: 0, native: 0, grok: 0, cleared: 0, exited: 0, service: 0, lifecycle: 0, partB: 0, reclaim: 0, systemEnv: 0 };
+const signals: string[] = [];
+/** The timeout each reclaimListenPort call asked for; #7771 makes a skipped 15 s wait visible. */
+const reclaimTimeouts: number[] = [];
+/** The Part A record each stop POST's receipt carried when the POST was sent (#7771). */
+const postPartA: unknown[] = [];
+let receiptBlocker: import("bun:sqlite").Database | undefined;
+const { Database } = await import("bun:sqlite");
+const { prepareConfigMutationDatabasePathForWrite } = await import("../../src/config");
+const urls: string[] = [];
+const probes: string[] = [];
+const absenceProbes: number[] = [];
+const transports: string[] = [];
+let viaDirect = false;
+const unexpectedIo: string[] = [];
+let alive = !options.alreadyStopped;
+let nonce: string | undefined;
+
+function unexpected(operation: string): never {
+  unexpectedIo.push(operation);
+  throw new Error(`unexpected external I/O in parent stop fixture: ${operation}`);
+}
+
+// Neither an accidental POSIX signal nor the Windows taskkill fallback may reach the host.
+process.kill = ((pid: number, signal?: number | NodeJS.Signals) => {
+  if (options.discoveryMiss && pid === fakePid && (signal === "SIGTERM" || signal === "SIGKILL")) {
+    signals.push(signal);
+    calls.killed++;
+    if (signal === "SIGKILL" || options.standaloneRecord) alive = false;
+    return true;
+  }
+  if (options.nativeSignal && pid === fakePid && signal === "SIGTERM") { calls.killed++; alive = false; return true; }
+  if (pid !== fakePid || signal !== 0) {
+    calls.killed += 1;
+    return unexpected(`process.kill(${pid}, ${signal})`);
+  }
+  if (alive) return true;
+  calls.exited += 1;
+  throw Object.assign(new Error("fixture process exited"), { code: "ESRCH" });
+}) as typeof process.kill;
+mock.module("node:child_process", () => ({
+  ...childProcess,
+  execFileSync: (file: string) => {
+    if (options.discoveryMiss && file.endsWith("taskkill.exe")) { signals.push("taskkill /F"); calls.killed++; alive = false; return Buffer.alloc(0); }
+    if (options.nativeSignal && file.endsWith("taskkill.exe")) { calls.killed++; alive = false; return Buffer.alloc(0); }
+    calls.killed += 1; return unexpected("execFileSync");
+  },
+}));
+
+const receipts = await import("../../src/config/pending-teardown");
+if (options.windowsStopWiring) (await import("../../src/cli/stop-windows-checked")).resetEpxWindowsStopForTests("win32");
+process.on("exit", () => {
+  receiptBlocker?.close();
+  writeFileSync(join(home, "parent-stop-result.json"), JSON.stringify({
+    calls, signals, reclaimTimeouts, urls, probes, absenceProbes, transports, unexpectedIo, nonce, postPartA,
+    receiptExists: nonce !== undefined && existsSync(receipts.pendingTeardownPathFor(nonce)),
+  }));
+});
+const claimReceipt = receipts.claimPendingTeardown;
+const clearReceipt = receipts.clearPendingTeardown;
+mock.module("../../src/config/pending-teardown", () => ({
+  ...receipts,
+  claimPendingTeardown: (...args: Parameters<typeof claimReceipt>) => {
+    if (!options.receipt) throw new Error("receipt storage unavailable");
+    const receipt = claimReceipt(...args);
+    nonce = receipt.nonce;
+    return receipt;
+  },
+  clearPendingTeardown: (value: string) => { calls.cleared += 1; return clearReceipt(value); },
+}));
+
+const state = await import("../../src/config/process-state");
+// The human stop notice must not inspect the host process with this fixture's synthetic PID.
+const supervision = await import("../../src/service/desktop-supervision.mjs");
+mock.module("../../src/service/desktop-supervision.mjs", () => ({
+  ...supervision,
+  inspectDesktopSupervision: () => ({ kind: "none" }),
+}));
+const readRuntime = state.readRuntimePort;
+if ((!options.alreadyStopped || options.staleRuntimeRecord) && !options.noRuntimeRecord) {
+  const { linkStopConnectionOwner, readClientConnectionState } = await import("../../src/client/state");
+  const connection = readClientConnectionState();
+  const clientLinkOwner = connection.kind === "connected" && options.siblingRecord !== "standalone"
+    ? linkStopConnectionOwner(connection.value) ?? null : undefined;
+  const record = { ...endpoint, pid: fakePid, ...(options.siblingRecord ? { siblingOfPort: 10101 } : {}) };
+  writeFileSync(join(home, "runtime-port.json"), JSON.stringify(options.standaloneRecord === "legacy"
+    || options.standaloneRecord === "wrong-home" || options.standaloneRecord === "wrong-port" ? record : {
+      ...record, attestationSecret: ATTESTATION_SECRET, clientLinkOwner,
+      startTime: options.standaloneRecord ? options.standaloneRecord === "stale" ? "fixture:previous-runtime" : "fixture:serving-runtime" : undefined,
+      role: options.standaloneRecord === "client-role" ? "client" : undefined,
+    }));
+}
+const stopOwner = await import("../../src/client/stop-teardown-owner");
+mock.module("../../src/client/stop-teardown-owner", () => ({ ...stopOwner,
+  readClientStopProcessStart: (pid: number) => pid === process.pid ? "fixture:stop-owner"
+    : pid === fakePid && alive ? "fixture:serving-runtime" : undefined,
+  readLegacyStopProcessHome: () => options.standaloneRecord === "wrong-home" ? join(home, "other") : home,
+}));
+mock.module("../../src/config/process-state", () => ({
+  ...state,
+  readPid: () => options.orphan || options.alreadyStopped || (options.deadPidReadsNull && !alive) ? null : fakePid,
+  readProcessCommandLine: (pid: number) => pid === fakePid && alive ? "epx start" : undefined,
+  readRuntimePort: (pid?: number) => (options.alreadyStopped && !options.staleRuntimeRecord) || options.noRuntimeRecord ? null : readRuntime(pid),
+  removePid() {},
+  removeRuntimePort: options.siblingRecord ? state.removeRuntimePort : () => {},
+}));
+const service = await import("../../src/service");
+mock.module("../../src/service", () => ({ ...service, stopServiceIfInstalledDetailed: () => {
+  calls.service++;
+  if (options.managerCascades) { alive = false; return "stopped"; }
+  return "absent";
+} }));
+if (options.discoveryMiss || options.managerBound) {
+  const guarded = await import("../../src/service/guarded-manager-target");
+  mock.module("../../src/service/guarded-manager-target", () => ({ ...guarded,
+    inspectGuardedManagerTarget: (pid: number) => options.managerBound && pid === fakePid && alive
+      ? { kind: "bound", pid, managerPid: pid, backend: "systemd", childNeedsSeparateStop: false }
+      : { kind: "unknown", reason: "fixture manager does not own the tracked PID" },
+  }));
+}
+if (options.guarded) {
+  const approval = { pid: fakePid, ...endpoint, configHome: home, cliVersion: "2.93.0", compatibilityToken: "fixture" };
+  const manager = options.windowsGuarded
+    ? { kind: "bound", pid: fakePid, managerPid: fakePid + 1, backend: "scheduler", childNeedsSeparateStop: true }
+    : { kind: "bound", pid: fakePid, managerPid: fakePid + 1, backend: "launchd" };
+  const stopApproval = await import("../../src/cli/stop-approval");
+  mock.module("../../src/cli/stop-approval", () => ({ ...stopApproval,
+    parseStopApproval: () => ({ ok: true, json: true, approval }),
+    runApprovedStop: async (_a: unknown, _r: unknown, _f: unknown, _m: unknown, stop: (s: unknown) => unknown) => stop({ approval, manager }),
+    settleApprovedTarget: async () => !alive,
+  }));
+  const guarded = await import("../../src/service/guarded-manager-target");
+  mock.module("../../src/service/guarded-manager-target", () => ({ ...guarded,
+    inspectGuardedManagerTarget: () => manager,
+    observeGuardedManagerStopped: () => (options.windowsGuarded ? "inactive" : "stopped"),
+  }));
+}
+if (options.orphan || options.alreadyStopped || options.discoveryMiss) {
+  const liveness = await import("../../src/server/proxy-liveness");
+  mock.module("../../src/server/proxy-liveness", () => ({ ...liveness,
+    findLiveProxy: async () => {
+      if (options.connectDuringDiscovery) writeHubConnection();
+      return alive && !options.discoveryMiss ? { ...endpoint, pid: fakePid, source: "config" } : null;
+    },
+    proveLiveProxyOwnedByHome: async () => "proven",
+    probeEndpointLiveness: async (target: { port: number }) => { absenceProbes.push(target.port); return options.absence ?? "dead"; },
+  }));
+}
+if (options.alreadyStopped) {
+  const guarded = await import("../../src/service/guarded-manager-target");
+  mock.module("../../src/service/guarded-manager-target", () => ({ ...guarded,
+    observeGuardedManagerStopped: async () => options.managerState ?? "inactive",
+  }));
+}
+const native = await import("../../src/codex/inject");
+mock.module("../../src/codex/inject", () => ({
+  ...native,
+  restoreNativeCodexAsync: async (restoreOptions?: { withWriteGuard?: <T>(write: () => T) => T }) => {
+    await Promise.resolve(); // The real restore awaits config-file/N acquisition before committing.
+    if (options.connectDuringRestore) writeHubConnection();
+    const write = () => { calls.native += 1; return options.restore; };
+    return restoreOptions?.withWriteGuard ? restoreOptions.withWriteGuard(write) : write();
+  },
+}));
+const grok = await import("../../src/grok/inject");
+mock.module("../../src/grok/inject", () => ({
+  ...grok,
+  stripGrokConfig: () => {
+    calls.grok += 1;
+    if (options.pendingAfterGrok) queueMicrotask(publishPending);
+    if (options.receiptClearBusy) queueMicrotask(() => {
+      receiptBlocker = new Database(prepareConfigMutationDatabasePathForWrite(), { readwrite: true, create: true });
+      receiptBlocker.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
+    });
+    return { ok: true, changed: true, message: "Grok restored" };
+  },
+}));
+const systemEnv = await import("../../src/server/system-env");
+mock.module("../../src/server/system-env", () => ({ ...systemEnv, revertSystemEnv() { calls.systemEnv++; } }));
+const portReclaim = await import("../../src/server/port-reclaim");
+mock.module("../../src/server/port-reclaim", () => ({ ...portReclaim,
+  inspectIpv4LoopbackListener: async () => ({ kind: options.standaloneRecord === "wrong-port" ? "mismatch" : "match", elapsedMs: 0 }),
+  ownsLegacyStopBind: async () => options.standaloneRecord !== "wrong-port",
+  reclaimListenPort: async (_port: number, _host: string, options?: { timeoutMs?: number }) => {
+    calls.reclaim += 1;
+    reclaimTimeouts.push(options?.timeoutMs ?? 0);
+  },
+}));
+// Only shim preflight is unrelated to this stop contract; parsing and dispatch stay real.
+mock.module("../../src/cli/codex-shim-autorestore", () => ({ async maybeAutoRestoreCodexShimAsync() {} }));
+
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const url = String(input);
+  if (init?.method === "GET") {
+    probes.push(url);
+    if (init.redirect !== "error") return unexpected("redirectable compatibility probe");
+    const requestHeaders = new Headers(init.headers);
+    if (requestHeaders.has("x-easyproxy-api-key")) return unexpected("credential on compatibility probe");
+    const nonce = requestHeaders.get(url.endsWith("/healthz") ? LOCAL_ATTESTATION_CHALLENGE_HEADER : LOCAL_MANAGEMENT_NONCE_HEADER);
+    const proof = nonce ? createLocalAttestationProof(ATTESTATION_SECRET, nonce, fakePid, endpoint.port) : null;
+    const headers = proof ? { [LOCAL_ATTESTATION_PROOF_HEADER]: proof } : undefined;
+    if (url.endsWith("/healthz")) {
+      if (options.standaloneRecord) throw new Error("fixture listener cannot answer health");
+      if (options.childExitsDuringProbe) alive = false;
+      return Response.json({ service: "easyproxy", version: "2.93.0", pid: fakePid,
+        ...(options.clientTransport === "link" && options.siblingRecord !== "standalone" ? { linkStopFence: true } : {}),
+        ...(options.clientTransport && options.siblingRecord !== "standalone" && !options.serverTeardown && !options.clientServer ? { role: "client" } : {}) }, { headers });
+    }
+    if (!url.endsWith("/api/stop")) return unexpected(`GET ${url}`);
+    if (options.clientServer === "unknown") throw new Error("fixture probe unavailable");
+    if (options.clientServer === "legacy") return Response.json({ error: "not found" }, { status: 404 });
+    if (options.clientServer === "unauthorized") return new Response(null, { status: 401 });
+    if (options.clientServer === "redirect") return Response.redirect("http://example.test/", 302);
+    if (options.clientServer === "malformed") return new Response("{bad json", { headers });
+    if (options.clientServer === "oversized") return new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(4097)); c.close(); } }), { headers });
+    if (options.clientServer === "body-timeout") return new Response(new ReadableStream({ start(c) {
+      init.signal?.addEventListener("abort", () => c.error(init.signal!.reason), { once: true });
+    } }), { headers });
+    if (options.disconnectDuringProbe) {
+      writeFileSync(join(home, "config.json"), JSON.stringify({ runtimeRole: "standalone", providers: {}, defaultProvider: "openai" }));
+    }
+    return Response.json({ schema: "epx-stop-capabilities/1", connectedClientOwnership: true,
+      pid: options.clientServer === "wrong-pid" ? fakePid + 1 : fakePid }, { headers });
+  }
+  if (!url.startsWith("http://127.0.0.1:10100/api/stop")) return unexpected(`fetch(${url})`);
+  urls.push(url);
+  postPartA.push(receipts.pendingTeardownPartA(new URL(url).searchParams.get("teardownNonce")));
+  transports.push(viaDirect ? "direct" : "global");
+  if (options.standaloneRecord === "current") throw new Error("fixture listener cannot answer stop");
+  if (options.connectDuringPost) writeHubConnection();
+  const body = options.serverTeardown && !options.apiFailure
+    ? await (await import("../../src/server/stop-teardown")).performStopTeardown(new URL(url))
+    : options.response;
+  if (!options.nativeSignal && (options.status ?? 200) !== 409) alive = false;
+  return Response.json(body, { status: options.status ?? 200 });
+}) as typeof fetch;
+
+// Only the real proxy-environment mode above exercises TCP; other cases inject responses.
+const direct = await import("../../src/server/direct-local-http");
+mock.module("../../src/server/direct-local-http", () => ({ ...direct,
+  directLocalHttpFetch: async (input: string | URL | Request, init?: RequestInit, io?: { onResponseStatus?: (status: number) => void }) => {
+    if (!alive && String(input).endsWith("/healthz")) throw Object.assign(new Error("fixture listener closed"), { code: "ECONNREFUSED" });
+    if (options.stopBodyFailure && init?.method === "POST") {
+      urls.push(String(input));
+      io?.onResponseStatus?.(409);
+      throw new Error("fixture truncated stop refusal");
+    }
+    viaDirect = true;
+    try {
+      return globalThis.fetch(input, { ...init, method: init?.method ?? "GET", redirect: "error" });
+    } finally {
+      viaDirect = false;
+    }
+  },
+}));
+
+process.argv = [process.execPath, "epx", "stop", ...(options.json ? ["--json"] : [])];
+if (options.windowsPartA || options.windowsPartAReject) {
+  // The stop wiring acts for win32 while the host stays untouched: Part A and Part B answer here.
+  (await import("../../src/cli/stop-windows-checked")).resetEpxWindowsStopForTests("win32");
+  const { partAResult, partBResult } = await import("../helpers/windows-stop-caller-fixtures");
+  (await import("../../src/service/windows-service-stop")).setWindowsServiceStopHooksForTests({
+    partA: async () => { calls.service++; if (options.windowsPartAReject) throw new Error("wrapper watch rejected"); return partAResult(options.windowsPartA!); },
+    partB: async () => { calls.partB++; return partBResult(options.windowsPartB ?? "freed"); },
+    // The guarded inspection reads evidence before it asks the mocked manager; nothing may
+    // reach the host's process table.
+    ...(options.guarded ? { snapshot: async () => [], schedulePid: async () => null } : {}),
+  });
+}
+if (options.windowsPartAUnderOwnWrapper) {
+  // This stop runs under this home's wrapper: epx stop <- cmd.exe (.cmd) <- wscript.exe (.vbs),
+  // with nothing registered. The real Part A answers the own-wrapper refusal.
+  (await import("../../src/cli/stop-windows-checked")).resetEpxWindowsStopForTests("win32");
+  const { PATHS, launcher, loop } = await import("../helpers/windows-checked-stop-fixtures");
+  const self = { pid: process.pid, parentPid: 30, name: "epx.exe", commandLine: "epx stop", startTime: 6_000 };
+  (await import("../../src/service/windows-service-stop")).setWindowsServiceStopHooksForTests({
+    liveDeps: () => ({
+      canonicalPaths: PATHS, childPid: null, selfPid: process.pid,
+      probeScheduler: () => { calls.service++; return { status: "absent" }; }, probeWinsw: () => options.windowsWinswStopped ? "stopped" : "nonexistent",
+      enumerate: () => [launcher(), loop(), self],
+      scheduleServicePid: () => null, endTask: () => unexpected("schtasks /end"), taskState: () => "not-running",
+      winswStop: () => "sent", winswState: () => "stopped", proxyAlive: () => false,
+      openWatch: () => ({ status: "gone" }),
+      terminate: () => unexpected("terminate"),
+    }),
+  });
+}
+if (options.handover) process.env.EPX_UPDATE_TEARDOWN_HANDOVER = "1";
+// The Windows stop wiring (on a Windows host, or windowsStopWiring) stops the manager through the checked
+// stop's Part A, not the Detailed form faked above; its real Part A probes Task Scheduler and WinSW and reads the
+// proxy's command line through PowerShell or WMIC, which dev run 43508374033 (windows 5/14) caught as unexpected
+// execFileSync calls. A case without a Part A scenario of its own gets the same answer the Detailed fake gives:
+// no registered manager, or one that took the proxy down with it.
+const windowsWiring = process.platform === "win32" || options.windowsStopWiring === true;
+if (windowsWiring && !options.windowsPartA && !options.windowsPartAReject && !options.windowsPartAUnderOwnWrapper) {
+  const { partAResult, partBResult } = await import("../helpers/windows-stop-caller-fixtures");
+  (await import("../../src/service/windows-service-stop")).setWindowsServiceStopHooksForTests({
+    partA: async () => {
+      calls.service++;
+      if (options.managerCascades) { alive = false; return partAResult("stopped", { bound: [], terminated: [] }); }
+      return partAResult("absent");
+    },
+    partB: async () => { calls.partB++; return partBResult("freed"); },
+  });
+}
+if (options.exitCleanup) {
+  delete process.env.EPX_SERVICE;
+  // Execute the actual startup exit closure, with only host/config effects replaced.
+  const { repoPath } = await import("../helpers/repo-root");
+  const source = readFileSync(repoPath("src", "cli", "index.ts"), "utf8");
+  const from = source.indexOf("  const syncCleanup = () => {");
+  const to = source.indexOf("\n  let shuttingDown", from);
+  if (from < 0 || to < 0) throw new Error("startup cleanup closure missing");
+  const restore = await import("../../src/cli/stop-restore");
+  const dispatch = await import("../../src/cli/dispatch");
+  const bindings = {
+    catalogHealer: null, routingHealer: null, guardian: { stop() {} }, historyGuardian: null, healthSentinel: null,
+    siblingStart: false, isRecyclingForExit: () => false, decideStartExitTeardown: dispatch.decideStartExitTeardown,
+    preserveConnectedClientRoutingOnExit: (teardown: Parameters<typeof restore.preserveConnectedClientRoutingOnExit>[0]) => {
+      const decision = restore.preserveConnectedClientRoutingOnExit(teardown);
+      if (options.connectAfterExitInspection) writeHubConnection();
+      if (options.pendingAfterExitInspection) publishPending();
+      return decision;
+    },
+    stopRestoreWriteGuard: (await import("../../src/cli/stop-restore-guard")).stopRestoreWriteGuard,
+    revertSystemEnv() {}, removePid() {}, removeRuntimePort() {}, serviceEnvironmentOwnedHere: () => true,
+    getCodexHome: () => "fixture", codexHomeIsAbsent: () => false,
+    restoreNativeCodex: (restoreOptions?: { withWriteGuard?: <T>(write: () => T) => T }) => {
+      const write = () => { calls.native++; return options.restore; };
+      return restoreOptions?.withWriteGuard ? restoreOptions.withWriteGuard(write) : write();
+    },
+    stripGrokConfig: () => { calls.grok++; return { ok: true, changed: true, message: "stripped" }; },
+  };
+  const cleanup = new Function(...Object.keys(bindings), "let cleaned = false; let cleanupSucceeded = true;\n" + source.slice(from, to) + "\nreturn syncCleanup();");
+  const succeeded = cleanup(...Object.values(bindings));
+  process.exit(succeeded ? 0 : 1);
+}
+await import("../../src/cli/index");

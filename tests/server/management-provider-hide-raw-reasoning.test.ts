@@ -1,0 +1,125 @@
+/** Provider display policy survives dashboard saves and is editable through PATCH. */
+import { afterEach, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadConfig, saveConfig } from "../../src/config";
+import { providerConfigSchema } from "../../src/config/schema/leaf-validators";
+import * as destinationPolicy from "../../src/lib/destination-policy";
+import { startServer } from "../../src/server";
+import type { EpxProviderConfig } from "../../src/types";
+import { managementFetch as fetch } from "../helpers/management-auth";
+import { config } from "../helpers/management-relative-send-paths";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+
+setDefaultTimeout(60_000);
+
+const BASE_URL = "https://relay.example/v1";
+const previousHome = process.env.EASYPROXY_HOME;
+let home = "";
+
+afterEach(() => {
+  if (previousHome === undefined) delete process.env.EASYPROXY_HOME;
+  else process.env.EASYPROXY_HOME = previousHome;
+  if (home) removeTreeWithRetry(home);
+  home = "";
+});
+
+async function withServer(provider: EpxProviderConfig, run: (url: URL) => Promise<void>): Promise<void> {
+  home = mkdtempSync(join(tmpdir(), "epx-provider-hide-raw-reasoning-"));
+  process.env.EASYPROXY_HOME = home;
+  const base = config("127.0.0.1");
+  saveConfig({ ...base, providers: { ...base.providers, relay: provider } });
+  const server = startServer(0);
+  const resolved = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+  try {
+    await run(server.url);
+  } finally {
+    resolved.mockRestore();
+    await server.stop(true);
+  }
+}
+
+function send(url: URL, path: string, method: "PATCH" | "POST", body: unknown): Promise<Response> {
+  return fetch(new URL(path, url), {
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe.each(["hideRawReasoning", "rawReasoningAsSummary"] as const)("%s management saves", field => {
+  function provider(value?: boolean): EpxProviderConfig {
+    return { adapter: "openai-chat", baseUrl: BASE_URL, ...(value === undefined ? {} : { [field]: value }) };
+  }
+  test("same-destination POST keeps an omitted true on disk", async () => {
+    await withServer(provider(true), async url => {
+      const response = await send(url, "/api/providers", "POST", {
+        name: "relay",
+        provider: { adapter: "openai-chat", baseUrl: BASE_URL, defaultModel: "relay-thinker" },
+      });
+      expect(response.status).toBe(200);
+      expect(loadConfig().providers.relay).toMatchObject({ defaultModel: "relay-thinker", [field]: true });
+    });
+  });
+
+  test("destination-move POST keeps an omitted true on disk", async () => {
+    await withServer(provider(true), async url => {
+      const movedUrl = "https://other-relay.example/v1";
+      const response = await send(url, "/api/providers", "POST", {
+        name: "relay",
+        provider: { adapter: "openai-chat", baseUrl: movedUrl },
+      });
+      expect(response.status).toBe(200);
+      expect(loadConfig().providers.relay).toMatchObject({ baseUrl: movedUrl, [field]: true });
+    });
+  });
+
+  test("POST false overrides stored true", async () => {
+    await withServer(provider(true), async url => {
+      const response = await send(url, "/api/providers", "POST", {
+        name: "relay",
+        provider: { adapter: "openai-chat", baseUrl: BASE_URL, [field]: false },
+      });
+      expect(response.status).toBe(200);
+      expect(loadConfig().providers.relay?.[field]).toBe(false);
+    });
+  });
+
+  test("POST rejects a string value", async () => {
+    await withServer(provider(), async url => {
+      const response = await send(url, "/api/providers", "POST", {
+        name: "relay",
+        provider: { adapter: "openai-chat", baseUrl: BASE_URL, [field]: "true" },
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: field + " must be a boolean" });
+      expect(loadConfig().providers.relay).not.toHaveProperty(field);
+    });
+  });
+
+  test("PATCH with only the display field sets then clears it on disk", async () => {
+    await withServer(provider(), async url => {
+      const set = await send(url, "/api/providers?name=relay", "PATCH", { [field]: true });
+      expect(set.status).toBe(200);
+      expect(loadConfig().providers.relay?.[field]).toBe(true);
+      const clear = await send(url, "/api/providers?name=relay", "PATCH", { [field]: null });
+      expect(clear.status).toBe(200);
+      expect(loadConfig().providers.relay).not.toHaveProperty(field);
+    });
+  });
+
+  test("PATCH rejects a string value", async () => {
+    await withServer(provider(true), async url => {
+      const response = await send(url, "/api/providers?name=relay", "PATCH", { [field]: "yes" });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: field + " must be a boolean" });
+      expect(loadConfig().providers.relay?.[field]).toBe(true);
+    });
+  });
+
+  test("provider schema rejects a string instead of passing it through at config load", () => {
+    expect(providerConfigSchema.safeParse({ ...provider(), [field]: "true" }).success).toBe(false);
+    expect(providerConfigSchema.safeParse(provider(true)).success).toBe(true);
+  });
+});

@@ -1,0 +1,294 @@
+import { DEFAULT_VIDEO_MODEL } from "./video-capabilities";
+import type { EpxConfig, EpxParsedRequest, EpxProviderConfig } from "../types";
+import { toolChoiceToolPredicate } from "../types";
+import type { ImageBridgePlan, VideoBridgePlan } from "./types";
+import { resolveProviderApiKey } from "../providers/key-store";
+import { isProviderApiKeyPaused } from "../providers/api-key-pause-state";
+import { isKeychainReference, keychainReferenceBelongsToProvider } from "../providers/api-key-resolve";
+import { getValidAccessToken } from "../oauth/index";
+import { getProviderRegistryEntry } from "../providers/registry";
+import { providerDestinationConfigError } from "../lib/destination-policy";
+import { IMAGE_GEN_TOOL_NAME, VIDEO_GEN_TOOL_NAME, isVideoGenName } from "./synthetic-tool";
+import type { VideoProviderAuth } from "./xai-video-client";
+
+import { XAI_DEFAULT_IMAGE_MODEL } from "./xai-client";
+/** Absolute ceiling for `images.timeoutMs` (matches /v1/images relay budget). */
+export const MAX_IMAGE_TIMEOUT_MS = 300_000;
+
+function clampImageTimeoutMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.max(1, Math.min(MAX_IMAGE_TIMEOUT_MS, Math.floor(value)));
+}
+
+export function findXaiProvider(config: EpxConfig): { name: string; provider: EpxProviderConfig } | undefined {
+  // Primary: well-known name "xai"
+  const xai = config.providers["xai"];
+  if (xai && xai.disabled !== true) return { name: "xai", provider: xai };
+  // Fallback: hostname match for custom-named xAI configs
+  for (const [name, p] of Object.entries(config.providers)) {
+    if (p.disabled) continue;
+    try {
+      const host = new URL(p.baseUrl).hostname;
+      if (host === "api.x.ai" || host === "cli-chat-proxy.grok.com") return { name, provider: p };
+    } catch { /* invalid baseUrl */ }
+  }
+  return undefined;
+}
+
+/**
+ * Image Bridge fulfillment talks to the public Images API on api.x.ai with a Bearer API key.
+ * OAuth / Grok CLI proxy transport is not used here (that path is chat-oriented and not a
+ * supported Images transport), so oauth-only configs deliberately do not arm the bridge.
+ */
+export function resolveXaiImageApiKey(provider: EpxProviderConfig): string | undefined {
+  if (provider.authMode === "oauth") return undefined;
+  const apiKey = resolveProviderApiKey(provider.apiKey)?.trim();
+  return apiKey || undefined;
+}
+
+/** Token for the /v1/images → Imagine relay. OAuth reuses the Grok CLI grant. */
+export async function resolveXaiImageAuthToken(provider: EpxProviderConfig): Promise<string | undefined> {
+  if (provider.authMode === "oauth") {
+    try {
+      const token = (await getValidAccessToken("xai"))?.trim();
+      return token || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return resolveXaiImageApiKey(provider);
+}
+
+export async function planImageBridge(
+  config: EpxConfig,
+  parsed: EpxParsedRequest,
+  routedProvider: EpxProviderConfig,
+): Promise<ImageBridgePlan | undefined> {
+  if (config.images?.bridgeEnabled !== true) return undefined;
+  if (!parsed._imageGeneration) return undefined;
+  const toolAllowed = toolChoiceToolPredicate(parsed.options.toolChoice);
+  const toolNames = new Set([...parsed._imageGeneration.toolNames].filter(name => toolAllowed({ name })));
+  if (toolAllowed({ name: IMAGE_GEN_TOOL_NAME })) toolNames.add(IMAGE_GEN_TOOL_NAME);
+  if (toolNames.size === 0) return undefined;
+  // Responses advertises and rewrites authorized aliases to this synthetic name, so the loop
+  // must always intercept it once any image-generation name has armed the bridge.
+  toolNames.add(IMAGE_GEN_TOOL_NAME);
+  // Don't intercept for OpenAI native passthrough
+  const host = (() => { try { return new URL(routedProvider.baseUrl).hostname; } catch { return ""; } })();
+  if (host === "api.openai.com") return undefined;
+  const found = findXaiProvider(config);
+  if (!found) return undefined;
+  const token = resolveXaiImageApiKey(found.provider);
+  if (!token) return undefined;
+  // Pin the baseUrl to the registry entry, ignoring any config-level baseUrl override.
+  const registryEntry = getProviderRegistryEntry("xai");
+  const pinnedBaseUrl = (registryEntry?.baseUrl ?? "https://api.x.ai/v1").replace(/\/+$/, "");
+  // The synthetic tool injected into the conversation is named IMAGE_GEN_TOOL_NAME,
+  // which is what the model will actually call. toolNames also retains authorized hosted aliases.
+  const original = parsed._imageGeneration.originalTool;
+  const hostedSize = typeof original?.size === "string" ? original.size : undefined;
+  const hostedQuality = typeof original?.quality === "string" ? original.quality : undefined;
+  const timeoutMs = clampImageTimeoutMs(config.images?.timeoutMs);
+  const keepRaw = config.images?.artifactsKeepCount;
+  const artifactsKeepCount =
+    typeof keepRaw === "number" && Number.isFinite(keepRaw) ? Math.floor(keepRaw) : undefined;
+  return {
+    provider: found.provider,
+    auth: { baseUrl: pinnedBaseUrl, token },
+    model: config.images?.bridgeModel ?? XAI_DEFAULT_IMAGE_MODEL,
+    toolNames,
+    ...(hostedSize ? { defaultSize: hostedSize } : {}),
+    ...(hostedQuality ? { defaultQuality: hostedQuality } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(artifactsKeepCount !== undefined ? { artifactsKeepCount } : {}),
+  };
+}
+
+const XAI_HOSTS = new Set(["api.x.ai", "cli-chat-proxy.grok.com"]);
+
+function pinnedXaiBaseUrl(): string {
+  return (getProviderRegistryEntry("xai")?.baseUrl ?? "https://api.x.ai/v1").replace(/\/+$/, "");
+}
+
+function hostnameOf(baseUrl: string): string | undefined {
+  try { return new URL(baseUrl).hostname.toLowerCase(); } catch { return undefined; }
+}
+
+/** Only these exact origins may receive an xAI credential: HTTPS, an xAI host, the default port. */
+function isTrustedXaiOrigin(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" && url.port === "" && XAI_HOSTS.has(url.hostname.toLowerCase());
+  } catch { return false; }
+}
+
+function isXaiRow(name: string, provider: EpxProviderConfig): boolean {
+  const host = hostnameOf(provider.baseUrl);
+  return name.trim().toLowerCase() === "xai" || (host !== undefined && XAI_HOSTS.has(host));
+}
+
+/**
+ * Whether a credential is recognizably xAI's, from any of: xAI's `xai-` key format, a key held by an
+ * xAI row (disabled rows and pooled keys included), or an environment reference whose name points at
+ * xAI/Grok. Such a key may reach only xAI. An arbitrary string with none of these marks cannot be
+ * attributed to xAI; foreign keychain references are refused earlier for every destination.
+ */
+function isXaiCredential(config: EpxConfig, reference: string | undefined, token: string): boolean {
+  if (token.toLowerCase().startsWith("xai-")) return true;
+  const ref = reference?.trim() ?? "";
+  if (/^\$\{?[A-Za-z0-9_]*(XAI|GROK)[A-Za-z0-9_]*\}?$/i.test(ref)) return true;
+  for (const [name, provider] of Object.entries(config.providers)) {
+    if (!isXaiRow(name, provider)) continue;
+    for (const candidate of [provider.apiKey, ...(provider.apiKeyPool ?? []).map(entry => entry.key)]) {
+      if (resolveProviderApiKey(candidate)?.trim() === token) return true;
+    }
+  }
+  return false;
+}
+
+export type VideoProviderSelection =
+  | { ok: true; providerName: string; provider: EpxProviderConfig; auth: VideoProviderAuth }
+  | { ok: false; error: string };
+
+/** The pinned xAI destination: registry host, no private-network opt-in, the row's egress route. */
+function pinnedXaiVideoAuth(provider: EpxProviderConfig, token: string): VideoProviderAuth {
+  return {
+    baseUrl: pinnedXaiBaseUrl(),
+    token,
+    providerName: "xai",
+    ...(provider.proxy !== undefined ? { proxy: provider.proxy } : {}),
+    ...(provider.noProxy !== undefined ? { noProxy: provider.noProxy } : {}),
+  };
+}
+
+/**
+ * Resolve an explicit `images.videoProvider`. Returns undefined when the setting is absent, which
+ * keeps the historical xAI discovery. Every other outcome is final: an unusable selection is an
+ * error and never falls back to xAI. The chosen row's own baseUrl and key are the only destination
+ * and credential; `xai` itself stays pinned to the registry host, and a recognizably xAI credential
+ * (see {@link isXaiCredential}) is refused for every origin except HTTPS xAI hosts on the default port.
+ */
+export function selectVideoProvider(config: EpxConfig): VideoProviderSelection | undefined {
+  const configured = config.images?.videoProvider;
+  if (configured === undefined) return undefined;
+  if (typeof configured !== "string" || !configured.trim()) {
+    return { ok: false, error: "images.videoProvider must be a nonblank provider name" };
+  }
+  const providerName = configured.trim();
+  const label = `images.videoProvider "${providerName}"`;
+  const isXai = providerName === "xai";
+  if (!isXai && getProviderRegistryEntry(providerName)) {
+    return { ok: false, error: `${label} must name a custom provider or xai` };
+  }
+  const provider = Object.prototype.hasOwnProperty.call(config.providers, providerName)
+    ? config.providers[providerName]
+    : undefined;
+  if (!provider) return { ok: false, error: `${label} is not configured` };
+  if (provider.disabled === true) return { ok: false, error: `${label} is disabled` };
+  if (provider.authMode !== undefined && provider.authMode !== "key") {
+    return { ok: false, error: `${label} must be an API-key provider` };
+  }
+  if (isProviderApiKeyPaused(provider)) {
+    return { ok: false, error: `${label} is paused: its active API key is disabled` };
+  }
+  // Never resolve another row's keychain secret, whatever the destination (xAI included).
+  if (isKeychainReference(provider.apiKey) && !keychainReferenceBelongsToProvider(provider.apiKey, providerName)) {
+    return { ok: false, error: `${label} references a keychain secret it does not own` };
+  }
+  let baseUrl: string;
+  if (isXai) {
+    baseUrl = pinnedXaiBaseUrl();
+  } else {
+    baseUrl = provider.baseUrl.trim().replace(/\/+$/, "");
+    let parsed: URL | undefined;
+    try { parsed = new URL(baseUrl); } catch { /* reported below */ }
+    // The client appends paths as strings, so a query or fragment would swallow them.
+    if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")
+      || parsed.username || parsed.password || parsed.search || parsed.hash
+      || baseUrl.includes("?") || baseUrl.includes("#")) {
+      return { ok: false, error: `${label} needs a plain http(s) baseUrl without credentials, query or fragment` };
+    }
+    const destinationError = providerDestinationConfigError(providerName, provider);
+    if (destinationError) return { ok: false, error: `${label} ${destinationError}` };
+  }
+  const token = resolveProviderApiKey(provider.apiKey)?.trim();
+  if (!token) return { ok: false, error: `${label} has no usable API key` };
+  if (!isXai && !isTrustedXaiOrigin(baseUrl) && isXaiCredential(config, provider.apiKey, token)) {
+    return { ok: false, error: `${label} uses an xAI API key; an xAI API key is only sent to xAI over HTTPS` };
+  }
+  // The literal check above runs at plan time; the outbound transport repeats it on the resolved
+  // addresses at connect time, so a hostname that resolves to loopback or private space needs the
+  // same allowPrivateNetwork opt-in.
+  const auth: VideoProviderAuth = isXai
+    ? pinnedXaiVideoAuth(provider, token)
+    : {
+      baseUrl,
+      token,
+      providerName,
+      ...(provider.allowPrivateNetwork === true ? { allowPrivateNetwork: true } : {}),
+      ...(provider.proxy !== undefined ? { proxy: provider.proxy } : {}),
+      ...(provider.noProxy !== undefined ? { noProxy: provider.noProxy } : {}),
+    };
+  return { ok: true, providerName, provider, auth };
+}
+
+/**
+ * Decide whether the video bridge should activate for this request. Unlike images, video
+ * generation has no hosted OpenAI tool type — the synthetic `video_gen` tool is unconditionally
+ * injected when `videoBridgeEnabled` is true. The bridge activates only when:
+ *   1. videoBridgeEnabled is explicitly true (opt-in)
+ *   2. the routed provider is NOT api.openai.com (native passthrough)
+ *   3. `images.videoProvider` names a usable provider, or, when it is unset, an xAI provider with a
+ *      valid API key is available. An unusable explicit provider yields an unavailable plan that
+ *      answers every call with its error; it never falls back to xAI.
+ */
+export async function planVideoBridge(
+  config: EpxConfig,
+  parsed: EpxParsedRequest,
+  routedProvider: EpxProviderConfig,
+): Promise<VideoBridgePlan | undefined> {
+  if (config.images?.videoBridgeEnabled !== true) return undefined;
+  const toolNames = new Set<string>();
+  toolNames.add(VIDEO_GEN_TOOL_NAME);
+  // Collect any existing function tools whose name matches a video_gen alias
+  // so the loop can intercept and replace them (image-bridge parity).
+  for (const t of parsed.context?.tools ?? []) {
+    // Skip namespaced tools — a namespaced MCP video_gen must not be intercepted.
+    if (t.namespace) continue;
+    const fnName = typeof t.name === "string" ? t.name
+      : (t as unknown as { function?: { name?: string } }).function?.name;
+    if (typeof fnName === "string" && isVideoGenName(fnName)) {
+      toolNames.add(fnName);
+    }
+  }
+  const toolAllowed = toolChoiceToolPredicate(parsed.options?.toolChoice);
+  for (const name of toolNames) {
+    if (!toolAllowed({ name })) toolNames.delete(name);
+  }
+  if (toolNames.size === 0) return undefined;
+  // Don't intercept for OpenAI native passthrough
+  const host = (() => { try { return new URL(routedProvider.baseUrl).hostname; } catch { return ""; } })();
+  if (host === "api.openai.com") return undefined;
+  const timeoutMs = clampImageTimeoutMs(config.images?.videoTimeoutMs);
+  const keepRaw = config.images?.artifactsKeepCount;
+  const artifactsKeepCount =
+    typeof keepRaw === "number" && Number.isFinite(keepRaw) ? Math.floor(keepRaw) : undefined;
+  const common = {
+    model: config.images?.videoBridgeModel ?? DEFAULT_VIDEO_MODEL,
+    toolNames,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(artifactsKeepCount !== undefined ? { artifactsKeepCount } : {}),
+  };
+  const selection = selectVideoProvider(config);
+  if (selection) {
+    return selection.ok
+      ? { ...common, provider: selection.provider, auth: selection.auth }
+      : { ...common, unavailable: selection.error };
+  }
+  const found = findXaiProvider(config);
+  if (!found) return undefined;
+  const token = resolveXaiImageApiKey(found.provider);
+  if (!token) return undefined;
+  // Pin the baseUrl to the registry entry, ignoring any config-level baseUrl override.
+  return { ...common, provider: found.provider, auth: pinnedXaiVideoAuth(found.provider, token) };
+}

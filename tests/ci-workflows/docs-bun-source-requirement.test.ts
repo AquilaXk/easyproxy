@@ -1,0 +1,76 @@
+import { expect, test } from "bun:test";
+import { repoPath } from "../helpers/repo-root";
+
+/**
+ * Every contributor entry point must say that building from source needs a local `bun`, and
+ * explain the bundled runtime and package-script PATH shadowing. Users who install `epx`
+ * never need their own Bun; contributors need the CLI and the separately pinned test runner.
+ *
+ * Each file is checked as one whole normalized paragraph rather than as scattered fragments.
+ * Matching fragments independently across a whole file passes even after the explanatory
+ * sentence is deleted, as long as the words survive somewhere else — that is a test that
+ * cannot fail for the reason it exists. Whitespace normalization keeps a maintainer's
+ * paragraph rewrap from breaking the suite over nothing.
+ */
+const PARAGRAPH_START = "Source development requires the `bun` CLI on your `PATH`";
+
+const CASES = [
+  {
+    path: "README.md",
+    paragraph:
+      "Source development requires the `bun` CLI on your `PATH`. The published npm package bundles its own"
+      + " Bun runtime for installed `epx` commands; package scripts may also resolve Bun through that bundled dependency.",
+  },
+] as const;
+
+/** The paragraph starting at `PARAGRAPH_START`, collapsed to single spaces. */
+function normalizedRequirementParagraph(text: string): string | undefined {
+  const start = text.indexOf(PARAGRAPH_START);
+  if (start === -1) return undefined;
+  const rest = text.slice(start);
+  const end = rest.indexOf("\n\n");
+  const paragraph = end === -1 ? rest : rest.slice(0, end);
+  return paragraph.replace(/\s+/g, " ").trim();
+}
+
+test("source development docs require a local Bun CLI while preserving the bundled-runtime distinction", async () => {
+  for (const entry of CASES) {
+    const text = await Bun.file(repoPath(entry.path)).text();
+    expect(normalizedRequirementParagraph(text)).toBe(entry.paragraph);
+  }
+});
+
+test("package.json pins both testRunnerBun and shipped dependencies.bun", async () => {
+  const pkg = await Bun.file(repoPath("package.json")).json();
+  expect(pkg.testRunnerBun).toMatch(/^\d+\.\d+\.\d+$/);
+  expect(pkg.dependencies.bun).toBe(pkg.testRunnerBun);
+});
+
+test("architecture transport notes identify the current bundle and historical runtime", async () => {
+  const pkg = await Bun.file(repoPath("package.json")).json();
+  for (const [path, statement] of [
+    ["reference/architecture.md", /current package bundles Bun \*\*(\d+\.\d+\.\d+)\*\*/],
+    ["es/reference/architecture.md", /paquete actual incluye Bun \*\*(\d+\.\d+\.\d+)\*\*/],
+    ["fr/reference/architecture.md", /package actuel inclut Bun \*\*(\d+\.\d+\.\d+)\*\*/],
+    ["ko/reference/architecture.md", /현재 패키지에는 Bun \*\*(\d+\.\d+\.\d+)\*\*/],
+  ] as const) {
+    const text = await Bun.file(repoPath(`docs-site/src/content/docs/${path}`)).text();
+    expect(statement.exec(text)?.[1], path).toBe(pkg.dependencies.bun);
+    expect(text, path).not.toMatch(/Bundled Bun 1\.3\.14|El Bun 1\.3\.14 incluido/);
+  }
+});
+
+test("Windows memory guidance reports the shipped runtime in every current-bundle statement", async () => {
+  const pkg = await Bun.file(repoPath("package.json")).json();
+  const cases = [
+    ["troubleshooting/windows-memory.md", /current package bundles Bun\s*\**(\d+\.\d+\.\d+)/g],
+    ["es/troubleshooting/windows-memory.md", /(?:paquete actual incluye Bun|incluye Bun)\s*\**(\d+\.\d+\.\d+)/g],
+  ] as const;
+  for (const [path, statement] of cases) {
+    const text = await Bun.file(repoPath(`docs-site/src/content/docs/${path}`)).text();
+    const versions = [...text.matchAll(statement)].map(match => match[1]);
+    expect(versions.length, `${path} intro and recovery guidance`).toBe(2);
+    expect(versions, path).toEqual([pkg.dependencies.bun, pkg.dependencies.bun]);
+    expect(text, `${path} historical investigation remains historical`).toContain("1.3.14");
+  }
+});

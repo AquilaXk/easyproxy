@@ -1,0 +1,162 @@
+/**
+ * Validation and in-memory application of `PATCH /api/protocols/settings`.
+ *
+ * Pure with respect to I/O: the route persists through `saveConfigPreservingClaudeCode` and
+ * restores the snapshot taken here when the save fails, so a refused write never leaves the
+ * live config serving a state the file does not hold.
+ *
+ * The one asymmetric rule is the Messages surface. Closing it writes
+ * `apiSurfaces.messages.enabled = false` AND `claudeCode.enabled = false` in the same save:
+ * a binary older than `apiSurfaces` reads only `claudeCode.enabled`, so a rollback after a
+ * close must still find the endpoint closed. Opening writes only the explicit surface value;
+ * an older binary then keeps reading `claudeCode.enabled`, which errs closed.
+ */
+import { commitClaudeCodeBlock } from "../../claude/claude-code-block";
+import type { ProtocolRolloutSettings, UnrepresentablePolicy } from "../../protocols/settings";
+import type { EpxConfig } from "../../types";
+
+export interface ProtocolSettingsPatch {
+  messagesEnabled?: boolean;
+  geminiEnabled?: boolean;
+  unrepresentable?: UnrepresentablePolicy;
+  rollout?: Partial<ProtocolRolloutSettings>;
+}
+
+export type ParsedProtocolSettingsPatch =
+  | { ok: true; patch: ProtocolSettingsPatch }
+  | { ok: false; code: string; message: string };
+
+const PATCH_KEYS = new Set(["messagesEnabled", "geminiEnabled", "unrepresentable", "rollout"]);
+export const PROTOCOL_ROLLOUT_KEYS = [
+  "nativeChatCombos",
+  "managedMessagesNative",
+  "managedMessagesNativeOAuth",
+  "directEncoders",
+  "antigravityDirect",
+  "geminiNativeAntigravity",
+  "shadowPlan",
+] as const satisfies readonly (keyof ProtocolRolloutSettings)[];
+const ROLLOUT_KEYS = new Set<string>(PROTOCOL_ROLLOUT_KEYS);
+
+type Rec = Record<string, unknown>;
+function isRec(value: unknown): value is Rec {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function invalid(code: string, message: string): ParsedProtocolSettingsPatch {
+  return { ok: false, code, message };
+}
+
+/** Strict: unknown keys and wrong types are refused; messages name the field, never the value. */
+export function parseProtocolSettingsPatch(body: unknown): ParsedProtocolSettingsPatch {
+  if (!isRec(body)) return invalid("invalid_body", "body must be a JSON object");
+  const keys = Object.keys(body);
+  if (keys.length === 0) return invalid("empty_body", "body must set messagesEnabled, geminiEnabled, unrepresentable or rollout");
+  for (const key of keys) {
+    if (!PATCH_KEYS.has(key)) return invalid("unknown_field", "body accepts only messagesEnabled, geminiEnabled, unrepresentable and rollout");
+  }
+  const patch: ProtocolSettingsPatch = {};
+  if (body.messagesEnabled !== undefined) {
+    if (typeof body.messagesEnabled !== "boolean") return invalid("invalid_messages_enabled", "messagesEnabled must be a boolean");
+    patch.messagesEnabled = body.messagesEnabled;
+  }
+  if (body.geminiEnabled !== undefined) {
+    if (typeof body.geminiEnabled !== "boolean") return invalid("invalid_gemini_enabled", "geminiEnabled must be a boolean");
+    patch.geminiEnabled = body.geminiEnabled;
+  }
+  if (body.unrepresentable !== undefined) {
+    if (body.unrepresentable !== "legacy" && body.unrepresentable !== "reject") {
+      return invalid("invalid_unrepresentable", "unrepresentable must be \"legacy\" or \"reject\"");
+    }
+    patch.unrepresentable = body.unrepresentable;
+  }
+  if (body.rollout !== undefined) {
+    if (!isRec(body.rollout)) return invalid("invalid_rollout", "rollout must be an object");
+    const rollout: Partial<ProtocolRolloutSettings> = {};
+    for (const [key, value] of Object.entries(body.rollout)) {
+      if (!ROLLOUT_KEYS.has(key)) return invalid("unknown_rollout_field", `rollout accepts only ${PROTOCOL_ROLLOUT_KEYS.join(", ")}`);
+      if (typeof value !== "boolean") return invalid("invalid_rollout", "rollout values must be booleans");
+      rollout[key as keyof ProtocolRolloutSettings] = value;
+    }
+    patch.rollout = rollout;
+  }
+  return { ok: true, patch };
+}
+
+/** The config subtrees a patch may touch, captured so a failed save can be undone. */
+export interface ProtocolSettingsSnapshot {
+  apiSurfaces: unknown;
+  protocols: unknown;
+  claudeCode: unknown;
+}
+
+export function snapshotProtocolSettings(config: EpxConfig): ProtocolSettingsSnapshot {
+  return {
+    apiSurfaces: structuredClone(config.apiSurfaces),
+    protocols: structuredClone(config.protocols),
+    claudeCode: structuredClone(config.claudeCode),
+  };
+}
+
+export function restoreProtocolSettings(config: EpxConfig, snapshot: ProtocolSettingsSnapshot): void {
+  const target = config as unknown as Rec;
+  for (const key of ["apiSurfaces", "protocols", "claudeCode"] as const) {
+    if (snapshot[key] === undefined) delete target[key];
+    else target[key] = snapshot[key];
+  }
+}
+
+export type ApplyProtocolSettingsResult =
+  | { ok: true; claudeCodeChanged: boolean }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Apply a validated patch to the live config. Checks that depend on the merged state run
+ * before anything is written, so a refusal leaves the config untouched.
+ */
+export function applyProtocolSettingsPatch(config: EpxConfig, patch: ProtocolSettingsPatch): ApplyProtocolSettingsResult {
+  const protocols: Rec = isRec(config.protocols) ? { ...config.protocols } : {};
+  if (patch.rollout) {
+    const rollout: Rec = { ...(isRec(protocols.rollout) ? protocols.rollout : {}), ...patch.rollout };
+    // The OAuth extension is meaningless without the key-auth lane it extends; the resolver
+    // would silently read it as off, so refuse turning it on alone instead of storing a switch
+    // that does nothing. Turning the key-auth lane off leaves the extension inert, not wrong.
+    if (patch.rollout.managedMessagesNativeOAuth === true && rollout.managedMessagesNative !== true) {
+      return {
+        ok: false,
+        code: "rollout_dependency",
+        message: "rollout.managedMessagesNativeOAuth requires rollout.managedMessagesNative",
+      };
+    }
+    protocols.rollout = rollout;
+  }
+  if (patch.unrepresentable !== undefined) protocols.unrepresentable = patch.unrepresentable;
+  if (patch.unrepresentable !== undefined || patch.rollout) {
+    config.protocols = protocols as EpxConfig["protocols"];
+  }
+
+  let claudeCodeChanged = false;
+  if (patch.messagesEnabled !== undefined || patch.geminiEnabled !== undefined) {
+    const current = config.apiSurfaces;
+    const surfaces: Rec = isRec(current) ? { ...current } : {};
+    for (const [name, enabled] of [
+      ["messages", patch.messagesEnabled],
+      ["gemini", patch.geminiEnabled],
+    ] as const) {
+      if (enabled === undefined) continue;
+      const surface = surfaces[name];
+      surfaces[name] = { ...(isRec(surface) ? surface : {}), enabled };
+    }
+    if (current !== undefined && !isRec(current)) {
+      // Repairing the malformed parent must preserve closed sibling surfaces.
+      if (patch.messagesEnabled === undefined) surfaces.messages = { enabled: false };
+      if (patch.geminiEnabled === undefined) surfaces.gemini = { enabled: false };
+    }
+    config.apiSurfaces = surfaces as EpxConfig["apiSurfaces"];
+    if (patch.messagesEnabled === false && config.claudeCode?.enabled !== false) {
+      commitClaudeCodeBlock(config, { ...(config.claudeCode ?? {}), enabled: false });
+      claudeCodeChanged = true;
+    }
+  }
+  return { ok: true, claudeCodeChanged };
+}

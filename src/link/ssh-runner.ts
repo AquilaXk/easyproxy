@@ -1,0 +1,400 @@
+import { homedir } from "node:os";
+
+const DEFAULT_OUTPUT_BYTES = 64 * 1024;
+const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+const TUNNEL_OUTPUT_EXIT_GRACE_MS = 250;
+/** A tapped stderr line longer than this is handed to the tap in pieces, so memory stays bounded. */
+const TAP_LINE_MAX_CHARS = 16 * 1024;
+const HINT_MAX_CHARS = 160;
+// Written as escapes on purpose: invisible and bidi controls must never sit literally in source.
+const ANSI_SEQUENCE = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b\[[0-?]*[ -/]*[@-~]|\u001b[@-_]/g;
+const HINT_CONTROL = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
+const HINT_SECRET = /\bepx_(data|admin|session|pair)_[A-Za-z0-9_-]+/g;
+const HINT_URL_QUERY = /\b(https?:\/\/[^\s?#]*)[?#]\S*/g;
+
+type SpawnEnv = Record<string, string | undefined>;
+
+/**
+ * PATH for ssh and ssh-keygen children on POSIX. A desktop sidecar inherits launchd's minimal
+ * PATH, so a ProxyCommand helper installed by Homebrew or into ~/.bun/bin would not resolve.
+ * Inherited entries keep their order and precedence; the common helper directories are appended
+ * once. Windows keeps its inherited environment untouched and gets undefined.
+ */
+export function linkSshPath(env: SpawnEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  if (platform === "win32") return undefined;
+  const home = env.HOME || homedir();
+  const extra = ["/opt/homebrew/bin", "/usr/local/bin", ...(home ? [`${home}/.bun/bin`, `${home}/.local/bin`] : [])];
+  return [...new Set([...(env.PATH ?? "").split(":").filter(Boolean), ...extra])].join(":");
+}
+
+/** The environment ssh runs with: the inherited one with `linkSshPath`, or undefined on Windows. */
+export function linkSshSpawnEnv(env: SpawnEnv = process.env, platform: NodeJS.Platform = process.platform): SpawnEnv | undefined {
+  const path = linkSshPath(env, platform);
+  return path === undefined ? undefined : { ...env, PATH: path };
+}
+
+/**
+ * One hint line as the dashboard may see it: control and bidi characters removed, EasyProxy
+ * secrets and URL queries redacted, whitespace collapsed, capped at 160 code points. The cut is
+ * made between code points, so an astral character is never split into a lone surrogate.
+ */
+export function boundHint(line: string): string | undefined {
+  const clean = line.replace(HINT_CONTROL, " ").replace(HINT_SECRET, "epx_$1_[redacted]")
+    .replace(HINT_URL_QUERY, "$1").replace(/\s+/g, " ").trim();
+  if (!clean) return undefined;
+  const points = Array.from(clean);
+  return points.length > HINT_MAX_CHARS ? `${points.slice(0, HINT_MAX_CHARS - 1).join("")}\u2026` : clean;
+}
+
+/**
+ * A short reason for a failed ssh command: the last non-empty stderr line, with terminal escapes,
+ * control and bidi characters removed, EasyProxy secrets and URL queries redacted, capped at 160
+ * code points. It reads stderr only; stdout and stdin can carry keys. Callers return it to the
+ * dashboard and never log it.
+ */
+export function sshFailureHint(stderr: string): string | undefined {
+  const lines = stderr.replace(ANSI_SEQUENCE, "").split(/\r\n|\r|\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const hint = boundHint(lines[index]!);
+    if (hint) return hint;
+  }
+  return undefined;
+}
+
+/** The runner's own failure (spawn, timeout, output limit) or a diagnosed remote failure as a hint; other errors give none. */
+export function sshRunnerErrorHint(error: unknown): string | undefined {
+  if (error instanceof SshRunnerError) return boundHint(error.message);
+  return error instanceof SshDiagnosticError ? boundHint(error.hint) : undefined;
+}
+
+export interface SshRunResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface SshChild {
+  readonly pid: number;
+  readonly argv: readonly string[];
+  readonly exited: Promise<number>;
+  readonly stdout?: Promise<string>;
+  readonly stderr?: Promise<string>;
+  kill(signal?: NodeJS.Signals): void;
+}
+
+export interface SshRunner {
+  run(argv: readonly string[], options?: {
+    stdin?: string | Uint8Array;
+    timeoutMs?: number;
+    maxOutputBytes?: number;
+    /**
+     * Opt-in confirmed termination. With a signal, a timeout and an abort share one cleanup:
+     * SIGTERM, SIGKILL after RUN_KILL_GRACE_MS, and the call settles once the exit is observed or
+     * RUN_KILL_GRACE_MS after the SIGKILL, with SshRunnerError.exitConfirmed saying which.
+     * An already aborted signal spawns nothing. Without a signal, behaviour is unchanged.
+     */
+    signal?: AbortSignal;
+  }): Promise<SshRunResult>;
+  spawnTunnel(argv: readonly string[], options?: SshTunnelOptions): SshChild;
+}
+
+export interface SshTunnelOptions {
+  /**
+   * Opt-in SSH capture (src/link/ssh-capture.ts): called with every stderr line as it arrives.
+   * Returns whether the line belongs in the stderr text the exit classifier reads; the 64 KiB cap
+   * applies to that text only, so verbose ssh output cannot end a healthy tunnel.
+   */
+  stderrLine?: (line: string) => boolean;
+}
+
+export class SshRunnerError extends Error {
+  /** Set on a confirmed-termination run (see SshRunner.run's signal): was the process seen to exit? */
+  exitConfirmed?: boolean;
+
+  constructor(readonly code: "spawn" | "timeout" | "output_limit" | "decode" | "aborted", message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SshRunnerError";
+  }
+}
+
+/**
+ * A remote step that ran and could not be interpreted, such as platform discovery (#8972). `hint` is
+ * built from the step's own message and its bounded stderr hint, so the dashboard learns why instead of
+ * reading every such failure as an SSH outage.
+ */
+export class SshDiagnosticError extends Error {
+  constructor(message: string, readonly hint: string) {
+    super(message);
+    this.name = "SshDiagnosticError";
+  }
+}
+
+/** SIGTERM to SIGKILL, and SIGKILL to giving up on observing the exit, for confirmed-termination runs. */
+export const RUN_KILL_GRACE_MS = 2_000;
+
+export interface SshRunnerClock {
+  setTimeout: (callback: () => void, ms: number) => unknown;
+  clearTimeout: (timer: unknown) => void;
+}
+
+const REAL_CLOCK: SshRunnerClock = {
+  setTimeout: (callback, ms) => setTimeout(callback, ms),
+  clearTimeout: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
+};
+
+/** Splits decoded stderr into lines for a tap and keeps the lines it accepts. */
+function createLineTap(tap: (line: string) => boolean) {
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let pending = "";
+  let kept = "";
+  let keptBytes = 0;
+  // When a line is longer than TAP_LINE_MAX_CHARS it is offered in pieces; every later piece takes the
+  // first piece's decision, so the rest of a debug1: line can never reach the classifier.
+  let inherited: boolean | undefined;
+  const decide = (text: string): boolean => {
+    let keep = true;
+    try { keep = tap(text); } catch { /* A failing tap keeps the line, as an untapped stream would. */ }
+    return keep;
+  };
+  const offer = (line: string, complete: boolean): void => {
+    const text = line.endsWith("\r") ? line.slice(0, -1) : line;
+    const keep = inherited ?? decide(text);
+    inherited = complete ? undefined : keep;
+    if (!keep) return;
+    kept += `${text}\n`;
+    keptBytes += Buffer.byteLength(text) + 1;
+  };
+  const split = (): void => {
+    for (let index = pending.indexOf("\n"); index !== -1; index = pending.indexOf("\n")) {
+      offer(pending.slice(0, index), true);
+      pending = pending.slice(index + 1);
+    }
+    while (pending.length > TAP_LINE_MAX_CHARS) {
+      offer(pending.slice(0, TAP_LINE_MAX_CHARS), false);
+      pending = pending.slice(TAP_LINE_MAX_CHARS);
+    }
+  };
+  return {
+    push(bytes: Uint8Array): number { pending += decoder.decode(bytes, { stream: true }); split(); return keptBytes; },
+    end(): { text: string; bytes: number } {
+      pending += decoder.decode(); split(); if (pending) offer(pending, true); pending = "";
+      return { text: kept, bytes: keptBytes };
+    },
+  };
+}
+
+async function readOutput(stream: ReadableStream<Uint8Array>, maxBytes: number, kill?: () => void, fatalUtf8 = true, exited?: Promise<number>, signal?: AbortSignal, tap?: (line: string) => boolean): Promise<string> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let finished = false;
+  const lines = tap ? createLineTap(tap) : undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = (): void => { void reader.cancel().catch(() => {}); };
+  const onExit = (): void => {
+    if (!finished) timer = setTimeout(cancel, TUNNEL_OUTPUT_EXIT_GRACE_MS);
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  // A descendant may inherit a pipe after ssh exits. Cancellation completes pending reads
+  // immediately; do not await the underlying source's possibly unbounded cancel promise.
+  void exited?.then(onExit, onExit);
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      total = lines ? lines.push(next.value) : total + next.value.byteLength;
+      if (total > maxBytes) {
+        kill?.();
+        cancel();
+        throw new SshRunnerError("output_limit", `ssh output exceeded ${maxBytes} bytes`);
+      }
+      if (!lines) chunks.push(next.value);
+    }
+  } finally {
+    finished = true;
+    if (timer !== undefined) clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+    reader.releaseLock();
+  }
+  if (lines) {
+    // The last line may arrive without a newline; it counts against the cap like any other.
+    const { text, bytes } = lines.end();
+    if (bytes > maxBytes) {
+      kill?.();
+      throw new SshRunnerError("output_limit", `ssh output exceeded ${maxBytes} bytes`);
+    }
+    return text;
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: fatalUtf8 }).decode(bytes);
+  } catch (error) {
+    throw new SshRunnerError("decode", "ssh output was not valid UTF-8", { cause: error });
+  }
+}
+
+function outputStream(stream: Bun.Subprocess["stdout"]): ReadableStream<Uint8Array> {
+  if (!stream || typeof stream === "number") throw new SshRunnerError("spawn", "ssh output was not piped");
+  return stream;
+}
+
+function defaultKill(process: Bun.Subprocess, signal?: NodeJS.Signals): void {
+  process.kill(signal);
+}
+
+export function createSshRunner(deps: { spawn?: typeof Bun.spawn; timeoutMs?: number; env?: () => SpawnEnv | undefined; clock?: SshRunnerClock } = {}): SshRunner {
+  const spawn = deps.spawn ?? ((argv, options) => Bun.spawn(argv, options));
+  const defaultTimeoutMs = deps.timeoutMs ?? 30_000;
+  const clock = deps.clock ?? REAL_CLOCK;
+  // Read per spawn so a PATH change reaches the next command; Windows passes no env key at all.
+  const spawnEnv = (): { env?: SpawnEnv } => {
+    const env = (deps.env ?? (() => linkSshSpawnEnv()))();
+    return env ? { env } : {};
+  };
+
+  const spawnChild = (argv: readonly string[], options: SshTunnelOptions = {}): SshChild => {
+    let child: Bun.Subprocess;
+    try {
+      child = spawn([...argv], { stdin: "ignore", stdout: "pipe", stderr: "pipe", ...spawnEnv() });
+    } catch (error) {
+      throw new SshRunnerError("spawn", `could not spawn ${argv[0] ?? "ssh"}`, { cause: error });
+    }
+    const stdout = readOutput(outputStream(child.stdout), DEFAULT_OUTPUT_BYTES, () => defaultKill(child, "SIGTERM"), true, child.exited);
+    const stderr = readOutput(outputStream(child.stderr), DEFAULT_OUTPUT_BYTES, () => defaultKill(child, "SIGTERM"), false, child.exited, undefined, options.stderrLine);
+    void stdout.catch(() => {});
+    void stderr.catch(() => {});
+    return {
+      pid: child.pid,
+      argv: [...argv],
+      exited: child.exited,
+      stdout,
+      stderr,
+      kill: signal => defaultKill(child, signal),
+    };
+  };
+
+  return {
+    async run(argv, options = {}) {
+      const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
+      if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+        throw new SshRunnerError("timeout", "timeoutMs must be a positive integer at most 2147483647");
+      }
+      const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_OUTPUT_BYTES;
+      if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 0 || maxOutputBytes > MAX_OUTPUT_BYTES) {
+        throw new SshRunnerError("output_limit", `maxOutputBytes must be an integer between 0 and ${MAX_OUTPUT_BYTES}`);
+      }
+      if (options.signal?.aborted) throw new SshRunnerError("aborted", "ssh command was aborted before it started");
+      let child: Bun.Subprocess;
+      try {
+        child = spawn([...argv], {
+          stdin: options.stdin === undefined ? "ignore" : "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+          ...spawnEnv(),
+        });
+      } catch (error) {
+        throw new SshRunnerError("spawn", `could not spawn ${argv[0] ?? "ssh"}`, { cause: error });
+      }
+
+      const cancellation = new AbortController();
+      let stdout: Promise<string> | undefined;
+      let stderr: Promise<string> | undefined;
+      let timer: unknown;
+      // Confirmed termination (opt-in through options.signal): one cleanup for timeout and abort.
+      const confirmed = options.signal !== undefined;
+      let terminating: Promise<never> | undefined;
+      const terminationTimers: unknown[] = [];
+      let onAbort: (() => void) | undefined;
+      const terminate = (code: "timeout" | "aborted"): Promise<never> => {
+        if (terminating) return terminating;
+        cancellation.abort();
+        try { defaultKill(child, "SIGTERM"); } catch { /* already gone */ }
+        terminating = new Promise<never>((_, reject) => {
+          let settled = false;
+          const settle = (exitConfirmed: boolean): void => {
+            if (settled) return;
+            settled = true;
+            for (const pending of terminationTimers.splice(0)) clock.clearTimeout(pending);
+            const error = new SshRunnerError(code, code === "timeout" ? `ssh command exceeded ${timeoutMs}ms` : "ssh command was aborted");
+            error.exitConfirmed = exitConfirmed;
+            reject(error);
+          };
+          child.exited.then(() => settle(true), () => settle(true));
+          terminationTimers.push(clock.setTimeout(() => {
+            if (settled) return;
+            try { defaultKill(child, "SIGKILL"); } catch { /* already gone */ }
+            terminationTimers.push(clock.setTimeout(() => settle(false), RUN_KILL_GRACE_MS));
+          }, RUN_KILL_GRACE_MS));
+        });
+        terminating.catch(() => {});
+        return terminating;
+      };
+      const timeout = new Promise<never>((_, reject) => {
+        timer = clock.setTimeout(() => {
+          if (confirmed) { terminate("timeout").catch(reject); return; }
+          reject(new SshRunnerError("timeout", `ssh command exceeded ${timeoutMs}ms`));
+        }, timeoutMs);
+      });
+      const aborted = new Promise<never>((_, reject) => {
+        if (!options.signal) return;
+        onAbort = () => { terminate("aborted").catch(reject); };
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      });
+      try {
+        const outStream = outputStream(child.stdout), errStream = outputStream(child.stderr);
+        stdout = readOutput(outStream, maxOutputBytes, undefined, true, undefined, cancellation.signal);
+        stderr = readOutput(errStream, Math.min(maxOutputBytes, DEFAULT_OUTPUT_BYTES), undefined, false, undefined, cancellation.signal);
+        const stdin = async (): Promise<void> => {
+          if (options.stdin === undefined) return;
+          try {
+            const input = child.stdin;
+            if (!input || typeof input === "number") throw new Error("ssh stdin was not piped");
+            await input.write(options.stdin);
+            // A timed-out write may settle later; do not start another operation after failure.
+            if (cancellation.signal.aborted) return;
+            await input.end();
+          } catch (error) {
+            throw new SshRunnerError("spawn", "could not write ssh stdin", { cause: error });
+          }
+        };
+        // Observe all rejections immediately, including errors arriving after timeout. One
+        // deadline covers stdin, exit and EOF: an inherited output pipe is still unfinished work.
+        const [, code, out, err] = await Promise.race([
+          Promise.all([stdin(), child.exited, stdout, stderr]), timeout, aborted,
+        ]);
+        // An exit that lands after a timeout or abort began never turns into a result.
+        if (terminating) await terminating;
+        return { code, stdout: out, stderr: err };
+      } catch (error) {
+        // Once a timeout or abort began, its own error is the result, after its exit is settled.
+        if (terminating) await terminating;
+        cancellation.abort();
+        // Only terminate this local SSH child. A kill failure must not hide the original error.
+        try { defaultKill(child, "SIGTERM"); } catch { /* Preserve the command failure when an already-gone child cannot be signalled. */ }
+        if (error instanceof SshRunnerError) throw error;
+        throw new SshRunnerError("spawn", "ssh command failed", { cause: error });
+      } finally {
+        if (timer !== undefined) clock.clearTimeout(timer);
+        if (onAbort) options.signal?.removeEventListener("abort", onAbort);
+        void child.exited.catch(() => {});
+        // reader.cancel closes pending reads even if the source's cancel promise never settles.
+        // Do not await stdin or process exit: neither is guaranteed to settle after SIGTERM.
+        await Promise.allSettled([stdout, stderr]);
+      }
+    },
+    spawnTunnel,
+  };
+
+  function spawnTunnel(argv: readonly string[], options?: SshTunnelOptions): SshChild {
+    return spawnChild(argv, options);
+  }
+}
+
+export const SSH_OUTPUT_CAP_BYTES = DEFAULT_OUTPUT_BYTES;
+export const SSH_MAX_OUTPUT_BYTES = MAX_OUTPUT_BYTES;

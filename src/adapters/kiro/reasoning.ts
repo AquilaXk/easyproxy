@@ -1,0 +1,174 @@
+import { normalizeKiroModelId } from "../../providers/kiro-models";
+import type { EpxParsedRequest } from "../../types";
+
+export type KiroReasoningMode = "native" | "emulated";
+
+// Kiro takes a verified native effort field for these models, and each model family names it
+// differently: the GPT-5.6 family's `reasoning.effort` versus the Claude-specific
+// `output_config.effort`. Models absent from this table fall back to emulated thinking
+// instructions.
+//
+// The GPT-5.6 entries are measured against the live runtime rather than inferred from the vendor
+// schema: the field is accepted (HTTP 200) and the encrypted reasoning blob that comes back grows
+// with the effort. On one fixed hard prompt — a primality search plus a 20-bit recurrence count —
+// luna's blob measured 5,130 chars at `low`, 16,686 at `medium`, 30,670 at `high` and 48,594 at
+// `max`, against 13,118 with no effort signal at all; terra's measured 34,590 and 38,106 at native
+// `max` against 11,758 and 17,598 bare, two repetitions each. The channel this replaces — the
+// emulated `<thinking_mode>` tag block, which was all those models used to receive — measured
+// 21,202 (`low`) and 28,302 (`max`) for luna, i.e. between that model's native `medium` and
+// `high`, never reaching native `max`. `gpt-5.6-sol`'s native `max` cross-checked at 30,498 on the
+// same prompt. Terra's absence from this table was therefore an omission rather than a capability
+// difference: what the earlier Sol-only scope recorded was not reproducible here.
+export const KIRO_NATIVE_EFFORT_FIELDS: Record<string, "reasoning" | "output_config"> = {
+  "gpt-5.6-sol": "reasoning",
+  "gpt-5.6-terra": "reasoning",
+  "gpt-5.6-luna": "reasoning",
+  // 260923 preemptive (see kiro-models.ts): same native field as the GPT-5.6 family.
+  "gpt-6-sol": "reasoning",
+  "gpt-6-luna": "reasoning",
+  // 260930 preemptive (see kiro-models.ts): same native field as GPT-6 Sol.
+  "gpt-6.1-sol": "reasoning",
+  // 261027 preemptive: GPT-6.1 Terra (mirrors GPT-6.1 Sol; see kiro-models.ts).
+  "gpt-6.1-terra": "reasoning",
+  // 261118 preemptive: GPT-6.2 Sol and Astra (mirror GPT-6.1 Sol; see kiro-models.ts).
+  "gpt-6.2-sol": "reasoning",
+  "gpt-6.2-astra": "reasoning",
+  // Claude models whose output_config.effort was accepted by a live probe on 2026-11-07, at every
+  // ladder rung except xhigh on the 4.6 pair. Haiku 4.5, Opus 4.5 and Sonnet 4.5 reject the field
+  // (HTTP 400). The probe covered these nine ids individually; no other Claude id was measured, so
+  // this table stays a per-id allowlist rather than a `claude-*` rule.
+  "claude-opus-5": "output_config",
+  "claude-opus-5.5": "output_config",
+  "claude-opus-4.8": "output_config",
+  "claude-opus-4.7": "output_config",
+  "claude-opus-4.6": "output_config",
+  "claude-sonnet-5.5": "output_config",
+  "claude-sonnet-5": "output_config",
+  "claude-sonnet-4.6": "output_config",
+  "claude-haiku-5.5": "output_config",
+};
+
+export const KIRO_NATIVE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+// The newly enabled models have evidence for these rungs only. Keep the previous
+// emulation for xhigh, and never widen their native wire when the shared ladder grows.
+const KIRO_LUNA_TERRA_NATIVE_EFFORTS = new Set(["low", "medium", "high", "max"]);
+// Kiro rejects a native xhigh for these two (HTTP 400, live probe 2026-11-07); it stays emulated.
+const KIRO_NO_XHIGH_NATIVE_MODELS = new Set(["claude-opus-4.6", "claude-sonnet-4.6"]);
+// These models used the emulated block for every effort before native effort was verified, so
+// `minimal` — the one value outside the native ladder that arrives as the caller's own request —
+// keeps that block rather than becoming an error. Models absent from this set still reject
+// `minimal`: it is an enumerated compatibility set, not a general unknown-effort fallback. The
+// value check is what keeps it that way: an effort this file has never seen still throws instead
+// of silently dropping reasoning.
+//
+// Caller-supplied `ultra` is folded by the Responses parser, but operator pins are applied
+// afterward. The Kiro payload builder folds `ultra` to `max` for native models; emulated
+// models retain their existing path, which has no `ultra` thinking budget.
+const KIRO_EMULATED_EXTRA_EFFORT_MODELS = new Set([
+  "claude-opus-4.8",
+  "claude-opus-4.7",
+  "claude-opus-4.6",
+  "claude-sonnet-5.5",
+  "claude-sonnet-5",
+  "claude-sonnet-4.6",
+  "claude-haiku-5.5",
+]);
+/** The one outside-ladder value that keeps the emulated block instead of failing the request. */
+const KIRO_EMULATED_LEGACY_EFFORT = "minimal";
+
+export function kiroNativeEffortField(
+  modelId: string,
+  effort?: string,
+): "reasoning" | "output_config" | undefined {
+  const model = normalizeKiroModelId(modelId);
+  if ((model === "gpt-5.6-luna" || model === "gpt-5.6-terra")
+    && effort !== undefined && !KIRO_LUNA_TERRA_NATIVE_EFFORTS.has(effort)) return undefined;
+  if (KIRO_NO_XHIGH_NATIVE_MODELS.has(model) && effort === "xhigh") return undefined;
+  if (KIRO_EMULATED_EXTRA_EFFORT_MODELS.has(model) && effort === KIRO_EMULATED_LEGACY_EFFORT) {
+    return undefined;
+  }
+  return KIRO_NATIVE_EFFORT_FIELDS[model];
+}
+
+/** True when an effort outside the native ladder keeps the emulated path instead of failing. */
+export function kiroEmulatesUnsupportedEffort(modelId: string, effort?: string): boolean {
+  return effort === KIRO_EMULATED_LEGACY_EFFORT
+    && KIRO_EMULATED_EXTRA_EFFORT_MODELS.has(normalizeKiroModelId(modelId));
+}
+
+export function kiroReasoningMode(modelId: string, effort?: string): KiroReasoningMode {
+  return kiroNativeEffortField(modelId, effort) ? "native" : "emulated";
+}
+
+export function kiroThinkingBudget(parsed: EpxParsedRequest): number | undefined {
+  const effort = parsed.options.reasoning;
+  if (!effort || effort === "none") return undefined;
+  const maxTokens = parsed.options.maxOutputTokens || 4096;
+  const percent: Record<string, number> = {
+    minimal: 0.10,
+    low: 0.20,
+    medium: 0.50,
+    high: 0.80,
+    xhigh: 0.90,
+    max: 0.95,
+  };
+  const ratio = percent[effort];
+  return ratio === undefined ? undefined : Math.max(1, Math.floor(maxTokens * ratio));
+}
+
+export function injectKiroThinkingTags(content: string, parsed: EpxParsedRequest): string {
+  if (kiroReasoningMode(parsed.modelId, parsed.options.reasoning) !== "emulated") return content;
+  const budget = kiroThinkingBudget(parsed);
+  if (!budget) return content;
+  const instruction = [
+    "Think in English for better reasoning quality.",
+    "Be thorough and systematic, consider edge cases, challenge assumptions, and verify reasoning before answering.",
+    "After thinking, respond in the user's language.",
+  ].join("\n");
+  return [
+    "<thinking_mode>enabled</thinking_mode>",
+    `<max_thinking_length>${budget}</max_thinking_length>`,
+    `<thinking_instruction>${instruction}</thinking_instruction>`,
+    "",
+    content,
+  ].join("\n");
+}
+
+/**
+ * The blob from a Kiro `reasoningContentEvent` has two possible homes on a replayed assistant
+ * turn, and the wire validates the SHAPE of each rather than its content: `signature` takes the
+ * emitted string verbatim, while `redactedContent` is a base64 member. The `.KTR~~…` value every
+ * GPT-5.6 capture returns is NOT valid base64, which is exactly why replaying it as
+ * `redactedContent` — what this proxy did before the field was measured — came back as
+ * REQUEST_BODY_INVALID ("Improperly formed request").
+ *
+ * The blob travels as ONE opaque string: adapter event, `epxr1:` reasoning envelope, then
+ * `EpxAssistantMessage.kiroRedactedReasoning`. The field it arrived on therefore rides that same
+ * string, instead of a second parallel value that could drift from it. Provider data cannot forge
+ * the tag: the other channel is base64, whose alphabet has no colon.
+ */
+export const KIRO_REASONING_SIGNATURE_TAG = "signature:";
+
+export function tagKiroReasoningBlob(field: "signature" | "redactedContent", data: string): string {
+  return field === "signature" ? KIRO_REASONING_SIGNATURE_TAG + data : data;
+}
+
+/** The wire field a stored blob arrived on, and its untagged value. */
+export function splitKiroReasoningBlob(value: string): { field: "signature" | "redactedContent"; data: string } {
+  return value.startsWith(KIRO_REASONING_SIGNATURE_TAG)
+    ? { field: "signature", data: value.slice(KIRO_REASONING_SIGNATURE_TAG.length) }
+    : { field: "redactedContent", data: value };
+}
+
+/**
+ * The `reasoningContent` object on an `assistantResponseMessage`. Exactly one member is set: the
+ * wire validates the shape, so the two cannot be substituted for each other.
+ */
+export type KiroReasoningContent = { signature: string } | { redactedContent: string };
+
+/** `reasoningContent` for a replayed `assistantResponseMessage`, carrying the blob verbatim. */
+export function kiroReasoningContent(value: string): KiroReasoningContent {
+  const { field, data } = splitKiroReasoningBlob(value);
+  return field === "signature" ? { signature: data } : { redactedContent: data };
+}

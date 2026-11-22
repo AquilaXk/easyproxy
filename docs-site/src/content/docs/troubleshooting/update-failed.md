@@ -1,0 +1,260 @@
+---
+title: Update Failed on Windows
+description: What state an EasyProxy install is in after epx update fails during the npm install step, how to finish the update safely, and which leftover folders you may delete.
+---
+
+This page is for an `epx update` or dashboard update that stops partway, most often on Windows,
+with a result like this (reported as issue
+[#5624](https://github.com/AquilaXk/easyproxy/issues/5624)):
+
+```text
+update command failed (1)
+exit 1 · code: ENOTDIR · syscall: mkdir
+```
+
+and, afterwards, a folder next to the package that cannot be deleted because `bunx.exe` is in use
+(`EPERM`).
+
+## What state you are in
+
+The updater stops the proxy, installs the new version into a separate staging folder, checks it,
+and only then swaps it in. When the install step fails, the swap never happens: the previous version
+stays installed and runnable, and the updater restarts the previous background service (or the
+previous proxy) before it exits, when ownership and service-home checks authorize recovery.
+
+If the initial service-home check is inconclusive, for example because Bun is missing or a service
+query fails, the updater can replace an idle package without stopping or restarting the proxy.
+A successful package-only update prints a manual restart hint and explains that service ownership
+could not be verified. Check `epx service status` and the registered installation before restarting.
+Changes in authority, unknown durable runtime ownership, Desktop supervision, a live package
+runtime or an unresolved teardown receipt still block package replacement; an inconclusive check is not permission to control them.
+
+Check that with:
+
+```bash
+epx --version
+epx status
+```
+
+The dashboard job only records the exit status, because the installer's own output can contain local
+paths. Running `epx update` in a terminal shows the step that failed and the next step to take.
+
+## Finish the update
+
+### If npm staging times out
+
+On Windows, the npm-backed `epx update` staging install has a three-minute budget. A timeout reports
+`ETIMEDOUT` with that budget. On Windows, the updater terminates the installer's entire
+process tree and confirms its exit before removing the stage and recovering the previous
+service. It does not continue extracting into a deleted stage after recovery starts.
+
+If installer exit cannot be confirmed, the update fails and keeps the staging folder and
+its ownership marker. Confirm that no installer or EasyProxy process runs from that folder
+before removing it. A retained folder does not prevent another update attempt; a leftover update marker can, see [If every update and sync says update-in-flight](#if-every-update-and-sync-says-update-in-flight).
+
+Check your registry connection if the install repeatedly exceeds the budget, then retry
+`epx update`. Increasing the budget is not needed to clean up a timed-out install safely.
+
+This process-tree exit guarantee applies to Windows npm updates. POSIX retains its existing
+timeout handling; complete-tree timeout cleanup remains open there.
+
+### Retry or reinstall
+
+1. Close anything that may still run EasyProxy files: the Codex app, terminals that started
+   `epx` or `bunx`, and the EasyProxy tray. A running `bun.exe` or `bunx.exe` keeps its files
+   locked on Windows.
+2. Run `epx update` again from a terminal.
+3. If it fails the same way, run `epx status` and let any in-progress recovery finish. If the
+   updater restarted the proxy, stop it through its owner (`epx stop`, its service, or the desktop
+   app) and confirm it has stopped. Reinstall with the same package manager that owns the install;
+   for an npm install managed by the EasyProxy service:
+
+   ```bash
+   epx stop
+   npm install -g --allow-scripts=bun easyproxy@latest
+   epx service restart
+   ```
+
+   Restart through the owning service or desktop app after installation completes; use `epx start`
+   when unmanaged. Replace `latest` with `preview` if you follow the preview channel.
+
+## Leftover folders
+
+They sit next to the package in npm's global folder, usually
+`%APPDATA%\npm\node_modules\@aquilaxk\` on Windows.
+
+| Folder | Created by | What to do |
+|---|---|---|
+| `.easyproxy-<random>` | npm itself, while replacing the package during a direct `npm install -g` | Delete it once no EasyProxy process runs from it |
+| `.epx-staging-<timestamp>` | the EasyProxy updater's staging install | A marked stage older than half an hour is reported but left in place; delete it by hand once no EasyProxy process runs from it. A stage without an `.epx-update-owner.json` marker has an unverified origin — an interrupted update can leave one, but so can anything else that chose the prefix — so confirm it belongs to EasyProxy before deleting it |
+| `.epx-backup-<timestamp>` | the updater's copy of the previous version | Leave it; it is removed automatically after the new version starts healthy, and restored if it does not |
+
+None of these folders blocks the next update by pathname: every attempt stages into a new folder.
+Retained staging contents still consume disk space, though, and enough leftovers can make a later
+staging attempt fail with `ENOSPC`. The updater leaves leftover staging folders in place during
+later updates; it reports marked stages older than half an hour after checking their recorded
+ownership marker. Delete a leftover only after confirming that no EasyProxy process runs from it.
+
+If a folder will not delete, a process is still running from it. Signing out or restarting Windows
+releases the lock.
+
+## If every update and sync says update-in-flight
+
+If every `epx update` and `epx sync` fails with `update-in-flight`, even after waiting, restarting
+the service or rebooting, an interrupted update may have left its marker behind
+([#8524](https://github.com/AquilaXk/easyproxy/issues/8524)). The marker is
+`update-orchestrated.json` in the EasyProxy home (`%USERPROFILE%\.easyproxy` on Windows,
+`~/.easyproxy` elsewhere).
+
+Current releases record the Windows installer's supervisor in the marker. The marker then clears
+by itself once the 15-minute fence has passed and that supervisor and the launcher are gone.
+Releases up to 2.100.x did not record the supervisor. A marker they left after an interrupted
+update (a closed console, Ctrl+C, Task Manager, sleep or power loss) cannot be checked, so it never
+clears by itself. When that is the cause, `epx update` and `epx sync` in a terminal print the
+marker's path and the rename command after `update-in-flight`. The dashboard, Desktop and Remote
+Link only report `update-in-flight`, so run `epx update` in a terminal to see the guidance.
+
+Before you rename the marker, make sure no update is running:
+
+1. No `epx update` or dashboard update is in progress in another window.
+2. No `npm`, `pnpm` or `bun` global install is running. On Windows, check Task Manager for
+   `node.exe` running npm and for a `powershell.exe` whose command line contains `npm-install-job.ps1`.
+3. Then rename the marker (renaming keeps a copy) and run `epx update` again:
+
+   ```bat
+   ren "%USERPROFILE%\.easyproxy\update-orchestrated.json" update-orchestrated.json.stale
+   ```
+
+   ```bash
+   mv -n ~/.easyproxy/update-orchestrated.json ~/.easyproxy/update-orchestrated.json.stale
+   ```
+
+Use the exact path the error prints if `EASYPROXY_HOME` points somewhere else. If that path contains
+characters a shell could expand or interpret, or on Windows anything other than plain ASCII, the error names the file
+without a command; rename it by hand. A marker that is
+still inside its fence, or whose recorded process is still running, does not print this guidance.
+In that case, wait or let the running update finish.
+
+## If the update reports an UNSUPERVISED proxy
+
+When the background service cannot be refreshed after an update, the updater first asks launchd
+(macOS) or the systemd user manager (Linux) to restart the service it already has. If that does not
+bring back a proxy owned by the service, the updater starts the proxy directly so you are not left
+without one, prints a warning that the proxy is running UNSUPERVISED, and exits with a non-zero
+status. That proxy works, but nothing restarts it after a crash, and a later service start can
+compete with it for the port. Run `epx service repair` to hand it back to the background service,
+then check `epx status`.
+
+Updates started from the dashboard follow the same order. If only the direct start brings the proxy
+back, the dashboard reports the update as failed with the same UNSUPERVISED message even though the
+new version is installed and answering; run the same repair to clear it.
+
+## If the proxy answers 503 after a manual install
+
+Installing over a running proxy makes it answer `503` with `package_tree_changed` until it
+restarts. Releases after 2.64.0 can restart themselves after a few seconds once the package tree
+and its Bun runtime are complete. An incomplete or failed Bun postinstall prevents that recovery.
+`epx restart` or `epx service restart` can find a proxy in that state, but restarting still requires
+a complete runtime and package tree. With 2.64.0 and earlier, the
+proxy stays in that state, and `epx restart` may report that no proxy is running while the old one
+still holds the port; use `epx service restart`, or end the process whose `pid` the `/healthz`
+response shows and then run `epx start`.
+
+If the installer has exited or failed, inspect its error and run `epx status`. Let any in-progress
+recovery finish, stop any running proxy through its owner (`epx stop`, its service, or the desktop
+app), and confirm it has stopped. Reinstall with the same package manager, allowing Bun's
+postinstall to complete, then start again through the owning service or desktop app (`epx start`
+when unmanaged).
+
+## If the update stops at the npm cache check
+
+`ENOTDIR` on `mkdir` means npm tried to create a folder where a path component was a file, or
+a link whose target no longer exists. One confirmed cause
+([#6288](https://github.com/AquilaXk/easyproxy/issues/6288)) is a `%LOCALAPPDATA%\npm-cache`
+junction that pointed to another drive after the target folder had been deleted or the drive had
+been removed.
+
+The updater checks npm's cache folder before it stops the proxy, and the npm staging install uses
+the same folder that `npm config get cache` reports. If the cache folder cannot be used, the update
+stops with `cache_root_dangling_link` or `cache_root_not_directory` and leaves the proxy running:
+
+- `cache_root_dangling_link`: the cache folder is a link or junction whose target is missing.
+  Recreate the target folder, or remove the link so npm can create a normal folder.
+- `cache_root_not_directory`: the cache folder, or a folder above it, is a file or sits on a drive
+  that is not available. Move the file aside, or point npm at another cache with
+  `npm config set cache <folder>`.
+
+Then run `epx update` again. If `ENOTDIR` persists after the check passes, open an issue with the
+full terminal output of `epx update` and the output of `npm config get prefix` and
+`npm config get cache`.
+
+## If a pnpm update says the path looks like a pnpm global store
+
+pnpm 11 and 12 install global packages as a link into the pnpm store (for example
+`~/Library/pnpm/store/v11/links/...` on macOS or `~/.local/share/pnpm/store/v11/links/...`
+on Linux). The updater accepts such an install only when pnpm itself names the store it uses: it runs
+`pnpm store path` for your pnpm home and checks that the installed package lies inside that store.
+A store-like path, marker files or `.modules.yaml` are never enough on their own.
+
+If that check cannot be made when the updater first identifies your install, the update stops before
+it installs or removes anything (pnpm's store query itself may create an empty store folder). The
+message includes `this install's path looks like a pnpm global store`
+and then the command to run instead. The updater repeats the store check after `pnpm add`; if pnpm's
+store answer no longer passes at that point, the update stops without a rollback, because the updater
+can no longer confirm which store a rollback would write to. Check `epx --version`, then use the
+pnpm command below.
+
+Common causes:
+
+- pnpm is older or newer than the versions whose store behavior was checked (11 and 12). Run
+  `pnpm --version`.
+- `PNPM_HOME`, or a folder above it, is a symbolic link, or pnpm prints a store path that is
+  not a single absolute `v<N>` folder.
+- On Windows, the pnpm home, the global folders or the store path contain one of `"%!^&|<>`, which
+  cmd.exe cannot pass to pnpm safely.
+- The global group sits under a folder whose name merely looks like a store (a `v<N>/links`
+  folder, or pnpm's `files` and `index` markers) without being the store pnpm reports.
+
+In each case, update with pnpm itself and then restart the proxy:
+
+```bash
+pnpm add -g easyproxy@latest
+```
+
+A default pnpm 11 or 12 setup passes this check and updates normally with `epx update`.
+
+## Desktop app update stalls or fails on "Installing update…"
+
+In the EasyProxy desktop app, **Install update** downloads the installer from GitHub
+Releases and verifies its signature. The update window reports whether verification failed,
+the runtime could not stop or be identified, another stop is in progress, or the platform
+installer failed. If the window times out, check the update status before retrying.
+
+If the package download fails, the window links to the offered version when it is known.
+Use that link, or find the same version on
+the [EasyProxy releases page](https://github.com/AquilaXk/easyproxy/releases), and download
+the installer for your operating system and architecture. Preview versions have their own
+release pages; choose the version the app offered.
+
+Before running the installer, stop the proxy through its owner and confirm it has stopped:
+
+1. Quit the EasyProxy desktop app from its tray menu to stop an app-owned proxy.
+2. If a service owns the proxy, stop it through the service's controls (`epx stop` for an
+   EasyProxy-managed service). For an unmanaged terminal proxy, stop it in that terminal.
+3. On Windows, use this process listing to help identify any remaining runtime:
+
+   ```powershell
+   Get-Process -Name epx, easyproxy-desktop, bun, bunx -ErrorAction SilentlyContinue
+   ```
+
+   The listing does not establish which app owns a process. Identify the EasyProxy runtime
+   and stop it through its owning app or service; a `bun` process may belong to another app.
+   Wait for the owning app and proxy to exit before installing.
+
+Run the downloaded installer, then reopen the desktop app or restart the owning service.
+
+On Windows, `"C:\Program Files\EasyProxy\epx.exe" update --desktop` (from an elevated
+terminal signed in as the account that runs EasyProxy, adjusting the folder to your installation) performs the same verified download and a
+silent install without the app window, then restarts the proxy into the new version. If you
+already ran an MSI by hand and `epx status` warns that the installed version is newer than the
+running proxy, the same command restarts that old proxy without reinstalling.

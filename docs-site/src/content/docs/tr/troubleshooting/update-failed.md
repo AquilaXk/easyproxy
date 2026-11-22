@@ -1,0 +1,201 @@
+---
+title: Windows'ta güncelleme başarısız
+description: npm kurulum adımında başarısız olan epx update sonrasında kurulumun durumu, güncellemeyi güvenle tamamlama ve kalan klasörleri temizleme.
+---
+
+Bu sayfa, çoğunlukla Windows'ta `epx update` veya pano güncellemesinin
+[#5624](https://github.com/AquilaXk/easyproxy/issues/5624) örneğindeki gibi yarıda
+kalması içindir:
+
+```text
+update command failed (1)
+exit 1 · code: ENOTDIR · syscall: mkdir
+```
+
+Ardından paketin yanında, `bunx.exe` kullanımda olduğu için silinemeyen (`EPERM`)
+bir klasör kalabilir.
+
+## Kurulumun durumu
+
+Güncelleyici proxy'yi durdurur, yeni sürümü ayrı bir hazırlık klasörüne kurar,
+kontrol eder ve ancak sonra eski sürümün yerine geçirir. Kurulum adımı başarısızsa
+değiştirme yapılmaz: önceki sürüm kurulu ve çalıştırılabilir kalır. Güncelleyici
+çıkmadan önce eski arka plan servisini veya proxy'yi yeniden başlatır. Çalışan
+proxy'ye dönmek için yeniden kurmanız gerekmez.
+
+Kontrol edin:
+
+```bash
+epx --version
+epx status
+```
+
+Kurulum çıktısı yerel yollar içerebildiği için pano işi yalnızca çıkış durumunu
+kaydeder. Terminalde `epx update` çalıştırmak başarısız adımı ve sonraki işlemi gösterir.
+
+## Güncellemeyi tamamlama
+
+1. EasyProxy dosyalarını çalıştırabilecek uygulamaları kapatın: Codex uygulaması,
+   `epx` veya `bunx` başlatan terminaller ve EasyProxy sistem tepsisi uygulaması.
+   Çalışan `bun.exe` veya `bunx.exe`, Windows'ta dosyalarını kilitli tutar.
+2. Terminalden yeniden `epx update` çalıştırın.
+3. Aynı hata sürerse `epx status` çalıştırıp devam eden kurtarmanın bitmesini bekleyin.
+   Güncelleyici proxy'yi yeniden başlattıysa onu yöneten uygulama veya servis üzerinden
+   (`epx stop`, servisi veya masaüstü uygulaması) durdurup durduğunu doğrulayın.
+   Kurulumu yöneten aynı paket yöneticisiyle yeniden kurun. EasyProxy servisinin
+   yönettiği npm kurulumu için:
+
+   ```bash
+   epx stop
+   npm install -g --allow-scripts=bun easyproxy@latest
+   epx service restart
+   ```
+
+   Kurulumdan sonra yöneten servis veya masaüstü uygulamasıyla başlatın; bağımsız
+   çalıştırıyorsanız `epx start` kullanın. Önizleme kanalındaysanız `latest` yerine `preview` yazın.
+
+## Kalan klasörler
+
+Bunlar npm'in genel klasöründe paketin yanında bulunur; Windows'ta genellikle
+`%APPDATA%\npm\node_modules\@aquilaxk\` konumundadır.
+
+| Klasör | Oluşturan | Yapılacak işlem |
+| --- | --- | --- |
+| `.easyproxy-<random>` | Doğrudan `npm install -g` sırasında paketi değiştiren npm | İçinden EasyProxy işlemi çalışmadığında silin. |
+| `.epx-staging-<timestamp>` | EasyProxy güncelleyicisinin hazırlık kurulumu | İşaretli ve yarım saatten eski klasör bildirilir ama silinmez. İçinden EasyProxy işlemi çalışmadığında elle silin. `.epx-update-owner.json` işareti yoksa kökeni doğrulanmamıştır: yarım kalan güncelleme de aynı öneki kullanan başka bir şey de oluşturmuş olabilir. Silmeden önce EasyProxy'e ait olduğunu doğrulayın. |
+| `.epx-backup-<timestamp>` | Güncelleyicinin önceki sürüm kopyası | Bırakın; yeni sürüm sağlıklı başlayınca otomatik silinir, başlamazsa geri yüklenir. |
+
+Her deneme yeni klasör kullandığı için bu adlar sonraki güncellemeyi doğrudan
+engellemez. Ancak artıklar disk tüketir ve birikirse sonraki hazırlık `ENOSPC`
+ile başarısız olabilir. Güncelleyici sonraki güncellemelerde de bunları yerinde
+bırakır; sahiplik işaretini kontrol edip yarım saatten eski işaretli klasörleri
+bildirir. Yalnızca içinden EasyProxy işlemi çalışmadığını doğruladıktan sonra silin.
+
+Bir klasör silinemiyorsa içinden çalışan işlem kalmış olabilir. Windows oturumunu
+kapatmak veya yeniden başlatmak kilidi serbest bırakır.
+
+## Her güncelleme ve senkronizasyon update-in-flight diyorsa
+
+Beklemeye, servisi yeniden başlatmaya veya bilgisayarı yeniden başlatmaya rağmen her `epx update` ve
+`epx sync` `update-in-flight` ile başarısız oluyorsa, yarıda kalan bir güncelleme işaret dosyasını
+geride bırakmış olabilir ([#8524](https://github.com/AquilaXk/easyproxy/issues/8524)). Bu dosya
+EasyProxy ana dizinindeki `update-orchestrated.json` dosyasıdır (Windows'ta
+`%USERPROFILE%\.easyproxy`, diğer sistemlerde `~/.easyproxy`).
+
+Güncel sürümler Windows yükleyicisinin denetleyici sürecini bu dosyaya kaydeder. Dosya, 15 dakikalık
+koruma süresi dolduğunda ve o denetleyici ile başlatıcı kapandığında kendiliğinden temizlenir.
+2.100.x ve öncesi sürümler denetleyiciyi kaydetmiyordu. Bu sürümlerin yarıda kalan bir güncellemeden
+(kapatılan konsol, Ctrl+C, Görev Yöneticisi, uyku veya elektrik kesintisi) sonra bıraktığı dosya
+denetlenemez ve hiçbir zaman kendiliğinden temizlenmez. Neden buysa, terminaldeki `epx update` ve
+`epx sync` `update-in-flight` satırından sonra dosyanın yolunu ve yeniden adlandırma komutunu yazar.
+Pano, Desktop ve Remote Link yalnızca `update-in-flight` bildirir; yönergeyi görmek için
+`epx update` komutunu bir terminalde çalıştırın.
+
+Dosyayı yeniden adlandırmadan önce hiçbir güncellemenin çalışmadığından emin olun:
+
+1. Başka bir pencerede `epx update` veya pano güncellemesi sürmüyor.
+2. Hiçbir `npm`, `pnpm` veya `bun` genel kurulumu çalışmıyor. Windows'ta Görev Yöneticisi'nde npm çalıştıran
+   `node.exe` ve komut satırında `npm-install-job.ps1` geçen bir `powershell.exe` olup olmadığına bakın.
+3. Ardından dosyayı yeniden adlandırın (bir kopya kalır) ve `epx update` komutunu yeniden çalıştırın:
+
+   ```bat
+   ren "%USERPROFILE%\.easyproxy\update-orchestrated.json" update-orchestrated.json.stale
+   ```
+
+   ```bash
+   mv -n ~/.easyproxy/update-orchestrated.json ~/.easyproxy/update-orchestrated.json.stale
+   ```
+
+`EASYPROXY_HOME` başka bir yeri gösteriyorsa hata mesajının yazdığı yolu kullanın. Bu yol bir kabuğun
+genişletebileceği veya yorumlayabileceği karakterler ya da Windows'ta düz ASCII dışında karakterler içeriyorsa hata
+mesajı komut vermeden yalnızca dosyayı adlandırır; dosyayı elle
+yeniden adlandırın. Koruma süresi
+dolmamış ya da kaydedilen süreci hâlâ çalışan bir dosya bu yönergeyi yazdırmaz; bu durumda bekleyin
+veya çalışan güncellemenin bitmesine izin verin.
+
+## Güncelleme UNSUPERVISED proxy bildiriyorsa
+
+Güncellemeden sonra arka plan servisi yenilenemediğinde güncelleyici önce mevcut
+servisi launchd (macOS) veya systemd kullanıcı yöneticisi (Linux) üzerinden yeniden
+başlatmayı ister. Servisin yönettiği proxy dönmezse hizmet kesilmesin diye proxy'yi
+doğrudan başlatır, `UNSUPERVISED` uyarısı verir ve sıfır dışında kodla çıkar.
+Proxy çalışır; ancak çökerse yeniden başlatılmaz ve sonraki servis başlangıcıyla
+aynı bağlantı noktası için yarışabilir. `epx service repair` ile yönetimi servise
+devredin, ardından `epx status` kontrolü yapın.
+
+Panodan başlayan güncelleme de aynı sırayı izler. Yalnızca doğrudan başlatma
+başarılıysa yeni sürüm yanıtlıyor olsa bile pano aynı uyarıyla başarısızlık
+gösterir. Aynı onarım komutu bunu giderir.
+
+## Elle kurulumdan sonra proxy 503 döndürüyorsa
+
+Çalışan proxy'nin üzerine kurulum yapmak, yeniden başlayana kadar
+`package_tree_changed` koduyla `503` döndürmesine yol açar. 2.64.0 sonrasındaki
+sürümler, paket ağacı ve Bun çalışma zamanı tamamlanınca birkaç saniye içinde
+kendini yeniden başlatabilir. Eksik veya başarısız Bun postinstall adımı bu
+kurtarmayı engeller. `epx restart` veya `epx service restart` bu durumdaki proxy'yi
+bulabilir; yine de eksiksiz çalışma zamanı ve paket ağacı gerekir. 2.64.0 ve
+öncesinde proxy bu durumda kalır; eski işlem bağlantı noktasını tutarken
+`epx restart` çalışan proxy yok diyebilir. `epx service restart` kullanın veya
+`/healthz` yanıtındaki `pid` işlemine son verip `epx start` çalıştırın.
+
+Yükleyici çıktıysa veya başarısız olduysa hatasını inceleyin ve `epx status`
+çalıştırın. Kurtarmanın bitmesini bekleyin; çalışan proxy'yi yöneticisi üzerinden
+durdurun ve durduğunu doğrulayın. Aynı paket yöneticisiyle yeniden kurup Bun
+postinstall adımının tamamlanmasını sağlayın. Sonra yöneten servis/uygulama
+üzerinden; bağımsızsa `epx start` ile başlatın.
+
+## Güncelleme npm önbellek kontrolünde duruyorsa
+
+`mkdir` işleminde `ENOTDIR`, npm'in bir bileşeni dosya olan veya hedefi kayıp bir
+bağlantı olan yolda klasör oluşturmaya çalıştığını gösterir.
+[#6288](https://github.com/AquilaXk/easyproxy/issues/6288) örneğinde,
+`%LOCALAPPDATA%\npm-cache` başka sürücüye işaret eden bir junction idi; hedef
+klasör silinmiş veya sürücü kaldırılmıştı.
+
+Güncelleyici proxy'yi durdurmadan önce önbellek klasörünü kontrol eder. npm hazırlık
+kurulumu da `npm config get cache` tarafından bildirilen aynı klasörü kullanır.
+Klasör kullanılamıyorsa güncelleme `cache_root_dangling_link` veya
+`cache_root_not_directory` ile durur ve proxy çalışmaya devam eder:
+
+- `cache_root_dangling_link`: Önbellek bağlantısının/junction'ının hedefi kayıp.
+  Hedefi yeniden oluşturun veya npm normal klasör oluşturabilsin diye bağlantıyı kaldırın.
+- `cache_root_not_directory`: Önbellek ya da üst klasörlerinden biri dosya veya
+  kullanılamayan sürücüde. Dosyayı başka yere alın ya da
+  `npm config set cache <folder>` ile başka önbellek seçin.
+
+Sonra `epx update` komutunu yeniden çalıştırın. Kontrol geçmesine rağmen `ENOTDIR`
+sürerse tam `epx update` terminal çıktısı, `npm config get prefix` ve
+`npm config get cache` çıktılarıyla sorun kaydı açın.
+
+## Masaüstü güncellemesi “Installing update…” aşamasında takılıyorsa
+
+EasyProxy masaüstü uygulamasında **Install update**, uygulamayı değiştirmeden ve
+yeniden başlatmadan önce yükleyiciyi GitHub Releases'ten indirir ve imzasını doğrular.
+Pencere, imza doğrulama hatasını, proxy'nin belirlenemediğini veya durdurulamadığını,
+durdurma işleminin zaten sürdüğünü ya da yükleyicinin başarısız olduğunu bildirir.
+Zaman aşımı durumunda yeniden denemeden önce güncelleme durumunu kontrol edin.
+
+Paket indirilemezse ve sürüm biliniyorsa pencere o sürümün bağlantısını gösterir. Bağlantıyı kullanın
+ya da [yayınlar sayfasında](https://github.com/AquilaXk/easyproxy/releases) aynı
+sürümü bulup işletim sisteminize ve mimarinize uygun yükleyiciyi indirin.
+Önizleme sürümlerinin ayrı sayfaları vardır; uygulamanın önerdiği sürümü seçin.
+
+Yükleyiciyi çalıştırmadan önce proxy'yi onu yöneten uygulama veya servis üzerinden
+durdurun ve durduğunu doğrulayın:
+
+1. Uygulamanın yönettiği proxy için EasyProxy masaüstü uygulamasından tepsi menüsüyle çıkın.
+2. Servisin yönettiği proxy'yi servis denetimleriyle durdurun (EasyProxy servisi için
+   `epx stop`). Bağımsız terminal proxy'sini o terminalden durdurun.
+3. Windows'ta kalan çalışma zamanlarını belirlemeye yardımcı olması için:
+
+   ```powershell
+   Get-Process -Name epx, easyproxy-desktop, bun, bunx -ErrorAction SilentlyContinue
+   ```
+
+   Bu liste işlemi hangi uygulamanın yönettiğini kanıtlamaz. EasyProxy çalışma
+   zamanını belirleyip yöneten uygulama/servisle durdurun; `bun` başka uygulamaya
+   ait olabilir. Kurulumdan önce uygulamanın ve proxy'nin çıkmasını bekleyin.
+
+İndirdiğiniz yükleyiciyi çalıştırın, ardından masaüstü uygulamasını açın veya
+yöneten servisi yeniden başlatın.

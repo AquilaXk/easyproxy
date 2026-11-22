@@ -1,0 +1,110 @@
+---
+title: Windows kod imzalama
+description: EasyProxy Windows dosyalarının SignPath Foundation ile imzalanması, imzaların doğrulanması ve projenin kod imzalama ilkesi.
+---
+
+EasyProxy, bağımsız `epx.exe` ve `EasyProxy-<version>-windows-x64.msi` masaüstü
+yükleyicisi için [SignPath Foundation](https://signpath.org) üzerinden Authenticode
+kod imzalamaya geçiyor. İmza, Windows'a, SmartScreen'e ve antivirüs ürünlerine
+dosyayı kimin yayımladığını ve derlemeden sonra değiştirilmediğini bildirir.
+Bu, [#7207](https://github.com/AquilaXk/easyproxy/issues/7207) gibi imzasız
+dosyalardan kaynaklanan yanlış alarmları önlemeye yardımcı olur.
+
+Geçiş sürüyor. Yayın iş akışı hazır; SignPath bunu test sertifikasıyla doğruluyor.
+Üretim sertifikası verilene kadar Windows yayın dosyaları imzasız kalır ve
+SmartScreen bir kez **Ek bilgi → Yine de çalıştır** seçimini isteyebilir.
+Geçişten sonra iş akışı **SignPath Foundation** ile üretim imzalamayı dener. İmzalama veya doğrulama başarısız olursa, aşağıda açıklandığı gibi özgün imzasız dosya yine de yayımlanabilir.
+
+## Kod imzalama ilkesi
+
+Ücretsiz kod imzalama [SignPath.io](https://about.signpath.io/), sertifika ise
+[SignPath Foundation](https://signpath.org/) tarafından sağlanır.
+
+- Kod katkısı yapanlar ve inceleyenler: [AquilaXk](https://github.com/AquilaXk)
+- Onaylayanlar: [AquilaXk](https://github.com/AquilaXk)
+
+Sertifika kullanılmadan önce her yayın imzalama isteği SignPath'te elle onaylanır.
+Yalnızca bu deponun kaynaklarından GitHub Actions ile derlenen dosyalar imzalanır.
+Önceden derlenmiş keyring eklentileri gibi sürüme eklenen üçüncü taraf dosyaları
+özgün hallerini korur; SignPath Foundation ilkesi bunların proje sertifikasıyla
+imzalanmasını yasaklar.
+
+### Gizlilik
+
+easyproxy, yalnızca kuran veya çalıştıran kişi kontrol panelinde ya da etkileşimli bir CLI isteminde bildirimi gördükten ve reddetmedikten sonra `telemetry.easyproxy.me` adresine günde bir kez anonim kullanım özeti (her gün değişen bir kurulum karması, sürüm, sürüm kanalı, platform, kurulum kanalı, sağlayıcı türü, kaba model ailesi, etkin dakikalar ve istek, jeton ve hata sayaçları; istemler, model çıktıları, anahtarlar, hesaplar, ana bilgisayar adları veya dosya yolları asla gönderilmez) gönderir. Bu özellik bu bildirimde, Windows yükleyicisinde (varsayılan olarak işaretli "Send anonymous usage statistics" onay kutusu), Proxy ayrıntılarında veya `epx telemetry disable`, `EPX_TELEMETRY=0` ya da `DO_NOT_TRACK=1` ile kapatılabilir. Bu anonim verilerin yalnızca proje genelindeki toplamları herkese açıktır. Ayrı bir herkese açık sıralama profili, siz kendiniz bağlamadıkça (pano Ana ekranı veya epx telemetry profile connect) kapalıdır; yalnızca seçtiğiniz kullanıcı adını, görünen adı ve rengi ile günlük istek, jeton ve model ailesi toplamlarınızı paylaşır, anonim telemetri kimliğinizi asla paylaşmaz ve bağlantıyı kesmek profili siler. Bunun dışındaki tüm veriler yalnızca yapılandırdığınız sağlayıcılara ve hizmetlere gider. Yeni sürümleri kontrol etmek için GitHub ve npm kayıt deposundan yayın meta verilerini de okur; bu sürüm kontrolleri istemlerinizi veya kimlik bilgilerinizi taşımaz. Bkz. [Telemetri ve Gizlilik](/tr/guides/telemetry/).
+
+## İndirmeyi doğrulama
+
+PowerShell'de indirdiğiniz dosyayı kontrol edin:
+
+```powershell
+Get-AuthenticodeSignature .\EasyProxy-<version>-windows-x64.msi | Format-List Status, SignerCertificate
+Get-AuthenticodeSignature .\epx.exe | Format-List Status, SignerCertificate
+```
+
+İmzalı sürüm `Status : Valid` ve konusunda `SignPath Foundation` bulunan bir
+imzalayan sertifikası gösterir. Aynı bilgi Dosya Gezgini'nde **Özellikler → Dijital
+İmzalar** altındadır. Yayın sayfasında her dosyanın yanında bir `.sha256` dosyası
+da bulunur; bunu `Get-FileHash <file> -Algorithm SHA256` çıktısıyla karşılaştırın.
+
+## İmzalanan dosyalar
+
+| Dosya | İmzalanan içerik |
+| --- | --- |
+| `epx-<version>-bun-windows-x64.zip` | Arşivdeki `epx.exe`. ZIP ve `.sha256`, imzalı dosyadan oluşturulur. |
+| `EasyProxy-<version>-windows-x64.msi` | Yükleyici ve kurduğu tüm `.exe` dosyaları: masaüstü uygulaması ile paketlenmiş `epx.exe`. |
+
+Masaüstü güncelleyici imzası (`.msi.sig`) ve `latest.json`, imzalı yükleyiciden
+üretilir; uygulama içi güncellemeler yayın sayfasındaki aynı baytları kurar.
+
+Her yayın sayfası **Code signing** başlığı altında o yayının Windows dosyalarının
+gerçekten imzalanıp imzalanmadığını belirtir. Bu bilgi, yayın çalıştırmasının her dosya
+için kaydettiği sonuçtan gelir: bir dosya yalnızca çalıştırma `release-signing` ilkesini
+kullandıysa, doğrulanmış imzalı dosya imzasız dosyanın yerine geçtiyse ve kaydedilen
+SHA-256 değeri yayında yayımlanan dosyanınkiyle eşleşiyorsa imzalı sayılır. Böyle bir
+kaydı olmayan dosya, örneğin kaydı yayın işine ulaşmayan bir yeniden çalıştırmada yeniden
+derlenmiş bir dosya, kaydedilmemiş olarak listelenir ve kod imzalı değil sayılır.
+Çalıştırma hiçbir sonuç kaydetmediyse yayın, Windows dosyalarının kod imzalı olmadığını
+belirtir. SignPath atfı ve ilke bağlantısı her yayında yer alır.
+
+## Proje bakımını yapanlar için
+
+`.github/workflows/release.yml`, resmi
+`signpath/github-action-submit-signing-request` eylemini kullanır. Bir gizli değer
+ve üç depo değişkeni okur:
+
+| Ad | Tür | Değer |
+| --- | --- | --- |
+| `SIGNPATH_API_TOKEN` | Gizli değer | SignPath CI kullanıcısının API tokenı |
+| `SIGNPATH_ORGANIZATION_ID` | Değişken | SignPath kuruluş kimliği |
+| `SIGNPATH_PROJECT_SLUG` | Değişken | `easyproxy` |
+| `SIGNPATH_SIGNING_POLICY_SLUG` | Değişken | Şimdilik `test-signing`; sertifika verilince `release-signing` |
+
+SignPath çıktı yapılandırmaları: `windows-standalone-zip` (ZIP kökünde tek
+`epx.exe`) ve `windows-msi-zip` (ZIP kökünde tek `.msi`, iç dosyaları da imzalanır).
+
+İmzalama, yayını engellemez. İşleyiş seçilen ilkeye bağlıdır:
+
+| İlke | Deneme çalıştırması | Gerçek yayın |
+| --- | --- | --- |
+| Token yok veya yapılandırma eksik | İmzasız | Bildirim veya uyarıyla imzasız |
+| `test-signing` | Test sertifikasıyla imzalanır, yalnızca iş akışı çıktısı olarak tutulur | Bildirimle imzasız; test sertifikası hiçbir zaman yayımlanmaz |
+| `release-signing` | İmzalanır ve güvenilirliği doğrulanır | İmzalanır ve güvenilirliği doğrulanır |
+
+İstek başarısız olur, zaman aşımına uğrar veya reddedilirse ya da doğrulama
+başarısız olursa iş uyarı kaydeder ve özgün imzasız dosyayı yayımlar. MSI, varsa özgün
+güncelleyici imzasını korur; bağımsız `epx.exe` dosyasının güncelleyici imzası yoktur.
+
+**Üretim sertifikasına geçiş:** SignPath sertifikayı verince depo değişkeni
+`SIGNPATH_SIGNING_POLICY_SLUG` değerini `release-signing` yapın
+(Settings → Secrets and variables → Actions → Variables). İş akışını değiştirmek
+gerekmez. Bundan sonra deneme çalıştırmaları dahil her yayın iki imzalama isteği
+açar: bağımsız dosya ve yükleyici. Çalıştırma beklerken onaylayan kişi ikisini de
+[app.signpath.io](https://app.signpath.io) üzerinde onaylamalıdır. İş akışı her
+istek için en fazla bir saat bekler, sonra imzasız yayımlar.
+
+**Yayımlamadan test etme:** **Windows signing test** iş akışı
+(`.github/workflows/windows-signing-test.yml`, yalnızca elle başlatılır, girdi
+almaz) GitHub Windows çalıştırıcılarında `epx.exe` ve MSI derler. İkisini de
+`test-signing` ile imzalar, imzaları doğrular ve test imzalı dosyaları kısa süreli
+iş akışı çıktıları olarak saklar. Hiçbir şey yayımlamaz, yayın ilkesini kullanmaz.
