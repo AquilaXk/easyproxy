@@ -429,12 +429,14 @@ export default function GatewayGuardrailsPanel({
                 {uxT(locale, "guardrails.dryRunFindings", { list: dryRunResult.findings.join(", ") })}
               </div>
             )}
-            <div className="flex flex-col gap-1">
-              <span className="text-[11px] font-medium text-fg-subtle">{uxT(locale, "guardrails.dryRunPreviewLabel")}</span>
-              <pre className="m-0 max-h-48 overflow-auto rounded-control border border-line bg-bg p-2.5 font-mono text-xs whitespace-pre-wrap break-words text-fg">
-                {dryRunResult.previewText}
-              </pre>
-            </div>
+            {dryRunResult.previewText.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-medium text-fg-subtle">{uxT(locale, "guardrails.dryRunPreviewLabel")}</span>
+                <pre className="m-0 max-h-48 overflow-auto rounded-control border border-line bg-bg p-2.5 font-mono text-xs whitespace-pre-wrap break-words text-fg">
+                  {dryRunResult.previewText}
+                </pre>
+              </div>
+            )}
           </div>
         )}
       </section>
