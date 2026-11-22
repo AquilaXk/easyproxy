@@ -2,23 +2,24 @@
 
 ## Color
 
-색상 토큰은 역할을 나타낸다. 컴포넌트에서 hex 값을 직접 사용하지 않는다.
+색상 토큰은 역할을 나타낸다. 컴포넌트에서 hex 값을 직접 사용하지 않는다. 캔버스는 Obsidian-Slate 중립 팔레트(`#f8fafc` 라이트 / `#0b0e14` 다크)를 기반으로 한다.
 
 | 역할 | 토큰 | 라이트 | 다크 |
 |---|---|---:|---:|
-| 앱 배경 | `--bg` | `#ffffff` | `#212121` |
-| 사이드바 | `--rail` | `#f9f9f9` | `#171717` |
-| 기본 표면 | `--surface` | `#ffffff` | `#262626` |
-| 올라온 표면 | `--raised` | `#f4f4f4` | `#303030` |
-| 기본 텍스트 | `--text` | `#0d0d0d` | `#ececec` |
-| 보조 텍스트 | `--muted` | `#6e6e6e` | `#a6a6a6` |
-| 약한 텍스트 | `--faint` | `#707070` | `#9a9a9a` |
-| 성공/활성 | `--green` | `#0a7d5c` | `#4ecb9d` |
-| 경고 | `--amber` | `#9a4a08` | `#fbbf24` |
-| 위험 | `--red` | `#b91c1c` | `#f87171` |
+| 사이드바 레일 | `--rail` (`--epx-rail`) | `#f1f5f9` | `#080b10` |
+| 앱 배경 | `--bg` (`--epx-bg`) | `#f8fafc` | `#0b0e14` |
+| 기본 표면 | `--surface` (`--epx-surface`) | `#ffffff` | `#111620` |
+| 보조 표면 | `--epx-surface-2` | `#f1f5f9` | `#161d2a` |
+| 올라온 표면 | `--raised` (`--epx-raised`) | `#ffffff` | `#1b2333` |
+| 안쪽 표면 | `--epx-inset` | `#f1f5f9` | `#0d1118` |
+| 기본 텍스트 | `--text` (`--epx-fg`) | `#0f172a` | `#f8fafc` |
+| 보조 텍스트 | `--muted` (`--epx-fg-muted`) | `#475569` | `#a6b3c6` |
+| 약한 텍스트 | `--faint` (`--epx-fg-subtle`) | `#5b687b` | `#8b99af` |
+| 성공/활성 | `--green` (`--epx-success`) | `#0e9f6e` | `#34d399` |
+| 경고 | `--amber` (`--epx-warning`) | `#c2410c` | `#fbbf24` |
+| 위험 | `--red` (`--epx-danger`) | `#dc2626` | `#f87171` |
 
-`--accent`는 기본 액션과 포커스에 사용한다. 활성 토글은 다크 모드에서 트랙과 핸들이
-겹쳐 보이지 않도록 `--toggle-on-bg`와 `--toggle-dot-color`를 사용한다.
+`--accent`는 기본 액션에, `--accent-ring`은 포커스에 사용한다. 활성 토글은 다크 모드에서도 트랙과 핸들이 구분되도록 `--toggle-on-bg`와 `--toggle-dot-color`를 사용한다.
 
 ### v2 색 역할 (`src/design/theme.css`)
 
@@ -26,24 +27,23 @@ v2는 위 v1 토큰을 `src/design/bridge.css`에서 아래 `--epx-*` 토큰으�
 
 | 역할 | 토큰 | Tailwind | 라이트 | 다크 |
 |---|---|---|---:|---:|
-| 메인(기본 버튼, 선택 상태, 켜진 토글) | `--epx-accent` | `bg-accent` | `#18181b` | `#fafafa` |
-| 메인 위 글자 | `--epx-on-accent` | `text-on-accent` | `#ffffff` | `#09090b` |
-| 하이라이트(포커스 링, 링크) | `--epx-highlight` | `text-highlight` | `#0369a1` | `#38bdf8` |
-| 하이라이트 바탕 | `--epx-highlight-soft` | `bg-highlight-soft` | sky 12% | sky 16% |
+| 메인(기본 버튼, 선택 상태, 켜진 토글) | `--epx-accent` | `bg-accent` | `#1d4ed8` | `#2563eb` |
+| 메인 상단/하단 톤 | `--epx-accent-top` / `--epx-accent-bottom` | `bg-accent-top` / `bg-accent-bottom` | `#2563eb` / `#1e40af` | `#3b82f6` / `#1d4ed8` |
+| 메인 위 글자 | `--epx-on-accent` | `text-on-accent` | `#ffffff` | `#ffffff` |
+| 하이라이트(포커스 링, 링크) | `--epx-highlight` | `text-highlight` | `#2563eb` | `#60a5fa` |
+| 하이라이트 바탕 | `--epx-highlight-soft` | `bg-highlight-soft` | `rgb(37 99 235 / 0.14)` | `rgb(96 165 250 / 0.2)` |
+| 기본 버튼 상단 광택 | `--epx-glow` / `--epx-glow-hover` | `shadow-glow` / `shadow-glow-hover` | `inset 0 1px 0 0 rgb(255 255 255 / 0.18)` | `inset 0 1px 0 0 rgb(255 255 255 / 0.18)` |
 
-메인은 화면의 반전색이다. 다크에서는 흰색, 라이트에서는 흰 배경에 묻히지 않게 거의 검정이다.
-파랑을 메인으로 쓰지 않는다. 링크와 키보드 포커스만 스카이블루로 칠한다. 선택된 메뉴, 호버는
-흰색 계열로 처리하고, 호버에 색 번짐(glow)을 넣지 않는다.
+Obsidian-Slate 배경(`#f8fafc` 라이트 / `#0b0e14` 다크) 위에서 Cobalt 파랑(`#1d4ed8` 라이트 / `#2563eb` 다크)을 기본 액션 색으로 쓰고, Sapphire(`#2563eb` 라이트 / `#60a5fa` 다크)를 포커스 링과 링크에 쓴다. 차트는 상태 색과 분리된 `--epx-chart-1`..`6` 범주 팔레트를 사용한다.
 
 ## Typography
 
 ### Font families
 
-- `--font-ui`: 일반 UI, 제목, 본문, 버튼, 입력. 제품 서체를 우선하고, 그 뒤에는 시스템 UI 폰트를 영문도 지원하는 한글 fallback보다 먼저 선언한다. 그래야 한글 fallback이 시스템 UI 폰트의 영문·숫자 글리프까지 대신 표시하지 않는다. 한글은 앞선 서체의 지원 여부에 따라 시스템의 언어별 fallback 또는 뒤에 선언된 한글 글꼴로 표시한다. 중문·일문은 `:root:lang(...)` 규칙으로 해당 언어의 시스템 글꼴을 우선한다.
-- `--font-code`: 모델 ID, URL, 버전, 토큰 수, 로그, 코드. 숫자는 tabular 형태로 정렬한다.
+- `--font-ui`: `"Geist Variable"`, `"Wanted Sans Variable"`, 시스템 UI 글꼴 순으로 선언한다. 영문·숫자는 `Geist Variable`이 먼저 처리하고 한글은 `Wanted Sans Variable`이 이어받으며, 중문·일문은 `:root:lang(...)` 규칙으로 해당 언어의 시스템 글꼴을 우선한다.
+- `--font-code`: `"Geist Mono Variable"`, `"Wanted Sans Variable"`, `ui-monospace` 순으로 선언하며 모델 ID, URL, 버전, 토큰 수, 로그, 코드에 사용한다. 숫자는 tabular 형태로 정렬한다.
 
-외부 CDN 폰트를 사용하지 않는다. 프록시 관리 화면은 오프라인에서도 열려야 하고, 폰트
-다운로드 실패가 레이아웃 이동이나 한글 누락으로 이어지면 안 되기 때문이다.
+모든 제품 서체(`@fontsource-variable/geist`, `@fontsource-variable/geist-mono`, `wanted-sans`)는 번들에 내장하며 외부 CDN 폰트를 사용하지 않는다. 프록시 관리 화면은 오프라인에서도 열려야 하고 폰트 다운로드 실패가 레이아웃 이동이나 한글 누락으로 이어지면 안 되기 때문이다.
 
 ### Type scale
 
@@ -167,44 +167,22 @@ v1 토큰 `--radius-xs`, `--radius-sm`, `--radius-lg`는 Tailwind의 `rounded-xs
 
 ### Motion and decoration
 
-- 상태 점은 깜빡이지 않는다(`animate-ping`/`animate-pulse` 금지). 움직임은 상태가 바뀔 때만
-  (전환, 진행 중 스피너).
-- 버튼은 단색 채움이다. 그라데이션·광택·번짐 없음.
+- 상태 점은 깜빡이지 않는다(`animate-ping`/`animate-pulse` 금지). 움직임은 상태가 바뀔 때만(전환, 진행 중 스피너) 사용한다.
+- 버튼은 단색 채움이다. 배경 그라데이션이나 과한 네온 번짐을 넣지 않으며, primary 버튼의 상단 1px 하이라이트는 `--epx-glow` / `--epx-glow-hover` 토큰으로 표현한다.
 - 기능적인 그라데이션(로딩 스켈레톤, 단색 사각형으로 그린 아이콘)은 예외다.
 
 ### 색
 
-색은 상태(정상·경고·오류)에만 쓴다. 진행률, 선택, 강조는 흑백 단계(`--epx-accent` 반전색)로 한다.
-링크와 키보드 포커스만 스카이블루.
+Obsidian-Slate 중립 표면 위에서 Cobalt(`--epx-accent`, 라이트 `#1d4ed8` / 다크 `#2563eb`)를 기본 액션과 활성 내비게이션 강조에 쓴다. Sapphire(`--epx-highlight`, 라이트 `#2563eb` / 다크 `#60a5fa`)는 포커스 링과 링크에 쓰며, 상태 표현은 `--epx-success` / `--epx-warning` / `--epx-danger`로 구분한다.
 
 ### Sidebar
 
-- 메뉴 행 32px, 13px medium, 아이콘 16px. 텍스트는 `--epx-fg-muted`, 아이콘은 `--epx-fg-subtle`.
-- 호버와 현재 페이지는 은은한 톤 단계 하나. 떠 있는 판, 링, 그림자 없음.
-- 분류 제목은 11.5px, 문장형(대문자 변환 없음).
-- 아래쪽은 1px 경계선 아래 같은 32px 행: 프록시 상태 행(정지된 점 + 이름 + 켜진 시간 + 레버),
-  언어 + 테마, GitHub + 버전.
-- 프록시 행의 동작은 3단 슬롯 레버 하나(`proxy-lever.tsx`)다. 가운데 홈까지 당겼다 놓으면 Codex 모델
-  목록 새로고침, 끝까지 당기면 프록시 정지(확인 창은 그대로, 취소하면 다시 올라감). 조금만 당기고 놓으면
-  제자리로 돌아간다. 클릭·Enter·↓는 안전한 가운데(새로고침), End는 정지. 마우스를 올리면 상태 줄이
-  "당겨서 새로고침·정지"가 되고, 당기는 동안에는 "놓으면 모델 새로고침"/"놓으면 프록시 정지"(빨강)로
-  놓았을 때 일어날 일을 글자로 말한다. 손잡이도 같은 색이 되고, 새로고침이 끝나면 잠깐 초록. 움직임은
-  상태가 바뀔 때만 있다(장식 아님).
-- 예외: 새로고침(놓기 직전 문구와 실제 진행 중 상태 글자)은 눈에 띄도록 스카이블루에 빛이 지나가는
-  글자(`.epx-shine`, bridge.css)를 쓴다. 이 한 곳만 하이라이트 색을 상태 표시에 쓰고, 동작 줄이기
-  설정에서는 빛 없이 스카이블루 글자만 남는다.
-- 레버를 잡고 있는 동안의 움직임: 가운데 칸에서는 하늘색 빛 띠가 계속 줄을 훑고 점도 하늘색이
-  된다(`.epx-sweep-loop`). 정지 칸까지 당기면 프록시 불빛이 전기가 끊기기 직전처럼 빨갛게
-  깜빡이고(`.epx-flicker`), 줄이 살짝 어두워지며(`.epx-dim`) 줄과 레버가 덜덜 떤다(`.epx-tremble`).
-  놓기 전에 손끝에서 결과를 느끼게 하려는 것이다. 줄 아래 레일 같은 장식 선은 쓰지 않는다.
-- 레버 동작이 시작될 때의 움직임(bridge.css, 동작 줄이기 설정에서는 모두 꺼짐):
-  - 정지는 기차가 서는 느낌: 손잡이가 무겁게 끝까지 떨어졌다 튕기고(`THROW.stop`), 줄이 앞으로
-    쏠렸다 뒤로 흔들리고(`.epx-halt`), "중지 중…"이 미끄러져 들어와 멈추고(`.epx-brake`), 불빛이
-    몇 번 깜빡이다 꺼져 빈 동그라미가 된다(`.epx-lightout`).
-  - 새로고침은 충전 느낌: 하늘색 빛 띠가 줄을 한 번 훑고(`.epx-sweep`), 레버 홈이 하늘색으로
-    차오르고(`.epx-charge`), 손잡이가 가운데 홈에 튕기듯 들어가 하늘색 테두리를 두른다.
-- 아래쪽 세 줄은 한 격자다: 높이 32px, 왼쪽 16px 아이콘 칸(상태 점도 이 칸 가운데), 글자는 그 뒤 9px,
-  오른쪽 동작은 28px 칸으로 오른쪽 10px 안쪽에 끝난다. 줄 사이 여백은 따로 두지 않는다.
+- 메뉴 행 32px, 13px medium, 아이콘 16px. 텍스트는 `--epx-fg-muted`, 아이콘은 `--epx-fg-subtle`을 쓰고 활성 항목 아이콘은 `--epx-accent`로 맞춘다.
+- 호버와 현재 페이지는 은은한 톤 단계 하나만 쓴다. 떠 있는 판, 링, 그림자를 넣지 않는다.
+- 분류 제목(`Everyday`, `Fine-tuning`)은 12px, 문장형(대문자 변환 없음)이다.
+- 아래쪽은 1px 경계선(`--epx-line`) 아래 32px 높이의 푸터 행들이다: `ProxyControls` 상태·제어 행, 언어 + `ThemeSwitch` 행(`.sidebar-pref-row`), GitHub + 버전 행(`.sidebar-github-row`), 데스크톱 전용 줌 행(`.sidebar-meta-row`).
+- 프록시 제어는 `ProxyControls`(`gui/src/components/ui-v2/proxy-controls.tsx`)로 통일한다. 정지된 상태 점(정상 `bg-success`, 중지 중 `bg-danger`, 오프라인 `bg-fg-subtle`), 레이블 + 가동 시간(`tabular-nums`) 또는 진행 상태 문구, 그리고 명시적인 아이콘 버튼(세션 종료, Codex 카탈로그 새로고침 `IconRefresh`, 프록시 중지 `IconPower`)으로 시작·중지·재시작을 제어한다.
+- 진행 중 상태(`stopping`은 `--epx-danger`, `restarting`은 `--epx-highlight`와 `IconRefresh`의 `animate-spin`)만 강조 색과 회전을 사용하며 장식용 애니메이션은 두지 않는다.
 
 ### 레이아웃
 

@@ -3,7 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>EasyProxy</title>
+    <script>
+      (function () {
+        var meta = document.querySelector('meta[name="color-scheme"]');
+        function syncTheme() {
+          var mode = null;
+          try {
+            mode = localStorage.getItem("epx-theme");
+          } catch (e) {}
+          var root = document.documentElement;
+          if (mode === "light" || mode === "dark") {
+            root.dataset.theme = mode;
+            if (meta) meta.setAttribute("content", mode);
+          } else {
+            delete root.dataset.theme;
+            if (meta) meta.setAttribute("content", "light dark");
+          }
+        }
+        syncTheme();
+        window.addEventListener("storage", function (event) {
+          if (!event.key || event.key === "epx-theme") syncTheme();
+        });
+      })();
+    </script>
     <style>
       /*
         The dashboard's v2 tokens (gui/src/design/theme.css), copied by value: this page renders
@@ -38,8 +62,29 @@
         font: 14px/1.5 var(--font-ui);
         -webkit-font-smoothing: antialiased;
       }
+      :root[data-theme="light"] { color-scheme: light; }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #0b0e14;
+        --surface: #111620;
+        --surface-2: #161d2a;
+        --raised: #1b2333;
+        --line: rgb(148 163 184 / 0.14);
+        --line-strong: rgb(148 163 184 / 0.25);
+        --fg: #f8fafc;
+        --fg-muted: #a6b3c6;
+        --fg-subtle: #8b99af;
+        --accent: #2563eb;
+        --accent-hover: #3b82f6;
+        --accent-soft: rgb(96 165 250 / 0.16);
+        --on-accent: #ffffff;
+        --highlight: #60a5fa;
+        --success: #34d399;
+        --danger: #f87171;
+        --danger-soft: rgb(248 113 113 / 0.14);
+      }
       @media (prefers-color-scheme: dark) {
-        :root {
+        :root:not([data-theme]) {
           --bg: #0b0e14;
           --surface: #111620;
           --surface-2: #161d2a;

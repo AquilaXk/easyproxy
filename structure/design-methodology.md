@@ -32,7 +32,7 @@ monochrome mask set. Crusoe follows this path with its four-stop gradient lozeng
 
 | Surface | Current design | Notes |
 |---|---|---|
-| Dashboard | Data-dense, light, rounded, sans-serif | Default Bun/React template aesthetic |
+| Dashboard | Obsidian-Slate canvas (`#f8fafc` light / `#0b0e14` dark), Cobalt accent (`#1d4ed8` / `#2563eb`), hairline 1px cards, `Geist Variable` / `Wanted Sans Variable` / `Geist Mono Variable` | v2 tokens (`gui/src/design/theme.css`), 8+3 grouped sidebar, `ProxyControls` footer |
 | `epx init` CLI | Flat numbered menu, no personality | Could benefit from staged approach |
 | Add Provider modal | Functional form | Minimal styling |
 | Logs page | Dense table, monospace | Appropriate for log viewing |

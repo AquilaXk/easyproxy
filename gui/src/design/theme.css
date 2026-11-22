@@ -95,6 +95,7 @@
   --epx-warning: light-dark(#c2410c, #fbbf24);
   --epx-warning-soft: light-dark(rgb(194 65 12 / 0.1), rgb(251 191 36 / 0.14));
   --epx-danger: light-dark(#dc2626, #f87171);
+  --epx-danger-solid: #dc2626;
   --epx-danger-soft: light-dark(rgb(220 38 38 / 0.1), rgb(248 113 113 / 0.14));
 
   /* 6-slot categorical telemetry palette independent of status semantics */
@@ -154,6 +155,7 @@
   --color-warning: var(--epx-warning);
   --color-warning-soft: var(--epx-warning-soft);
   --color-danger: var(--epx-danger);
+  --color-danger-solid: var(--epx-danger-solid);
   --color-danger-soft: var(--epx-danger-soft);
 
   --color-background-primary: var(--epx-bg);

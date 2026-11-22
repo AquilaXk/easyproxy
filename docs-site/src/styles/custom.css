@@ -1097,17 +1097,22 @@ footer.sl-flex .meta { color: var(--sl-color-gray-4); }
   .lp-chips { animation-delay: 0.21s; }
   /* per-chip stagger on top of the group entrance */
   .lp-chips li { animation: epx-fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
-  .lp-chips li:nth-child(1) { animation-delay: 0.22s; }
-  .lp-chips li:nth-child(2) { animation-delay: 0.26s; }
-  .lp-chips li:nth-child(3) { animation-delay: 0.3s; }
-  .lp-chips li:nth-child(4) { animation-delay: 0.34s; }
-  .lp-chips li:nth-child(5) { animation-delay: 0.38s; }
-  .lp-chips li:nth-child(6) { animation-delay: 0.42s; }
-  .lp-chips li:nth-child(7) { animation-delay: 0.46s; }
-  .lp-chips li:nth-child(8) { animation-delay: 0.5s; }
-  .lp-chips li:nth-child(9) { animation-delay: 0.54s; }
-  .lp-chips li:nth-child(10) { animation-delay: 0.58s; }
-  .lp-chips li:nth-child(11) { animation-delay: 0.62s; }
+  @supports (animation-delay: calc(sibling-index() * 0.1s)) {
+    .lp-chips li { animation-delay: calc(0.18s + sibling-index() * 0.04s); }
+  }
+  @supports not (animation-delay: calc(sibling-index() * 0.1s)) {
+    .lp-chips li:nth-child(1) { animation-delay: 0.22s; }
+    .lp-chips li:nth-child(2) { animation-delay: 0.26s; }
+    .lp-chips li:nth-child(3) { animation-delay: 0.3s; }
+    .lp-chips li:nth-child(4) { animation-delay: 0.34s; }
+    .lp-chips li:nth-child(5) { animation-delay: 0.38s; }
+    .lp-chips li:nth-child(6) { animation-delay: 0.42s; }
+    .lp-chips li:nth-child(7) { animation-delay: 0.46s; }
+    .lp-chips li:nth-child(8) { animation-delay: 0.5s; }
+    .lp-chips li:nth-child(9) { animation-delay: 0.54s; }
+    .lp-chips li:nth-child(10) { animation-delay: 0.58s; }
+    .lp-chips li:nth-child(11) { animation-delay: 0.62s; }
+  }
   .lp-stage-in img { animation-delay: 0.28s; }
 
   /* interactive lift */
@@ -1194,5 +1199,16 @@ footer.sl-flex .meta { color: var(--sl-color-gray-4); }
         max-width: 100%;
       }
     }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-hero-copy h1,
+  .lp-sub,
+  .lp-cta,
+  .lp-chips,
+  .lp-chips li,
+  .lp-stage-in img {
+    animation: none;
   }
 }

@@ -1,9 +1,8 @@
 /* ProviderOverviewDashboard — aggregate overview (Phase 010) */
 
 .pws-dashboard {
-  /* Muted labels here must clear WCAG 4.5:1 in both themes; the old `var(--fg-muted, #888)`
-     fallback only reached ~3.5:1 on white. Alias the design-system muted token instead. */
-  --fg-muted: var(--muted);
+  /* Muted labels here must clear WCAG 4.5:1 in both themes; alias the design-system muted token. */
+  --fg-muted: var(--epx-fg-muted, var(--muted));
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -72,13 +71,13 @@
   line-height: 1.25;
 }
 
-.pws-dashboard-card--ok .pws-dashboard-card-count { color: var(--green, #22c55e); }
-.pws-dashboard-card--warn .pws-dashboard-card-count { color: var(--yellow, #eab308); }
-.pws-dashboard-card--muted .pws-dashboard-card-count { color: var(--fg-muted, #888); }
+.pws-dashboard-card--ok .pws-dashboard-card-count { color: var(--epx-success, var(--green)); }
+.pws-dashboard-card--warn .pws-dashboard-card-count { color: var(--epx-warning, var(--yellow)); }
+.pws-dashboard-card--muted .pws-dashboard-card-count { color: var(--epx-fg-muted, var(--fg-muted)); }
 
 .pws-dashboard-card-label {
   font-size: 0.75rem;
-  color: var(--fg-muted, #888);
+  color: var(--epx-fg-muted, var(--fg-muted));
   letter-spacing: 0;
 }
 
@@ -102,7 +101,7 @@
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0;
-  color: var(--fg-muted, #888);
+  color: var(--epx-fg-muted, var(--fg-muted));
   margin: 0;
   padding-bottom: 2px;
 }
@@ -111,15 +110,15 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--yellow, #eab308);
+  color: var(--epx-warning, var(--yellow));
   text-transform: none;
   font-size: 0.82rem;
   letter-spacing: 0;
 }
 
 .pws-dashboard-row--attention {
-  border-color: color-mix(in srgb, var(--yellow, #eab308) 40%, var(--border));
-  background: color-mix(in srgb, var(--yellow, #eab308) 8%, var(--bg-secondary, var(--bg)));
+  border-color: color-mix(in srgb, var(--epx-warning, var(--yellow)) 40%, var(--epx-line-strong, var(--border)));
+  background: color-mix(in srgb, var(--epx-warning, var(--yellow)) 8%, var(--epx-surface, var(--bg)));
 }
 
 /* Clickable provider rows */
@@ -191,7 +190,7 @@
 .pws-dashboard-row-chevron {
   width: 12px;
   height: 12px;
-  color: var(--fg-muted, #888);
+  color: var(--epx-fg-muted, var(--fg-muted));
   flex-shrink: 0;
 }
 
@@ -210,7 +209,7 @@
 }
 
 .pws-capacity-label {
-  color: var(--fg-muted, #888);
+  color: var(--epx-fg-muted, var(--fg-muted));
   margin-bottom: 3px;
 }
 
@@ -228,7 +227,7 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  color: var(--fg-muted, #888);
+  color: var(--epx-fg-muted, var(--fg-muted));
 }
 
 .pws-capacity-recovery span {
@@ -282,7 +281,7 @@
 .pws-skel {
   display: block;
   border-radius: var(--radius-2xs, 4px);
-  background: linear-gradient(90deg, var(--raised, #eee) 0%, var(--surface, #f7f7f7) 50%, var(--raised, #eee) 100%);
+  background: linear-gradient(90deg, var(--epx-raised, var(--raised)) 0%, var(--epx-surface, var(--surface)) 50%, var(--epx-raised, var(--raised)) 100%);
   background-size: 200% 100%;
   animation: codex-auth-skeleton-shimmer 1.2s ease-in-out infinite;
 }

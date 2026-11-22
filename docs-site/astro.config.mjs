@@ -56,8 +56,8 @@ export default defineConfig({
         { tag: "meta", attrs: { property: "og:image:height", content: "630" } },
         { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
         { tag: "meta", attrs: { name: "twitter:image", content: `${SITE_URL}/og.png` } },
-        { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: light)", content: "#ffffff" } },
-        { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: dark)", content: "#212121" } },
+        { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: light)", content: "#f8fafc" } },
+        { tag: "meta", attrs: { name: "theme-color", media: "(prefers-color-scheme: dark)", content: "#0b0e14" } },
       ],
       social: [
         { icon: "github", label: "GitHub", href: "https://github.com/AquilaXk/easyproxy" },

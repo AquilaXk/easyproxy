@@ -71,3 +71,18 @@ test("the sidebar is quiet: flat rows, no raised plate on the current page", asy
   expect(proxy).not.toContain("epx-beam");
   expect(proxy).not.toContain("animate-ping");
 });
+
+test("foundations.md documents the Obsidian-Slate and Cobalt tokens from theme.css", async () => {
+  const [foundations, theme] = await Promise.all([
+    read("../design-system/foundations.md"),
+    read("../src/design/theme.css"),
+  ]);
+  for (const [token, lightHex, darkHex] of [
+    ["--epx-bg", "#f8fafc", "#0b0e14"],
+    ["--epx-accent", "#1d4ed8", "#2563eb"],
+  ] as const) {
+    expect(theme).toContain(`${token}: light-dark(${lightHex}, ${darkHex});`);
+    expect(foundations).toContain(lightHex);
+    expect(foundations).toContain(darkHex);
+  }
+});
