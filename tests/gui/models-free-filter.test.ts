@@ -71,6 +71,7 @@ describe("Dashboard free-only model filter (#3666)", () => {
  */
 describe("free-only runs before the page slice (#3666)", () => {
   const modelsPage = readFileSync(repoPath("gui", "src", "pages", "Models.tsx"), "utf8");
+  const modelsGroupMemo = readFileSync(repoPath("gui", "src", "pages", "models-group-memo.ts"), "utf8");
   const inventory = readFileSync(
     repoPath("gui", "src", "components", "provider-workspace", "ProviderModels.tsx"),
     "utf8",
@@ -84,13 +85,14 @@ describe("free-only runs before the page slice (#3666)", () => {
   }
 
   test("the Models page filters, then searches, then sorts, then slices", () => {
-    const filter = at(modelsPage, "const scoped = filterFreeModelRows(rows, freeOnlyActive)");
-    const search = at(modelsPage, "scoped.filter(m => m.id.toLowerCase().includes(q))");
-    const sort = at(modelsPage, "filtered.toSorted(");
-    const slice = at(modelsPage, "sorted.slice(0, shown)");
+    const filter = at(modelsGroupMemo, "const scoped = filterFreeModelRows(rows, freeOnlyActive)");
+    const search = at(modelsGroupMemo, "scoped.filter(m => m.id.toLowerCase().includes(q))");
+    const sort = at(modelsGroupMemo, "filtered.toSorted(");
+    const slice = at(modelsGroupMemo, "sorted.slice(0, shown)");
     expect(filter).toBeLessThan(search);
     expect(search).toBeLessThan(sort);
     expect(sort).toBeLessThan(slice);
+    expect(modelsPage).toContain("groupViewByProvider.get(provider)");
   });
 
   test("the provider inventory filters before its chip render cap", () => {
@@ -112,8 +114,10 @@ describe("free-only runs before the page slice (#3666)", () => {
     const end = at(modelsPage, "<ModelsProviderRail");
     expect(start).toBeLessThan(end);
     const group = modelsPage.slice(start, end);
+    const groupMemo = modelsGroupMemo.slice(at(modelsGroupMemo, "export function buildGroupViewMap("));
+    expect(groupMemo).toContain("for (const row of scoped)");
+    expect(groupMemo).not.toContain("for (const row of rows)");
     expect(group).toContain('t("models.active", { active: activeCount, total: scoped.length })');
-    expect(group).toContain("const activeCount = scoped.filter(isVisible).length");
     expect(group).toContain("scoped.map(m => ({ id: m.id, native: m.native === true }))");
     expect(group).not.toContain('total: rows.length })');
   });
@@ -123,7 +127,8 @@ describe("free-only runs before the page slice (#3666)", () => {
     // outlives the rows it was made against. If the filter kept reading the raw flag, a refresh
     // that came back without pricing would hide the control and empty the list at the same time,
     // leaving no way to undo it. Both consumers must read the derived flag.
-    expect(modelsPage).toContain("const freeOnlyActive = freeOnlyInForce(freeOnlyOn, rows)");
+    expect(modelsGroupMemo).toContain("const freeOnlyActive = freeOnlyInForce(freeOnlyOn, rows)");
+    expect(modelsGroupMemo).not.toContain("filterFreeModelRows(rows, freeOnlyOn)");
     expect(modelsPage).not.toContain("filterFreeModelRows(rows, freeOnlyOn)");
     expect(inventory).toContain("const freeOnlyActive = freeOnlyInForce(freeOnly, visible)");
     expect(inventory).not.toContain("filterFreeModelRows(visible, freeOnly)");
