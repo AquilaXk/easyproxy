@@ -370,6 +370,8 @@ export interface EpxApiKeyEntry {
   maxDailyRequests?: number;
   /** Optional UTC-day token budget cap for this key. */
   dailyTokenLimit?: number;
+  /** Optional UTC-day USD spend cap for this key (tracked in integer microdollars). */
+  dailyCostLimitUsd?: number;
 }
 
 export interface EpxPendingApiKeyRotation {

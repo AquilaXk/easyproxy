@@ -787,6 +787,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Epx
   }
   if (rawTop && Array.isArray(rawTop.apiKeys)) {
     const budgetIntSchema = (max: number) => z.number().int().min(1).max(max);
+    const budgetCostSchema = z.number().finite().min(0.000001).max(1_000_000);
     for (const row of rawTop.apiKeys) {
       if (!row || typeof row !== "object" || Array.isArray(row)) continue;
       const entry = row as Record<string, unknown>;
@@ -798,6 +799,9 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Epx
       }
       if (Object.hasOwn(entry, "dailyTokenLimit") && entry.dailyTokenLimit !== undefined && !budgetIntSchema(10_000_000_000).safeParse(entry.dailyTokenLimit).success) {
         return { ok: false, error: "schema_invalid: apiKeys: dailyTokenLimit must be a positive integer within bounds" };
+      }
+      if (Object.hasOwn(entry, "dailyCostLimitUsd") && entry.dailyCostLimitUsd !== undefined && !budgetCostSchema.safeParse(entry.dailyCostLimitUsd).success) {
+        return { ok: false, error: "schema_invalid: apiKeys: dailyCostLimitUsd must be a finite number between 0.000001 and 1000000" };
       }
     }
   }

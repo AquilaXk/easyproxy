@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { normalizeRecordedClient, type UsageClient } from "../usage/client";
 import { anthropicAccountTagField, stampApiKeyAccountLabel, usesApiKeyAccount } from "../providers/label";
 import { finalizeProviderCacheAffinity } from "./request-log-cache-affinity";
-import { recordApiKeyTokens, type ApiKeyBudgetLease } from "./api-key-budget";
+import { settleApiKeyRequestBudget, type ApiKeyBudgetLease } from "./api-key-budget";
 import { aggregateAttemptUsage } from "./request-log-attempt-usage";
 export { aggregateAttemptUsage } from "./request-log-attempt-usage";
 
@@ -1634,7 +1634,7 @@ function writeFinalRequestLog(
   const protocolTrace = protocolTraceForRequest(logCtx, logCtx.attempts);
   // Projected before any writer (an injected one too): the row keeps only proxy-owned error facts.
   reportCommittedTerminalCooldown(logCtx, meta, attempts, effectiveStatus);
-  addLog(projectErrorDetail({
+  const finalEntry = projectErrorDetail<RequestLogEntry>({
     requestId,
     ...(isLogicalRequestId(logicalRequestId) ? { logicalRequestId } : {}),
     timestamp: start,
@@ -1704,16 +1704,9 @@ function writeFinalRequestLog(
     ...(claudeCompatibility ? { claudeCompatibility } : {}),
     ...(protocolTrace ? { protocolTrace } : {}),
     ...attribution,
-  }));
-  if (logCtx.apiKeyBudgetLease) {
-    if (logCtx.requestBodyHolder?.rejected) {
-      logCtx.apiKeyBudgetLease.releaseUnused();
-    } else {
-      logCtx.apiKeyBudgetLease.settleTokens(totalTokens ?? 0, start);
-    }
-  } else if (logCtx.apiKeyId && totalTokens !== undefined && totalTokens > 0) {
-    recordApiKeyTokens(logCtx.apiKeyId, totalTokens, start);
-  }
+  });
+  addLog(finalEntry);
+  settleApiKeyRequestBudget(logCtx, finalEntry, totalTokens, start);
   // Formatted from the finalized snapshot, so the ring shows exactly what the ledger holds.
   for (const attempt of attempts ?? []) debugAttemptDeliverySummary(requestId, attempt);
   if (isUsageDebugEnabled()) {

@@ -913,6 +913,7 @@ export const apiKeyEntrySchema = z.object({
   rpmLimit: z.number().int().min(1).max(1_000_000).optional(),
   maxDailyRequests: z.number().int().min(1).max(100_000_000).optional(),
   dailyTokenLimit: z.number().int().min(1).max(10_000_000_000).optional(),
+  dailyCostLimitUsd: z.number().finite().min(0.000001).max(1_000_000).optional(),
 }).passthrough();
 
 export const toolOutputCompressionSchema = z.object({

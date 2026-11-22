@@ -7,6 +7,7 @@ import {
   getApiKeyBudgetSnapshot,
   MAX_TRACKED_API_KEYS,
   peekApiKeyBudgetUsage,
+  recordApiKeyCostUsd,
   recordApiKeyTokens,
   resetApiKeyBudgetsForTests,
 } from "../../src/server/api-key-budget";
@@ -229,6 +230,7 @@ describe("api-key-budget", () => {
       rpmCurrent: 0,
       dailyRequestsUsed: 1,
       dailyTokensUsed: 650,
+      dailyCostUsdUsed: 0,
     });
     expect(consumeApiKeyBudget(entry, t0 + 200)).toEqual({ allowed: true });
 
@@ -248,6 +250,53 @@ describe("api-key-budget", () => {
       rpmCurrent: 0,
       dailyRequestsUsed: 1,
       dailyTokensUsed: 200,
+      dailyCostUsdUsed: 0,
+    });
+  });
+
+  test("enforces UTC dailyCostLimitUsd in integer microdollars, resets at UTC midnight, and rejects invalid cost limits", () => {
+    const t0 = Date.UTC(2026, 10, 21, 23, 59, 52);
+    const nextDay = Date.UTC(2026, 10, 22, 0, 0, 5);
+    const entry = { id: "key-cost", maxDailyRequests: 10, dailyCostLimitUsd: 0.5 };
+
+    expect(consumeApiKeyBudget(entry, t0)).toEqual({ allowed: true });
+    // Avoid IEEE-754 drift (0.1 + 0.2 = 0.30000000000000004) by storing integer microdollars.
+    recordApiKeyCostUsd("key-cost", 0.1, t0);
+    recordApiKeyCostUsd("key-cost", 0.2, t0 + 50);
+    expect(getApiKeyBudgetSnapshot("key-cost", t0 + 100)).toEqual({
+      rpmCurrent: 0,
+      dailyRequestsUsed: 1,
+      dailyTokensUsed: 0,
+      dailyCostUsdUsed: 0.3,
+    });
+    expect(consumeApiKeyBudget(entry, t0 + 200)).toEqual({ allowed: true });
+
+    recordApiKeyCostUsd("key-cost", 0.2, t0 + 500);
+    const denied = consumeApiKeyBudget(entry, t0 + 1_000);
+    expect(denied.allowed).toBe(false);
+    if (!denied.allowed) {
+      expect(denied.reason).toBe("daily_cost_limit_exceeded");
+      expect(denied.retryAfterSec).toBe(7);
+    }
+
+    // Invalid cost bounds fail closed without touching counters.
+    for (const bad of [0, -1, 1e-7, 1_000_000.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(consumeApiKeyBudget({ id: "key-bad-cost", dailyCostLimitUsd: bad }, t0)).toEqual({
+        allowed: false,
+        reason: "invalid_budget_limit",
+        retryAfterSec: 60,
+      });
+    }
+
+    // Next UTC day clears spend, and stale completions from t0 cannot rewind or pollute nextDay.
+    expect(consumeApiKeyBudget(entry, nextDay)).toEqual({ allowed: true });
+    recordApiKeyCostUsd("key-cost", 0.123456, nextDay);
+    recordApiKeyCostUsd("key-cost", 9.99, t0);
+    expect(getApiKeyBudgetSnapshot("key-cost", nextDay)).toEqual({
+      rpmCurrent: 0,
+      dailyRequestsUsed: 1,
+      dailyTokensUsed: 0,
+      dailyCostUsdUsed: 0.123456,
     });
   });
 
@@ -275,7 +324,7 @@ describe("api-key-budget", () => {
       expect(getBody.keys[0]).toMatchObject({
         id: "key-route-1",
         rpmLimit: 30,
-        budgetUsage: { rpmCurrent: 0, dailyRequestsUsed: 0, dailyTokensUsed: 420 },
+        budgetUsage: { rpmCurrent: 0, dailyRequestsUsed: 0, dailyTokensUsed: 420, dailyCostUsdUsed: 0 },
       });
 
       const patchBad = await handleManagementAPI(
@@ -289,11 +338,30 @@ describe("api-key-budget", () => {
       );
       expect(patchBad?.status).toBe(400);
 
+      for (const badCost of [0, -0.5, 1e-7, 1_000_001, "1.5"]) {
+        const badCostRes = await handleManagementAPI(
+          new ManagementRequest("http://127.0.0.1/api/keys", {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "key-route-1", dailyCostLimitUsd: badCost }),
+          }),
+          new URL("http://127.0.0.1/api/keys"),
+          cfg,
+        );
+        expect(badCostRes?.status).toBe(400);
+      }
+
       const patchOk = await handleManagementAPI(
         new ManagementRequest("http://127.0.0.1/api/keys", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id: "key-route-1", rpmLimit: null, maxDailyRequests: 500, dailyTokenLimit: 250_000 }),
+          body: JSON.stringify({
+            id: "key-route-1",
+            rpmLimit: null,
+            maxDailyRequests: 500,
+            dailyTokenLimit: 250_000,
+            dailyCostLimitUsd: 12.5,
+          }),
         }),
         new URL("http://127.0.0.1/api/keys"),
         cfg,
@@ -303,8 +371,25 @@ describe("api-key-budget", () => {
       expect(patched.rpmLimit).toBeUndefined();
       expect(patched.maxDailyRequests).toBe(500);
       expect(patched.dailyTokenLimit).toBe(250_000);
+      expect(patched.dailyCostLimitUsd).toBe(12.5);
+      expect(projectApiKeyBudgetDto(cfg.apiKeys[0]!).dailyCostLimitUsd).toBe(12.5);
+
+      const patchClearCost = await handleManagementAPI(
+        new ManagementRequest("http://127.0.0.1/api/keys", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: "key-route-1", dailyCostLimitUsd: null }),
+        }),
+        new URL("http://127.0.0.1/api/keys"),
+        cfg,
+      );
+      expect(patchClearCost?.status).toBe(200);
+      const cleared = await patchClearCost!.json() as Record<string, unknown>;
+      expect(cleared.dailyCostLimitUsd).toBeUndefined();
+      expect(cfg.apiKeys[0]!.dailyCostLimitUsd).toBeUndefined();
       expect(projectApiKeyBudgetDto(cfg.apiKeys[0]!).maxDailyRequests).toBe(500);
       expect(applyApiKeyBudgetPatch({ ...cfg.apiKeys[0]! }, { dailyTokenLimit: -1 }).ok).toBe(false);
+      expect(applyApiKeyBudgetPatch({ ...cfg.apiKeys[0]! }, { dailyCostLimitUsd: 0 }).ok).toBe(false);
     } finally {
       if (prevHome === undefined) delete process.env.EASYPROXY_HOME;
       else process.env.EASYPROXY_HOME = prevHome;

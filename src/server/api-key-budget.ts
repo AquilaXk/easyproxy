@@ -6,12 +6,17 @@ import { getConfigDir } from "../config/paths";
 import { registerOptionalShutdownHook } from "../lib/optional-shutdown-hooks";
 import { Float64RingBuffer } from "../lib/ring-buffer";
 import { isProtectedHomeUnderTest } from "../lib/test-home-guard";
+import { isCodexUsageAccountLogLabel, type PersistedUsageEntry } from "../usage/log";
+import { computeEntryCost } from "../usage/summary";
 
 export const MAX_TRACKED_API_KEYS = 1_024;
 const MAX_ARCHIVED_DAILY_KEYS = 16_384;
 const ONE_MINUTE_MS = 60_000;
 const ONE_DAY_MS = 86_400_000;
 const EXACT_RPM_RING_THRESHOLD = 1_024;
+const MICROS_PER_USD = 1_000_000;
+const MIN_DAILY_COST_LIMIT_USD = 0.000001;
+const MAX_DAILY_COST_LIMIT_USD = 1_000_000;
 const LEDGER_FILENAME = "api-key-budgets.json";
 const MAX_LEDGER_FILE_BYTES = 4 * 1024 * 1024;
 const PERSIST_DEBOUNCE_MS = 100;
@@ -20,6 +25,7 @@ export type ApiKeyBudgetDenialReason =
   | "rpm_limit_exceeded"
   | "daily_limit_exceeded"
   | "daily_token_limit_exceeded"
+  | "daily_cost_limit_exceeded"
   | "invalid_budget_limit";
 
 export type ApiKeyBudgetDecision =
@@ -35,6 +41,8 @@ export interface ApiKeyBudgetLease {
   releaseHoldOnly(): void;
   /** Release any active token reservation hold and commit actual token usage at most once. */
   settleTokens(actualTokens: number, now?: number): void;
+  /** Commit settled USD request spend (in integer microdollars) at most once. */
+  settleCostUsd(costUsd: number, now?: number): void;
 }
 
 export type ApiKeyBudgetLeaseDecision =
@@ -50,6 +58,7 @@ interface StoredKeyBudget {
   utcDay: number;
   dailyCount: number;
   dailyTokens: number;
+  dailyCostMicros: number;
 }
 
 interface KeyBudgetState {
@@ -59,6 +68,7 @@ interface KeyBudgetState {
   utcDay: number;
   dailyCount: number;
   dailyTokens: number;
+  dailyCostMicros: number;
   inFlightReservedTokens: number;
 }
 
@@ -78,6 +88,7 @@ const NOOP_LEASE: ApiKeyBudgetLease = {
   releaseUnused() {},
   releaseHoldOnly() {},
   settleTokens() {},
+  settleCostUsd() {},
 };
 
 const stores = new Map<string, ConfigDirBudgetStore>();
@@ -132,15 +143,17 @@ function hydrateStoreFromDisk(store: ConfigDirBudgetStore): void {
   for (const [keyId, val] of Object.entries(record.keys as Record<string, unknown>)) {
     if (!keyId || keyId === "__proto__" || keyId === "constructor" || keyId === "prototype") continue;
     if (!val || typeof val !== "object" || Array.isArray(val)) continue;
-    const row = val as { utcDay?: unknown; dailyCount?: unknown; dailyTokens?: unknown };
+    const row = val as { utcDay?: unknown; dailyCount?: unknown; dailyTokens?: unknown; dailyCostMicros?: unknown };
+    const dailyCostMicros = row.dailyCostMicros ?? 0;
     if (
       typeof row.utcDay !== "number" || !Number.isSafeInteger(row.utcDay) || row.utcDay < 0 ||
       typeof row.dailyCount !== "number" || !Number.isSafeInteger(row.dailyCount) || row.dailyCount < 0 ||
-      typeof row.dailyTokens !== "number" || !Number.isSafeInteger(row.dailyTokens) || row.dailyTokens < 0
+      typeof row.dailyTokens !== "number" || !Number.isSafeInteger(row.dailyTokens) || row.dailyTokens < 0 ||
+      typeof dailyCostMicros !== "number" || !Number.isSafeInteger(dailyCostMicros) || dailyCostMicros < 0
     ) {
       continue;
     }
-    if (row.dailyCount === 0 && row.dailyTokens === 0) continue;
+    if (row.dailyCount === 0 && row.dailyTokens === 0 && dailyCostMicros === 0) continue;
     if (row.utcDay > maxDay) maxDay = row.utcDay;
     if (store.archivedDaily.size >= MAX_ARCHIVED_DAILY_KEYS) {
       const oldest = store.archivedDaily.keys().next().value;
@@ -150,6 +163,7 @@ function hydrateStoreFromDisk(store: ConfigDirBudgetStore): void {
       utcDay: row.utcDay,
       dailyCount: row.dailyCount,
       dailyTokens: row.dailyTokens,
+      dailyCostMicros,
     });
   }
   store.highestUtcDay = maxDay;
@@ -169,15 +183,16 @@ function serializeStoreLedger(store: ConfigDirBudgetStore): string {
   const keysOut: Record<string, StoredKeyBudget> = Object.create(null);
   const cutoffDay = store.highestUtcDay;
   for (const [keyId, entry] of store.archivedDaily) {
-    if (entry.utcDay < cutoffDay || (entry.dailyCount === 0 && entry.dailyTokens === 0)) continue;
+    if (entry.utcDay < cutoffDay || (entry.dailyCount === 0 && entry.dailyTokens === 0 && entry.dailyCostMicros === 0)) continue;
     keysOut[keyId] = {
       utcDay: entry.utcDay,
       dailyCount: entry.dailyCount,
       dailyTokens: entry.dailyTokens,
+      dailyCostMicros: entry.dailyCostMicros,
     };
   }
   for (const [keyId, state] of store.keys) {
-    if (state.utcDay < cutoffDay || (state.dailyCount === 0 && state.dailyTokens === 0)) {
+    if (state.utcDay < cutoffDay || (state.dailyCount === 0 && state.dailyTokens === 0 && state.dailyCostMicros === 0)) {
       delete keysOut[keyId];
       continue;
     }
@@ -185,6 +200,7 @@ function serializeStoreLedger(store: ConfigDirBudgetStore): string {
       utcDay: state.utcDay,
       dailyCount: state.dailyCount,
       dailyTokens: state.dailyTokens,
+      dailyCostMicros: state.dailyCostMicros,
     };
   }
   return JSON.stringify({ version: 1, keys: keysOut });
@@ -222,7 +238,7 @@ function scheduleFlush(store: ConfigDirBudgetStore): void {
 }
 
 function setArchivedDaily(store: ConfigDirBudgetStore, keyId: string, entry: StoredKeyBudget): void {
-  if (entry.dailyCount <= 0 && entry.dailyTokens <= 0) {
+  if (entry.dailyCount <= 0 && entry.dailyTokens <= 0 && entry.dailyCostMicros <= 0) {
     store.archivedDaily.delete(keyId);
     return;
   }
@@ -263,11 +279,12 @@ function getOrCreateState(
     if (candidate) {
       const [oldestKey, oldestState] = candidate;
       store.keys.delete(oldestKey);
-      if (oldestState.utcDay >= store.highestUtcDay && (oldestState.dailyCount > 0 || oldestState.dailyTokens > 0)) {
+      if (oldestState.utcDay >= store.highestUtcDay && (oldestState.dailyCount > 0 || oldestState.dailyTokens > 0 || oldestState.dailyCostMicros > 0)) {
         setArchivedDaily(store, oldestKey, {
           utcDay: oldestState.utcDay,
           dailyCount: oldestState.dailyCount,
           dailyTokens: oldestState.dailyTokens,
+          dailyCostMicros: oldestState.dailyCostMicros,
         });
         store.dirty = true;
         flushStoreSync(store);
@@ -285,6 +302,7 @@ function getOrCreateState(
     utcDay: initialUtcDay,
     dailyCount: sameDay ? archived.dailyCount : 0,
     dailyTokens: sameDay ? archived.dailyTokens : 0,
+    dailyCostMicros: sameDay ? archived.dailyCostMicros : 0,
     inFlightReservedTokens: 0,
   };
   store.keys.set(keyId, fresh);
@@ -295,23 +313,53 @@ function pruneRpmTimestamps(state: KeyBudgetState, now: number): void {
   state.rpmTimestamps.pruneLeq(now - ONE_MINUTE_MS);
 }
 
+function resetStateForUtcDay(state: KeyBudgetState, utcDay: number): void {
+  state.utcDay = utcDay;
+  state.dailyCount = 0;
+  state.dailyTokens = 0;
+  state.dailyCostMicros = 0;
+}
+
+function usdToMicrosClamped(costUsd: number): number {
+  if (!Number.isFinite(costUsd) || costUsd <= 0) return 0;
+  const raw = Math.round(costUsd * MICROS_PER_USD);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(Number.MAX_SAFE_INTEGER, raw);
+}
+
 function recordTokensOnStore(store: ConfigDirBudgetStore, keyId: string, tokens: number, now: number): void {
   if (!keyId || !Number.isFinite(tokens) || tokens <= 0) return;
   const utcDay = Math.floor(now / ONE_DAY_MS);
   const minuteBucket = Math.floor(now / ONE_MINUTE_MS);
   const state = getOrCreateState(store, keyId, utcDay, minuteBucket);
   if (utcDay < state.utcDay) return;
-  if (utcDay > state.utcDay) {
-    state.utcDay = utcDay;
-    state.dailyCount = 0;
-    state.dailyTokens = 0;
-  }
+  if (utcDay > state.utcDay) resetStateForUtcDay(state, utcDay);
   state.dailyTokens += Math.trunc(tokens);
   scheduleFlush(store);
 }
 
+function recordCostMicrosOnStore(store: ConfigDirBudgetStore, keyId: string, costMicros: number, now: number): void {
+  if (!keyId || !Number.isSafeInteger(costMicros) || costMicros <= 0) return;
+  const utcDay = Math.floor(now / ONE_DAY_MS);
+  const minuteBucket = Math.floor(now / ONE_MINUTE_MS);
+  const state = getOrCreateState(store, keyId, utcDay, minuteBucket);
+  if (utcDay < state.utcDay) return;
+  if (utcDay > state.utcDay) resetStateForUtcDay(state, utcDay);
+  state.dailyCostMicros = Math.min(Number.MAX_SAFE_INTEGER, state.dailyCostMicros + costMicros);
+  scheduleFlush(store);
+}
+
+export function hasApiKeyBudgetLimits(
+  entry: Pick<EpxApiKeyEntry, "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd">,
+): boolean {
+  return entry.rpmLimit !== undefined
+    || entry.maxDailyRequests !== undefined
+    || entry.dailyTokenLimit !== undefined
+    || entry.dailyCostLimitUsd !== undefined;
+}
+
 function acquireBudgetInternal(
-  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit">,
+  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd">,
   now: number,
   reserveTokens: number,
   withTokenHold: boolean,
@@ -325,11 +373,31 @@ function acquireBudgetInternal(
   if (entry.dailyTokenLimit !== undefined && (!Number.isSafeInteger(entry.dailyTokenLimit) || entry.dailyTokenLimit < 1)) {
     return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
   }
+  let dailyCostLimitMicros: number | undefined;
+  if (entry.dailyCostLimitUsd !== undefined) {
+    if (
+      typeof entry.dailyCostLimitUsd !== "number"
+      || !Number.isFinite(entry.dailyCostLimitUsd)
+      || entry.dailyCostLimitUsd < MIN_DAILY_COST_LIMIT_USD
+      || entry.dailyCostLimitUsd > MAX_DAILY_COST_LIMIT_USD
+    ) {
+      return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
+    }
+    dailyCostLimitMicros = Math.round(entry.dailyCostLimitUsd * MICROS_PER_USD);
+    if (!Number.isSafeInteger(dailyCostLimitMicros) || dailyCostLimitMicros < 1) {
+      return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
+    }
+  }
   const rpmLimit = entry.rpmLimit;
   const maxDailyRequests = entry.maxDailyRequests;
   const dailyTokenLimit = entry.dailyTokenLimit;
 
-  if (rpmLimit === undefined && maxDailyRequests === undefined && dailyTokenLimit === undefined) {
+  if (
+    rpmLimit === undefined
+    && maxDailyRequests === undefined
+    && dailyTokenLimit === undefined
+    && dailyCostLimitMicros === undefined
+  ) {
     return { allowed: true, lease: NOOP_LEASE };
   }
 
@@ -339,9 +407,7 @@ function acquireBudgetInternal(
   const state = getOrCreateState(store, entry.id, utcDay, minuteBucket);
 
   if (utcDay > state.utcDay) {
-    state.utcDay = utcDay;
-    state.dailyCount = 0;
-    state.dailyTokens = 0;
+    resetStateForUtcDay(state, utcDay);
     store.dirty = true;
   }
   if (minuteBucket > state.rpmBucketStartMin) {
@@ -350,6 +416,12 @@ function acquireBudgetInternal(
   }
   if (state.rpmTimestamps.length > 0) {
     pruneRpmTimestamps(state, now);
+  }
+
+  if (dailyCostLimitMicros !== undefined && state.dailyCostMicros >= dailyCostLimitMicros) {
+    const nextDayStartMs = (utcDay + 1) * ONE_DAY_MS;
+    const retryAfterSec = Math.max(1, Math.ceil((nextDayStartMs - now) / 1000));
+    return { allowed: false, reason: "daily_cost_limit_exceeded", retryAfterSec };
   }
 
   if (dailyTokenLimit !== undefined && state.dailyTokens + state.inFlightReservedTokens >= dailyTokenLimit) {
@@ -405,7 +477,9 @@ function acquireBudgetInternal(
   }
 
   let holdReleased = reservedTokens === 0;
-  let settled = false;
+  let unusedReleased = false;
+  let tokensSettled = false;
+  let costSettled = false;
   const leaseUtcDay = state.utcDay;
 
   const releaseHoldOnly = () => {
@@ -419,8 +493,8 @@ function acquireBudgetInternal(
     reservedTokens,
     releaseHoldOnly,
     releaseUnused() {
-      if (settled) return;
-      settled = true;
+      if (unusedReleased || tokensSettled || costSettled) return;
+      unusedReleased = true;
       releaseHoldOnly();
       if (dailyCountAdded) {
         if (state.utcDay === leaseUtcDay && state.dailyCount > 0) {
@@ -444,10 +518,18 @@ function acquireBudgetInternal(
     },
     settleTokens(actualTokens: number, settleNow = Date.now()) {
       releaseHoldOnly();
-      if (settled) return;
-      settled = true;
+      if (unusedReleased || tokensSettled) return;
+      tokensSettled = true;
       if (Number.isFinite(actualTokens) && actualTokens > 0) {
         recordTokensOnStore(store, entry.id, actualTokens, settleNow);
+      }
+    },
+    settleCostUsd(costUsd: number, settleNow = Date.now()) {
+      if (unusedReleased || costSettled) return;
+      costSettled = true;
+      const micros = usdToMicrosClamped(costUsd);
+      if (micros > 0) {
+        recordCostMicrosOnStore(store, entry.id, micros, settleNow);
       }
     },
   };
@@ -456,11 +538,11 @@ function acquireBudgetInternal(
 }
 
 /**
- * Checks per-key RPM, UTC-day request, and UTC-day token caps, holding an in-flight token
- * reservation until `lease.settleTokens(...)` or `lease.releaseUnused()` completes.
+ * Checks per-key RPM, UTC-day request, UTC-day token, and UTC-day USD cost caps, holding an
+ * in-flight token reservation until `lease.settleTokens(...)` or `lease.releaseUnused()` runs.
  */
 export function acquireApiKeyBudgetLease(
-  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit">,
+  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd">,
   options?: AcquireApiKeyBudgetOptions,
 ): ApiKeyBudgetLeaseDecision {
   const now = options?.now ?? Date.now();
@@ -469,12 +551,12 @@ export function acquireApiKeyBudgetLease(
 }
 
 /**
- * Checks and consumes per-key `rpmLimit`, `maxDailyRequests`, and `dailyTokenLimit` quotas
- * before acquiring a server turn lease. Rejects fail-closed when any cap is invalid or exceeded
+ * Checks and consumes per-key `rpmLimit`, `maxDailyRequests`, `dailyTokenLimit`, and `dailyCostLimitUsd`
+ * quotas before acquiring a server turn lease. Rejects fail-closed when any cap is invalid or exceeded
  * without incrementing counters on denial.
  */
 export function consumeApiKeyBudget(
-  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit">,
+  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd">,
   now = Date.now(),
 ): ApiKeyBudgetDecision {
   const decision = acquireBudgetInternal(entry, now, 0, false);
@@ -488,10 +570,60 @@ export function recordApiKeyTokens(keyId: string, tokens: number, now = Date.now
   recordTokensOnStore(store, keyId, tokens, now);
 }
 
+/** Records committed USD spend (converted to integer microdollars) against the key's UTC-day ledger. */
+export function recordApiKeyCostUsd(keyId: string, costUsd: number, now = Date.now()): void {
+  if (!keyId) return;
+  const micros = usdToMicrosClamped(costUsd);
+  if (micros <= 0) return;
+  const store = getStore();
+  recordCostMicrosOnStore(store, keyId, micros, now);
+}
+
+export type ApiKeyBudgetSettlementEntry = Omit<PersistedUsageEntry, "accountLogLabel"> & {
+  readonly accountLogLabel?: string;
+};
+
+/** Settles both token and USD cost budgets for a finalized request log entry (or rolls back rejected requests). */
+export function settleApiKeyRequestBudget(
+  logCtx: {
+    readonly apiKeyBudgetLease?: ApiKeyBudgetLease;
+    readonly apiKeyId?: string;
+    readonly requestBodyHolder?: { readonly rejected?: boolean };
+  },
+  entry: ApiKeyBudgetSettlementEntry,
+  totalTokens: number | undefined,
+  now: number,
+): void {
+  const lease = logCtx.apiKeyBudgetLease;
+  if (!lease && !logCtx.apiKeyId) return;
+  if (lease && logCtx.requestBodyHolder?.rejected) {
+    lease.releaseUnused();
+    return;
+  }
+  const { accountLogLabel, ...baseEntry } = entry;
+  const normalizedEntry: PersistedUsageEntry =
+    accountLogLabel !== undefined && isCodexUsageAccountLogLabel(accountLogLabel)
+      ? { ...baseEntry, accountLogLabel }
+      : baseEntry;
+  const cost = computeEntryCost(normalizedEntry);
+  if (lease) {
+    lease.settleTokens(totalTokens ?? 0, now);
+    lease.settleCostUsd(cost.costTotal > 0 ? cost.costTotal : 0, now);
+    return;
+  }
+  if (totalTokens !== undefined && totalTokens > 0) {
+    recordApiKeyTokens(logCtx.apiKeyId!, totalTokens, now);
+  }
+  if (cost.costTotal > 0) {
+    recordApiKeyCostUsd(logCtx.apiKeyId!, cost.costTotal, now);
+  }
+}
+
 export function getApiKeyBudgetSnapshot(keyId: string, now = Date.now()): {
   rpmCurrent: number;
   dailyRequestsUsed: number;
   dailyTokensUsed: number;
+  dailyCostUsdUsed: number;
 } {
   const store = getStore();
   const utcDay = Math.floor(now / ONE_DAY_MS);
@@ -500,12 +632,13 @@ export function getApiKeyBudgetSnapshot(keyId: string, now = Date.now()): {
   if (!state) {
     const archived = store.archivedDaily.get(keyId);
     if (!archived || archived.utcDay !== utcDay) {
-      return { rpmCurrent: 0, dailyRequestsUsed: 0, dailyTokensUsed: 0 };
+      return { rpmCurrent: 0, dailyRequestsUsed: 0, dailyTokensUsed: 0, dailyCostUsdUsed: 0 };
     }
     return {
       rpmCurrent: 0,
       dailyRequestsUsed: archived.dailyCount,
       dailyTokensUsed: archived.dailyTokens,
+      dailyCostUsdUsed: archived.dailyCostMicros / MICROS_PER_USD,
     };
   }
   pruneRpmTimestamps(state, now);
@@ -513,6 +646,7 @@ export function getApiKeyBudgetSnapshot(keyId: string, now = Date.now()): {
     rpmCurrent: Math.max(state.rpmTimestamps.length, state.rpmBucketStartMin === minuteBucket ? state.rpmBucketCount : 0),
     dailyRequestsUsed: state.utcDay === utcDay ? state.dailyCount : 0,
     dailyTokensUsed: state.utcDay === utcDay ? state.dailyTokens : 0,
+    dailyCostUsdUsed: state.utcDay === utcDay ? state.dailyCostMicros / MICROS_PER_USD : 0,
   };
 }
 

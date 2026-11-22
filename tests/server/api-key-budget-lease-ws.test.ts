@@ -182,6 +182,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
       rpmCurrent: 2,
       dailyRequestsUsed: 2,
       dailyTokensUsed: 550,
+      dailyCostUsdUsed: 0,
     });
     const reopened = acquireApiKeyBudgetLease(entry, { reserveTokens: 1, now: now + 90 });
     expect(reopened.allowed).toBe(true);
@@ -228,6 +229,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
       rpmCurrent: 0,
       dailyRequestsUsed: 0,
       dailyTokensUsed: 0,
+      dailyCostUsdUsed: 0,
     });
     for (const lease of activeTurnLeases.splice(0)) lease.release();
 
@@ -251,6 +253,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
       rpmCurrent: 0,
       dailyRequestsUsed: 0,
       dailyTokensUsed: 0,
+      dailyCostUsdUsed: 0,
     });
 
     // 3. Normal completion settles tokens ONCE via addFinalRequestLog (never double-counted).
@@ -272,6 +275,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
         rpmCurrent: 1,
         dailyRequestsUsed: 1,
         dailyTokensUsed: 150,
+        dailyCostUsdUsed: 0,
       });
     } finally {
       await okRes.body?.cancel().catch(() => undefined);
@@ -310,6 +314,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
       rpmCurrent: 0,
       dailyRequestsUsed: 0,
       dailyTokensUsed: 0,
+      dailyCostUsdUsed: 0,
     });
 
     // Simulated restart in homeA hydrates dailyCount & dailyTokens (even keys evicted past 1,024!).
@@ -319,6 +324,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
       rpmCurrent: 0,
       dailyRequestsUsed: 1,
       dailyTokensUsed: 1_234,
+      dailyCostUsdUsed: 0,
     });
     expect(peekApiKeyBudgetUsage("flood-0", t0)).toEqual({ minuteCount: 0, dailyCount: 1 });
   });
@@ -363,7 +369,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
     handler.message(guardClient.ws, JSON.stringify({ type: "response.create", model: "gateway/normal", input: "a".repeat(1024 * 1024 + 512) }));
     expect(guardClient.sent.at(-1)?.error?.code).toBe("inbound_body_too_large");
     expect(guardClient.sent.at(-1)?.status).toBe(413);
-    expect(getApiKeyBudgetSnapshot("key-ws-1")).toEqual({ rpmCurrent: 0, dailyRequestsUsed: 0, dailyTokensUsed: 0 });
+    expect(getApiKeyBudgetSnapshot("key-ws-1")).toEqual({ rpmCurrent: 0, dailyRequestsUsed: 0, dailyTokensUsed: 0, dailyCostUsdUsed: 0 });
 
     // 2. Concurrent in-flight WS response.create holds 1 token out of dailyTokenLimit: 1 -> second parallel WS frame is rejected BEFORE first finishes!
     const cfgTok = makeWsConfig({
@@ -426,7 +432,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
     handlerRpm.message(busyWs.ws, JSON.stringify({ type: "response.create", model: "gateway/normal", input: "busy" }));
     expect(busyWs.sent[0]).toMatchObject({ type: "error", status: 503, error: { code: "server_busy" } });
     // Rolled back cleanly -> quota still 0 used!
-    expect(getApiKeyBudgetSnapshot("key-ws-rpm")).toEqual({ rpmCurrent: 0, dailyRequestsUsed: 0, dailyTokensUsed: 0 });
+    expect(getApiKeyBudgetSnapshot("key-ws-rpm")).toEqual({ rpmCurrent: 0, dailyRequestsUsed: 0, dailyTokensUsed: 0, dailyCostUsdUsed: 0 });
     for (const lease of activeTurnLeases.splice(0)) lease.release();
 
     // Now admit one real turn and verify next hits 429 rpm_limit_exceeded.
@@ -497,6 +503,7 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
       rpmCurrent: 0,
       dailyRequestsUsed: 0,
       dailyTokensUsed: 0,
+      dailyCostUsdUsed: 0,
     });
 
     if (process.platform !== "win32") {
@@ -515,5 +522,153 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
       expect(readFileSync(outsideTarget, "utf8")).toBe("DO_NOT_OVERWRITE");
       expect(lstatSync(symLedger).isSymbolicLink()).toBe(false);
     }
+  });
+
+  test("enforces dailyCostLimitUsd across HTTP/WS admission, post-turn log settlement, and legacy ledger hydration", async () => {
+    const home = createTempHome("epx-budget-cost-e2e-");
+    process.env.EASYPROXY_HOME = home;
+    releaseSpendHome ??= acquireOwnedSpendHome();
+
+    const cfg = makeWsConfig({
+      hostname: "0.0.0.0",
+      providers: {
+        gateway: {
+          adapter: "openai-responses",
+          baseUrl: "https://gateway.example/v1",
+          authMode: "key",
+          apiKey: "upstream-test-key",
+          models: ["normal"],
+          modelCosts: {
+            normal: { input: 1_000, output: 2_000, cacheRead: 0, cacheWrite: 0 },
+          },
+        },
+      },
+      apiKeys: [
+        {
+          id: "key-cost-http",
+          name: "cost-http",
+          key: "epx_data_costhttpsecret01",
+          createdAt: "2026-11-22T00:00:00.000Z",
+          dailyCostLimitUsd: 0.07,
+        },
+        {
+          id: "key-cost-ws",
+          name: "cost-ws",
+          key: "epx_data_costwssecret0001",
+          createdAt: "2026-11-22T00:00:00.000Z",
+          dailyCostLimitUsd: 0.05,
+        },
+      ],
+    });
+    saveConfig(cfg);
+
+    const run = createAdmittedHttpTurn(
+      () => MAX_CONFIGURABLE_INBOUND_BODY_BYTES,
+      () => new Response("busy", { status: 503 }),
+    );
+    const turnStart = Date.now();
+    const httpLogCtx: Record<string, any> = {
+      model: "normal",
+      provider: "gateway",
+      apiKeyId: "key-cost-http",
+      usage: { inputTokens: 25, outputTokens: 25, totalTokens: 50 },
+    };
+    const firstHttp = await run(
+      new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: { "x-easyproxy-api-key": "epx_data_costhttpsecret01" },
+        body: "{}",
+      }),
+      cfg,
+      async () => {
+        // 25 * $0.001 + 25 * $0.002 = $0.075 (75,000 micros) -> exceeds $0.07 cap after turn completes.
+        addFinalRequestLog("req-cost-http-1", turnStart, httpLogCtx as any, 200);
+        return new Response("ok", { status: 200 });
+      },
+      { requestId: "req-cost-http-1", start: turnStart, logCtx: httpLogCtx as any },
+    );
+    expect(firstHttp.status).toBe(200);
+    await firstHttp.text();
+    expect(getApiKeyBudgetSnapshot("key-cost-http", turnStart).dailyCostUsdUsed).toBe(0.075);
+
+    // Subsequent HTTP turn hits 429 daily_cost_limit_exceeded with Retry-After.
+    const deniedHttp = await run(
+      new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: { "x-easyproxy-api-key": "epx_data_costhttpsecret01" },
+        body: "{}",
+      }),
+      cfg,
+      async () => {
+        throw new Error("handler must not enter when dailyCostLimitUsd is exhausted");
+      },
+    );
+    expect(deniedHttp.status).toBe(429);
+    expect(Number(deniedHttp.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
+    expect(await deniedHttp.json()).toMatchObject({
+      error: { type: "rate_limit_error", code: "daily_cost_limit_exceeded" },
+    });
+
+    // WS turn sharing key-cost-http is also refused pre-admission.
+    const handler = createWebsocketHandler({ config: cfg, deps: {} } as ServeOptionsContext);
+    const deniedWs = createMockSocket(handler, "key-cost-http", "epx_data_costhttpsecret01");
+    handler.message(deniedWs.ws, JSON.stringify({ type: "response.create", model: "gateway/normal", input: "over" }));
+    expect(deniedWs.sent[0]).toMatchObject({
+      type: "error",
+      status: 429,
+      error: { type: "rate_limit_error", code: "daily_cost_limit_exceeded" },
+    });
+
+    // Live WS turn on key-cost-ws settles real measured cost through request-log, then blocks the next frame.
+    globalThis.fetch = (async () => new Response(sseCompletedBody(50, "resp_cost_ws_1"), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })) as unknown as typeof fetch;
+    const okWs = createMockSocket(handler, "key-cost-ws", "epx_data_costwssecret0001");
+    handler.message(okWs.ws, JSON.stringify({ type: "response.create", model: "gateway/normal", input: "ok" }));
+    await waitFor(() => okWs.sent.some(f => f.type === "response.completed"), "ws cost completion");
+    await waitFor(() => getApiKeyBudgetSnapshot("key-cost-ws").dailyCostUsdUsed > 0, "ws cost ledger settled");
+    expect(getApiKeyBudgetSnapshot("key-cost-ws").dailyCostUsdUsed).toBe(0.075);
+
+    const blockedWs = createMockSocket(handler, "key-cost-ws", "epx_data_costwssecret0001");
+    handler.message(blockedWs.ws, JSON.stringify({ type: "response.create", model: "gateway/normal", input: "over-ws" }));
+    expect(blockedWs.sent[0]).toMatchObject({
+      type: "error",
+      status: 429,
+      error: { type: "rate_limit_error", code: "daily_cost_limit_exceeded" },
+    });
+
+    // Ledger persists integer dailyCostMicros and hydrates legacy rows lacking dailyCostMicros cleanly.
+    flushApiKeyBudgets();
+    const ledgerPath = join(home, "api-key-budgets.json");
+    const persisted = JSON.parse(readFileSync(ledgerPath, "utf8")) as {
+      version: number;
+      keys: Record<string, { utcDay: number; dailyCount: number; dailyTokens: number; dailyCostMicros?: number }>;
+    };
+    expect(persisted.keys["key-cost-http"]?.dailyCostMicros).toBe(75_000);
+    expect(persisted.keys["key-cost-ws"]?.dailyCostMicros).toBe(75_000);
+
+    reloadApiKeyBudgetsFromDiskForTests();
+    expect(getApiKeyBudgetSnapshot("key-cost-http", turnStart).dailyCostUsdUsed).toBe(0.075);
+
+    // Simulate legacy ledger file without `dailyCostMicros` key.
+    const utcDay = Math.floor(turnStart / 86_400_000);
+    writeFileSync(ledgerPath, JSON.stringify({
+      version: 1,
+      keys: { "legacy-key": { utcDay, dailyCount: 3, dailyTokens: 900 } },
+    }));
+    resetApiKeyBudgetsForTests();
+    // Write again after reset (reset unlinks the file) and reload cleanly.
+    writeFileSync(ledgerPath, JSON.stringify({
+      version: 1,
+      keys: { "legacy-key": { utcDay, dailyCount: 3, dailyTokens: 900 } },
+    }));
+    reloadApiKeyBudgetsFromDiskForTests();
+    expect(getApiKeyBudgetSnapshot("legacy-key", turnStart)).toEqual({
+      rpmCurrent: 0,
+      dailyRequestsUsed: 3,
+      dailyTokensUsed: 900,
+      dailyCostUsdUsed: 0,
+    });
   });
 });

@@ -321,7 +321,7 @@ export function createWebsocketHandler(
         let budgetLease: ApiKeyBudgetLease | undefined;
         if (wsAdmission?.kind === "configured" && config.apiKeys?.length) {
           const entry = config.apiKeys.find(k => k.id === wsAdmission.keyId);
-          if (entry && (entry.rpmLimit !== undefined || entry.maxDailyRequests !== undefined || entry.dailyTokenLimit !== undefined)) {
+          if (entry && (entry.rpmLimit !== undefined || entry.maxDailyRequests !== undefined || entry.dailyTokenLimit !== undefined || entry.dailyCostLimitUsd !== undefined)) {
             const budget = acquireApiKeyBudgetLease(entry);
             if (!budget.allowed) {
               const denyStart = Date.now();
@@ -525,7 +525,10 @@ export function createWebsocketHandler(
             if (!logged && turnAbort.signal.aborted) finalizeLog(499);
             if (budgetLease) {
               if (wasRequestBodyRejected(req)) budgetLease.releaseUnused();
-              else budgetLease.settleTokens(0);
+              else {
+                budgetLease.settleTokens(0);
+                budgetLease.settleCostUsd(0);
+              }
             }
             ws.data.linkTurnEnded?.(turnId);
             if (ws.data.cancel === cancelTurn) ws.data.cancel = undefined;

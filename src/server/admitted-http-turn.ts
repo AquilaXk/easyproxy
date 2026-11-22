@@ -2,7 +2,11 @@ import { anthropicErrorResponse } from "../claude/outbound";
 import { markProxyError } from "../lib/client-error-body";
 import { normalizeMessagesProxyRefusal } from "../lib/messages-error-body";
 import { resolveApiAuth, resolveResponsesApiAuth, withCors, type RequestPolicyView } from "./auth-cors";
-import { acquireApiKeyBudgetLease, type ApiKeyBudgetLease } from "./api-key-budget";
+import {
+  acquireApiKeyBudgetLease,
+  hasApiKeyBudgetLimits,
+  type ApiKeyBudgetLease,
+} from "./api-key-budget";
 import { runAdmittedBodyWork } from "./inbound-body-admission";
 import { tryAdmitTurn, type ActiveTurnLease } from "./lifecycle";
 import { addFinalRequestLog, markLocalRequestLogRefusal } from "./request-log";
@@ -36,7 +40,7 @@ export function createAdmittedHttpTurn(
         return adm?.kind === "configured" ? adm.keyId : undefined;
       })();
       const entry = admittedKeyId ? policy.apiKeys.find(k => k.id === admittedKeyId) : undefined;
-      if (entry && (entry.rpmLimit !== undefined || entry.maxDailyRequests !== undefined || entry.dailyTokenLimit !== undefined)) {
+      if (entry && hasApiKeyBudgetLimits(entry)) {
         const budget = acquireApiKeyBudgetLease(entry);
         if (!budget.allowed) {
           if (refusalLog) {
