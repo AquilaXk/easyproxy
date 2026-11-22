@@ -52,6 +52,38 @@ jobs:
           persist-credentials: false
           submodules: false
 
+      - name: Verify dispatch branch and commit ancestry
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_REF: ${{ github.ref }}
+          EXPECTED_SHA: ${{ inputs.expected-sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$GIT_REF" != "refs/heads/main" ]; then
+            echo "::error::Release workflow_dispatch must run from main."
+            exit 1
+          fi
+          if [ -n "${EXPECTED_SHA:-}" ]; then
+            if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::expected-sha must be a full 40-character lowercase commit SHA."
+              exit 1
+            fi
+            source_sha="$(git rev-parse HEAD)"
+            if [ "$source_sha" != "$EXPECTED_SHA" ]; then
+              echo "::error::Checked-out commit ${source_sha} does not match expected-sha ${EXPECTED_SHA}."
+              exit 1
+            fi
+            if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+              auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+              git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            fi
+            if ! git merge-base --is-ancestor "$EXPECTED_SHA" origin/main; then
+              echo "::error::expected-sha ${EXPECTED_SHA} is not an ancestor of origin/main."
+              exit 1
+            fi
+          fi
+
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
         with:
@@ -73,38 +105,13 @@ jobs:
       - name: Verify release metadata and gates
         id: meta
         env:
-          EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
           GIT_REF: ${{ github.ref }}
           CHANNEL: ${{ inputs.tag }}
-          EXPECTED_SHA: ${{ inputs.expected-sha }}
           DRY_RUN: ${{ inputs.dry-run }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$GIT_REF" != "refs/heads/main" ]; then
-            echo "::error::Release workflow_dispatch must run from main."
-            exit 1
-          fi
           source_sha="$(git rev-parse HEAD)"
-          if [ -n "${EXPECTED_SHA:-}" ]; then
-            if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::expected-sha must be a full 40-character lowercase commit SHA."
-              exit 1
-            fi
-            if [ "$source_sha" != "$EXPECTED_SHA" ]; then
-              echo "::error::Checked-out commit ${source_sha} does not match expected-sha ${EXPECTED_SHA}."
-              exit 1
-            fi
-            if ! git rev-parse --verify --quiet origin/main >/dev/null; then
-              auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
-              git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-            fi
-            if ! git merge-base --is-ancestor "$EXPECTED_SHA" origin/main; then
-              echo "::error::expected-sha ${EXPECTED_SHA} is not an ancestor of origin/main."
-              exit 1
-            fi
-          fi
           bun scripts/check-repo-hygiene.ts
           bun scripts/release-version-sources.ts check
           bun scripts/generate-update-trust-root.ts --check

@@ -72,6 +72,9 @@ export function stageStandaloneNativeHelpers(
         throw new Error(`codesign failed for ${stagedChild} (exit ${signCode})`);
       }
     }
+    if (isPosix) {
+      chmodSync(stagedChild, 0o755);
+    }
 
     const digest = createHash("sha256").update(readFileSync(stagedChild)).digest("hex");
     const sumsPath = join(childOutDir, "SHA256SUMS");
@@ -98,13 +101,16 @@ export function stageStandaloneNativeHelpers(
       copyFileSync(helperSource, stagedHelper);
       if (isPosix) {
         chmodSync(stagedHelper, 0o755);
-        chmodSync(helperOutDir, 0o755);
       }
       if (platform === "darwin") {
         const signCode = sign(stagedHelper);
         if (signCode !== 0) {
           throw new Error(`codesign failed for ${stagedHelper} (exit ${signCode})`);
         }
+      }
+      if (isPosix) {
+        chmodSync(stagedHelper, 0o755);
+        chmodSync(helperOutDir, 0o755);
       }
       remoteWorkspaceHelperPath = stagedHelper;
     }
