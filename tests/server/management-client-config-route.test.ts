@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +33,8 @@ import type { ClineGeneratedConfig } from "../../src/clients/config-export/cline
 import type { EpxConfig } from "../../src/types";
 import { catalogConvergenceFactory } from "../helpers/catalog-convergence";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { repoRoot } from "../helpers/repo-root";
+import { SPAWN_BUDGET_MS } from "../helpers/test-budget";
 
 /**
  * A key that looks exactly like a real one. Every assertion about `epx_` absence is
@@ -741,6 +744,83 @@ describe("GET /api/client-config", () => {
     );
     expect(response?.status).toBe(403);
   }, 15_000);
+
+  test("client=aside answers 200 with display destination when ~/.aside/accounts.json does not exist, and 400 when corrupt", () => {
+    const tempHome = mkdtempSync(join(tmpdir(), "epx-aside-route-"));
+    try {
+      mkdirSync(join(tempHome, ".easyproxy"), { recursive: true });
+      // Bun on macOS caches os.homedir() from process startup env, so mutate HOME/USERPROFILE at spawn.
+      const script = `
+        import { expect } from "bun:test";
+        import { mkdirSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+        import { handleManagementAPI } from "./src/server/management-api";
+        import { OPENCODE_PROVIDER_ID } from "./src/clients/config-export";
+
+        const home = process.env.HOME;
+        const config = {
+          port: 10100,
+          hostname: "127.0.0.1",
+          defaultProvider: "openai",
+          providers: {
+            openai: { adapter: "openai-chat", baseUrl: "http://127.0.0.1/v1", apiKey: "test", liveModels: false, models: ["gpt-5.4"] },
+          },
+        };
+        const call = async () => {
+          const url = new URL("http://127.0.0.1:10100/api/client-config?client=aside");
+          const response = await handleManagementAPI(new Request(url, { headers: { Host: url.host } }), url, config, {
+            saveConfigPreservingClaudeCode: () => {},
+            createManagementConvergeCodex: () => async () => ({ refreshed: false, skippedReason: null }),
+          });
+          if (!response) throw new Error("expected management response");
+          return response;
+        };
+
+        const unsigned = await call();
+        expect(unsigned.status).toBe(200);
+        const unsignedBody = await unsigned.json();
+        expect(unsignedBody.client).toBe("aside");
+        expect(unsignedBody.filename).toBe("aside-models.json");
+        expect(unsignedBody.destination).toBe(join(home, ".aside", "u", "<account>", "models.json"));
+        expect(unsignedBody.config.providers[OPENCODE_PROVIDER_ID]).toBeDefined();
+
+        mkdirSync(join(home, ".aside", "cli"), { recursive: true });
+        expect((await call()).status).toBe(200);
+
+        writeFileSync(join(home, ".aside", "accounts.json"), "{ not-json");
+        const corrupt = await call();
+        expect(corrupt.status).toBe(400);
+        const corruptBody = await corrupt.json();
+        expect(corruptBody.error).toContain("accounts.json");
+        expect(corruptBody.config).toBeUndefined();
+
+        writeFileSync(join(home, ".aside", "accounts.json"), JSON.stringify({ currentAccountId: -1 }));
+        expect((await call()).status).toBe(400);
+
+        writeFileSync(join(home, ".aside", "accounts.json"), JSON.stringify({ currentAccountId: 2 }));
+        const valid = await call();
+        expect(valid.status).toBe(200);
+        const validBody = await valid.json();
+        expect(validBody.destination).toBe(join(home, ".aside", "u", "2", "models.json"));
+      `;
+      const child = spawnSync(process.execPath, ["--eval", script], {
+        cwd: repoRoot(),
+        encoding: "utf8",
+        timeout: SPAWN_BUDGET_MS,
+        env: {
+          ...process.env,
+          HOME: tempHome,
+          USERPROFILE: tempHome,
+          EASYPROXY_HOME: join(tempHome, ".easyproxy"),
+        },
+      });
+      if (child.status !== 0) {
+        throw new Error(`aside client-config subprocess failed (${child.status}):\n${child.stdout}\n${child.stderr}`);
+      }
+    } finally {
+      removeTreeWithRetry(tempHome);
+    }
+  }, SPAWN_BUDGET_MS + 5_000);
 });
 
 

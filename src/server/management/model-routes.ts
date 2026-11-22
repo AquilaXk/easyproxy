@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { shouldInjectApiAuthHeader } from "../../codex/loopback-target";
 import { isExportModelNames, supportsAliasModelNames } from "../../clients/config-export/model-names";
 
@@ -158,10 +159,12 @@ import {
   EXPORT_CLIENTS,
   EXPORT_CLIENT_IDS,
   OPENCODE_PROVIDER_ID,
+  asideHomeDir,
   buildClientConfigText,
   isExportClientId,
   opencodeProxyBaseUrl,
 } from "../../clients/config-export";
+import { unresolvedPathHintFor } from "../../integrations/registry";
 import type {
   ExportClientId,
   ExportModel,
@@ -662,7 +665,20 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
       // `integrations/state.ts` and `integrations/writer.ts` already catch the
       // same error on their paths; this route was the one that did not.
       if (!(error instanceof ClientPathError)) throw error;
-      return jsonResponse({ error: error.message }, 400, req, config);
+      if (requested === "aside") {
+        let accountsExists = false;
+        try {
+          lstatSync(join(asideHomeDir(process.env), "accounts.json"));
+          accountsExists = true;
+        } catch (statError) {
+          if ((statError as NodeJS.ErrnoException | null)?.code !== "ENOENT") accountsExists = true;
+        }
+        const hint = !accountsExists ? unresolvedPathHintFor("aside", process.env) : "";
+        if (!hint) return jsonResponse({ error: error.message }, 400, req, config);
+        destination = join(hint, "<account>", "models.json");
+      } else {
+        return jsonResponse({ error: error.message }, 400, req, config);
+      }
     }
     if ((requested === "t3code" || requested === "raycast" || requested === "droid" || requested === "qoder" || requested === "qoder-cn" || requested === "workbuddy" || requested === "workbuddy-ai") && shouldInjectApiAuthHeader(config)) {
       return jsonResponse({
