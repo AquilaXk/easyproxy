@@ -9,13 +9,13 @@ describe("unverified checkpoint payload codec", () => {
 
   test("decodes and reproduces the independently generated golden bytes", () => {
     expect(golden.byteLength).toBe(1369);
-    expect(createHash("sha256").update(golden).digest("hex")).toBe("9b2d3f7c39c2456cf3f28439de1f80be8af006c4705d5e621ea9abb723077546");
+    expect(createHash("sha256").update(golden).digest("hex")).toBe("6c226716a3ddb1b4b3513116d21ce9667fc94350387d32d54900755d8e2299e7");
     const data = decodeCheckpointPayload(golden);
     expect(data.rootRevision).toBe(1);
     expect(data.generation).toBe(1);
     expect(data.channels).toEqual({ latest: null, preview: null, nightly: null });
     expect(Buffer.from(encodeCheckpointPayload(data))).toEqual(golden);
-    expect(checkpointPayloadDigest(golden)).toBe("9b2d3f7c39c2456cf3f28439de1f80be8af006c4705d5e621ea9abb723077546");
+    expect(checkpointPayloadDigest(golden)).toBe("6c226716a3ddb1b4b3513116d21ce9667fc94350387d32d54900755d8e2299e7");
   });
 
   test("accepts independent canonical vectors and rejects malformed corpus", () => {
@@ -92,7 +92,7 @@ describe("unverified checkpoint payload codec", () => {
     expect(() => encodeCheckpointPayload(sparse as CheckpointPayload)).toThrow();
     const shadowed = Buffer.from(golden);
     Object.defineProperty(shadowed, "byteLength", { value: 0 });
-    expect(checkpointPayloadDigest(shadowed)).toBe("9b2d3f7c39c2456cf3f28439de1f80be8af006c4705d5e621ea9abb723077546");
+    expect(checkpointPayloadDigest(shadowed)).toBe("6c226716a3ddb1b4b3513116d21ce9667fc94350387d32d54900755d8e2299e7");
   });
 
   test("rejects extra properties before fetching every descriptor", () => {

@@ -235,10 +235,12 @@ describe("npm cache access pre-flight", () => {
   test.skipIf(process.platform === "win32")("runs the real worker protocol against npm's configured cache path", () => {
     const cache = tempRoot("worker-round-trip");
     mkdirSync(join(cache, "_cacache"));
+    const env = { ...process.env, npm_config_cache: cache };
+    delete env.NPM_CONFIG_CACHE;
 
     expect(runNpmCachePreflight({
       platform: process.platform === "win32" ? "linux" : process.platform,
-      env: { ...process.env, npm_config_cache: cache },
+      env,
     })).toEqual({ ok: true, reason: "cache_accessible" });
   });
 

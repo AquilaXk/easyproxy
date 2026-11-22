@@ -20,7 +20,7 @@ describe("npm global under a mise-managed Node runtime", () => {
     const root = "C:/Users/example/AppData/Local/mise/installs/node";
     const metadata = root + "/.mise.backend.toml";
     for (const path of [
-      "C:\\Users\\example\\AppData\\Local\\mise\\installs\\node\\22.12.0\\node_modules\\@aquilaxk\\easyproxy\\bin",
+      "C:\\Users\\example\\AppData\\Local\\mise\\installs\\node\\22.12.0\\node_modules\\easyproxy\\bin",
       root + "/22.12.0/node_modules/easyproxy/bin",
       root + "/22.12.0/node_modules/easyproxy",
     ]) {

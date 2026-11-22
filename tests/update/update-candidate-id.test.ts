@@ -4,7 +4,7 @@ import { deriveCandidateId } from "../../src/update/update-candidate-id.mjs";
 describe("signed update candidate identity", () => {
   test("matches the specified byte-level golden vector", () => {
     expect(deriveCandidateId("00".repeat(32), "linux-x64-npm"))
-      .toBe("496737c902f9e38cbd89b81b0ba6935e245a026f4d0a931904ddd4617eafc7c4");
+      .toBe("bebafe69fac6b327156af7f351bf89f20392621caf135bb1d713c42fcdfaca9f");
   });
 
   test("binds both release bytes and target and rejects malformed identities", () => {

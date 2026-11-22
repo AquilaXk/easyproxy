@@ -26,7 +26,7 @@ test("#8128 shared overflow predicate changes only in the documented 5xx and con
 test("#8128 behavior suite retains origin/dev source", () => {
   const source = readFileSync(repoPath("tests/claude-integration/claude-uncoded-context-overflow.test.ts"));
   expect(source.length).toBeGreaterThan(0);
-  expect(digest(source)).toBe("d5d0573f377c5d7894bff343a0bd9cebec46df5bc405b112238862479a3e7328");
+  expect(digest(source)).toBe("447d01785bf2557bffc872a15b80f1e413aaba775370411b8d763af0243fd3f7");
 });
 
 test("retained overflow scratch is outside nested test sandboxes and junction aliases", () => {

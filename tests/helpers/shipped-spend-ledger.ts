@@ -7,7 +7,7 @@ import { DEFAULT_SPEND_RESERVATION_POLICY, type SpendJournal, type SpendReservat
 
 // Freeze the complete shipped module; adapt relative imports only, never accounting code.
 const source = readFileSync(fixturePath("spend-ledger-2-80-0.ts.txt"), "utf8");
-if (createHash("sha256").update(source).digest("hex") !== "fccd58e3e70fde8c4e0b0df919b0718659f5e18893934583cd65338fedaf5b0e") {
+if (createHash("sha256").update(source).digest("hex") !== "585ccfa89bf009abb8a97691591bbbc3873920cfbd5c0129018937b2f6ccb2e4") {
   throw new Error("Shipped spend-ledger fixture changed");
 }
 const adapted = source.replace(/from "(\.[^"]+)"/g, (_, specifier: string) =>

@@ -66,7 +66,7 @@ function run(fixture: { home: string; bin: string }, argv: string[], extraPath: 
 const plan = () => remoteUpdatePlanArgv("2.100.0", "posix");
 const apply = (viaLauncher: boolean) => remoteUpdateApplyArgv({ homeVersion: "2.100.0", planToken: TOKEN, notAfter: NOT_AFTER, viaLauncher }, "posix");
 const APPLY_ARGS = "update --yes --json --version 2.100.0 --expect-plan " + TOKEN + " --not-after " + NOT_AFTER;
-const NPM_ROOT = join("prefix", "lib", "node_modules", "@aquilaxk", "easyproxy");
+const NPM_ROOT = join("prefix", "lib", "node_modules", "easyproxy");
 
 describe("A4 launcher route on fake package installs", () => {
   posix("npm global: apply runs <prefix>/bin/node <root>/bin/epx.mjs", () => {

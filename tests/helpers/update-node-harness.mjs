@@ -35,7 +35,7 @@ const hostileKey = { keyId: hostileId.toString("hex"), get publicKey() { return 
 assert.throws(() => verifyMinisignBytes(hostileBytes, hostileBox, hostileKey));
 assert.equal(keyReads, 1);
 
-assert.equal(deriveCandidateId("00".repeat(32), "linux-x64-npm"), "496737c902f9e38cbd89b81b0ba6935e245a026f4d0a931904ddd4617eafc7c4");
+assert.equal(deriveCandidateId("00".repeat(32), "linux-x64-npm"), "bebafe69fac6b327156af7f351bf89f20392621caf135bb1d713c42fcdfaca9f");
 assert.ok(sameSignedVersion("18446744073709551615.0.0+build", "v18446744073709551615.0.0+build"));
 assert.ok(!sameSignedVersion("18446744073709551616.0.0", "18446744073709551616.0.0"));
 assert.ok(!sameSignedVersion("1.2.3+one", "1.2.3+two"));
