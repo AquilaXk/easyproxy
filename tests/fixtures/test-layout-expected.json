@@ -844,6 +844,7 @@
   "link-epx-child-ws-feature.test.ts": "clients", "link-relay-wait-observer.test.ts": "clients", "responses-offline-resend.test.ts": "responses", "link-served-runtime-trust.test.ts": "clients",
   "link-ws-autobahn.test.ts": "clients", "routing-profile-types-reexport.test.ts": "config", "provider-quota-probe-isolation.test.ts": "providers",
   "lib-tool-output-compression.test.ts": "lib", "lib-outbound-secret-guard.test.ts": "lib", "api-key-budget.test.ts": "server",
+  "standalone-native-helpers.test.ts": "lib",
   "json-depth-guard.test.ts": "lib", "api-key-budget-lease-ws.test.ts": "server",
   "request-history-routing-nonblocking.test.ts": "usage"
 }

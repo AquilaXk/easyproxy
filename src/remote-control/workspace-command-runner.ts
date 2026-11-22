@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { arch } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { isStandaloneBinary, standaloneRoot } from "../lib/standalone";
 import type {
   RemoteWorkspaceCommandRequest,
   RemoteWorkspaceCommandResult,
@@ -204,6 +205,7 @@ export function pinRemoteWorkspaceNativeHelper(path: string): RemoteWorkspaceNat
 export function discoverRemoteWorkspaceNativeHelper(options: {
   platform?: NodeJS.Platform;
   architecture?: string;
+  standaloneRootDir?: string;
 } = {}): RemoteWorkspaceNativeHelperDescriptor | undefined {
   const platform = options.platform ?? process.platform;
   if (platform !== "darwin" && platform !== "win32") return undefined;
@@ -211,7 +213,10 @@ export function discoverRemoteWorkspaceNativeHelper(options: {
   const executable = platform === "win32"
     ? "easyproxy-remote-workspace-helper.exe"
     : "easyproxy-remote-workspace-helper";
+  const standaloneDir = options.standaloneRootDir
+    ?? (isStandaloneBinary() ? standaloneRoot() : undefined);
   const candidates = [
+    ...(standaloneDir ? [join(standaloneDir, "native-bin", `${platform}-${architecture}`, executable)] : []),
     // Signed release bundles place the helper here.
     `${import.meta.dir}/../../native-bin/${platform}-${architecture}/${executable}`,
     // Source/private-dogfood builds produced by `bun run build:remote-workspace-helper`.

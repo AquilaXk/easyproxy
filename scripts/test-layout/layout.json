@@ -660,6 +660,7 @@
     "link-websocket-release-gate.test.ts": "e2e-style", "link-websocket-rss-child.test.ts": "e2e-style", "link-gate-codex-binary.test.ts": "e2e-style", "link-websocket-child-gate.test.ts": "e2e-style",
     "link-websocket-child-restart.test.ts": "e2e-style", "lib-tool-output-compression.test.ts": "lib", "lib-outbound-secret-guard.test.ts": "lib", "api-key-budget.test.ts": "server",
     "json-depth-guard.test.ts": "lib", "api-key-budget-lease-ws.test.ts": "server",
+    "standalone-native-helpers.test.ts": "lib",
     "request-history-routing-nonblocking.test.ts": "usage"
   }
 }

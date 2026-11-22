@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { getConfigDir } from "../config/paths";
 import { packageVersion } from "../lib/package-version";
+import { isStandaloneBinary, standaloneRoot } from "../lib/standalone";
 
 export const CHILD_TARGET_TRIPLES = [
   "darwin-arm64",
@@ -37,6 +38,7 @@ export interface ResolveChildBinaryOptions {
   readonly version?: string;
   readonly execPath?: string;
   readonly repoRoot?: string;
+  readonly standaloneRootDir?: string;
   readonly allowLocalRelease?: boolean;
 }
 
@@ -187,11 +189,19 @@ export function resolveChildBinarySource(
   }
 
   const execDir = dirname(options.execPath ?? process.execPath);
+  const resolvedStandaloneRoot = options.standaloneRootDir
+    ?? (!options.execPath && isStandaloneBinary() ? standaloneRoot() : undefined);
   const sidecarCandidates = [
     join(repoRoot, "native-bin", targetTriple, plainExe),
     join(repoRoot, "native-bin", artifactFile),
     join(execDir, artifactFile),
     join(execDir, "native-bin", targetTriple, plainExe),
+    ...(resolvedStandaloneRoot && resolvedStandaloneRoot !== execDir
+      ? [
+          join(resolvedStandaloneRoot, artifactFile),
+          join(resolvedStandaloneRoot, "native-bin", targetTriple, plainExe),
+        ]
+      : []),
   ];
   for (const candidate of sidecarCandidates) {
     const res = verifyManifestCandidate(candidate, targetTriple, "sidecar", hostPlatform);
