@@ -12,6 +12,7 @@ import {
   MAX_CONFIGURABLE_INBOUND_BODY_BYTES,
   readJsonRequestBody,
   DecompressedBodyTooLargeError,
+  JsonNestingDepthExceededError,
   UnsupportedContentEncodingError,
 } from "../../src/server/request-decompress";
 import {
@@ -613,21 +614,24 @@ describe("raised inbound body admission lifetime", () => {
   }
 
   for (const normalized of [false, true]) {
-    test(`measures a deeply nested valid JSON body with translator budget ${normalized}`, async () => {
-      // Deeper than the call stack allows a recursive serializer to walk, and well under the limit.
-      const depth = 500_000;
-      const text = "[".repeat(depth) + "]".repeat(depth);
-      const req = admissionRequest("/v1/responses", text);
+    test(`measures a valid nested JSON body up to max depth (256) and rejects >256 with translator budget ${normalized}`, async () => {
+      const okDepth = 256;
+      const okText = "[".repeat(okDepth) + "]".repeat(okDepth);
+      const okReq = admissionRequest("/v1/responses", okText);
       const translator = normalized ? createTranslatorBudget() : undefined;
       let response: Response | undefined;
       try {
         response = await admittedBodyWork(async () => {
-          assert.equal(Array.isArray(await readJsonRequestBody(req, translator, RAISED_BODY_LIMIT)), true);
+          assert.equal(Array.isArray(await readJsonRequestBody(okReq, translator, RAISED_BODY_LIMIT)), true);
           return new Response("held");
-        }, req);
+        }, okReq);
         assert.equal(response.status, 200);
-        assert.deepEqual(testBudget.snapshot(), { reservedBytes: text.length, activeLeases: 1, queuedRequests: 0 });
+        assert.deepEqual(testBudget.snapshot(), { reservedBytes: okText.length, activeLeases: 1, queuedRequests: 0 });
         await response.text();
+        for (const badDepth of [257, 500_000]) {
+          const badReq = admissionRequest("/v1/responses", "[".repeat(badDepth) + "]".repeat(badDepth));
+          await assert.rejects(() => readJsonRequestBody(badReq, translator, RAISED_BODY_LIMIT), JsonNestingDepthExceededError);
+        }
       } finally {
         await response?.body?.cancel().catch(() => undefined);
         translator?.dispose();

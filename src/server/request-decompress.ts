@@ -1,9 +1,12 @@
 import { Buffer } from "node:buffer";
 import { gunzipSync, inflateRawSync, inflateSync, zstdDecompressSync } from "node:zlib";
 import type { TranslatorBudget } from "../lib/translator-budget";
+import { assertJsonNestingDepth, JsonNestingDepthExceededError } from "../lib/json-depth-guard";
 import { updateInboundBodyReservation } from "./inbound-body-budget";
 import { serializedJsonByteLength } from "./json-serialized-bytes";
-import { recordRequestBodyFacts } from "./request-body-facts";
+import { markRequestBodyRejected, recordRequestBodyFacts } from "./request-body-facts";
+
+export { JsonNestingDepthExceededError };
 
 /**
  * Request-body decompression for the /v1/responses data plane.
@@ -341,6 +344,7 @@ export async function readBoundedJsonRequestBody(
   // and dishonest declarations remain bounded by the streaming reader below.
   if (declaredLength !== null && declaredLength > maxBytes) {
     const error = new DecompressedBodyTooLargeError(declaredLength, maxBytes, "declared_wire");
+    markRequestBodyRejected(req);
     cancelStreamWithoutWaiting(req.body, error);
     throw error;
   }
@@ -350,10 +354,18 @@ export async function readBoundedJsonRequestBody(
   let raw: Uint8Array;
   try {
     raw = await readRequestBodyBytesCapped(req.body, maxBytes, options?.signal ?? req.signal);
+  } catch (err) {
+    markRequestBodyRejected(req);
+    throw err;
   } finally {
     releaseReservation?.();
   }
-  assertBodySizeWithinLimit(raw, maxBytes, "observed_wire_lower_bound");
+  try {
+    assertBodySizeWithinLimit(raw, maxBytes, "observed_wire_lower_bound");
+  } catch (err) {
+    markRequestBodyRejected(req);
+    throw err;
+  }
   const releaseRaw = budget?.observeAcceptedRequestCopy(raw.byteLength);
   let releaseDecoded: (() => void) | undefined;
   let releaseText: (() => void) | undefined;
@@ -361,6 +373,7 @@ export async function readBoundedJsonRequestBody(
     const decoded = decodeRequestBody(raw, encoding, maxBytes);
     recordRequestBodyFacts(req, raw.byteLength, encoding, decoded.byteLength);
     releaseDecoded = decoded === raw ? undefined : budget?.observeAcceptedRequestCopy(decoded.byteLength);
+    assertJsonNestingDepth(decoded);
     const text = new TextDecoder().decode(decoded);
     // Count UTF-8 without allocating another request-sized byte array for diagnostics.
     releaseText = budget?.observeAcceptedRequestCopy(Buffer.byteLength(text, "utf8"));
@@ -375,6 +388,9 @@ export async function readBoundedJsonRequestBody(
     budget?.observeAcceptedRequestCopy(parsedBytes);
     updateInboundBodyReservation(req, Math.max(raw.byteLength, decoded.byteLength, parsedBytes));
     return parsed;
+  } catch (err) {
+    markRequestBodyRejected(req);
+    throw err;
   } finally {
     releaseText?.();
     releaseDecoded?.();
@@ -400,9 +416,12 @@ export function readJsonRequestBody(
  * Admit a body the caller already parsed (a Remote Link WebSocket create, #8600) as if it had been read: its serialized
  * size is held to the same limit and observed by the same budget as the parse at the end of the bounded reader.
  */
-export function admitParsedJsonRequestBody(body: unknown, maxBytes: number, budget?: TranslatorBudget): unknown {
+export function admitParsedJsonRequestBody(body: unknown, maxBytes: number, budget?: TranslatorBudget, req?: Request): unknown {
   const parsedBytes = serializedJsonByteLength(body);
-  if (parsedBytes > maxBytes) throw new DecompressedBodyTooLargeError(parsedBytes, maxBytes, "decoded_exact");
+  if (parsedBytes > maxBytes) {
+    if (req) markRequestBodyRejected(req);
+    throw new DecompressedBodyTooLargeError(parsedBytes, maxBytes, "decoded_exact");
+  }
   budget?.observeAcceptedRequestCopy(parsedBytes);
   return body;
 }

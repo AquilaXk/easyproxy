@@ -39,12 +39,8 @@ import {
   unnamedToolCallEvent,
   usageFromOpenAIChat,
 } from "./openai-chat/response-events";
-import {
-  formatOpenAIChatErrorBody,
-  OpenAIChatError,
-  unwrapChatCompletionPayload,
-  upstreamErrorEvent,
-} from "./openai-chat/errors";
+import { serializedJsonByteLength } from "../server/json-serialized-bytes";
+import { formatOpenAIChatErrorBody, OpenAIChatError, unwrapChatCompletionPayload, upstreamErrorEvent } from "./openai-chat/errors";
 import { messagesToChatFormat } from "./openai-chat/messages";
 import { withOpenAIChatToolNames } from "./openai-chat/tool-name-registry";
 import { openAIChatTransport, stripBracketedModelSuffix } from "./openai-chat/wire";
@@ -704,7 +700,7 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
       if (Object.hasOwn(json, "service_tier")) {
         tierMetadata?.observeResponseServiceTier(json.service_tier);
       }
-      const responseBytes = Buffer.byteLength(JSON.stringify(json), "utf8");
+      const responseBytes = serializedJsonByteLength(json);
       budget.chargeRetained(responseBytes, { kind: "retained_collectors" });
       try {
         const payload = unwrapChatCompletionPayload(json);

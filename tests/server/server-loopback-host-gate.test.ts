@@ -21,11 +21,12 @@ describe("isLoopbackRequestHost", () => {
     expect(isLoopbackRequestHost("[::1]:20100")).toBe(true);
   });
 
-  test("the proxy's own port, a bare host, and a missing Host stay allowed", () => {
+  test("the proxy's own port, a bare host, and a missing or empty Host stay allowed", () => {
     expect(isLoopbackRequestHost("localhost:10100")).toBe(true);
     expect(isLoopbackRequestHost("localhost")).toBe(true);
     expect(isLoopbackRequestHost("127.0.0.1")).toBe(true);
     expect(isLoopbackRequestHost(null)).toBe(true);
+    expect(isLoopbackRequestHost("")).toBe(true);
   });
 
   test("a non-loopback hostname is refused on every port", () => {
@@ -60,13 +61,10 @@ describe("isLoopbackRequestHost", () => {
     expect(isLoopbackRequestHost("localhost.")).toBe(true);
   });
 
-  test("characterization: an unparseable Host still fails open", () => {
-    // Pre-existing behavior of `if (!parsed) return true`, unchanged by the port-check
-    // removal and not browser-reachable (a browser composes Host from its own connection).
-    // Pinned here so tightening it is a deliberate change with a failing test, not a
-    // silent drift. See the scope note in isLoopbackRequestHost.
-    expect(isLoopbackRequestHost("attacker.test:99999")).toBe(true);
-    expect(isLoopbackRequestHost("attacker test:80")).toBe(true);
+  test("malformed non-empty Host values fail closed", () => {
+    expect(isLoopbackRequestHost("attacker.test:99999")).toBe(false);
+    expect(isLoopbackRequestHost("attacker test:80")).toBe(false);
+    expect(isLoopbackRequestHost("   ")).toBe(false);
   });
 });
 

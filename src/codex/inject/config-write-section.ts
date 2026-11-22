@@ -6,7 +6,7 @@ import { ConfigWriteContentChanged, ConfigWriteLockRefusal, assertConfigWriteDes
 import { CODEX_CONFIG_PATH, CODEX_PROFILE_PATH } from "../paths";
 import { getCodexHome } from "../paths";
 import { codexHomeIsAbsent } from "../codex-home-owner";
-import { JOURNAL_PATH, removeJournal } from "../journal";
+import { JOURNAL_PATH, removeJournal } from "../journal-file";
 import { externalCodexModelProvider } from "./config-toml";
 
 export function beginCodexWriteSection(held: LockHandle): void {

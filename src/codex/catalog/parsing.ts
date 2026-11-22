@@ -43,7 +43,8 @@ import { redactSecretString } from "../../lib/redact";
 import upstreamModelsSnapshot from "../data/upstream-models.json";
 
 
-import { NATIVE_OPENAI_CONTEXT_OVERRIDES, SUPPORTED_NATIVE_OPENAI_SLUGS, UPSTREAM_NATIVE_ENTRIES, hasNativeOpenAiCapabilityMetadata, nativeMultiAgentVersion, nativeOpenAiAutoCompactTokenLimit, nativeOpenAiConfiguredContextLimit, nativeOpenAiContextWindow, nativeOpenAiMaxInputTokens, type NativeContextLimitsInput } from "./metadata";
+import { NATIVE_OPENAI_CONTEXT_OVERRIDES, UPSTREAM_NATIVE_ENTRIES, nativeMultiAgentVersion, nativeOpenAiAutoCompactTokenLimit, nativeOpenAiConfiguredContextLimit, nativeOpenAiContextWindow, nativeOpenAiMaxInputTokens, type NativeContextLimitsInput } from "./native-capability-metadata";
+import { SUPPORTED_NATIVE_OPENAI_SLUGS, hasNativeOpenAiCapabilityMetadata } from "./native-models";
 import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import { trustedAccountBoundNativeCatalogSlug } from "./account-models";
 import { CODEX_NATIVE_ALIAS_CATALOG_KIND } from "./kinds";

@@ -658,6 +658,8 @@
     "link-ws-activity-holds.test.ts": "clients", "link-websocket-fingerprints.test.ts": "server", "link-activity-holds-routes.test.ts": "server", "link-ws-activity-holds-operator.test.ts": "clients",
     "cli-link-activity.test.ts": "cli", "link-child-ops-ignore-activity.test.ts": "clients", "link-request-log-fields.test.ts": "server", "link-websocket-transport-status.test.ts": "server",
     "link-websocket-release-gate.test.ts": "e2e-style", "link-websocket-rss-child.test.ts": "e2e-style", "link-gate-codex-binary.test.ts": "e2e-style", "link-websocket-child-gate.test.ts": "e2e-style",
-    "link-websocket-child-restart.test.ts": "e2e-style", "lib-tool-output-compression.test.ts": "lib", "lib-outbound-secret-guard.test.ts": "lib", "api-key-budget.test.ts": "server"
+    "link-websocket-child-restart.test.ts": "e2e-style", "lib-tool-output-compression.test.ts": "lib", "lib-outbound-secret-guard.test.ts": "lib", "api-key-budget.test.ts": "server",
+    "json-depth-guard.test.ts": "lib", "api-key-budget-lease-ws.test.ts": "server",
+    "request-history-routing-nonblocking.test.ts": "usage"
   }
 }

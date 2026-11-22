@@ -258,7 +258,7 @@ export async function prepareResponsesRequest(
   try {
     const limit = resolveInboundBodyLimitBytes(config.maxInboundBodyBytes);
     const attached = takeParsedRequestBody(req);
-    body = attached ? admitParsedJsonRequestBody(attached.body, limit, translatorBudget) : await readJsonRequestBody(req, translatorBudget, limit);
+    body = attached ? admitParsedJsonRequestBody(attached.body, limit, translatorBudget, req) : await readJsonRequestBody(req, translatorBudget, limit);
   } catch (err) {
     if (options.abortSignal?.aborted || req.signal.aborted) {
       return clientCancelledResponse();

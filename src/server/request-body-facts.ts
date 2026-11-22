@@ -11,7 +11,7 @@ export interface RequestBodyEntryField { requestBody?: RequestBodyFacts }
  * the request it hands to the handler to that request's log context, and the reader fills the holder
  * of the request it reads. Nothing is retained beyond the Request itself (WeakMap).
  */
-export interface RequestBodyFactsHolder { facts?: RequestBodyFacts }
+export interface RequestBodyFactsHolder { facts?: RequestBodyFacts; rejected?: boolean }
 
 const holders = new WeakMap<Request, RequestBodyFactsHolder>();
 
@@ -19,6 +19,14 @@ export function requestBodyFactsHolder(req: Request): RequestBodyFactsHolder {
   let holder = holders.get(req);
   if (!holder) { holder = {}; holders.set(req, holder); }
   return holder;
+}
+
+export function markRequestBodyRejected(req: Request): void {
+  requestBodyFactsHolder(req).rejected = true;
+}
+
+export function wasRequestBodyRejected(req: Request): boolean {
+  return holders.get(req)?.rejected === true;
 }
 
 function encodingOf(header: string | null): RequestBodyEncoding | null {

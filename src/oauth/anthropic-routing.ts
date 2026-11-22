@@ -23,7 +23,7 @@ import { clearAllAnthropicRatePauses, anthropicRatePolicyFor, classifyAnthropic4
 import { REFRESH_SKEW_MS } from "./refresh-policy";
 import { captureOAuthAccountSelection, commitOAuthAccountSelection, credentialGeneration, getAccountSet, getAccountCredential, getAccountCredentialWithStatus } from "./store";
 import type { OAuthAccessSnapshot } from "./index";
-import { getCachedProviderAccountQuota } from "../providers/quota";
+import { getCachedProviderAccountQuota } from "../providers/quota/account-cache";
 import { fallbackCodexAccountLogLabel } from "../codex/account-label";
 import {
   normalizeAccountPoolStickyLimit,

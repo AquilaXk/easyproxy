@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { normalizeRecordedClient, type UsageClient } from "../usage/client";
 import { anthropicAccountTagField, stampApiKeyAccountLabel, usesApiKeyAccount } from "../providers/label";
 import { finalizeProviderCacheAffinity } from "./request-log-cache-affinity";
-import { recordApiKeyTokens } from "./api-key-budget";
+import { recordApiKeyTokens, type ApiKeyBudgetLease } from "./api-key-budget";
 import { aggregateAttemptUsage } from "./request-log-attempt-usage";
 export { aggregateAttemptUsage } from "./request-log-attempt-usage";
 
@@ -134,6 +134,8 @@ export interface RequestLogContext extends UpstreamErrorDiagnostics, LinkRequest
   client?: UsageClient;
   /** Optional process-lifetime aggregate sink, injected by the server composition owner. */
   requestMetricsRecorder?: RequestMetricsRecorder;
+  /** Optional per-key budget reservation lease settled or rolled back once at final log time. */
+  apiKeyBudgetLease?: ApiKeyBudgetLease;
   /** Bounded terminal enum observed while inspecting a buffered response body. */
   observedTerminalStatus?: ResponsesTerminalStatus;
   /**
@@ -1703,7 +1705,13 @@ function writeFinalRequestLog(
     ...(protocolTrace ? { protocolTrace } : {}),
     ...attribution,
   }));
-  if (logCtx.apiKeyId && totalTokens !== undefined && totalTokens > 0) {
+  if (logCtx.apiKeyBudgetLease) {
+    if (logCtx.requestBodyHolder?.rejected) {
+      logCtx.apiKeyBudgetLease.releaseUnused();
+    } else {
+      logCtx.apiKeyBudgetLease.settleTokens(totalTokens ?? 0, start);
+    }
+  } else if (logCtx.apiKeyId && totalTokens !== undefined && totalTokens > 0) {
     recordApiKeyTokens(logCtx.apiKeyId, totalTokens, start);
   }
   // Formatted from the finalized snapshot, so the ring shows exactly what the ledger holds.

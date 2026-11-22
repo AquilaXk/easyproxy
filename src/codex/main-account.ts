@@ -55,14 +55,19 @@ import {
 } from "./native-main-refresh-mode";
 
 export { MAIN_CODEX_ACCOUNT_ID } from "./account-id";
+import {
+  isMainAccountJwtPlanAttempted,
+  markMainAccountJwtPlanAttempted,
+  peekMainAccountPlan,
+  setMainAccountPlan,
+} from "./main-account-plan";
+export { setMainAccountPlan };
 
 /**
  * Main account plan (e.g. "plus", "go", "free", "team"), populated from the WHAM usage
  * fetch. Used by the rotation usage-score so go/free main accounts score on monthly
  * percent, matching pool-account behavior.
  */
-let mainAccountPlan: string | null = null;
-let jwtPlanAttempted = false;
 const MAIN_TOKEN_REFRESH_SKEW_MS = 60_000;
 let beforeMainAuthJsonRenameForTests: (() => void) | null = null;
 let codexOwnedMainCredential: { home: string; expiresAt: number } | null = null;
@@ -854,20 +859,16 @@ export function forceRefreshMainAccountToken(
   return resolveMainAccountToken(dependencies, rejectedAccessToken);
 }
 
-export function setMainAccountPlan(plan: string | null): void {
-  mainAccountPlan = plan;
-  if (plan === null) jwtPlanAttempted = false;
-}
-
 export function getMainAccountPlan(): string | undefined {
-  if (mainAccountPlan) return mainAccountPlan;
-  if (jwtPlanAttempted) return undefined;
-  jwtPlanAttempted = true;
+  const existing = peekMainAccountPlan();
+  if (existing) return existing;
+  if (isMainAccountJwtPlanAttempted()) return undefined;
+  markMainAccountJwtPlanAttempted();
   const tokens = readCodexTokens();
   const jwtPlan = tokens
     ? extractChatgptPlanType(tokens.id_token, tokens.access_token)
     : undefined;
-  if (jwtPlan) mainAccountPlan = jwtPlan;
+  if (jwtPlan) setMainAccountPlan(jwtPlan);
   return jwtPlan;
 }
 

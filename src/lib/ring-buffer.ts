@@ -40,6 +40,35 @@ export class Float64RingBuffer {
     return this.buf[(this.head + index) & this.mask];
   }
 
+  pop(): number | undefined {
+    if (this.count === 0) return undefined;
+    this.count -= 1;
+    return this.buf[(this.head + this.count) & this.mask];
+  }
+
+  /**
+   * Removes the most recent entry equal to `target` while preserving order.
+   * Fast-path O(1) when removing the tail element; bounded linear shift otherwise.
+   */
+  removeLastEqual(target: number): boolean {
+    if (this.count === 0) return false;
+    const tailOffset = this.count - 1;
+    if (this.buf[(this.head + tailOffset) & this.mask] === target) {
+      this.count -= 1;
+      return true;
+    }
+    for (let i = tailOffset - 1; i >= 0; i -= 1) {
+      if (this.buf[(this.head + i) & this.mask] === target) {
+        for (let j = i; j < tailOffset; j += 1) {
+          this.buf[(this.head + j) & this.mask] = this.buf[(this.head + j + 1) & this.mask]!;
+        }
+        this.count -= 1;
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Removes all leading entries `<= cutoff` in strictly non-decreasing timestamp order. */
   pruneLeq(cutoff: number): number {
     let drop = 0;

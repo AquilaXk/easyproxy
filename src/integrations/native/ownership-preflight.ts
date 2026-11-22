@@ -14,14 +14,14 @@
 import {
   assertServiceEnvironmentMatchesInstall,
   isServiceOwnershipError,
-} from "../../service";
+} from "../../service/guards";
 import {
   currentServiceHomes,
   inspectServiceStateEvidence,
   compareServicePathToInstall,
   type ServiceStateEvidence,
   type ServicePathComparison,
-} from "../../service";
+} from "../../service/state";
 import type { CodexHomeDeps } from "../../codex/home";
 import {
   createWindowsTaskListingCache,

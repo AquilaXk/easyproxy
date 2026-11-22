@@ -160,6 +160,24 @@ pub fn require_local_settings_page(window: &WebviewWindow) -> Result<(), String>
     Ok(())
 }
 
+fn is_index_page_url(label: &str, url: &Url) -> bool {
+    label == "main"
+        && is_app_origin(url)
+        && matches!(url.path(), "/" | "/index.html")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+pub fn require_index_page(window: &WebviewWindow) -> Result<(), String> {
+    let url = window.url().map_err(|_| "startup page unavailable")?;
+    if !is_index_page_url(window.label(), &url) {
+        return Err("startup page unavailable".into());
+    }
+    Ok(())
+}
+
 pub fn shows_cli_page(window: &WebviewWindow) -> bool {
     window.label() == "main" && window.url().is_ok_and(|url| is_cli_page_url(&url))
 }
@@ -224,8 +242,8 @@ pub fn set_tray_policy(app: &AppHandle, visible: bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_app_origin, is_cli_page_url, is_local_settings_page, is_update_page_url,
-        opens_in_default_browser, webview_user_agent,
+        is_app_origin, is_cli_page_url, is_index_page_url, is_local_settings_page,
+        is_update_page_url, opens_in_default_browser, webview_user_agent,
     };
     use tauri::Url;
 
@@ -259,6 +277,34 @@ mod tests {
         ] {
             assert!(!is_local_settings_page("main", &url(value)), "{value}");
             assert!(!is_cli_page_url(&url(value)), "{value}");
+        }
+    }
+
+    #[test]
+    fn index_page_requires_main_and_exact_app_origin_root() {
+        for origin in ["tauri://localhost", "http://tauri.localhost"] {
+            for path in ["/", "/index.html"] {
+                let value = url(&format!("{origin}{path}"));
+                assert!(is_index_page_url("main", &value), "{value}");
+                assert!(!is_index_page_url("popup", &value), "{value}");
+            }
+        }
+        for value in [
+            "http://127.0.0.1:10100/",
+            "http://127.0.0.1:10100/index.html",
+            "https://tauri.localhost/index.html",
+            "tauri://evil/index.html",
+            "http://tauri.localhost:1420/index.html",
+            "tauri://localhost:1420/index.html",
+            "tauri://localhost/index.html.evil",
+            "tauri://localhost/update.html",
+            "tauri://localhost/cli.html",
+            "tauri://localhost/index.html?port=10100",
+            "tauri://localhost/?port=10100",
+            "tauri://localhost/index.html#x",
+            "tauri://user@localhost/index.html",
+        ] {
+            assert!(!is_index_page_url("main", &url(value)), "{value}");
         }
     }
 

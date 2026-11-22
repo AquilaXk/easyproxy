@@ -144,19 +144,11 @@ export function parseHttpHost(value: string | null): { hostname: string; port: s
 }
 
 export function isLoopbackRequestHost(value: string | null): boolean {
+  // Non-browser CLI callers may omit Host or send an empty header; malformed non-empty
+  // values must fail closed rather than slipping past the loopback DNS-rebinding guard.
+  if (value === null || value === "") return true;
   const parsed = parseHttpHost(value);
-  if (!parsed) return true;
-  // Loopback is a trust boundary by hostname, not by port. `ssh -L 20100:localhost:10100`
-  // legitimately arrives as `Host: localhost:20100`, and refusing it took the whole /v1/*
-  // data plane down with it, not just CORS. The sibling isLoopbackOriginValue() dropped its
-  // own port check for the same reason in e4e06125b ("same-trust-boundary"). Port equality
-  // was never the rebinding defense: a rebinding browser connects to the real port and sends
-  // it verbatim, so the hostname check below is what rejected it then and now.
-  //
-  // Scope of that guarantee: it holds for Hosts `parseHttpHost` can parse. An unparseable
-  // Host still returns true above — pre-existing behavior, not browser-reachable (a browser
-  // composes Host from its own connection), and pinned by a characterization test in
-  // tests/server/server-loopback-host-gate.test.ts. Tightening it is separate work.
+  if (!parsed) return false;
   return isLoopbackHostname(parsed.hostname);
 }
 

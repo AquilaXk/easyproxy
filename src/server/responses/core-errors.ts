@@ -10,6 +10,7 @@ import {
   UnsupportedContentEncodingError,
   DecompressedBodyTooLargeError,
   describeInboundBodyRefusal,
+  JsonNestingDepthExceededError,
 } from "../request-decompress";
 import { comboCooldownRetryAfterSeconds, NoAvailableComboTargetsError } from "../../combos";
 import type { AgentTaskRecoveryFailureReason } from "./agent-task-recovery";
@@ -94,6 +95,9 @@ export function decodeRequestErrorResponse(err: unknown, label: string): Respons
   }
   if (err instanceof DecompressedBodyTooLargeError) {
     return markProxyError(formatErrorResponse(413, "inbound_body_too_large", describeInboundBodyRefusal(err)), "inbound");
+  }
+  if (err instanceof JsonNestingDepthExceededError) {
+    return markProxyError(formatErrorResponse(400, "invalid_request_error", err.message, { code: err.code }));
   }
   console.warn(`[${label}] request body decode/parse failed: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
   return markProxyError(formatErrorResponse(400, "invalid_request_error", "Invalid JSON body"));

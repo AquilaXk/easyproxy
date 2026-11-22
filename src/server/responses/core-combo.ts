@@ -158,6 +158,7 @@ import { createJevModelInvoker } from "./jev-model-invoke";
 import { comboRequestedEffortLabel } from "./combo-requested-effort";
 import { clientWireOf } from "../inference/client-wire";
 import { resolveContextPrincipal } from "../auth-cors";
+import { attachParsedRequestBody } from "../request-decompress";
 
 /**
  * Sends one combo target may run on its own before the ladder moves on. A target is a whole
@@ -1356,8 +1357,8 @@ export async function executeComboResponses(
     const childRequest = new Request(req.url, {
       method: req.method,
       headers: childHeaders,
-      body: JSON.stringify(childBody),
     });
+    attachParsedRequestBody(childRequest, structuredClone(childBody));
     linkRequestSessionLane(req, childRequest);
     let resolvedAuth: CodexAuthContext | undefined;
     let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;

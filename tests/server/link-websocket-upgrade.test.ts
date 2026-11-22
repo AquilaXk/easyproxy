@@ -455,22 +455,28 @@ describe("link Responses WebSocket switched on", () => {
   });
 });
 
-describe("a link create reaches the pipeline once (#8600)", () => {
-  test("the pipeline takes the frame the socket parsed instead of reading it back from a request body; a local socket still reads one", async () => {
+describe("a link or local WebSocket create reaches the pipeline once (#8600)", () => {
+  test("the pipeline takes the pre-parsed frame via attachParsedRequestBody instead of re-serializing and re-parsing a request body", async () => {
     const port = await startHome();
     const read = spyOn(requestDecompress, "readJsonRequestBody");
+    const admit = spyOn(requestDecompress, "admitParsedJsonRequestBody");
     try {
       const wire = await openSocket(port);
       expect((await runTurn(wire, create("from the link"))).map(frameType)).toContain("response.completed");
       expect(read).not.toHaveBeenCalled();
+      expect(admit).toHaveBeenCalledTimes(1);
       const local = new WebSocket(new URL("/v1/responses", server!.url).href.replace("http:", "ws:"));
       await new Promise<void>((resolve, reject) => { local.onopen = () => resolve(); local.onerror = () => reject(new Error("local websocket failed")); });
       const done = new Promise<void>(resolve => { local.onmessage = event => { if (String(event.data).includes("response.completed")) resolve(); }; });
       local.send(JSON.stringify(create("from the local socket")));
       await done;
-      expect(read).toHaveBeenCalledTimes(1);
+      expect(read).not.toHaveBeenCalled();
+      expect(admit).toHaveBeenCalledTimes(2);
       local.close();
-    } finally { read.mockRestore(); }
+    } finally {
+      read.mockRestore();
+      admit.mockRestore();
+    }
     // Both turns reached the upstream with their own input.
     expect(JSON.stringify(upstreamRequests)).toContain("from the link");
     expect(JSON.stringify(upstreamRequests)).toContain("from the local socket");

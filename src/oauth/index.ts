@@ -1,3 +1,5 @@
+import { DEPRECATED_OAUTH_PROVIDER_ALIASES } from "./aliases";
+export { DEPRECATED_OAUTH_PROVIDER_ALIASES } from "./aliases";
 import { MuseLoginError, museLoginErrorMessage } from "./meta-muse-errors";
 import type { KiroOAuthMetadata, OAuthController, OAuthCredentials } from "./types";
 import { mapFill } from "../providers/resolved-model-policy-merge";
@@ -400,23 +402,6 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderDef> = {
     providerConfig: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" as const },
     defaultModel: "gpt-5.6-luna",
   },
-};
-
-/**
- * Removed provider ids that still name a live successor.
- *
- * `devin-cli` was merged into `devin` (import-first login absorbed the CLI
- * credential import; devlog/_fin/260913_devin_provider_merge). The id can
- * still arrive here from a saved config row or a stored credential slot that
- * the startup migration has not rekeyed yet, and from a user typing the old
- * name at `epx login`. It is deliberately NOT an OAUTH_PROVIDERS entry:
- * keeping one would re-expose it as a separate dashboard/login row, and its
- * `oauthConfig("devin-cli")` would throw at module load once the registry row
- * is gone. The alias map covers the paths that must keep working — refresh
- * policy resolution below, and the login-cli dispatch that warns and reroutes.
- */
-export const DEPRECATED_OAUTH_PROVIDER_ALIASES: Record<string, string> = {
-  "devin-cli": "devin",
 };
 
 export function isOAuthProvider(name: string): boolean {

@@ -80,6 +80,7 @@ export const GUI_PAIRING_GRANT_RATE_WINDOW_MS = 60_000;
 
 const pairingGrantCreations = new WeakMap<GuiSessionState, number[]>();
 const pairingSourceAttempts = new WeakMap<GuiSessionState, Map<string, { failures: number; windowStartedAt: number }>>();
+const sessionDigestIndexes = new WeakMap<GuiSessionState, Map<string, string>>();
 const PAIRING_SOURCE_WINDOW_MS = 10 * 60_000;
 const PAIRING_SOURCE_FAILURE_LIMIT = 10;
 const PAIRING_SOURCE_LIMIT = 1_024;
@@ -119,9 +120,30 @@ export function isRemoteGuiBrowserOriginAllowed(browserOrigin: string, config: E
   return (config.corsAllowOrigins ?? []).some(value => canonicalGuiBrowserOrigin(value) === canonical);
 }
 
+function tokenDigest(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function getSessionDigestIndex(state: GuiSessionState): Map<string, string> {
+  let index = sessionDigestIndexes.get(state);
+  if (!index) {
+    index = new Map();
+    for (const token of state.sessions.keys()) {
+      index.set(tokenDigest(token), token);
+    }
+    sessionDigestIndexes.set(state, index);
+  }
+  return index;
+}
+
+function deleteSessionToken(state: GuiSessionState, token: string): void {
+  state.sessions.delete(token);
+  sessionDigestIndexes.get(state)?.delete(tokenDigest(token));
+}
+
 function pruneExpired(state: GuiSessionState, now: number): void {
   for (const [token, session] of state.sessions) {
-    if (session.expiresAt <= now) state.sessions.delete(token);
+    if (session.expiresAt <= now) deleteSessionToken(state, token);
   }
   for (const [digest, grant] of state.pairingGrants) {
     if (grant.expiresAt <= now) state.pairingGrants.delete(digest);
@@ -132,7 +154,7 @@ function evictOldestSession(state: GuiSessionState): void {
   while (state.sessions.size >= GUI_SESSION_LIMIT) {
     const oldest = state.sessions.keys().next().value as string | undefined;
     if (!oldest) return;
-    state.sessions.delete(oldest);
+    deleteSessionToken(state, oldest);
   }
 }
 
@@ -159,6 +181,7 @@ export function mintSession(
     ...(localPairing ? { localPairing: true as const } : {}),
   };
   state.sessions.set(token, session);
+  getSessionDigestIndex(state).set(tokenDigest(token), token);
   return {
     token,
     serverOrigin: session.serverOrigin,
@@ -430,10 +453,23 @@ function findSession(
   credential: string,
   state: GuiSessionState,
 ): [string, GuiSessionRecord] | null {
-  for (const [token, session] of state.sessions) {
-    if (equalSecret(credential, token)) return [token, session];
+  const index = getSessionDigestIndex(state);
+  const digest = tokenDigest(credential);
+  let token = index.get(digest);
+  if (token === undefined && index.size !== state.sessions.size) {
+    index.clear();
+    for (const existing of state.sessions.keys()) {
+      index.set(tokenDigest(existing), existing);
+    }
+    token = index.get(digest);
   }
-  return null;
+  if (token === undefined) return null;
+  const session = state.sessions.get(token);
+  if (!session) {
+    index.delete(digest);
+    return null;
+  }
+  return equalSecret(credential, token) ? [token, session] : null;
 }
 
 export function authorizeGuiSessionRequest(
@@ -448,11 +484,11 @@ export function authorizeGuiSessionRequest(
   if (!found) return { ok: false, reason: "missing" };
   const [token, session] = found;
   if (session.expiresAt <= now) {
-    state.sessions.delete(token);
+    deleteSessionToken(state, token);
     return { ok: false, reason: "expired" };
   }
   if (session.localPairing && standaloneGuiPairingOrigin(config) !== session.serverOrigin) {
-    state.sessions.delete(token);
+    deleteSessionToken(state, token);
     return { ok: false, reason: "server-origin" };
   }
   if (managementRequestOrigin(req, config) !== session.serverOrigin) {

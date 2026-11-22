@@ -60,11 +60,14 @@ import {
   addFinalRequestLog,
   httpStatusForRequestLogTerminal,
   inspectResponseLogSsePayload,
+  markLocalRequestLogRefusal,
   nextRequestLogId,
   recordFirstOutput,
   type RequestLogContext,
   type RequestLogEntry,
 } from "../request-log";
+import { acquireApiKeyBudgetLease, type ApiKeyBudgetLease } from "../api-key-budget";
+import { requestBodyFactsHolder, wasRequestBodyRejected } from "../request-body-facts";
 import {
   corsHeaders,
   managementCorsHeaders,
@@ -95,11 +98,13 @@ import {
 import type { ServeOptionsContext } from "./serve-options";
 import type { RequestMetricsRecorder } from "../request-metrics";
 import { attachParsedRequestBody, resolveInboundBodyLimitBytes } from "../request-decompress";
+import { assertJsonNestingDepth, JsonNestingDepthExceededError } from "../../lib/json-depth-guard";
 import { responseToolOwnership } from "../responses/response-tool-ownership";
 import { runTurnStateCallerScope } from "../turn-state-handles";
 import { runWithRequestPeer } from "../../lib/request-peer-scope";
 /** The socket recorded a local peer at its upgrade; any other socket has no local snapshot. */
 const LOCAL_PEER = Object.freeze({ local: true });
+const wsFrameTextEncoder = new TextEncoder();
 import { admitHttpWorkflowTurn, workflowDecisionRefusalResponse } from "../workflow-refusal";
 
 /**
@@ -208,30 +213,39 @@ export function createWebsocketHandler(
           ws.close(1009, "message too large");
           return;
         }
-        // An established control connection only ever carries control frames, so the
-        // inbound body limit applies to raw bytes before the parse materializes them.
-        if (ws.data.nativeControl && rawBytes > resolveInboundBodyLimitBytes(config.maxInboundBodyBytes)) {
+        // Check inbound body cap and JSON nesting depth before parsing so oversized or
+        // deeply nested non-sideband client frames never allocate an AST or JSON tree.
+        if (rawBytes > resolveInboundBodyLimitBytes(config.maxInboundBodyBytes)) {
           sendJsonFrame(ws, buildWsErrorFrame(413, {
             type: "invalid_request_error",
             code: "inbound_body_too_large",
-            message: "Native response control frame exceeds the configured inbound body limit.",
+            message: ws.data.nativeControl
+              ? "Native response control frame exceeds the configured inbound body limit."
+              : "WebSocket frame exceeds the configured inbound body limit.",
           }));
           return;
+        }
+        const frameBytes = typeof raw === "string"
+          ? wsFrameTextEncoder.encode(raw)
+          : new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+        try {
+          assertJsonNestingDepth(frameBytes);
+        } catch (error) {
+          if (error instanceof JsonNestingDepthExceededError) {
+            sendJsonFrame(ws, buildWsErrorFrame(400, {
+              type: "invalid_request_error",
+              code: error.code,
+              message: error.message,
+            }));
+            return;
+          }
+          throw error;
         }
         let frame: Record<string, unknown>;
         try {
           frame = JSON.parse(typeof raw === "string" ? raw : raw.toString()) as Record<string, unknown>;
         } catch {
           return; // text-only contract; ignore unparseable frames
-        }
-        if ((frame.type === "response.inject" || frame.type === "response.steer")
-          && rawBytes > resolveInboundBodyLimitBytes(config.maxInboundBodyBytes)) {
-          sendJsonFrame(ws, buildWsErrorFrame(413, {
-            type: "invalid_request_error",
-            code: "inbound_body_too_large",
-            message: "Native response control frame exceeds the configured inbound body limit.",
-          }));
-          return;
         }
         if (frame.type === "response.inject" || frame.type === "response.steer" || (frame.type === "response.create" && ws.data.nativeControl)) {
           try {
@@ -303,8 +317,41 @@ export function createWebsocketHandler(
           return;
         }
 
+        const wsAdmission = ws.data.admission;
+        let budgetLease: ApiKeyBudgetLease | undefined;
+        if (wsAdmission?.kind === "configured" && config.apiKeys?.length) {
+          const entry = config.apiKeys.find(k => k.id === wsAdmission.keyId);
+          if (entry && (entry.rpmLimit !== undefined || entry.maxDailyRequests !== undefined || entry.dailyTokenLimit !== undefined)) {
+            const budget = acquireApiKeyBudgetLease(entry);
+            if (!budget.allowed) {
+              const denyStart = Date.now();
+              const denyRequestId = nextRequestLogId(denyStart);
+              const denyLogCtx: RequestLogContext = {
+                model: typeof frame.model === "string" && frame.model ? frame.model : "unknown",
+                provider: "unknown",
+                ...(requestMetricsRecorder ? { requestMetricsRecorder } : {}),
+                ...admissionFields(wsAdmission),
+                client: ws.data.client ?? "unknown",
+                inboundProtocol: "responses",
+              };
+              markLocalRequestLogRefusal(denyLogCtx, budget.reason);
+              denyLogCtx.errorCode = budget.reason;
+              addFinalRequestLog(denyRequestId, denyStart, denyLogCtx, 429);
+              sendJsonFrame(ws, buildWsErrorFrame(429, {
+                type: "rate_limit_error",
+                code: budget.reason,
+                message: "API key request budget exceeded.",
+              }, new Headers({ "Retry-After": String(budget.retryAfterSec) })));
+              if (ws.data.cancel === cancelTurn) ws.data.cancel = undefined;
+              return;
+            }
+            budgetLease = budget.lease;
+          }
+        }
+
         const turnAdmissionLease = tryAdmitTurn(ws.data.sessionLaneId);
         if (!turnAdmissionLease) {
+          budgetLease?.releaseUnused();
           sendJsonFrame(ws, buildWsErrorFrame(503, {
             type: "server_error",
             code: "server_busy",
@@ -329,12 +376,12 @@ export function createWebsocketHandler(
           // to re-resolve from. Optional on WsData like every other member, so
           // narrow rather than assume: an unattributed frame is preferable to a
           // fabricated attribution.
-          const wsAdmission = ws.data.admission;
           const logCtx: RequestLogContext = {
             model: "unknown",
             provider: "unknown",
             ...(requestMetricsRecorder ? { requestMetricsRecorder } : {}),
             ...(wsAdmission ? admissionFields(wsAdmission) : {}),
+            ...(budgetLease ? { apiKeyBudgetLease: budgetLease } : {}),
             client: ws.data.client ?? "unknown",
             inboundProtocol: "responses",
           };
@@ -350,23 +397,24 @@ export function createWebsocketHandler(
           const baseHeaders = ws.data.headers ?? new Headers();
           const fwd = new Headers({ "content-type": "application/json" });
           baseHeaders.forEach((value, key) => fwd.set(key, value));
-          // A Remote Link socket hands the pipeline the create it parsed (#8600): serializing it into the request and
-          // parsing it back would hold two more request-sized copies for the turn. Local sockets keep the request body.
-          // turnBody is a shallow copy: preparation's in-place edits to nested input reach frame.input too, which the
-          // socket's activity book reads again later, for the array's identity and each result's type and ids only.
+          // Attach the parsed body directly instead of serializing and re-parsing (#8600).
+          // A Remote Link socket passes turnBody directly so preparation's in-place edits
+          // preserve the frame.input array identity read by responsesActivity; local sockets
+          // attach a structured clone so request mutation never alters frame.input.
           const turnBody = { ...payload, stream: true };
           const linkSocket = ws.data.link !== undefined;
           const req = new Request("http://localhost/v1/responses", {
             method: "POST",
             headers: fwd,
-            ...(linkSocket ? {} : { body: JSON.stringify(turnBody) }),
           });
-          if (linkSocket) attachParsedRequestBody(req, turnBody);
+          attachParsedRequestBody(req, linkSocket ? turnBody : structuredClone(turnBody));
+          logCtx.requestBodyHolder = requestBodyFactsHolder(req);
           try {
             // A socket can be the first ingress for a root. Admit every inference frame,
             // then keep its workflow lease with the turn until terminal output or cancellation.
             const workflow = admitHttpWorkflowTurn(req.headers);
             if (workflow && !workflow.admitted) {
+              budgetLease?.releaseUnused();
               const refusal = workflowDecisionRefusalResponse(workflow, logCtx);
               await sendResponseToWebSocket(ws, refusal, isCurrent);
               finalizeLog(refusal.status);
@@ -475,6 +523,10 @@ export function createWebsocketHandler(
             turnAdmissionLease.release();
             if (ws.data.nativeControl === nativeControl) ws.data.nativeControl = undefined;
             if (!logged && turnAbort.signal.aborted) finalizeLog(499);
+            if (budgetLease) {
+              if (wasRequestBodyRejected(req)) budgetLease.releaseUnused();
+              else budgetLease.settleTokens(0);
+            }
             ws.data.linkTurnEnded?.(turnId);
             if (ws.data.cancel === cancelTurn) ws.data.cancel = undefined;
           }

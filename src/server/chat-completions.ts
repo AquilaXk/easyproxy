@@ -50,7 +50,7 @@ import {
   retainReplayRefusal,
   UPSTREAM_RESET_REPLAY_REFUSED_CODE,
 } from "../lib/upstream-retry";
-import { estimateTokens } from "../lib/token-estimate";
+import { charsPerToken } from "../lib/token-estimate";
 import { AnthropicSecondaryInstanceUnavailableError, captureRouteStaticPolicy, NoEligiblePolicyCandidateError, UnknownRoutingPolicyError, routeModel } from "../router";
 import { evidenceFromBody } from "../routing/request-evidence";
 import { resolveWireProtocolOverride } from "./adapter-resolve";
@@ -64,6 +64,7 @@ import {
 } from "./request-log-conversation";
 import type { EpxConfig } from "../types";
 import { attachParsedRequestBody, DecompressedBodyTooLargeError, UnsupportedContentEncodingError, readJsonRequestBody, resolveInboundBodyLimitBytes } from "./request-decompress";
+import { serializedJsonByteLength } from "./json-serialized-bytes";
 import { jsonUtf8Bytes } from "../lib/json-byte-size";
 import {
   addFinalRequestLog,
@@ -305,10 +306,10 @@ async function handleChatCompletionsWithBudget(
     callerAuthorizationRoute = !routeMayChangeCredentialDomain
       && providerConsumesCallerAuthorization(route.provider);
     if (route.provider.adapter === "cursor" || route.provider.adapter === "kiro") {
-      const parts: string[] = [];
-      if (chatBody.messages !== undefined) parts.push(JSON.stringify(chatBody.messages));
-      if (chatBody.tools !== undefined) parts.push(JSON.stringify(chatBody.tools));
-      logCtx.usageLogInputTokens = Math.max(1, estimateTokens(parts.join("\n"), requestedModel));
+      const msgBytes = chatBody.messages !== undefined ? serializedJsonByteLength(chatBody.messages) : 0;
+      const toolBytes = chatBody.tools !== undefined ? serializedJsonByteLength(chatBody.tools) : 0;
+      const totalBytes = msgBytes + toolBytes + (chatBody.messages !== undefined && chatBody.tools !== undefined ? 1 : 0);
+      logCtx.usageLogInputTokens = totalBytes === 0 ? 1 : Math.max(1, Math.ceil(totalBytes / charsPerToken(requestedModel)));
     }
     // Combos must enter the Responses routing path so child selection, forced default
     // effort, failover, and per-attempt telemetry run before any native Chat send.
@@ -320,9 +321,9 @@ async function handleChatCompletionsWithBudget(
       // Reserve an input estimate for spend without recording it as usage: native Chat attempts
       // keep the provider-reported counts, as they did before the reservation existed.
       if (logCtx.usageLogInputTokens === undefined) {
-        const parts = [JSON.stringify(chatBody.messages ?? [])];
-        if (chatBody.tools !== undefined) parts.push(JSON.stringify(chatBody.tools));
-        logCtx.spendInputEstimateTokens = Math.max(1, estimateTokens(parts.join("\n"), requestedModel));
+        const msgBytes = serializedJsonByteLength(chatBody.messages ?? []);
+        const totalBytes = msgBytes + (chatBody.tools !== undefined ? 1 + serializedJsonByteLength(chatBody.tools) : 0);
+        logCtx.spendInputEstimateTokens = totalBytes === 0 ? 1 : Math.max(1, Math.ceil(totalBytes / charsPerToken(requestedModel)));
       }
       const outputCeiling = chatBody.max_completion_tokens ?? chatBody.max_tokens;
       if (typeof outputCeiling === "number" && outputCeiling > 0) {
@@ -431,7 +432,7 @@ async function handleChatCompletionsWithBudget(
       // conversation. Account for the retained IR itself before an adapter materializes it
       // again; reasoning placeholders can be larger than the source Chat message.
       translatorBudget.chargeRetained(
-        Buffer.byteLength(JSON.stringify(directConversation), "utf8"),
+        serializedJsonByteLength(directConversation),
         { kind: "request_copies" },
       );
       internalBody = chatSettingsBody(chatBody);

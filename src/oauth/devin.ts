@@ -21,7 +21,7 @@ import { DEVIN_DEFAULT_API_SERVER, resolveDevinApiBaseUrl, validateDevinApiBaseU
 import { readDevinCliCredentialOutcome } from "./devin/cli-import";
 import { CloudAuthError, mintUserJwt } from "../adapters/devin/cloud-direct/auth";
 import { getCredential, listAccounts, type AuthStore } from "./store";
-import { DEPRECATED_OAUTH_PROVIDER_ALIASES } from "./index";
+import { DEPRECATED_OAUTH_PROVIDER_ALIASES } from "./aliases";
 
 export { DEVIN_DEFAULT_API_SERVER } from "./devin/api-base";
 

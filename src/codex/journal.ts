@@ -2,26 +2,16 @@ import { beginCodexWriteSection, publishCodexArtifact, publishCodexConfigIfUncha
 import { createHash } from "node:crypto";
 import type { AtomicWriteHooks } from "../config/atomic-write";
 import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import { atomicWriteFile, withConfigMutationLockSync } from "../config";
-import { assertCodexHomeOwner, codexHomeIsAbsent, CODEX_HOME_JOURNAL_FILE, CodexHomeOwnerRefusal, easyproxyHomeForInjection, readCodexHomeJournal, type CodexHomeOwnerRefusalReason } from "./codex-home-owner";
+import { assertCodexHomeOwner, codexHomeIsAbsent, CodexHomeOwnerRefusal, easyproxyHomeForInjection, readCodexHomeJournal, type CodexHomeOwnerRefusalReason } from "./codex-home-owner";
+import { JOURNAL_PATH, removeJournal } from "./journal-file";
+export { JOURNAL_PATH, removeJournal };
 import { hasInjectedCodexRouting } from "./injected-marker";
 import { ConfigWriteContentChanged, configWriteLockFailureMessage, withConfigWriteLockHeld } from "./config-write-lock";
 import type { LockHandle } from "./config-write-lock";
 import { CODEX_HOME, CODEX_CONFIG_PATH, CODEX_PROFILE_PATH, resolveCodexCatalogPath } from "./paths";
 import { transformManagedSubagentDefaults, type WrittenSubagentDefaults } from "./subagent-defaults";
 import { appendInjectedRootHistory, captureJournalConfigFields, ownedJournalCatalogBinding, parseInjectedRootHistory, restoreJournalConfigFields, snapshotDisconnectRecovery, type InjectedRootHistory, type InjectedRootKey, type JournalConfigFields } from "./journal-config-restore";
-
-/**
- * Exported so that anything reasoning ABOUT the journal points at the journal.
- *
- * The Codex admission snapshot re-derived this path by hand and got it wrong in
- * both halves — wrong directory and wrong filename — so its "journal identity"
- * watched a file nothing writes. The fixture re-derived it the same wrong way,
- * agreed with the producer, and the pair stayed green. One exported constant
- * removes the opportunity.
- */
-export const JOURNAL_PATH = join(CODEX_HOME, CODEX_HOME_JOURNAL_FILE);
 
 export type JournalOwner =
   | { kind: "process"; pid: number }
@@ -358,13 +348,6 @@ function parseInjectedSubagentDefaults(recorded: unknown): WrittenSubagentDefaul
     if (typeof value === "string") written[key] = value;
   }
   return Object.keys(written).length > 0 ? written : null;
-}
-
-export function removeJournal(hooks: AtomicWriteHooks = {}): void {
-  assertCodexHomeOwner(CODEX_HOME);
-  hooks.validateBeforeRename?.(JOURNAL_PATH);
-  try { unlinkSync(JOURNAL_PATH); } catch { return; }
-  hooks.afterRename?.(JOURNAL_PATH);
 }
 
 /** Successful field-level native restore releases ownership while retaining recovery evidence. */

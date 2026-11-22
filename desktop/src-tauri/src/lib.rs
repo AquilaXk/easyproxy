@@ -214,9 +214,11 @@ fn startup_phases() -> Vec<startup::PhaseInfo> {
 ///
 /// A person asking for a runtime again also resumes supervision, even after the tray's Stop.
 #[tauri::command]
-fn retry_startup(app: tauri::AppHandle) {
+fn retry_startup(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
+    window::require_index_page(&window)?;
     supervisor::resume(&app);
     startup::begin(&app);
+    Ok(())
 }
 
 /// The user's answer to the takeover prompt the startup sequence is waiting on.
@@ -224,10 +226,16 @@ fn retry_startup(app: tauri::AppHandle) {
 /// The sequence holds a oneshot for exactly the duration of the prompt; a decision arriving
 /// with nothing pending is a click after the fact, and it changes nothing.
 #[tauri::command]
-fn decide_takeover(app: tauri::AppHandle, approved: bool) {
+fn decide_takeover(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    approved: bool,
+) -> Result<(), String> {
+    window::require_index_page(&window)?;
     if let Some(startup) = app.try_state::<startup::Startup>() {
         startup.decide_takeover(approved);
     }
+    Ok(())
 }
 
 #[tauri::command]

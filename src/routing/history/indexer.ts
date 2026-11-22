@@ -53,7 +53,11 @@ import {
 import { buildFilePath, removeBuildFiles } from "./build-file";
 import { RebuildWorkerJob } from "./rebuild-job";
 import { RequestHistoryIntegrityMonitor, type RequestHistoryIntegrityOptions } from "./integrity";
-import { isHistoryIndexCorruption } from "./sqlite-errors";
+import { isHistoryIndexCorruption, isSqliteBusyError } from "./sqlite-errors";
+
+export const MAX_ROUTING_SYNC_TAIL_BYTES = 65_536;
+const DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5_000;
+const HISTORY_WAL_JOURNAL_SIZE_LIMIT_BYTES = 67_108_864;
 
 export {
   REQUEST_HISTORY_INSERT_BATCH,
@@ -164,6 +168,7 @@ let integrity = new RequestHistoryIntegrityMonitor();
 let integrityDrain: Promise<void> | null = null;
 let corruptHandle: Database | null = null;
 let validatedBuildPath: string | null = null;
+let asyncCatchUpTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Test seam: replace integrity scheduling without leaving a scanner on an old file. */
 export function setRequestHistoryIntegrityOptionsForTests(options?: RequestHistoryIntegrityOptions): void {
@@ -292,24 +297,57 @@ function notifyIndexInvalidated(): void {
   }
 }
 
-function configureHistoryDbPragmas(handle: Database): void {
-  handle.exec("PRAGMA journal_mode = WAL");
+function configureHistoryDbPragmas(
+  handle: Database,
+  busyTimeoutMs = DEFAULT_SQLITE_BUSY_TIMEOUT_MS,
+): void {
+  handle.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
+  const modeRow = handle.query("PRAGMA journal_mode").get() as { journal_mode?: unknown } | null;
+  if (String(modeRow?.journal_mode ?? "").toLowerCase() !== "wal") {
+    handle.exec("PRAGMA journal_mode = WAL");
+  }
   handle.exec("PRAGMA synchronous = NORMAL");
-  handle.exec("PRAGMA busy_timeout = 5000");
   handle.exec("PRAGMA temp_store = MEMORY");
   handle.exec("PRAGMA cache_size = -16000");
   handle.exec("PRAGMA mmap_size = 67108864");
+  handle.exec(`PRAGMA journal_size_limit = ${HISTORY_WAL_JOURNAL_SIZE_LIMIT_BYTES}`);
 }
 
-function destroyAndRecreate(path: string, reason: string): Database {
+function checkpointHistoryDb(handle: Database | null): void {
+  if (!handle) return;
+  try {
+    handle.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch {
+    /* best-effort truncation on close or replacement */
+  }
+}
+
+function scheduleAsyncCatchUp(): void {
+  if (asyncCatchUpTimer !== null || openPromise !== null) return;
+  const scheduledLifetime = indexLifetime;
+  const timer = setTimeout(() => {
+    if (asyncCatchUpTimer === timer) asyncCatchUpTimer = null;
+    if (scheduledLifetime !== indexLifetime) return;
+    void openRequestHistoryIndex().catch(() => undefined);
+  }, 0);
+  timer.unref?.();
+  asyncCatchUpTimer = timer;
+}
+
+function destroyAndRecreate(
+  path: string,
+  reason: string,
+  busyTimeoutMs = DEFAULT_SQLITE_BUSY_TIMEOUT_MS,
+): Database {
   prepareIndexReplacement();
   if (db) {
+    checkpointHistoryDb(db);
     try { db.close(); } catch { /* already closed */ }
     db = null;
   }
   removeIndexFiles(path);
   const fresh = new Database(path, { create: true });
-  configureHistoryDbPragmas(fresh);
+  configureHistoryDbPragmas(fresh, busyTimeoutMs);
   resetAndCreateSchema(fresh);
   setMeta(fresh, HISTORY_META_KEYS.lastError, reason);
   db = fresh;
@@ -319,32 +357,37 @@ function destroyAndRecreate(path: string, reason: string): Database {
   return fresh;
 }
 
-function openIndexDb(): Database {
+function openIndexDb(busyTimeoutMs = DEFAULT_SQLITE_BUSY_TIMEOUT_MS): Database {
   if (integrityDrain) throw new IntegrityHandedOff(integrityDrain);
   const path = indexDbPath();
   if (db) return db;
   let handle: Database | undefined;
   try {
     handle = new Database(path, { create: true });
-    configureHistoryDbPragmas(handle);
-    handle.exec(HISTORY_DDL);
-    if (metaValue(handle, HISTORY_META_KEYS.schemaVersion) === null) {
-      // Fresh database: record the schema version so the next refresh treats
-      // it as current instead of destroying the file we just created.
-      setMeta(handle, HISTORY_META_KEYS.schemaVersion, HISTORY_SCHEMA_VERSION);
-      setMeta(handle, HISTORY_META_KEYS.indexedOffset, 0);
-      setMeta(handle, HISTORY_META_KEYS.indexedRows, 0);
-      setMeta(handle, HISTORY_META_KEYS.builtAtMs, Date.now());
-      setMeta(handle, HISTORY_META_KEYS.lastError, "created");
+    configureHistoryDbPragmas(handle, busyTimeoutMs);
+    const hasMetaTable = handle.query(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'",
+    ).get() !== null;
+    if (!hasMetaTable) {
+      handle.exec(HISTORY_DDL);
+      if (metaValue(handle, HISTORY_META_KEYS.schemaVersion) === null) {
+        // Fresh database: record the schema version so the next refresh treats
+        // it as current instead of destroying the file we just created.
+        setMeta(handle, HISTORY_META_KEYS.schemaVersion, HISTORY_SCHEMA_VERSION);
+        setMeta(handle, HISTORY_META_KEYS.indexedOffset, 0);
+        setMeta(handle, HISTORY_META_KEYS.indexedRows, 0);
+        setMeta(handle, HISTORY_META_KEYS.builtAtMs, Date.now());
+        setMeta(handle, HISTORY_META_KEYS.lastError, "created");
+      }
     }
   } catch (error) {
     // A partially-opened handle on a corrupt file can hold the OS lock on
-    // Windows; close it before the destructive recreate.
+    // Windows; close it before the destructive recreate or busy exit.
     if (handle) {
       try { handle.close(); } catch { /* already unusable */ }
     }
     if (!isHistoryIndexCorruption(error)) throw error;
-    handle = destroyAndRecreate(path, "unreadable database recreated");
+    handle = destroyAndRecreate(path, "unreadable database recreated", busyTimeoutMs);
   }
   dbPath = path;
   db = handle;
@@ -467,6 +510,7 @@ function startWorkerRebuild(reason: string, revision: UsageLogRevision): WorkerR
 function installBuild(buildPath: string, indexPath: string): void {
   prepareIndexReplacement();
   if (db) {
+    checkpointHistoryDb(db);
     try { db.close(); } catch { /* already closed */ }
     db = null;
   }
@@ -505,11 +549,21 @@ function rebuildFromLedger(handle: Database, reason: string, caller: RefreshCall
 
 function refreshOnceLockedSync(caller: RefreshCaller): RequestHistoryIndexMeta {
   if (workerRebuild) throw new RebuildHandedOff(workerRebuild);
-  openIndexDb();
+  const busyTimeoutMs = caller === "routing" ? 0 : DEFAULT_SQLITE_BUSY_TIMEOUT_MS;
+  openIndexDb(busyTimeoutMs);
   const state = ensureSchemaAndIdentity(db!);
   const handle = db!;
   const revision = sourceIdentity();
   if (state === "rebuilt") {
+    if (
+      caller === "routing"
+      && revision !== null
+      && Number(revision.size) > MAX_ROUTING_SYNC_TAIL_BYTES
+      && Number(revision.size) < workerRebuildMinBytes
+    ) {
+      scheduleAsyncCatchUp();
+      return metaFor(handle);
+    }
     rebuildFromLedger(handle, "rebuilt after identity/schema mismatch", caller);
     return metaFor(handle);
   }
@@ -526,6 +580,11 @@ function refreshOnceLockedSync(caller: RefreshCaller): RequestHistoryIndexMeta {
     return metaFor(handle);
   }
   if (tailNextOffset < Number(revision.size)) {
+    const tailDelta = Number(revision.size) - tailNextOffset;
+    if (caller === "routing" && tailDelta > MAX_ROUTING_SYNC_TAIL_BYTES) {
+      scheduleAsyncCatchUp();
+      return metaFor(handle);
+    }
     const inserted = ingestSourceTail(handle, revision.path, tailNextOffset);
     // A clean tail ingest proves the index is healthy: clear any earlier
     // rebuild marker so status readers can distinguish rebuilds from tails.
@@ -538,6 +597,7 @@ function refreshOnceLockedSync(caller: RefreshCaller): RequestHistoryIndexMeta {
 }
 
 function refreshLockedSync(caller: RefreshCaller): RequestHistoryIndexMeta {
+  const busyTimeoutMs = caller === "routing" ? 0 : DEFAULT_SQLITE_BUSY_TIMEOUT_MS;
   try {
     return refreshOnceLockedSync(caller);
   } catch (error) {
@@ -548,7 +608,7 @@ function refreshLockedSync(caller: RefreshCaller): RequestHistoryIndexMeta {
       corruptHandle = db;
       integrity.markCorrupt(db);
     }
-    const handle = destroyAndRecreate(dbPath, "SQLite corruption; index rebuilt");
+    const handle = destroyAndRecreate(dbPath, "SQLite corruption; index rebuilt", busyTimeoutMs);
     rebuildFromLedger(handle, "SQLite corruption; index rebuilt", caller);
     return metaFor(handle);
   }
@@ -556,16 +616,38 @@ function refreshLockedSync(caller: RefreshCaller): RequestHistoryIndexMeta {
 
 /**
  * Synchronous refresh for routing-time evidence reads (RI-06+). Never waits
- * for a worker rebuild: while one runs (this call may start it), throws
- * `RequestHistoryIndexBusyError`, which health scoring reads as unknown evidence.
+ * on SQLite write locks or worker rebuilds, and bounds synchronous tail reads to
+ * `MAX_ROUTING_SYNC_TAIL_BYTES`; stale/contended paths trigger non-blocking async
+ * catch-up and return existing indexed metadata when readable.
  */
 export function openRequestHistoryIndexSync(): RequestHistoryIndexMeta {
   if (manualRebuild) throw new RequestHistoryIndexBusyError();
+  if (db) {
+    try { db.exec("PRAGMA busy_timeout = 0"); } catch { /* handled below */ }
+  }
   try {
     return refreshLockedSync("routing");
   } catch (error) {
-    if (error instanceof RebuildHandedOff || error instanceof IntegrityHandedOff) throw new RequestHistoryIndexBusyError();
+    if (error instanceof RebuildHandedOff || error instanceof IntegrityHandedOff) {
+      throw new RequestHistoryIndexBusyError();
+    }
+    if (isSqliteBusyError(error)) {
+      scheduleAsyncCatchUp();
+      if (db) {
+        try {
+          const hasMetaTable = db.query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'",
+          ).get() !== null;
+          if (hasMetaTable) return metaFor(db);
+        } catch { /* fall through to busy error */ }
+      }
+      throw new RequestHistoryIndexBusyError("request-history index write lock busy");
+    }
     throw error;
+  } finally {
+    if (db) {
+      try { db.exec(`PRAGMA busy_timeout = ${DEFAULT_SQLITE_BUSY_TIMEOUT_MS}`); } catch { /* closed */ }
+    }
   }
 }
 
@@ -619,6 +701,10 @@ export function openRequestHistoryIndex(): Promise<RequestHistoryIndexMeta> {
 
 export function closeRequestHistoryIndex(): void {
   indexLifetime += 1;
+  if (asyncCatchUpTimer !== null) {
+    clearTimeout(asyncCatchUpTimer);
+    asyncCatchUpTimer = null;
+  }
   stopIntegrityScan();
   corruptHandle = null;
   validatedBuildPath = null;
@@ -628,6 +714,7 @@ export function closeRequestHistoryIndex(): void {
   // The rebuild's own settlement removes its build files once the thread exits.
   if (rebuild) void rebuild.job.dispose();
   if (db) {
+    checkpointHistoryDb(db);
     try { db.close(); } catch { /* ignore */ }
     db = null;
   }

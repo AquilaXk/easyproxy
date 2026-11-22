@@ -94,6 +94,7 @@ import { CatalogGatherBusyError } from "../codex/catalog/provider-fetch";
 import type { CatalogDisposition, ConvergeCodex } from "../codex/convergence-types";
 import { normalizeCatalogDisposition } from "../codex/catalog-refresh-status";
 import { managementBodyTooLargeResponse } from "./management/body";
+import { JsonNestingDepthExceededError } from "../lib/json-depth-guard";
 import { handleSessionRoutes, SESSION_REMEMBER_PATH } from "./management/session-routes";
 import { siblingRefusesManagementRequest } from "./management/sibling-guard";
 import { siblingOfLivePort, siblingSkipMessage } from "../codex/sibling-start";
@@ -420,6 +421,9 @@ export async function handleManagementAPI(
   } catch (error) {
     const tooLarge = managementBodyTooLargeResponse(error, req, config);
     if (tooLarge) return tooLarge;
+    if (error instanceof JsonNestingDepthExceededError) {
+      return jsonResponse({ error: error.message, code: error.code }, 400, req, config);
+    }
     if (error instanceof OAuthMutationBusyError) {
       return new Response(JSON.stringify({ error: { type: "server_error", code: "oauth_mutation_busy", message: error.message } }), {
         status: 503,
