@@ -597,13 +597,14 @@ export function resolveDataPlaneAdmissionSecret(
   if (!apiKeys?.length) return null;
   const now = Date.now();
   for (const k of apiKeys) {
-    if (options.linkIngress && !options.linkIngress.has(k.id)) continue;
+    const keyId = typeof k.id === "string" ? k.id : "";
+    if (options.linkIngress && !options.linkIngress.has(keyId)) continue;
     const mat = getApiKeyMaterial(apiKeys, k);
     if (timingSafeBytesEqual(actualBytes, mat.primary.bytes)) {
-      return { kind: "configured", keyId: k.id, source, contextPrincipalId: mat.primary.principalId };
+      return { kind: "configured", keyId, source, contextPrincipalId: mat.primary.principalId };
     }
     if (mat.pending && mat.pending.expiresAtMs > now && timingSafeBytesEqual(actualBytes, mat.pending.bytes)) {
-      return { kind: "configured", keyId: k.id, source, contextPrincipalId: mat.pending.principalId };
+      return { kind: "configured", keyId, source, contextPrincipalId: mat.pending.principalId };
     }
   }
   return null;
@@ -641,9 +642,10 @@ export function isContextPrincipalCurrent(principal: string | undefined, config:
     return contextPrincipalIdOf(resolveDataPlaneAdmissionSecret(secret, config) ?? undefined) === principal;
   };
   for (const key of config.apiKeys ?? []) {
-    if (matches(key.id, key.key)) return true;
+    const keyId = typeof key.id === "string" ? key.id : "";
+    if (matches(keyId, key.key)) return true;
     const pending = key.pendingRotation;
-    if (pending && Date.parse(pending.expiresAt) > Date.now() && matches(key.id, pending.key)) return true;
+    if (pending && Date.parse(pending.expiresAt) > Date.now() && matches(keyId, pending.key)) return true;
   }
   return false;
 }

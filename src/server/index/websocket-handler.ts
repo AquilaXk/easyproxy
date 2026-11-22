@@ -66,7 +66,7 @@ import {
   type RequestLogContext,
   type RequestLogEntry,
 } from "../request-log";
-import { acquireApiKeyBudgetLease, type ApiKeyBudgetLease } from "../api-key-budget";
+import { acquireApiKeyBudgetLease, hasApiKeyBudgetLimits, type ApiKeyBudgetLease } from "../api-key-budget";
 import { requestBodyFactsHolder, wasRequestBodyRejected } from "../request-body-facts";
 import {
   corsHeaders,
@@ -321,7 +321,7 @@ export function createWebsocketHandler(
         let budgetLease: ApiKeyBudgetLease | undefined;
         if (wsAdmission?.kind === "configured" && config.apiKeys?.length) {
           const entry = config.apiKeys.find(k => k.id === wsAdmission.keyId);
-          if (entry && (entry.rpmLimit !== undefined || entry.maxDailyRequests !== undefined || entry.dailyTokenLimit !== undefined || entry.dailyCostLimitUsd !== undefined)) {
+          if (entry && hasApiKeyBudgetLimits(entry)) {
             const budget = acquireApiKeyBudgetLease(entry);
             if (!budget.allowed) {
               const denyStart = Date.now();

@@ -438,10 +438,11 @@ describe("outbound-secret-guard", () => {
         findings: ["aws_access_key"],
         compressedItems: 0,
         originalChars: `secret=${fakeAwsKey()}`.length,
-        outputChars: `secret=${fakeAwsKey()}`.length,
+        outputChars: 0,
         savedChars: 0,
-        previewText: `secret=${fakeAwsKey()}`,
+        previewText: "",
       });
+      expect(JSON.stringify(blockBody)).not.toContain(fakeAwsKey());
 
       const ansiLines = Array.from({ length: 120 }, (_, i) => `\x1b[31mline-${i} ${"x".repeat(20)}\x1b[0m`).join("\n");
       const compRes = await handleManagementAPI(

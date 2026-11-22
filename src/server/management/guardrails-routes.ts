@@ -103,7 +103,7 @@ async function dryRunGuardrails(ctx: ManagementContext): Promise<Response> {
   const compression = secretGuard.blocked
     ? { compressedItems: 0, savedChars: 0 }
     : compressResponsesToolOutputsInPlace(samplePayload, previewCompression);
-  const previewText = samplePayload.input[0]!.output;
+  const previewText = secretGuard.blocked ? "" : samplePayload.input[0]!.output;
 
   const response = jsonResponse({
     blocked: secretGuard.blocked,
