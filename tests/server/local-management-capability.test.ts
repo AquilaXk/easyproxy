@@ -354,7 +354,7 @@ describe("desktop snapshot proof contract", () => {
   describe("body-bound desktop snapshot contract", () => {
     test("matches the Rust fixed vector", () => {
       expect(digest).toBe("5pREWDDMbj42QHj3DvVNrC54yVF7Vpd8cNj5c-z3rQ4");
-      expect(proof).toBe("yEkTQtyXzQsi_kJGmzmUO1wyJIjc_G4-iiNNoyB4Zcw");
+      expect(proof).toBe("TGxryR7sen6oAHAsP5m56_haCOZYMfwKxanapK32pU4");
       expect(verify(secret, nonce, "POST", path, 4242, 10100, expiry, digest, proof, now)).toBe(true);
     });
 
@@ -404,7 +404,7 @@ describe("desktop snapshot proof contract", () => {
 
     test("preserves read-v1 and separates read grants from snapshot grants", () => {
       const read = createLocalManagementReadCapability(secret, nonce, "GET", "/api/usage?range=7d", 4242, 10100, expiry)!;
-      expect(read).toBe("oGyWOCGZsICYctxQv-mPK0gCiDocvOVHQG5plyjYCUg");
+      expect(read).toBe("tr4ByZogujLEdtka6ydHTetCFpEaCSr_Aod0GjmETmM");
       expect(verify(secret, nonce, "POST", path, 4242, 10100, expiry, digest, read, now)).toBe(false);
       expect(verifyLocalManagementReadCapability(secret, nonce, "GET", "/api/usage?range=7d", 4242, 10100, expiry, proof, now)).toBe(false);
     });

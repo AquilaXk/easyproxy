@@ -1,3 +1,4 @@
+import { getConfigDir } from "../../config/paths";
 import { scanUsageLedgerCooperatively } from "../../usage/ledger-scanner";
 import { currentUsageLogRevision, usageLogIdentityKey, usageLogRevisionKey } from "../../usage/log";
 import { createSourceFacetAccumulator } from "../../usage/source-facets";
@@ -23,7 +24,7 @@ export async function getUsageSourceFacets(filter: UsageSourceFilter, configured
   const captured: UsageSourceFilter = { client: filter.client, device: { ...filter.device } };
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const revision = currentUsageLogRevision();
-  const key = JSON.stringify([captured, ids, timeZone, usageLogIdentityKey(revision), usageLogRevisionKey(revision)]);
+  const key = JSON.stringify([getConfigDir(), captured, ids, timeZone, usageLogIdentityKey(revision), usageLogRevisionKey(revision)]);
   const now = Date.now();
   const cached = facetCache.get(key);
   if (cached && cached.expiresAt > now) {

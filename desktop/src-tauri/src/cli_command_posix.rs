@@ -676,12 +676,31 @@ mod tests {
     use crate::process_spawn::with_spawn;
     use record::tests::{bundle, Temp};
     #[cfg(target_os = "macos")]
-    fn stable_bundle_fixture() -> Temp {
-        // Stable bundles cannot live under the OS temp directory. Keep the fixture
-        // in this checkout, with the production raw/canonical checks still enabled.
-        let base = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
+    struct StableTemp(PathBuf, Option<PathBuf>);
+    #[cfg(target_os = "macos")]
+    impl Drop for StableTemp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+            if let Some(parent) = &self.1 {
+                let _ = fs::remove_dir(parent);
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    fn stable_bundle_fixture() -> StableTemp {
+        // Stable bundles cannot live under the OS temp directory or /Volumes mounts.
+        // Prefer checkout `.tmp`, falling back to `~/Library/Caches` when checked out on /Volumes.
+        let manifest_base = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
             .unwrap()
             .join(".tmp");
+        let (base, parent_to_prune) = if is_temporary_bundle_path(&manifest_base, &std::env::temp_dir()) {
+            let cache_base = fs::canonicalize(std::env::var_os("HOME").expect("HOME required"))
+                .unwrap()
+                .join("Library/Caches/epx-stable-bundle-test");
+            (cache_base.clone(), Some(cache_base))
+        } else {
+            (manifest_base, None)
+        };
         assert!(
             !is_temporary_bundle_path(&base, &std::env::temp_dir())
                 && !has_app_translocation_marker(&base),
@@ -691,7 +710,7 @@ mod tests {
         record::check(&base, true).unwrap();
         let root = base.join(format!("epx-stable-bundle-{}", uuid::Uuid::new_v4()));
         record::private_dir(&root).unwrap();
-        Temp(root)
+        StableTemp(root, parent_to_prune)
     }
     #[cfg(target_os = "macos")]
     fn rc_acl(path: &Path, add: bool) {

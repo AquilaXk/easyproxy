@@ -106,7 +106,7 @@ async function runComboLadder(
   const ladder = new AbortController();
   registerTurn(ladder, options.turnAdmissionLease);
   try {
-    return await executeComboResponses(req, rawBody, comboId, config, logCtx, options, requestDispatchers);
+    return await executeComboResponses(req, rawBody, comboId, config, logCtx, options, { ...requestDispatchers, usesAttachedParsedBody: true });
   } finally {
     if (options.turnAdmissionLease && "bindAbortController" in options.turnAdmissionLease) unregisterTurn(ladder);
   }

@@ -27,9 +27,9 @@ const local = { attestationSecret: secret, pid, port };
 const config = { port, defaultProvider: "openai", providers: {} } as EpxConfig;
 const state: ManagementAuthState = { available: true, token: "switch-test-admin", source: "environment", sessions: new Map(), pairingGrants: new Map() };
 const vectors = [
-  [LOCAL_ACCOUNT_SWITCH_PATHS[0], '{"accountId":"acct-1"}', "TAvg-9rOZVklyLUY6FQ1afEc-hJ80OLD8qSKdKSrjh4", "oaJMrRckk98viNXA3nUO6y7nHDkehgcPIGjbEhgDX4M"],
-  [LOCAL_ACCOUNT_SWITCH_PATHS[1], '{"provider":"anthropic","accountId":"acct-1"}', "AkfVPiY6XR2cClHqqApykOKZcdiTqwpkeVuBQDg3u5A", "5_u4nzIUGl32US-V7eftK1r4iV90gS4WSdtEgimYtFQ"],
-  [LOCAL_ACCOUNT_SWITCH_PATHS[2], '{"name":"xai","id":"key-1"}', "TwpvGp8TFleVkY5xRWSl_UMujQUbQMsk-P2oFvMvjjg", "kdKDBHHEYD9E56oKxS2NHSU5DIuhdLEHv5XLDh9KM9Q"],
+  [LOCAL_ACCOUNT_SWITCH_PATHS[0], '{"accountId":"acct-1"}', "TAvg-9rOZVklyLUY6FQ1afEc-hJ80OLD8qSKdKSrjh4", "lPZf41shiKTYO3_aZbV0x9gfwl71E-6RRouubEFVbxc"],
+  [LOCAL_ACCOUNT_SWITCH_PATHS[1], '{"provider":"anthropic","accountId":"acct-1"}', "AkfVPiY6XR2cClHqqApykOKZcdiTqwpkeVuBQDg3u5A", "z8X7kw274ssK4Jr0ICZnOnVnidnh9YDxvqXglb5YIP8"],
+  [LOCAL_ACCOUNT_SWITCH_PATHS[2], '{"name":"xai","id":"key-1"}', "TwpvGp8TFleVkY5xRWSl_UMujQUbQMsk-P2oFvMvjjg", "kYgzYIQn1B0uhgWZa8yUS9_wEBdWeZHd1NhZaT-CSAc"],
 ] as const;
 
 function signed(path: string, body: string, options: { sent?: string; expiry?: number; requestNonce?: string } = {}): Request {

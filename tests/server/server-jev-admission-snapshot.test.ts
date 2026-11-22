@@ -73,7 +73,7 @@ test("admission helper metadata reads are represented in the snapshot", async ()
     ["src/adapters/openai-responses/passthrough.ts", "provider", provider, "requiresPlaintextReasoningReplay"],
     ["src/server/effort-policy.ts", "provider", provider, "supportedLadderFor"],
     ["src/vision/plan.ts", "provider", provider, "requiresVisionPreprocessing"],
-    ["src/codex/catalog/metadata.ts", "config", gateConfig, "nativeContextLimits"],
+    ["src/codex/catalog/native-capability-metadata.ts", "config", gateConfig, "nativeContextLimits"],
     ["src/combos/request-capability.ts", "config", gateConfig],
   ] as const;
   for (const [path, receiver, metadata, helper] of sources) {

@@ -550,6 +550,7 @@ describe("link management routes", () => {
     } finally {
       release();
       spy.mockRestore();
+      resetUsageAggregateCacheForTests();
       if (previousHome === undefined) delete process.env.EASYPROXY_HOME;
       else process.env.EASYPROXY_HOME = previousHome;
     }

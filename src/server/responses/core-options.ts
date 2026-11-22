@@ -398,4 +398,6 @@ export interface PassthroughAdmissionState {
 export interface ResponsesDispatchers {
   handleResponses(req: Request, config: EpxConfig, logCtx: RequestLogContext, options?: HandleResponsesOptions): Promise<Response>;
   handleComboResponses(req: Request, body: unknown, comboId: string, config: EpxConfig, logCtx: RequestLogContext, options: HandleResponsesOptions & { translatorBudget: TranslatorBudget }): Promise<Response>;
+  /** Set on the real pipeline dispatcher whose ingress reads via takeParsedRequestBody (#8600). */
+  usesAttachedParsedBody?: boolean;
 }

@@ -562,7 +562,7 @@ mod tests {
             1_700_000_010_000,
         )
         .expect("a signable grant");
-        assert_eq!(capability, "oGyWOCGZsICYctxQv-mPK0gCiDocvOVHQG5plyjYCUg");
+        assert_eq!(capability, "tr4ByZogujLEdtka6ydHTetCFpEaCSr_Aod0GjmETmM");
         assert_eq!(
             capability_mac(
                 &recorded_runtime(),
@@ -571,7 +571,7 @@ mod tests {
                 1_700_000_010_000,
             )
             .as_deref(),
-            Some("_a3HS292KKaMcXsDx0owmWr3zRFTYjH6vhUdpunRW28")
+            Some("vkdOnEhklNCh-68hKA0FUV01cASZNyu8m7SiU_BNujA")
         );
     }
 
@@ -596,7 +596,7 @@ mod tests {
                 digest,
             )
             .as_deref(),
-            Some("yEkTQtyXzQsi_kJGmzmUO1wyJIjc_G4-iiNNoyB4Zcw")
+            Some("TGxryR7sen6oAHAsP5m56_haCOZYMfwKxanapK32pU4")
         );
         assert!(CapabilityHeaders::mint_snapshot(&recorded_runtime(), &[0; 1025]).is_none());
         let request = headers
@@ -626,19 +626,19 @@ mod tests {
                 AccountSwitchKind::Codex,
                 r#"{"accountId":"acct-1"}"#,
                 "TAvg-9rOZVklyLUY6FQ1afEc-hJ80OLD8qSKdKSrjh4",
-                "oaJMrRckk98viNXA3nUO6y7nHDkehgcPIGjbEhgDX4M",
+                "lPZf41shiKTYO3_aZbV0x9gfwl71E-6RRouubEFVbxc",
             ),
             (
                 AccountSwitchKind::OAuth,
                 r#"{"provider":"anthropic","accountId":"acct-1"}"#,
                 "AkfVPiY6XR2cClHqqApykOKZcdiTqwpkeVuBQDg3u5A",
-                "5_u4nzIUGl32US-V7eftK1r4iV90gS4WSdtEgimYtFQ",
+                "z8X7kw274ssK4Jr0ICZnOnVnidnh9YDxvqXglb5YIP8",
             ),
             (
                 AccountSwitchKind::ApiKey,
                 r#"{"name":"xai","id":"key-1"}"#,
                 "TwpvGp8TFleVkY5xRWSl_UMujQUbQMsk-P2oFvMvjjg",
-                "kdKDBHHEYD9E56oKxS2NHSU5DIuhdLEHv5XLDh9KM9Q",
+                "kYgzYIQn1B0uhgWZa8yUS9_wEBdWeZHd1NhZaT-CSAc",
             ),
         ];
         for (kind, body, digest, mac) in vectors {

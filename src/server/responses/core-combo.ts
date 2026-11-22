@@ -1357,6 +1357,7 @@ export async function executeComboResponses(
     const childRequest = new Request(req.url, {
       method: req.method,
       headers: childHeaders,
+      ...(requestDispatchers.usesAttachedParsedBody ? {} : { body: JSON.stringify(childBody) }),
     });
     attachParsedRequestBody(childRequest, childBody);
     linkRequestSessionLane(req, childRequest);
