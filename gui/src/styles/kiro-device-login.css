@@ -1,8 +1,8 @@
 /* Imported by its component, so it sits in the `legacy` cascade layer itself:
    unlayered CSS would outrank design/bridge.css and every Tailwind utility. */
 @layer legacy {
-.kiro-device-dialog { max-width: var(--prose-measure); width: 100%; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); padding: var(--space-6); }
-.kiro-device-dialog::backdrop { background: var(--glass-rail); }
+.kiro-device-dialog { margin: auto; max-width: var(--prose-measure); width: 100%; border: 1px solid var(--epx-line-strong, var(--border)); border-radius: var(--radius-lg); background: var(--epx-raised, var(--surface)); color: var(--text); box-shadow: var(--epx-shadow-lg, var(--shadow)); padding: var(--space-6); }
+.kiro-device-dialog::backdrop { background: light-dark(rgb(15 23 42 / 0.34), rgb(4 7 13 / 0.64)); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
 .kiro-login-choices { display: grid; gap: var(--space-2); margin-block: var(--space-4); }
 .kiro-login-choices .btn { justify-content: flex-start; min-height: var(--control-touch); }
 .kiro-device-code { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-block: var(--space-4); }

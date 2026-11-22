@@ -116,8 +116,7 @@
 .pws-filter-head {
   margin-top: 8px;
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   color: var(--muted);
 }
 
@@ -900,10 +899,9 @@
 }
 
 .pws-section-title {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   color: var(--muted);
   margin: 0 0 8px 0;
 }

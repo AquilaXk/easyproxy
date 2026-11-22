@@ -53,7 +53,7 @@ function deriveCodexRuntimeNotice(
   const newer = Boolean(runtime.newerAvailable);
   const version = (clampActive
     ? runtime.catalogClamp?.runtimeVersion
-    : runtime.version) ?? runtime.version ?? "unknown";
+    : runtime.version) ?? runtime.version ?? t("codexCliUpdate.unknown");
   const efforts = (runtime.catalogClamp?.removedEfforts ?? []).join(", ");
   const doctorSync = shellChain(["epx doctor --fix-codex-runtime", "epx sync"], platform);
   if (clampActive) {

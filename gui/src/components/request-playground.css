@@ -1,11 +1,14 @@
-/* Scoped to @layer legacy so v2 utilities win over modal customizations. */
-@layer legacy {
+/* Scoped to @layer bridge so it outranks @layer legacy (.modal-card max-width: 520px) while letting @layer utilities override. */
+@layer bridge {
   dialog.playground-native-dialog {
+    position: fixed;
+    inset: 0;
+    margin: auto;
     padding: 0;
     border: 0;
-    margin: auto;
     width: min(920px, 94vw);
     max-width: min(920px, 94vw);
+    height: fit-content;
     max-height: 92dvh;
     background: transparent;
     color: inherit;
@@ -13,13 +16,14 @@
   }
 
   dialog.playground-native-dialog::backdrop {
-    background: rgb(9 12 18 / 0.65);
+    background: light-dark(rgb(15 23 42 / 0.34), rgb(4 7 13 / 0.64));
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
   }
 
-  .playground-modal-card {
+  dialog.playground-native-dialog .playground-modal-card {
     width: 100%;
+    max-width: none;
     max-height: 90dvh;
     overflow: auto;
     display: flex;
@@ -69,6 +73,36 @@
     color: var(--muted);
   }
 
+  .playground-field-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .playground-turns {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .playground-turn-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--epx-line, var(--border));
+    background: var(--epx-inset, var(--bg));
+  }
+
+  .playground-turn-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
   .playground-textarea {
     min-height: 84px;
     resize: vertical;
@@ -85,18 +119,27 @@
     align-items: center;
     gap: 10px;
     padding-top: 8px;
-    background: var(--epx-surface, var(--surface));
+    background: var(--epx-raised, var(--surface));
     border-top: 1px solid var(--epx-line, var(--border));
   }
 
   .playground-stream-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     font-size: var(--text-caption);
     color: var(--text);
     cursor: pointer;
     margin-right: auto;
+    user-select: none;
+  }
+
+  .playground-stream-toggle input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--epx-accent);
+    cursor: pointer;
   }
 
   .playground-compare-grid {

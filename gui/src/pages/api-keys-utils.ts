@@ -13,6 +13,7 @@ export interface ApiKeyBudgetUsage {
   rpmCurrent: number;
   dailyRequestsUsed: number;
   dailyTokensUsed: number;
+  dailyCostUsdUsed?: number;
 }
 
 export interface ApiKeyEntry {
@@ -23,6 +24,9 @@ export interface ApiKeyEntry {
   rpmLimit?: number;
   maxDailyRequests?: number;
   dailyTokenLimit?: number;
+  dailyCostLimitUsd?: number;
+  allowedProviders?: string[];
+  allowedModels?: string[];
   budgetUsage?: ApiKeyBudgetUsage;
   pendingRotation?: { id: string; createdAt: string; expiresAt: string };
   /** Always present from the server; zeroes are a real answer. Whether anything
@@ -34,16 +38,34 @@ function validOptionalLimit(v: unknown): boolean {
   return v === undefined || (typeof v === "number" && Number.isSafeInteger(v) && v >= 1);
 }
 
+function validOptionalCostLimit(v: unknown): boolean {
+  return v === undefined || (typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1_000_000);
+}
+
+function validOptionalStringArray(v: unknown): boolean {
+  return v === undefined || (Array.isArray(v) && v.every(item => typeof item === "string"));
+}
+
 export function isApiKeyBudgetFields(entry: Record<string, unknown>): boolean {
-  if (!validOptionalLimit(entry.rpmLimit) || !validOptionalLimit(entry.maxDailyRequests) || !validOptionalLimit(entry.dailyTokenLimit)) {
+  if (
+    !validOptionalLimit(entry.rpmLimit)
+    || !validOptionalLimit(entry.maxDailyRequests)
+    || !validOptionalLimit(entry.dailyTokenLimit)
+    || !validOptionalCostLimit(entry.dailyCostLimitUsd)
+    || !validOptionalStringArray(entry.allowedProviders)
+    || !validOptionalStringArray(entry.allowedModels)
+  ) {
     return false;
   }
   if (entry.budgetUsage === undefined) return true;
   if (!entry.budgetUsage || typeof entry.budgetUsage !== "object" || Array.isArray(entry.budgetUsage)) return false;
   const u = entry.budgetUsage as Record<string, unknown>;
+  const validCostUsed = u.dailyCostUsdUsed === undefined
+    || (typeof u.dailyCostUsdUsed === "number" && Number.isFinite(u.dailyCostUsdUsed));
   return typeof u.rpmCurrent === "number" && Number.isFinite(u.rpmCurrent)
     && typeof u.dailyRequestsUsed === "number" && Number.isFinite(u.dailyRequestsUsed)
-    && typeof u.dailyTokensUsed === "number" && Number.isFinite(u.dailyTokensUsed);
+    && typeof u.dailyTokensUsed === "number" && Number.isFinite(u.dailyTokensUsed)
+    && validCostUsed;
 }
 
 /**

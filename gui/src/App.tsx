@@ -789,14 +789,14 @@ export default function App() {
                 <Suspense fallback={<DataSurfaceSkeleton label={t("common.loading")} rows={4} />}>
                 {page === "home" && <Home apiBase={sharedBase} endpointUrl={endpointUrl} navigate={navigateToPage}
                   onReloadCodex={() => { void handleCodexRestart(); }} reloadingCodex={codexRestarting}
-                  onOpenPlayground={() => setPlaygroundOpen(true)} />}
+                  onOpenPlayground={() => { setPlaygroundSeed(null); setPlaygroundOpen(true); }} />}
                 {page === "setup" && <SetupHub apiBase={sharedBase} navigate={navigateToPage} />}
                 {page === "advanced" && <AdvancedHub navigate={navigateToPage} onSwitchClassic={() => switchDashboardEdition("classic")} />}
                 {page === "dashboard" && <Dashboard apiBase={sharedBase} targetKey={sharedTarget.key} readOnly={targets.link !== undefined} connected={targets.connected}
                   authenticationPending={targets.connected && !sharedSessionReady} refreshEpoch={sharedSessionEpoch} />}
                 {page === "startup" && <Startup apiBase={sharedBase} machineApiBase={machineBase} connected={targets.connected} />}
                 {page === "providers" && <Providers apiBase={sharedBase} targetKey={sharedTarget.key} targetLabel={sharedTarget.label} />}
-                {page === "models" && <Models key={sharedBase} apiBase={sharedBase} restartEpoch={codexRestartEpoch} connected={targets.connected} catalogSyncedAt={targets.catalogSyncedAt} reportRestart={report} onOpenPlayground={() => setPlaygroundOpen(true)} />}
+                {page === "models" && <Models key={sharedBase} apiBase={sharedBase} restartEpoch={codexRestartEpoch} connected={targets.connected} catalogSyncedAt={targets.catalogSyncedAt} reportRestart={report} onOpenPlayground={(seed) => { setPlaygroundSeed(seed ?? null); setPlaygroundOpen(true); }} />}
                 {page === "subagents" && <Subagents key={sharedBase} apiBase={sharedBase} />}
                 {page === "advisor" && <Advisor key={sharedBase} apiBase={sharedBase} />}
                 {page === "logs" && (

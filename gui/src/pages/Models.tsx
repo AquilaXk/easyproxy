@@ -14,6 +14,7 @@ import { IconChevron, IconBoxes, IconInfo, IconCheck, IconAlert, IconRefresh, Ic
 import { ModalDialog } from "../components/ui-v2/modal-dialog";
 import { useT } from "../i18n/shared";
 import type { TFn, TKey } from "../i18n/shared";
+import type { PlaygroundSeed } from "../lib/playground-client";
 import { ModelsCatalogRow } from "./models-catalog-row";
 import { formatProviderDisplayName, providerDisplaySlug } from "../provider-icons";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
@@ -139,7 +140,7 @@ interface AliasView {
   defaults: { global: boolean; providers: Record<string, boolean> };
 }
 
-export default function Models({ apiBase, restartEpoch = 0, connected = false, catalogSyncedAt, reportRestart, onOpenPlayground }: { apiBase: string; restartEpoch?: number; connected?: boolean; catalogSyncedAt?: string; reportRestart: (message: string, tone: NoticeTone) => void; onOpenPlayground?: () => void }) {
+export default function Models({ apiBase, restartEpoch = 0, connected = false, catalogSyncedAt, reportRestart, onOpenPlayground }: { apiBase: string; restartEpoch?: number; connected?: boolean; catalogSyncedAt?: string; reportRestart: (message: string, tone: NoticeTone) => void; onOpenPlayground?: (seed?: PlaygroundSeed) => void }) {
   // Codex app-server staleness (devlog/_fin/260815_gui_codex_restart). Named
   // appServerState, not catalogState: this file already binds that name to the
   // model-catalog resource state, which is an unrelated concept. (Spelling the
@@ -1701,6 +1702,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                      setCustomModalOpen(true);
                    }}
                    onDeleteCustom={() => deleteCustomModel(m.customId!, m.displayName ?? m.id)}
+                   onLaunchPlayground={onOpenPlayground ? () => onOpenPlayground({ model: m.native ? m.id : m.namespaced }) : undefined}
                    t={t}
                  />
                );
@@ -2407,7 +2409,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
             {SUBTITLE_TKEY[tab][1] && <ModelsAbout key={tab} text={t(SUBTITLE_TKEY[tab][1])}>
               {tab === "catalog" && <ModelCatalogDelivery connected={connected} catalogSyncedAt={catalogSyncedAt} />}
             </ModelsAbout>}
-            {onOpenPlayground && <Button variant="outline" size="sm" onClick={onOpenPlayground}>{t("ux.playground.open")}</Button>}
+            {onOpenPlayground && <Button variant="outline" onClick={() => onOpenPlayground()}>{t("ux.playground.open")}</Button>}
             {appServerState !== "stale" && <Button data-models-reload-action ref={reloadHeadRef} variant="outline" size="sm" onClick={() => { void handleCodexRestart(); }} disabled={codexRestarting}>
               <span className={codexRestarting ? "inline-flex animate-spin" : "inline-flex"}><IconRefresh aria-hidden="true" /></span>
               {codexRestarting ? t("dash.codexRestarting") : t("dash.codexRestart")}

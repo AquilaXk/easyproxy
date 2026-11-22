@@ -49,7 +49,9 @@ afterEach(async () => {
 });
 function serve(apps: unknown, include = true) {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input); calls.push(url);
+    const url = String(input);
+    if (url.includes("/api/routing-analytics")) return new Response(null, { status: 404 });
+    calls.push(url);
     if (url.includes("source-facets")) return new Response(null, { status: 503 });
     return Response.json({ ...report(url), ...(include ? { apps } : {}) });
   }) as typeof fetch;

@@ -14,7 +14,7 @@ const VARIANTS = {
     "bg-raised text-fg ring-1 ring-inset ring-line-strong hover:bg-surface",
   ghost: "bg-transparent text-fg-muted hover:bg-surface hover:text-fg",
   danger:
-    "bg-danger-soft text-danger ring-1 ring-inset ring-danger/20 hover:bg-danger hover:text-on-accent",
+    "bg-danger-soft text-danger ring-1 ring-inset ring-danger/20 hover:bg-[#dc2626] hover:text-on-accent",
 } as const;
 
 const SIZES = {

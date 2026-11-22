@@ -1405,7 +1405,7 @@ dialog.modal-overlay::backdrop {
 }
 .btn-icon-danger.card-right:hover { background: var(--red-soft); border-color: var(--red-soft); color: var(--red); }
 .card-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; }
-.badge-primary { background: var(--accent-soft); color: var(--accent-hover); }
+.badge-primary { background: var(--accent-soft); color: var(--epx-highlight); }
 .dot-blue { background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .dot-muted { background: var(--muted); }
 .dot-amber { background: var(--amber); box-shadow: 0 0 0 2px var(--amber-soft); }
@@ -1963,7 +1963,7 @@ table.logs-table {
 .log-status-cell { display: inline-flex; flex-direction: column; align-items: flex-start; gap: var(--space-0-5); min-width: 7ch; line-height: var(--leading-tight); }
 .log-detail-btn {
   background: none; border: none; padding: 0; cursor: pointer;
-  color: var(--accent-hover); font: inherit; font-size: var(--text-caption); text-decoration: underline;
+  color: var(--epx-highlight); font: inherit; font-size: var(--text-caption); text-decoration: underline;
   /* Wraps rather than clips: with the cell now clipping overflow, a nowrap label such as
      zh-TW's 檢視詳細資料 would lose its tail in the 8% status column. */
   white-space: normal;
@@ -2087,7 +2087,7 @@ table.logs-table {
 .log-detail-notes { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: var(--text-label); }
 .log-detail-notes-line { margin: 8px 0 0; font-size: var(--text-label); }
 .log-detail-attempts-wrap { overflow-x: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
-.log-detail-attempts { min-width: 680px; }
+.log-detail-attempts { min-width: 0; width: 100%; }
 .log-detail-attempts th, .log-detail-attempts td { vertical-align: top; }
 .log-detail-raw { margin-top: 14px; }
 .log-detail-raw > summary { cursor: pointer; color: var(--muted); font-size: var(--text-label); }

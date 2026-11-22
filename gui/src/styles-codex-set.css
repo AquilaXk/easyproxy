@@ -63,8 +63,7 @@
 /* C3: Transition-notices section heading reads as a distinct section label. */
 .codex-set-prompt__group strong {
   font-size: var(--text-caption);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
   color: var(--faint);
 }
 

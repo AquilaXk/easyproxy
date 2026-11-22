@@ -145,7 +145,7 @@ export default function AddProviderModal({
     }
     return () => {
       aliveRef.current = false;
-      previousFocusRef.current?.focus();
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
     };
     // oxlint-disable-next-line react/react-compiler -- existing exhaustive-deps exception is intentional
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only open hook

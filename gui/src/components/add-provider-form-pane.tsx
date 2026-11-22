@@ -1,5 +1,6 @@
 import { IconExternal, IconKey } from "../icons";
-import { useT } from "../i18n/shared";
+import { useI18n } from "../i18n/shared";
+import { uxT } from "../i18n/ux-overhaul-copy";
 import { Trans } from "../i18n/provider";
 import { Select } from "../ui";
 import type { CatalogPreset } from "./provider-catalog/provider-presets";
@@ -50,7 +51,7 @@ export function AddProviderFormPane({
   onUseOauthLogin: () => void;
   onBack: () => void;
 }) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const subscriptionCli = subscriptionCliWarning(form);
 
   return (
@@ -190,7 +191,7 @@ export function AddProviderFormPane({
           <input className="input" value={form.project ?? ""} onChange={e => onFormChange({ ...form, project: e.target.value })} />
         </AddProviderField>
         <AddProviderField label={t("modal.vertexLocation")}>
-          <input className="input" aria-label={t("modal.vertexLocation")} value={form.location ?? ""} onChange={e => onFormChange({ ...form, location: e.target.value })} placeholder="us-central1" />
+          <input className="input" aria-label={t("modal.vertexLocation")} value={form.location ?? ""} onChange={e => onFormChange({ ...form, location: e.target.value })} placeholder={uxT(locale, "placeholder.vertexRegion")} />
         </AddProviderField>
       </>}
       {!isReservedForward && <AddProviderField label={t("modal.defaultModel")}>

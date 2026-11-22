@@ -40,6 +40,7 @@ beforeEach(() => {
     const url = String(input);
     if (url.includes("/api/usage/source-facets")) return Promise.resolve(new Response(null, { status: 503 }));
     if (url.includes("/api/usage/devices")) return Promise.resolve(Response.json({ devices: [] }));
+    if (url.includes("/api/routing-analytics")) return Promise.resolve(new Response(null, { status: 404 }));
     return new Promise<Response>(resolve => { requests.push({ url, resolve }); });
   }) as typeof fetch;
 });

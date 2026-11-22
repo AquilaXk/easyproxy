@@ -1,12 +1,13 @@
 import { useId, useState } from "react";
-import { useT } from "../i18n/shared";
+import { useI18n } from "../i18n/shared";
+import { uxT } from "../i18n/ux-overhaul-copy";
 import { Select } from "../ui";
 import { KIRO_IAM_REGIONS, validKiroIamOptions, type KiroIamOptions, type KiroIamProfile } from "../kiro-device-login-helpers";
 
 export function KiroIamLoginForm({ disabled, onStart, onBack }: {
   disabled: boolean; onStart: (options: KiroIamOptions) => void; onBack: () => void;
 }) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const id = useId();
   const regionListId = id + "regions";
   const [startUrl, setStartUrl] = useState("");
@@ -21,11 +22,11 @@ export function KiroIamLoginForm({ disabled, onStart, onBack }: {
     <p className="muted">{t("kiroLogin.iamDescription")}</p>
     <label className="field-label" htmlFor={`${id}-portal`}>{t("kiroLogin.startUrl")}</label>
     <input className="input" id={`${id}-portal`} type="url" required maxLength={2048} value={startUrl} disabled={disabled}
-      placeholder="https://example.awsapps.com/start" autoComplete="url" aria-describedby={invalid ? `${id}-error` : undefined}
+      placeholder={uxT(locale, "placeholder.iamUrl")} autoComplete="url" aria-describedby={invalid ? `${id}-error` : undefined}
       aria-invalid={invalid || undefined} onChange={event => { setStartUrl(event.target.value); setInvalid(false); }} />
     <label className="field-label" htmlFor={`${id}-region`}>{t("kiroLogin.region")}</label>
     <input className="input" id={`${id}-region`} list={regionListId} required maxLength={32} value={region} disabled={disabled}
-      placeholder="us-east-1" autoComplete="off" aria-invalid={invalid || undefined}
+      placeholder={uxT(locale, "placeholder.iamRegion")} autoComplete="off" aria-invalid={invalid || undefined}
       aria-describedby={invalid ? `${id}-error` : undefined}
       onChange={event => { setRegion(event.target.value); setInvalid(false); }} />
     <datalist id={regionListId}>
@@ -42,7 +43,7 @@ export function KiroIamLoginForm({ disabled, onStart, onBack }: {
 export function KiroIamProfilePicker({ profiles, disabled, onSelect }: {
   profiles: KiroIamProfile[]; disabled: boolean; onSelect: (arn: string) => void;
 }) {
-  const t = useT();
+  const { t } = useI18n();
   const id = useId();
   const [arn, setArn] = useState("");
   return <form className="kiro-iam-form" onSubmit={event => {

@@ -196,8 +196,9 @@ dialog.log-detail-drawer > .log-detail-card {
   box-shadow: inset 0 0 0 1px var(--epx-line);
   background: var(--epx-inset);
 }
+.log-detail-card .log-detail-attempts { min-width: 0; width: 100%; }
 .log-detail-card .log-detail-attempts thead th { color: var(--epx-fg-subtle); font-size: 12px; border-bottom-color: var(--epx-line); }
-.log-detail-card .log-detail-attempts tbody td { border-bottom-color: var(--epx-line); font-size: 13px; }
+.log-detail-card .log-detail-attempts tbody td { border-bottom-color: var(--epx-line); font-size: 13px; overflow-wrap: anywhere; }
 .log-detail-card .log-detail-raw > summary { color: var(--epx-fg-muted); font-size: 13px; }
 .log-detail-card .log-detail-json {
   border: 0;

@@ -8,8 +8,14 @@ import { hashLogConversationQuery } from "../log-conversation-id";
 import { statusCodeInfo } from "../status-codes";
 import { IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconCopy, IconX } from "../icons";
 import { useCopyFeedback } from "../components/use-copy-feedback";
-import { parseProtocolTraceV1 } from "../../../src/protocols/dto";
-import type { PlaygroundEndpoint, PlaygroundSeed } from "../lib/playground-client";
+import {
+  buildLogReplayCurl,
+  playgroundSeedFromLog,
+  serializeLogsCsv,
+  serializeLogsJsonl,
+  triggerTextDownload,
+} from "../lib/log-export";
+import type { PlaygroundSeed } from "../lib/playground-client";
 import { modelLabel } from "../model-display";
 import { cn } from "@/lib/utils";
 import { panel, panelBody } from "../components/v2-logs/classes";
@@ -815,13 +821,39 @@ export default function Logs({
             onFilterChange={setFilters}
             onResetFilters={() => setFilters(DEFAULT_LOG_FILTER_STATE)}
             trailing={(
-              <ColumnsMenu
-                options={LOGS_OPTIONAL_COLUMNS.map(column => ({ key: column.key, label: t(column.label) }))}
-                visible={columns}
-                onToggle={toggleColumn}
-                label={t("logsV2.columns")}
-                menuLabel={t("logsV2.columnsMenu")}
-              />
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={filteredLogs.length === 0}
+                  onClick={() => triggerTextDownload(
+                    "easyproxy-logs.jsonl",
+                    "application/x-ndjson;charset=utf-8",
+                    serializeLogsJsonl(filteredLogs),
+                  )}
+                >
+                  {uxT(locale, "logs.exportJsonl")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={filteredLogs.length === 0}
+                  onClick={() => triggerTextDownload(
+                    "easyproxy-logs.csv",
+                    "text/csv;charset=utf-8",
+                    serializeLogsCsv(filteredLogs),
+                  )}
+                >
+                  {uxT(locale, "logs.exportCsv")}
+                </button>
+                <ColumnsMenu
+                  options={LOGS_OPTIONAL_COLUMNS.map(column => ({ key: column.key, label: t(column.label) }))}
+                  visible={columns}
+                  onToggle={toggleColumn}
+                  label={t("logsV2.columns")}
+                  menuLabel={t("logsV2.columnsMenu")}
+                />
+              </div>
             )}
           />
 
@@ -1093,6 +1125,7 @@ export default function Logs({
         };
         return (
           <LogDetailDialog
+            apiBase={apiBase}
             detail={detail}
             detailInfo={detailInfo}
             localeCode={locale}
@@ -1107,6 +1140,10 @@ export default function Logs({
               setFilters(prev => ({ ...prev, conversationId: id }));
               setDetail(null);
             }}
+            onFilterModel={model => {
+              setFilters(prev => ({ ...prev, model }));
+              setDetail(null);
+            }}
             onReplayInPlayground={onReplayInPlayground}
           />
         );
@@ -1116,11 +1153,21 @@ export default function Logs({
   );
 }
 
-function playgroundEndpointForLog(detail: LogEntry): PlaygroundEndpoint {
-  const inbound = parseProtocolTraceV1(detail.protocolTrace)?.inbound;
-  if (inbound === "messages" || detail.inboundProtocol === "anthropic-messages") return "/v1/messages";
-  if (inbound === "responses" || detail.inboundProtocol === "openai-responses") return "/v1/responses";
-  return "/v1/chat/completions";
+function routeKindLabel(kind: string | undefined, localeCode: Locale): string {
+  switch (kind) {
+    case "explicit-provider": return uxT(localeCode, "logs.routeKind.explicitProvider");
+    case "policy": return uxT(localeCode, "logs.routeKind.policy");
+    case "combo": return uxT(localeCode, "logs.routeKind.combo");
+    case "alias": return uxT(localeCode, "logs.routeKind.alias");
+    case "default": return uxT(localeCode, "logs.routeKind.default");
+    default: return kind ?? "–";
+  }
+}
+
+function routeReasonLabel(reason: string | undefined, localeCode: Locale): string {
+  if (!reason) return "";
+  if (reason === "explicit-provider") return uxT(localeCode, "logs.routeReason.explicitProvider");
+  return reason;
 }
 
 function useDesktopAuxPane(): boolean {
@@ -1174,8 +1221,9 @@ function useModalDialog(open: boolean, modal: boolean, switchingRef: { current: 
 }
 
 function LogDetailDialog({
-  detail, detailInfo, localeCode, localeTag, serverTimeZone, t, hasPrev, hasNext, onStep, onClose, onFilterConversation, onReplayInPlayground,
+  apiBase, detail, detailInfo, localeCode, localeTag, serverTimeZone, t, hasPrev, hasNext, onStep, onClose, onFilterConversation, onFilterModel, onReplayInPlayground,
 }: {
+  apiBase: string;
   detail: LogEntry;
   detailInfo: ReturnType<typeof statusCodeInfo> | null;
   localeCode: Locale;
@@ -1187,6 +1235,7 @@ function LogDetailDialog({
   onStep?: (delta: -1 | 1) => void;
   onClose: () => void;
   onFilterConversation?: (conversationId: string) => void;
+  onFilterModel?: (model: string) => void;
   onReplayInPlayground?: (seed: PlaygroundSeed) => void;
 }) {
   const desktopAuxPane = useDesktopAuxPane();
@@ -1196,10 +1245,14 @@ function LogDetailDialog({
   const [copied, setCopied] = useState(false);
   const jsonCopy = useCopyFeedback<"json">();
   const jsonCopyOutcome = jsonCopy.outcomeFor("json");
+  const curlCopy = useCopyFeedback<"curl">();
+  const curlCopyOutcome = curlCopy.outcomeFor("curl");
+  const filterModelTarget = detail.model || detail.resolvedModel || detail.servedModel || "";
 
   useEffect(() => {
     const onWindowKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (typeof document !== "undefined" && document.querySelectorAll("dialog[open]").length > 1) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.key === "Escape") { e.preventDefault(); onClose(); }
@@ -1252,17 +1305,38 @@ function LogDetailDialog({
             <StatusPill status={detail.status} outcome={classifyRequestOutcome(detail)} label={t(outcomeKey(detail))} announce={false} className="h-6 text-[13px]" />
             {summary.label && <span className="logs-detail-info m-0">{summary.label}</span>}
           </h3>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 flex-wrap items-center gap-1">
             {onReplayInPlayground && (
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
-                onClick={() => onReplayInPlayground({
-                  endpoint: playgroundEndpointForLog(detail),
-                  model: detail.model || detail.resolvedModel || detail.servedModel || "",
-                })}
+                onClick={() => {
+                  const seed = playgroundSeedFromLog(detail);
+                  onClose();
+                  onReplayInPlayground(seed);
+                }}
               >
                 {uxT(localeCode, "logs.replayPlayground")}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => curlCopy.copy(buildLogReplayCurl(detail, apiBase), "curl")}
+            >
+              {curlCopyOutcome === "copied"
+                ? uxT(localeCode, "playground.copied")
+                : curlCopyOutcome === "unavailable"
+                  ? uxT(localeCode, "playground.copyFailed")
+                  : uxT(localeCode, "logs.copyCurl")}
+            </button>
+            {onFilterModel && filterModelTarget && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => onFilterModel(filterModelTarget)}
+              >
+                {uxT(localeCode, "logs.filterModel")}
               </button>
             )}
             {onStep && (
@@ -1275,7 +1349,7 @@ function LogDetailDialog({
                 </button>
               </>
             )}
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.cancel")}><IconX /></button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.close")}><IconX /></button>
           </div>
         </div>
         {summary.description && <p className="modal-desc">{summary.description}</p>}
@@ -1352,7 +1426,7 @@ function LogDetailDialog({
           <h4 id="log-detail-route" className="log-detail-section-title">{t("logs.detail.route.section")}</h4>
           {detail.routeDecision ? (
             <div className="log-detail-grid">
-              <span className="muted">{t("logs.detail.route.kind")}</span><span className="mono">{detail.routeDecision.routeKind ?? "–"}</span>
+              <span className="muted">{t("logs.detail.route.kind")}</span><span>{routeKindLabel(detail.routeDecision.routeKind, localeCode)}</span>
               {detail.routeDecision.profile?.id && (
                 <><span className="muted">{t("logs.detail.route.profile")}</span>
                   <span className="mono">{detail.routeDecision.profile.id} ({detail.routeDecision.profile.revision})</span></>
@@ -1361,7 +1435,7 @@ function LogDetailDialog({
                 <><span className="muted">{t("logs.detail.route.selected")}</span>
                   <span className="mono">
                     {detail.routeDecision.selected.provider}/{detail.routeDecision.selected.model}
-                    {detail.routeDecision.selected.reason ? ` — ${detail.routeDecision.selected.reason}` : ""}
+                    {detail.routeDecision.selected.reason ? ` — ${routeReasonLabel(detail.routeDecision.selected.reason, localeCode)}` : ""}
                   </span></>
               )}
               <span className="muted">{t("logs.detail.route.candidates")}</span>

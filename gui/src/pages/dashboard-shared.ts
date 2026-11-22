@@ -568,4 +568,48 @@ export function useModalDialog(open: boolean, triggerRef: RefObject<HTMLButtonEl
   return dialogRef;
 }
 
+/** True when a pointer event landed on the top-layer `::backdrop` outside the `<dialog>` box. */
+export function isDialogBackdropClick(event: {
+  currentTarget: HTMLDialogElement;
+  target: EventTarget | null;
+  clientX: number;
+  clientY: number;
+}): boolean {
+  const dialog = event.currentTarget;
+  if (event.target !== dialog) return false;
+  const rect = dialog.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  return (
+    event.clientX < rect.left
+    || event.clientX > rect.right
+    || event.clientY < rect.top
+    || event.clientY > rect.bottom
+  );
+}
+
+/** Dismisses a native top-layer `<dialog>` only when both pointerdown and click happen outside its box. */
+export function useDialogBackdropDismiss(onDismiss: () => void) {
+  const startedOutsideRef = useRef(false);
+  return {
+    onPointerDown: (event: {
+      currentTarget: HTMLDialogElement;
+      target: EventTarget | null;
+      clientX: number;
+      clientY: number;
+    }) => {
+      startedOutsideRef.current = isDialogBackdropClick(event);
+    },
+    onClick: (event: {
+      currentTarget: HTMLDialogElement;
+      target: EventTarget | null;
+      clientX: number;
+      clientY: number;
+    }) => {
+      const clickedOutside = startedOutsideRef.current && isDialogBackdropClick(event);
+      startedOutsideRef.current = false;
+      if (clickedOutside) onDismiss();
+    },
+  };
+}
+
 export type { StartupHealthStatus };

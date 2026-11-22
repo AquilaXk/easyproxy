@@ -1,10 +1,11 @@
 import { useI18n } from "../i18n/shared";
+import { uxT } from "../i18n/ux-overhaul-copy";
 import { card, cardHint, cardTitle } from "../components/v2-logs/classes";
 import type { ClaudeInboundEntry } from "./debug-shared";
 import { formatClaudeInboundTime } from "./debug-shared";
 
 export function DebugClaudeInboundPanel({ entries }: { entries: ClaudeInboundEntry[] }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   return (
     <section className={card} aria-labelledby="debug-claude-inbound-title">
@@ -49,7 +50,7 @@ export function DebugClaudeInboundPanel({ entries }: { entries: ClaudeInboundEnt
                   <td className="mono" title={entry.metadataKeys?.join(", ")}>
                     {entry.hasMetadataUserId ? `user_id ${entry.userIdTag ?? ""}` : t("debug.claudeInbound.none")}
                   </td>
-                  <td className="mono">{entry.hasSystem ? entry.systemTag ?? "yes" : t("debug.claudeInbound.none")}</td>
+                  <td className="mono">{entry.hasSystem ? entry.systemTag ?? uxT(locale, "debug.presentYes") : t("debug.claudeInbound.none")}</td>
                 </tr>
               ))}
             </tbody>

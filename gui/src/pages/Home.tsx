@@ -345,7 +345,7 @@ export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, re
                       )}>
                       <span className={cn(
                         "grid size-6 shrink-0 place-items-center rounded-full text-xs font-semibold",
-                        step.done ? "bg-success text-on-accent" : current ? "bg-accent text-on-accent" : "bg-surface-2 text-fg-muted",
+                        step.done ? "bg-success-soft text-success ring-1 ring-inset ring-success/30" : current ? "bg-accent text-on-accent" : "bg-surface-2 text-fg-muted",
                       )} aria-hidden>{step.done ? "✓" : index + 1}</span>
                       <span className="flex min-w-0 flex-1 flex-col">
                         <span className={cn("text-[13px] leading-5", step.done ? "font-normal text-fg-subtle" : current ? "font-medium text-fg" : "font-medium text-fg-muted")}>{step.title}</span>
@@ -378,7 +378,13 @@ export default function Home({ apiBase, endpointUrl, navigate, onReloadCodex, re
                     {new Date(row.timestamp).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
                   </span>
                   <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning tabular-nums">{row.status}</span>
-                  <span className="min-w-0 flex-1 truncate">{row.provider} · {row.model}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {!row.provider || row.provider === "unknown"
+                      ? t("logsV2.clientUnknown")
+                      : formatProviderDisplayName(row.provider, t)}
+                    {" · "}
+                    {row.model}
+                  </span>
                 </li>
               ))}
             </ul>

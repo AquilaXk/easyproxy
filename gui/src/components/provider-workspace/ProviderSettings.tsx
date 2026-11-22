@@ -15,7 +15,8 @@ import { readJsonIfOk } from "../../fetch-json";
 import { confirmAction } from "../../action-dialogs";
 import { createBoundedFetch } from "../../bounded-fetch";
 import { startVisibilityPoll } from "../../visibility-poll";
-import { useT } from "../../i18n/shared";
+import { useI18n } from "../../i18n/shared";
+import { uxT } from "../../i18n/ux-overhaul-copy";
 import { IconLock } from "../../icons";
 import { Select } from "../../ui";
 import { isCatalogProviderId } from "../../provider-icons";
@@ -109,7 +110,7 @@ function ProviderSettingsForm({
   item, availableModels = EMPTY_MODELS, apiBase, targetKey, targetLabel, draftStore, onUpdateProvider, onDirtyChange, onRegisterSave, onRegisterDiscard,
   accountModeFocusToken = 0, onAccountModeFocused,
 }: ProviderSettingsProps & { targetKey: string; draftStore: ProviderDraftStore }) {
-  const t = useT();
+  const { t, locale } = useI18n();
   // This mount's identity in the draft store. Created once per mount, so a newer
   // mount for the same target supersedes an older one.
   const [draftOwner] = useState(createProviderDraftOwner);
@@ -574,7 +575,7 @@ function ProviderSettingsForm({
         </label>
         <label className="pwi-settings-field">
           <span className="pwi-settings-label">{t("modal.vertexLocation")}</span>
-          <input className="input" value={location} onChange={e => setLocation(e.target.value)} placeholder="us-central1" />
+          <input className="input" value={location} onChange={e => setLocation(e.target.value)} placeholder={uxT(locale, "placeholder.vertexRegion")} />
         </label>
       </>}
       {isCanonicalOpenAi && (

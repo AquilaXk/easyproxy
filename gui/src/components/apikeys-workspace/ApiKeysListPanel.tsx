@@ -31,8 +31,13 @@ function peakBudgetPercent(k: ApiKeyEntry): number | null {
   if (k.rpmLimit && k.rpmLimit > 0) ratios.push(((usage?.rpmCurrent ?? 0) / k.rpmLimit) * 100);
   if (k.maxDailyRequests && k.maxDailyRequests > 0) ratios.push(((usage?.dailyRequestsUsed ?? 0) / k.maxDailyRequests) * 100);
   if (k.dailyTokenLimit && k.dailyTokenLimit > 0) ratios.push(((usage?.dailyTokensUsed ?? 0) / k.dailyTokenLimit) * 100);
+  if (k.dailyCostLimitUsd && k.dailyCostLimitUsd > 0) ratios.push(((usage?.dailyCostUsdUsed ?? 0) / k.dailyCostLimitUsd) * 100);
   if (ratios.length === 0) return null;
   return Math.max(0, Math.min(100, Math.round(Math.max(...ratios))));
+}
+
+function formatCompactUsdLimit(amount: number): string {
+  return amount >= 1 && Number.isInteger(amount) ? String(amount) : amount.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 export default function ApiKeysListPanel({
@@ -263,8 +268,13 @@ export default function ApiKeysListPanel({
               {keys.map(k => {
                 const full = currentReveal(k);
                 const confirming = confirmId === k.id;
-                const limitCount = (k.rpmLimit !== undefined ? 1 : 0) + (k.maxDailyRequests !== undefined ? 1 : 0) + (k.dailyTokenLimit !== undefined ? 1 : 0);
+                const limitCount = (k.rpmLimit !== undefined ? 1 : 0)
+                  + (k.maxDailyRequests !== undefined ? 1 : 0)
+                  + (k.dailyTokenLimit !== undefined ? 1 : 0)
+                  + (k.dailyCostLimitUsd !== undefined ? 1 : 0);
                 const quotaPct = peakBudgetPercent(k);
+                const providerScopeCount = k.allowedProviders?.length ?? 0;
+                const modelScopeCount = k.allowedModels?.length ?? 0;
                 return (
                   <tr key={k.id} className={confirming ? "awi-keylist-row is-confirming" : "awi-keylist-row"}>
                     <td>
@@ -278,11 +288,28 @@ export default function ApiKeysListPanel({
                       >
                         {k.name}
                       </button>
-                      {limitCount > 0 && (
+                      {(limitCount > 0 || providerScopeCount > 0 || modelScopeCount > 0) && (
                         <>
-                          <span className="badge badge-muted ml-2">
-                            {uxT(locale, "budget.badgeCompact", { count: limitCount })}
-                          </span>
+                          {limitCount > 0 && (
+                            <span className="badge badge-muted ml-2">
+                              {uxT(locale, "budget.badgeCompact", { count: limitCount })}
+                            </span>
+                          )}
+                          {k.dailyCostLimitUsd !== undefined && (
+                            <span className="badge badge-muted ml-1.5">
+                              {uxT(locale, "budget.costBadge", { limit: formatCompactUsdLimit(k.dailyCostLimitUsd) })}
+                            </span>
+                          )}
+                          {providerScopeCount > 0 && (
+                            <span className="badge badge-muted ml-1.5">
+                              {uxT(locale, "budget.scopeProvidersBadge", { count: providerScopeCount })}
+                            </span>
+                          )}
+                          {modelScopeCount > 0 && (
+                            <span className="badge badge-muted ml-1.5">
+                              {uxT(locale, "budget.scopeModelsBadge", { count: modelScopeCount })}
+                            </span>
+                          )}
                           {quotaPct !== null && (
                             <div className="mt-1 h-1 w-24 max-w-full overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
                               <div

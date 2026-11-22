@@ -98,6 +98,7 @@ export default function BaseVariantDialog({
 }) {
   const t = useT();
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   /**
    * The ring. Default first because it is what a fresh install is on, then the authored
@@ -255,8 +256,13 @@ export default function BaseVariantDialog({
   }, [slots.length]);
 
   useEffect(() => {
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
+    };
   }, []);
 
   /**
@@ -384,7 +390,16 @@ export default function BaseVariantDialog({
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
     >
-      <div className="modal-card">
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        aria-label={t("common.close")}
+        tabIndex={-1}
+        onPointerDown={e => e.stopPropagation()}
+        onPointerUp={e => e.stopPropagation()}
+        onClick={requestClose}
+      />
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="row">
           <strong>{t("codexSet.base.title")}</strong>
           <span className="codex-set-base-dialog__nav">

@@ -40,7 +40,8 @@ export default function AddCodexAccountModal({
     );
     if (focusable) focusable.focus();
     return () => {
-      previousFocusRef.current?.focus();
+      if (dialog?.open) dialog.close();
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
     };
   }, []);
 
@@ -58,7 +59,8 @@ export default function AddCodexAccountModal({
       className="modal-overlay"
       onCancel={handleCancel}
     >
-      <div className="modal-card" style={{ maxWidth: 440 }}>
+      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={closeModal} />
+      <div className="modal-card" style={{ maxWidth: 440 }} onClick={e => e.stopPropagation()}>
         {ui.step === "pick" && (
           <AddCodexAccountPickStep
             id={ui.id}

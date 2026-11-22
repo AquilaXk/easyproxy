@@ -10,6 +10,7 @@ import { hostDocumentHidden, onHostVisibilityChange } from "../host-visibility";
 import { Select } from "../ui";
 import { Button } from "@/components/ui-v2/button";
 import { Banner, StateBadge } from "../components/v2-startup/primitives";
+import { useDialogBackdropDismiss } from "./dashboard-shared";
 import type { LinkActionErrorView } from "./RemoteLinkSheet";
 
 const ERROR_TKEY: Record<string, TKey> = {
@@ -135,14 +136,17 @@ export function ChildRowBadges({ row }: { row: ChildOpsRowView }): ReactElement 
 function ChildConfirmDialog(props: { open: boolean; title: string; body: string; confirm: string; onCancel(): void; onConfirm(): void }): ReactElement {
   const t = useT();
   const ref = useRef<HTMLDialogElement>(null);
+  const backdropDismiss = useDialogBackdropDismiss(props.onCancel);
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
     if (props.open && !dialog.open) { if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", ""); }
     if (!props.open && dialog.open) dialog.close();
+    return () => { if (dialog.open) dialog.close(); };
   }, [props.open]);
   return (
     <dialog ref={ref} aria-labelledby="remote-link-child-confirm-title" onCancel={event => { event.preventDefault(); props.onCancel(); }}
+      {...backdropDismiss}
       className="remote-link-confirm-dialog m-auto w-[min(440px,calc(100vw-24px))] rounded-[14px] border-0 bg-surface p-1 text-fg shadow-lg ring-1 ring-line backdrop:bg-black/40">
       {props.open && <>
         <div className="flex flex-col gap-2 rounded-[10px] bg-bg px-5 py-4 ring-1 ring-line">
@@ -185,14 +189,17 @@ function RestartCodexBody(props: { alias: string; onCancel(): void;
 export function RestartCodexDialog(props: { alias: string; open: boolean; onCancel(): void;
   onConfirm(scope: "app-server" | "codex"): void }): ReactElement {
   const ref = useRef<HTMLDialogElement>(null);
+  const backdropDismiss = useDialogBackdropDismiss(props.onCancel);
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
     if (props.open && !dialog.open) { if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", ""); }
     if (!props.open && dialog.open) dialog.close();
+    return () => { if (dialog.open) dialog.close(); };
   }, [props.open]);
   return (
     <dialog ref={ref} aria-labelledby="remote-link-restart-title" onCancel={event => { event.preventDefault(); props.onCancel(); }}
+      {...backdropDismiss}
       className="remote-link-confirm-dialog m-auto w-[min(440px,calc(100vw-24px))] rounded-[14px] border-0 bg-surface p-1 text-fg shadow-lg ring-1 ring-line backdrop:bg-black/40">
       {props.open && <RestartCodexBody alias={props.alias} onCancel={props.onCancel} onConfirm={props.onConfirm} />}
     </dialog>

@@ -27,6 +27,19 @@ function useEscapeToCancel(layer: RefObject<HTMLElement | null>, onCancel: () =>
   }, [layer, onCancel, enabled]);
 }
 
+function useAlertDialogFocus(layer: RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const focusable = layer.current?.querySelector<HTMLElement>(
+      "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+    );
+    focusable?.focus();
+    return () => {
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [layer]);
+}
+
 export function RemoveConfirmDialog({
   providerName, defaultProviderName, onConfirm, onCancel,
 }: {
@@ -39,6 +52,7 @@ export function RemoveConfirmDialog({
   const t = useT();
   const layer = useRef<HTMLDivElement>(null);
   useEscapeToCancel(layer, onCancel);
+  useAlertDialogFocus(layer);
   return (
     <div ref={layer} className="dialog-backdrop" onClick={onCancel}>
       <div className="dialog" role="alertdialog" aria-label={t("pws.removeConfirmTitle")} onClick={e => e.stopPropagation()}>
@@ -67,6 +81,7 @@ export function UnsavedLeaveDialog({
   const layer = useRef<HTMLDivElement>(null);
   // A save in flight cannot be abandoned from the keyboard, as the Save button is disabled too.
   useEscapeToCancel(layer, onCancel, !saving);
+  useAlertDialogFocus(layer);
   return (
     <div ref={layer} className="dialog-backdrop" onClick={onCancel}>
       <div className="dialog" role="alertdialog" aria-label={t("pws.unsavedLeaveTitle")} onClick={e => e.stopPropagation()}>

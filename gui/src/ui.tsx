@@ -1,9 +1,11 @@
 /* Shared UI primitives built on the design-system classes in styles.css. */
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { IconCheck, IconAlert } from "./icons";
 import { IconChevron } from "./icons";
 import { computeSelectMenuStyle } from "./select-position";
+import { I18nContext, getActiveLocale } from "./i18n/shared";
+import { catalogValue } from "./i18n/runtime-catalogs";
 import { cn } from "./lib/utils";
 
 /**
@@ -27,10 +29,14 @@ import { cn } from "./lib/utils";
  * announced twice with a description that repeats its own name.
  */
 export function Switch({ on, mixed, onClick, disabled, label, showLabel = false, title }: { on: boolean; mixed?: boolean; onClick: () => void; disabled?: boolean; label?: string; showLabel?: boolean; title?: string }) {
+  const i18n = useContext(I18nContext);
   const labeled = showLabel && !!label;
   // ARIA switches are binary. Controls that can represent a mixed bulk selection
   // retain toggle-button semantics for all three states.
   const triState = mixed !== undefined;
+  const fallbackStateLabel = label ?? (i18n
+    ? i18n.t(on ? "startupV2.on" : "startupV2.off")
+    : catalogValue(getActiveLocale(), on ? "startupV2.on" : "startupV2.off"));
   return (
     <button type="button"
       className={`switch${on ? " on" : ""}${mixed ? " mixed" : ""}${labeled ? " switch-labeled" : ""}`}
@@ -38,7 +44,7 @@ export function Switch({ on, mixed, onClick, disabled, label, showLabel = false,
       role={triState ? undefined : "switch"}
       aria-checked={triState ? undefined : on}
       aria-pressed={triState ? (mixed ? "mixed" : on) : undefined}
-      aria-label={labeled ? undefined : (label ?? (on ? "enabled" : "disabled"))}
+      aria-label={labeled ? undefined : fallbackStateLabel}
       title={title}>
       <span className="knob" />
       {labeled ? <span className="switch-labeled-text text-label muted">{label}</span> : null}

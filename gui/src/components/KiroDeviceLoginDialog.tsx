@@ -1,6 +1,6 @@
 import { useId, useState, type RefObject } from "react";
 import { useT } from "../i18n/shared";
-import { useModalDialog } from "../pages/dashboard-shared";
+import { useDialogBackdropDismiss, useModalDialog } from "../pages/dashboard-shared";
 import { kiroVerificationLink } from "../kiro-device-login-helpers";
 import { useCopyFeedback } from "./use-copy-feedback";
 import { useKiroDeviceLogin } from "./use-kiro-device-login";
@@ -32,9 +32,11 @@ export default function KiroDeviceLoginDialog({ apiBase, targetKey, triggerRef, 
   const destination = view?.verificationUriComplete ?? view?.verificationUri;
   const safeLink = kiroVerificationLink(destination, view?.method);
   const cancel = () => { void login.close(); onClose(); };
+  const backdropDismiss = useDialogBackdropDismiss(cancel);
   const finished = state.phase === "done" || state.phase === "failed" || state.phase === "expired" || state.phase === "ended";
   return (
     <dialog ref={dialogRef} className="kiro-device-dialog" aria-modal="true" aria-labelledby={titleId}
+      {...backdropDismiss}
       onCancel={event => { event.preventDefault(); cancel(); }}>
       <h2 id={titleId}>{t("kiroLogin.title")}</h2>
       {state.phase === "idle" && (

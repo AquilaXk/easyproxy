@@ -14,6 +14,7 @@ import {
 } from "../components/v2-usage/usage-model";
 import { UsageSummaryCards } from "../components/v2-usage/usage-metrics";
 import { UsageHeatmapPanel } from "../components/v2-usage/usage-activity";
+import { UsageLatencyPanel } from "../components/v2-usage/usage-latency-panel";
 import { UsageAppsTable, UsageCoveragePanel, UsageModelsTable, UsageProvidersTable } from "../components/v2-usage/usage-breakdown";
 import {
   UsageAppliedWindow, UsageFilters, UsageRangePanel, UsageRangeToggle, UsageScopeControl, UsageToolbarRow,
@@ -46,6 +47,8 @@ function UsageEmpty({ filtered, t }: { filtered: boolean; t: TFn }) {
  * landing on the right block even though the page no longer carries a section strip.
  */
 function UsageWorkspaceBody({
+  apiBase,
+  latencyEnabled,
   data,
   range,
   customWindow,
@@ -60,6 +63,8 @@ function UsageWorkspaceBody({
   locale,
   t,
 }: {
+  apiBase: string;
+  latencyEnabled: boolean;
   data: UsageResponse | null;
   range: Range;
   customWindow: boolean;
@@ -87,6 +92,7 @@ function UsageWorkspaceBody({
           <UsageSummaryCards summary={data.summary} days={bars} activeDays={activeDays} locale={locale} t={t} />
           <UsageHeatmapPanel key={`${range}:${customWindow}`} defaultView={defaultView} heatmap={heatmap} bars={bars}
             totalTokens={data.summary.totalTokens} locale={locale} t={t} />
+          <UsageLatencyPanel apiBase={apiBase} locale={locale} enabled={latencyEnabled} />
         </>
       ),
     },
@@ -289,6 +295,8 @@ export default function Usage({ apiBase, connected = false, apiKeyId, topology =
             </Notice>
           )}
           <UsageWorkspaceBody
+            apiBase={apiBase}
+            latencyEnabled={!connected}
             data={data}
             range={range}
             customWindow={customWindow !== null}

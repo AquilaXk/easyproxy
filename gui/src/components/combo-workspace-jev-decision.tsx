@@ -6,7 +6,8 @@ import {
   type JevSessionPinConfig,
 } from "../../../src/combos/jev-session-pin-config";
 import { JEV_DECISION_ISSUE_LABEL_KEYS, jevDecisionServiceOptions } from "../combo-workspace-data";
-import { type TKey, useT } from "../i18n/shared";
+import { type TKey, useI18n } from "../i18n/shared";
+import { uxT } from "../i18n/ux-overhaul-copy";
 import {
   JEV_BACKEND_LABEL_KEYS,
   JEV_DECISION_TIMEOUT_DEFAULT_MS,
@@ -72,7 +73,7 @@ export function ComboJevDecisionSection({
   disabled?: boolean;
   onChange: (patch: JevDecisionPatch) => void;
 }) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const method = jevDecisionMethod({ decisionProvider, decisionModel });
   const pinInvalid = sessionPin != null && !normalizeJevSessionPin(sessionPin);
   const servers = useMemo(
@@ -233,7 +234,7 @@ export function ComboJevDecisionSection({
             maxLength={512}
             spellCheck={false}
             autoComplete="off"
-            placeholder="ollama/qwen3:4b"
+            placeholder={uxT(locale, "placeholder.jevModel")}
             disabled={disabled}
             aria-describedby={`${idPrefix}-decision-model-hint`}
             onChange={(e) => onChange({ decisionModel: e.target.value, decisionProvider: null })}

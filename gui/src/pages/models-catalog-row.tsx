@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { TFn } from "../i18n/shared";
-import { IconPencil } from "../icons";
+import { IconPencil, IconPlay } from "../icons";
 import { modelLabel } from "../model-display";
 import { formatProviderDisplayName } from "../provider-icons";
 import { Switch } from "../ui";
@@ -26,6 +26,7 @@ interface ModelsCatalogRowProps {
   onOpenSettings: () => void;
   onEditCustom: () => void;
   onDeleteCustom: () => Promise<void>;
+  onLaunchPlayground?: () => void;
   t: TFn;
 }
 
@@ -44,6 +45,7 @@ export const ModelsCatalogRow = memo(function ModelsCatalogRow({
   onOpenSettings,
   onEditCustom,
   onDeleteCustom,
+  onLaunchPlayground,
   t,
 }: ModelsCatalogRowProps) {
   const [hoveredRect, setHoveredRect] = useState<DOMRect | null>(null);
@@ -129,6 +131,17 @@ export const ModelsCatalogRow = memo(function ModelsCatalogRow({
           )}
         </span>
         <span className="models-model-actions" role="group" aria-label={t("modelsV2.modelActions")}>
+          {onLaunchPlayground && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              aria-label={`${t("ux.playground.open")}: ${m.native ? m.id : m.namespaced}`}
+              title={t("ux.playground.open")}
+              onClick={onLaunchPlayground}
+            >
+              <IconPlay style={{ width: 13, height: 13 }} />
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-ghost btn-sm"

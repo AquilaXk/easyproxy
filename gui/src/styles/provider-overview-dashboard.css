@@ -99,10 +99,9 @@
 }
 
 .pws-dashboard-section-title {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   color: var(--fg-muted, #888);
   margin: 0;
   padding-bottom: 2px;

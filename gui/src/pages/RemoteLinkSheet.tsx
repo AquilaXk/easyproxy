@@ -1,4 +1,4 @@
-import type { ReactElement, RefObject } from "react";
+import { useEffect, type ReactElement, type RefObject } from "react";
 import {
   formatBinaryMegabytes,
   type LinkCandidateView,
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui-v2/button";
 import { cn } from "@/lib/utils";
 import { Banner, IconButton } from "../components/v2-startup/primitives";
 import { SheetSteps } from "../components/v2-startup/remote-link-parts";
+import { useDialogBackdropDismiss } from "./dashboard-shared";
 
 export interface LinkActionErrorView {
   readonly key: TKey;
@@ -132,9 +133,15 @@ export function RemoteLinkSheet({
 }: RemoteLinkSheetProps): ReactElement {
   const t = useT();
   const isChildFlow = role === "child" && standaloneRuntime;
+  const backdropDismiss = useDialogBackdropDismiss(onClose);
+
+  useEffect(() => () => {
+    if (sheetRef.current?.open) sheetRef.current.close();
+  }, [sheetRef]);
 
   return (
     <dialog ref={sheetRef} aria-labelledby="remote-link-sheet-title" onCancel={event => { event.preventDefault(); onClose(); }}
+      {...backdropDismiss}
       className="remote-link-sheet m-auto max-h-[min(800px,calc(100dvh-24px))] w-[min(620px,calc(100vw-24px))] flex-col overflow-hidden rounded-[14px] border-0 bg-bg text-fg shadow-lg ring-1 ring-line backdrop:bg-black/40 open:flex">
       <header className="flex shrink-0 flex-col gap-3 border-b border-line bg-surface px-5 pt-4 pb-3.5">
           <div className="flex items-start justify-between gap-3">

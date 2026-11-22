@@ -35,10 +35,11 @@ export function DashboardDialogs(d: Dash) {
         aria-labelledby="update-title"
         onCancel={event => { event.preventDefault(); closeUpdateDialog(); }}
       >
-        <div className="modal-card">
+        <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={closeUpdateDialog} />
+        <div className="modal-card" onClick={e => e.stopPropagation()}>
           <div className="modal-head">
             <h3 id="update-title">{t("dash.updateTitle")}</h3>
-            <button type="button" className="btn btn-ghost btn-icon" onClick={closeUpdateDialog} aria-label={t("common.cancel")}>
+            <button type="button" className="btn btn-ghost btn-icon" onClick={closeUpdateDialog} aria-label={t("common.close")}>
               <IconX />
             </button>
           </div>

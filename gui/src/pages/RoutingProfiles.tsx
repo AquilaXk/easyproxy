@@ -18,6 +18,7 @@ import {
 } from "../routing-profile-editor-data";
 import { readJsonIfOk } from "../fetch-json";
 import { Notice, Select } from "../ui";
+import { Combobox } from "../components/ui-v2/combobox";
 import { confirmAction } from "../action-dialogs";
 import { useI18n, useT } from "../i18n/shared";
 import { ROUTING_COMPATIBILITY_FIELD_LABELS } from "../i18n/routing-compatibility-labels";
@@ -694,7 +695,10 @@ export default function RoutingProfiles({
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {draft.candidates.map((candidate, index) => {
                 const candidateProviders = [...new Set([candidate.provider, ...providerNames])].filter(Boolean);
-                const listId = `routing-model-options-${index}`;
+                const modelOptions = (selectedModelOptions[index] ?? []).map(model => ({
+                  value: model.id,
+                  detail: model.provider,
+                }));
                 return (
                   <div key={candidate.key} className="model-card">
                     <div className="model-grid">
@@ -713,16 +717,12 @@ export default function RoutingProfiles({
                       </label>
                       <label className="field-label">
                         <code>model</code>
-                        <input
-                          className="input"
+                        <Combobox
                           required
-                          list={listId}
                           value={candidate.model}
-                          onChange={event => updateCandidate(index, "model", event.target.value)}
+                          onChange={model => updateCandidate(index, "model", model)}
+                          options={modelOptions}
                         />
-                        <datalist id={listId}>
-                          {selectedModelOptions[index]?.map(model => <option key={model.id} value={model.id} />)}
-                        </datalist>
                       </label>
                     </div>
                     <button

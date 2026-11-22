@@ -35,7 +35,7 @@
 .remote-chats-toolbar p, .remote-split-limit { margin: 0; color: var(--epx-fg-muted); font-size: 13px; line-height: 1.5; }
 .remote-split-limit { padding: 4px 8px; }
 .remote-chats-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 12px; align-items: stretch; }
-.remote-session-rail { display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 12px; background: var(--epx-surface); box-shadow: 0 0 0 1px var(--epx-line); min-width: 0; max-height: 720px; overflow: auto; }
+.remote-session-rail { display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 12px; background: var(--epx-surface); box-shadow: 0 0 0 1px var(--epx-line); min-width: 0; max-height: calc(100dvh - 180px); overflow: auto; }
 .remote-session-row { border-radius: 8px; background: transparent; cursor: grab; }
 .remote-session-row:hover { background: var(--epx-surface-2); }
 .remote-session-row.is-active { background: var(--epx-raised); box-shadow: 0 0 0 1px var(--epx-line-strong), var(--epx-shadow-sm); }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Notice, Select, Switch } from "../ui";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
@@ -24,6 +24,57 @@ export interface GuardrailsPayload {
   };
 }
 
+export interface GuardrailsDryRunResult {
+  blocked: boolean;
+  limitExceeded: boolean;
+  matches: number;
+  redactions: number;
+  findings: string[];
+  compressedItems: number;
+  originalChars: number;
+  outputChars: number;
+  savedChars: number;
+  previewText: string;
+}
+
+const MAX_DRY_RUN_INPUT_CHARS = 65_536;
+
+function parseDryRunResult(raw: unknown): GuardrailsDryRunResult | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.blocked !== "boolean"
+    || typeof r.limitExceeded !== "boolean"
+    || typeof r.matches !== "number" || !Number.isFinite(r.matches)
+    || typeof r.redactions !== "number" || !Number.isFinite(r.redactions)
+    || typeof r.compressedItems !== "number" || !Number.isFinite(r.compressedItems)
+    || typeof r.originalChars !== "number" || !Number.isFinite(r.originalChars)
+    || typeof r.outputChars !== "number" || !Number.isFinite(r.outputChars)
+    || typeof r.savedChars !== "number" || !Number.isFinite(r.savedChars)
+    || typeof r.previewText !== "string"
+    || !Array.isArray(r.findings)
+  ) {
+    return null;
+  }
+  const findings: string[] = [];
+  for (const item of r.findings) {
+    if (typeof item === "string" && item) findings.push(item);
+    if (findings.length >= 64) break;
+  }
+  return {
+    blocked: r.blocked,
+    limitExceeded: r.limitExceeded,
+    matches: r.matches,
+    redactions: r.redactions,
+    findings,
+    compressedItems: r.compressedItems,
+    originalChars: r.originalChars,
+    outputChars: r.outputChars,
+    savedChars: r.savedChars,
+    previewText: r.previewText,
+  };
+}
+
 export default function GatewayGuardrailsPanel({
   apiBase,
   readOnly = false,
@@ -43,6 +94,15 @@ export default function GatewayGuardrailsPanel({
   const [headCharsOverride, setHeadCharsOverride] = useState<string | null>(null);
   const [tailCharsOverride, setTailCharsOverride] = useState<string | null>(null);
   const [stripAnsiOverride, setStripAnsiOverride] = useState<boolean | null>(null);
+  const [dryRunText, setDryRunText] = useState("");
+  const [dryRunBusy, setDryRunBusy] = useState(false);
+  const [dryRunError, setDryRunError] = useState<string | null>(null);
+  const [dryRunResult, setDryRunResult] = useState<GuardrailsDryRunResult | null>(null);
+  const dryRunAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => {
+    dryRunAbortRef.current?.abort();
+  }, []);
 
   const mode = modeOverride ?? data?.outboundSecretGuard.mode ?? "off";
   const compressionEnabled = compressionOverride ?? data?.toolOutputCompression.enabled ?? false;
@@ -126,6 +186,51 @@ export default function GatewayGuardrailsPanel({
       setStatus({ ok: false, text: uxT(locale, "guardrails.saveFailed") });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDryRun = async () => {
+    if (dryRunBusy || !dryRunText.trim()) return;
+    dryRunAbortRef.current?.abort();
+    const ac = new AbortController();
+    dryRunAbortRef.current = ac;
+    setDryRunBusy(true);
+    setDryRunError(null);
+    const min = Number(minChars.trim());
+    const head = Number(headChars.trim());
+    const tail = Number(tailChars.trim());
+    try {
+      const res = await fetch(`${apiBase}/api/gateway-guardrails/dry-run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: dryRunText.slice(0, MAX_DRY_RUN_INPUT_CHARS),
+          outboundSecretGuard: { mode },
+          toolOutputCompression: {
+            enabled: compressionEnabled,
+            ...(Number.isSafeInteger(min) && min >= 512 && min <= 500_000 ? { minChars: min } : {}),
+            ...(Number.isSafeInteger(head) && head >= 0 && head <= 100_000 ? { headChars: head } : {}),
+            ...(Number.isSafeInteger(tail) && tail >= 0 && tail <= 100_000 ? { tailChars: tail } : {}),
+            stripAnsi,
+          },
+        }),
+        signal: ac.signal,
+      });
+      const raw = await readJsonIfOk<unknown>(res);
+      const parsed = parseDryRunResult(raw);
+      if (!parsed) {
+        setDryRunError(uxT(locale, "guardrails.dryRunFailed"));
+        return;
+      }
+      setDryRunResult(parsed);
+    } catch (error: unknown) {
+      if (ac.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+      setDryRunError(uxT(locale, "guardrails.dryRunFailed"));
+    } finally {
+      if (dryRunAbortRef.current === ac) {
+        dryRunAbortRef.current = null;
+        setDryRunBusy(false);
+      }
     }
   };
 
@@ -267,6 +372,72 @@ export default function GatewayGuardrailsPanel({
           </span>
         )}
       </div>
+
+      <section className="flex flex-col gap-2.5 rounded-card border border-line bg-inset p-3.5" aria-labelledby="guardrails-dryrun-title">
+        <div className="flex flex-col gap-0.5">
+          <h4 id="guardrails-dryrun-title" className="m-0 text-[13px] font-semibold text-fg">
+            {uxT(locale, "guardrails.dryRunTitle")}
+          </h4>
+          <p className="m-0 text-xs text-fg-muted">{uxT(locale, "guardrails.dryRunDesc")}</p>
+        </div>
+        <label htmlFor="guardrails-dryrun-input" className="text-xs font-medium text-fg-muted">
+          {uxT(locale, "guardrails.dryRunInputLabel")}
+        </label>
+        <textarea
+          id="guardrails-dryrun-input"
+          className="input min-h-[84px] font-mono text-xs"
+          rows={3}
+          maxLength={MAX_DRY_RUN_INPUT_CHARS}
+          placeholder={uxT(locale, "guardrails.dryRunPlaceholder")}
+          value={dryRunText}
+          onChange={e => setDryRunText(e.target.value)}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            disabled={dryRunBusy || !dryRunText.trim()}
+            onClick={() => { void handleDryRun(); }}
+          >
+            {dryRunBusy ? uxT(locale, "guardrails.dryRunRunning") : uxT(locale, "guardrails.dryRunRun")}
+          </button>
+          {dryRunError && <span role="alert" className="text-xs text-danger">{dryRunError}</span>}
+        </div>
+        {dryRunResult && (
+          <div className="flex flex-col gap-2 rounded-control border border-line bg-surface p-3" aria-live="polite">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={dryRunResult.blocked ? "badge badge-red" : (dryRunResult.redactions > 0 || dryRunResult.compressedItems > 0) ? "badge badge-amber" : "badge badge-muted"}>
+                {dryRunResult.blocked
+                  ? uxT(locale, "guardrails.dryRunBlocked")
+                  : dryRunResult.redactions > 0
+                    ? uxT(locale, "guardrails.dryRunRedacted")
+                    : uxT(locale, "guardrails.dryRunPassed")}
+              </span>
+              <span className="text-xs text-fg-muted tabular-nums">
+                {uxT(locale, "guardrails.dryRunSummary", {
+                  matches: dryRunResult.matches,
+                  redactions: dryRunResult.redactions,
+                  compressed: dryRunResult.compressedItems,
+                  saved: dryRunResult.savedChars,
+                  original: dryRunResult.originalChars,
+                  output: dryRunResult.outputChars,
+                })}
+              </span>
+            </div>
+            {dryRunResult.findings.length > 0 && (
+              <div className="font-mono text-xs text-fg-muted">
+                {uxT(locale, "guardrails.dryRunFindings", { list: dryRunResult.findings.join(", ") })}
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-medium text-fg-subtle">{uxT(locale, "guardrails.dryRunPreviewLabel")}</span>
+              <pre className="m-0 max-h-48 overflow-auto rounded-control border border-line bg-bg p-2.5 font-mono text-xs whitespace-pre-wrap break-words text-fg">
+                {dryRunResult.previewText}
+              </pre>
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

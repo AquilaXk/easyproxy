@@ -1,11 +1,28 @@
 export type PlaygroundEndpoint = "/v1/chat/completions" | "/v1/responses" | "/v1/messages";
+export type PlaygroundEffort = "" | "low" | "medium" | "high" | "xhigh";
+
+export interface PlaygroundTurn {
+  role: "user" | "assistant";
+  content: string;
+}
 
 export interface PlaygroundSeed {
   endpoint?: PlaygroundEndpoint;
   model?: string;
   systemPrompt?: string;
   userPrompt?: string;
+  turns?: PlaygroundTurn[];
   maxTokens?: number;
+  temperature?: number;
+  effort?: PlaygroundEffort;
+  serviceTier?: string;
+}
+
+export interface PlaygroundPayloadOptions {
+  temperature?: number;
+  effort?: PlaygroundEffort;
+  serviceTier?: string;
+  turns?: readonly PlaygroundTurn[];
 }
 
 export interface PlaygroundTelemetry {
@@ -14,6 +31,8 @@ export interface PlaygroundTelemetry {
   totalMs: number | null;
   throughputCps: number | null;
   tokens: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
   tokensPerSec: number | null;
 }
 
@@ -33,31 +52,56 @@ export function buildPlaygroundPayload(
   userPrompt: string,
   stream: boolean,
   maxTokens?: number,
+  options?: PlaygroundPayloadOptions,
 ): Record<string, unknown> {
   const sys = systemPrompt.trim();
   const hasMax = typeof maxTokens === "number" && Number.isSafeInteger(maxTokens) && maxTokens > 0;
+  const hasTemp = typeof options?.temperature === "number"
+    && Number.isFinite(options.temperature)
+    && options.temperature >= 0
+    && options.temperature <= 2;
+  const effort = options?.effort && options.effort.trim() ? options.effort.trim() : "";
+  const serviceTier = options?.serviceTier && options.serviceTier.trim() ? options.serviceTier.trim() : "";
+  const explicitTurns = options?.turns && options.turns.length > 0
+    ? options.turns.map(turn => ({ role: turn.role, content: turn.content }))
+    : [{ role: "user" as const, content: userPrompt }];
+  const multiTurn = explicitTurns.length > 1 || (explicitTurns.length === 1 && explicitTurns[0]!.role !== "user");
+
   if (endpoint === "/v1/chat/completions") {
     const messages = [
       ...(sys ? [{ role: "system", content: sys }] : []),
-      { role: "user", content: userPrompt },
+      ...explicitTurns,
     ];
-    return { model, messages, stream, ...(hasMax ? { max_tokens: maxTokens } : {}) };
+    return {
+      model,
+      messages,
+      stream,
+      ...(hasMax ? { max_tokens: maxTokens } : {}),
+      ...(hasTemp ? { temperature: options!.temperature } : {}),
+      ...(effort ? { reasoning_effort: effort } : {}),
+      ...(serviceTier ? { service_tier: serviceTier } : {}),
+    };
   }
   if (endpoint === "/v1/responses") {
     return {
       model,
       ...(sys ? { instructions: sys } : {}),
-      input: userPrompt,
+      input: multiTurn ? explicitTurns : (explicitTurns[0]?.content ?? userPrompt),
       stream,
       ...(hasMax ? { max_output_tokens: maxTokens } : {}),
+      ...(hasTemp ? { temperature: options!.temperature } : {}),
+      ...(effort ? { reasoning: { effort } } : {}),
+      ...(serviceTier ? { service_tier: serviceTier } : {}),
     };
   }
   return {
     model,
     max_tokens: hasMax ? maxTokens : 1024,
     ...(sys ? { system: sys } : {}),
-    messages: [{ role: "user", content: userPrompt }],
+    messages: explicitTurns,
     stream,
+    ...(hasTemp ? { temperature: options!.temperature } : {}),
+    ...(effort ? { output_config: { effort } } : {}),
   };
 }
 
@@ -71,6 +115,7 @@ export function buildPlaygroundCurl(
     "curl -sS -N",
     `-X POST ${shellSingleQuote(`${base}${endpoint}`)}`,
     `-H ${shellSingleQuote("Content-Type: application/json")}`,
+    `-H ${shellSingleQuote("Authorization: Bearer YOUR_API_KEY")}`,
     `-d ${shellSingleQuote(JSON.stringify(payload))}`,
   ].join(" \\\n  ");
 }
@@ -130,19 +175,30 @@ function readPositiveInt(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
 }
 
-function extractUsageTokensFromPayload(parsed: unknown): number | null {
+interface UsageExtract {
+  input: number | null;
+  output: number | null;
+  total: number | null;
+}
+
+function extractUsageTokensFromPayload(parsed: unknown): UsageExtract | null {
   if (!parsed || typeof parsed !== "object") return null;
   const obj = parsed as Record<string, unknown>;
   const responseObj = obj.response && typeof obj.response === "object" ? (obj.response as Record<string, unknown>) : null;
+  const messageObj = obj.message && typeof obj.message === "object" ? (obj.message as Record<string, unknown>) : null;
   const usage = (obj.usage && typeof obj.usage === "object"
     ? obj.usage
     : responseObj?.usage && typeof responseObj.usage === "object"
       ? responseObj.usage
-      : null) as Record<string, unknown> | null;
+      : messageObj?.usage && typeof messageObj.usage === "object"
+        ? messageObj.usage
+        : null) as Record<string, unknown> | null;
   if (!usage) return null;
-  return readPositiveInt(usage.output_tokens)
-    ?? readPositiveInt(usage.completion_tokens)
-    ?? readPositiveInt(usage.total_tokens);
+  const input = readPositiveInt(usage.input_tokens) ?? readPositiveInt(usage.prompt_tokens);
+  const output = readPositiveInt(usage.output_tokens) ?? readPositiveInt(usage.completion_tokens);
+  const total = readPositiveInt(usage.total_tokens);
+  if (input === null && output === null && total === null) return null;
+  return { input, output, total };
 }
 
 function appendBounded(current: string, chunk: string, truncatedSuffix: string): { next: string; hitCap: boolean } {
@@ -165,13 +221,23 @@ export async function executePlaygroundRequest(options: {
   signal: AbortSignal;
   onStatus: (status: number) => void;
   onOutput: (text: string) => void;
-}): Promise<{ telemetry: PlaygroundTelemetry; httpErrorStatus: number | null }> {
+}): Promise<{ telemetry: PlaygroundTelemetry; httpErrorStatus: number | null; errorDetail: string | null }> {
   const { apiBase, endpoint, payload, stream, truncatedSuffix, signal, onStatus, onOutput } = options;
   const startedAt = performance.now();
   let firstTokenAt: number | null = null;
   let rendered = "";
   let hitCap = false;
-  let usageTokens: number | null = null;
+  let inputTokens: number | null = null;
+  let outputTokens: number | null = null;
+  let totalUsageTokens: number | null = null;
+  let errorDetail: string | null = null;
+
+  const mergeUsage = (u: UsageExtract | null) => {
+    if (!u) return;
+    if (u.input !== null) inputTokens = u.input;
+    if (u.output !== null) outputTokens = u.output;
+    if (u.total !== null) totalUsageTokens = u.total;
+  };
 
   const response = await fetch(`${apiBase}${endpoint}`, {
     method: "POST",
@@ -207,8 +273,7 @@ export async function executePlaygroundRequest(options: {
         try {
           const parsedData = JSON.parse(dataStr);
           piece = extractTextFromJsonPayload(parsedData);
-          const tok = extractUsageTokensFromPayload(parsedData);
-          if (tok !== null) usageTokens = tok;
+          mergeUsage(extractUsageTokensFromPayload(parsedData));
         } catch {
           piece = dataStr;
         }
@@ -227,8 +292,7 @@ export async function executePlaygroundRequest(options: {
     if (tail.startsWith("data:") && tail.slice(5).trim() !== "[DONE]") {
       try {
         const parsedTail = JSON.parse(tail.slice(5).trim());
-        const tok = extractUsageTokensFromPayload(parsedTail);
-        if (tok !== null) usageTokens = tok;
+        mergeUsage(extractUsageTokensFromPayload(parsedTail));
         const piece = extractTextFromJsonPayload(parsedTail);
         if (piece && !hitCap) {
           if (firstTokenAt === null) firstTokenAt = performance.now();
@@ -243,9 +307,16 @@ export async function executePlaygroundRequest(options: {
     let formatted = rawText;
     if (contentType.includes("application/json") || rawText.trim().startsWith("{")) {
       try {
-        const parsed = JSON.parse(rawText) as { error?: { message?: unknown } };
-        const tok = extractUsageTokensFromPayload(parsed);
-        if (tok !== null) usageTokens = tok;
+        const parsed = JSON.parse(rawText) as { error?: { message?: unknown }; message?: unknown };
+        mergeUsage(extractUsageTokensFromPayload(parsed));
+        if (!response.ok) {
+          const rawMsg = typeof parsed?.error?.message === "string"
+            ? parsed.error.message
+            : typeof parsed?.message === "string"
+              ? parsed.message
+              : "";
+          if (rawMsg.trim()) errorDetail = rawMsg.trim().slice(0, 240);
+        }
         const extracted = response.ok ? extractTextFromJsonPayload(parsed) : "";
         formatted = extracted || JSON.stringify(parsed, null, 2);
       } catch {
@@ -260,11 +331,23 @@ export async function executePlaygroundRequest(options: {
   const totalMs = Math.max(1, Math.round(endedAt - startedAt));
   const ttftMs = firstTokenAt !== null ? Math.max(0, Math.round(firstTokenAt - startedAt)) : totalMs;
   const throughputCps = rendered.length > 0 ? Math.round((rendered.length / totalMs) * 1000) : 0;
-  const tokensPerSec = usageTokens !== null && totalMs > 0 ? Math.round((usageTokens / totalMs) * 1000) : null;
+  const usageTokens = outputTokens ?? totalUsageTokens ?? inputTokens;
+  const rateBasis = outputTokens ?? usageTokens;
+  const tokensPerSec = rateBasis !== null && totalMs > 0 ? Math.round((rateBasis / totalMs) * 1000) : null;
 
   return {
-    telemetry: { status: response.status, ttftMs, totalMs, throughputCps, tokens: usageTokens, tokensPerSec },
+    telemetry: {
+      status: response.status,
+      ttftMs,
+      totalMs,
+      throughputCps,
+      tokens: usageTokens,
+      inputTokens,
+      outputTokens,
+      tokensPerSec,
+    },
     httpErrorStatus: response.ok ? null : response.status,
+    errorDetail,
   };
 }
 

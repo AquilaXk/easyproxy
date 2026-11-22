@@ -171,6 +171,27 @@ export default function ApiKeysWorkspace({
   const [rotationCopyFallbackId, setRotationCopyFallbackId] = useState<string | null>(null);
 
   const selected = selectedId ? (keys.find(k => k.id === selectedId) ?? null) : null;
+  const budgetScopeCatalog = planModels ?? filteredModels;
+  const availableProviders = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of budgetScopeCatalog) {
+      if (row.provider && row.provider !== "combo") set.add(row.provider);
+    }
+    for (const provider of selected?.allowedProviders ?? []) {
+      if (provider) set.add(provider);
+    }
+    return Array.from(set).sort();
+  }, [budgetScopeCatalog, selected]);
+  const availableModels = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of budgetScopeCatalog) {
+      if (row.id) set.add(row.id);
+    }
+    for (const model of selected?.allowedModels ?? []) {
+      if (model) set.add(model);
+    }
+    return Array.from(set).sort();
+  }, [budgetScopeCatalog, selected]);
   const selectedRotationId = selected
     ? (rotationSecret?.id === selected.id ? rotationSecret.rotationId : selected.pendingRotation?.id)
     : undefined;
@@ -507,6 +528,8 @@ export default function ApiKeysWorkspace({
                     entry={selected}
                     localeTag={localeTag}
                     disabled={mutationPending}
+                    availableProviders={availableProviders}
+                    availableModels={availableModels}
                     onSave={onUpdateBudgets}
                   />
                 )}

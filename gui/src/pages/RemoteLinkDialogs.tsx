@@ -1,9 +1,10 @@
-import type { ReactElement, RefObject } from "react";
+import { useEffect, type ReactElement, type RefObject } from "react";
 import type { BoundRefusal, LinkRowWire } from "../remote-link-api";
 import { Trans } from "../i18n/provider";
 import { type TKey, useT } from "../i18n/shared";
 import { Banner } from "../components/v2-startup/primitives";
 import { Button } from "@/components/ui-v2/button";
+import { useDialogBackdropDismiss } from "./dashboard-shared";
 
 const REFUSAL_KEY: Record<BoundRefusal, TKey> = {
   child_link_mismatch: "remoteLink.forceRemove.refusal.child_link_mismatch",
@@ -77,9 +78,15 @@ export function RemoteLinkDisconnectDialog({
   // Home. A lightweight Child is cleaned by the link-bound recover (run here), which checks that it still belongs to this link.
   const forceCmd = isEphemeral ? `epx link recover --link-id ${confirming?.row.id ?? ""}` : `epx disconnect --expect-link ${confirming?.row.id ?? ""}`;
   const refusal = confirming?.force ? confirming.refusal ?? null : null;
+  const backdropDismiss = useDialogBackdropDismiss(onClose);
+
+  useEffect(() => () => {
+    if (confirmRef.current?.open) confirmRef.current.close();
+  }, [confirmRef]);
 
   return (
     <dialog ref={confirmRef} aria-labelledby="remote-link-confirm-title" onCancel={event => { event.preventDefault(); onClose(); }}
+      {...backdropDismiss}
       className="remote-link-confirm-dialog m-auto w-[min(440px,calc(100vw-24px))] rounded-[14px] border-0 bg-surface p-1 text-fg shadow-lg ring-1 ring-line backdrop:bg-black/40">
       {confirming && <>
         <div className="flex flex-col gap-2 rounded-[10px] bg-bg px-5 py-4 ring-1 ring-line">

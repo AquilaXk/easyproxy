@@ -3,15 +3,19 @@ import { IconX } from "../icons";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
 import { Select } from "../ui";
+import { Combobox } from "./ui-v2/combobox";
 import {
   buildPlaygroundCurl,
   buildPlaygroundPayload,
   DEFAULT_PLAYGROUND_MODEL,
   executePlaygroundRequest,
   fetchPlaygroundModelIds,
+  type PlaygroundEffort,
   type PlaygroundEndpoint,
+  type PlaygroundPayloadOptions,
   type PlaygroundSeed,
   type PlaygroundTelemetry,
+  type PlaygroundTurn,
 } from "../lib/playground-client";
 import "./request-playground.css";
 
@@ -25,6 +29,8 @@ const EMPTY_TELEMETRY: PlaygroundTelemetry = {
   totalMs: null,
   throughputCps: null,
   tokens: null,
+  inputTokens: null,
+  outputTokens: null,
   tokensPerSec: null,
 };
 
@@ -47,6 +53,13 @@ function parseOptionalMaxTokens(raw: string): number | undefined {
   return Number.isSafeInteger(n) && n > 0 && n <= 1_000_000 ? n : undefined;
 }
 
+function parseOptionalTemperature(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n >= 0 && n <= 2 ? n : undefined;
+}
+
 function isPointOutsideRect(rect: DOMRect, clientX: number, clientY: number): boolean {
   if (rect.width === 0 && rect.height === 0) return false;
   return clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom;
@@ -63,11 +76,12 @@ export default function RequestPlaygroundModal({
 }) {
   const { t, locale } = useI18n();
   const titleId = useId();
-  const modelListId = useId();
   const endpointId = useId();
   const modelAInputId = useId();
   const modelBInputId = useId();
   const maxTokensId = useId();
+  const temperatureId = useId();
+  const effortId = useId();
   const systemInputId = useId();
   const userInputId = useId();
 
@@ -89,7 +103,17 @@ export default function RequestPlaygroundModal({
       ? String(initialSeed.maxTokens)
       : ""
   ));
+  const [temperatureDraft, setTemperatureDraft] = useState(() => (
+    typeof initialSeed?.temperature === "number" && Number.isFinite(initialSeed.temperature)
+      ? String(initialSeed.temperature)
+      : ""
+  ));
+  const [effort, setEffort] = useState<PlaygroundEffort>(() => initialSeed?.effort ?? "");
+  const [serviceTier, setServiceTier] = useState(() => initialSeed?.serviceTier ?? "");
   const [systemPrompt, setSystemPrompt] = useState(() => initialSeed?.systemPrompt ?? "");
+  const [priorTurns, setPriorTurns] = useState<PlaygroundTurn[]>(() => (
+    initialSeed?.turns?.map(turn => ({ ...turn })) ?? []
+  ));
   const [userPrompt, setUserPrompt] = useState(() => initialSeed?.userPrompt ?? "");
   const [stream, setStream] = useState(true);
 
@@ -98,6 +122,30 @@ export default function RequestPlaygroundModal({
   const [laneA, setLaneA] = useState<LaneState>(INITIAL_LANE);
   const [laneB, setLaneB] = useState<LaneState>(INITIAL_LANE);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const [trackedSeed, setTrackedSeed] = useState(initialSeed);
+
+  if (trackedSeed !== initialSeed) {
+    setTrackedSeed(initialSeed);
+    if (initialSeed) {
+      if (initialSeed.endpoint) setEndpoint(initialSeed.endpoint);
+      if (initialSeed.model?.trim()) {
+        const nextModel = initialSeed.model.trim();
+        setModelA(nextModel);
+        setModelB(nextModel);
+      }
+      if (initialSeed.systemPrompt !== undefined) setSystemPrompt(initialSeed.systemPrompt);
+      if (initialSeed.userPrompt !== undefined) setUserPrompt(initialSeed.userPrompt);
+      if (initialSeed.turns !== undefined) setPriorTurns(initialSeed.turns.map(turn => ({ ...turn })));
+      if (initialSeed.maxTokens !== undefined) {
+        setMaxTokensDraft(Number.isSafeInteger(initialSeed.maxTokens) && initialSeed.maxTokens > 0 ? String(initialSeed.maxTokens) : "");
+      }
+      if (initialSeed.temperature !== undefined) {
+        setTemperatureDraft(Number.isFinite(initialSeed.temperature) ? String(initialSeed.temperature) : "");
+      }
+      if (initialSeed.effort !== undefined) setEffort(initialSeed.effort);
+      if (initialSeed.serviceTier !== undefined) setServiceTier(initialSeed.serviceTier);
+    }
+  }
 
   const requestClose = useCallback(() => {
     if (closedRef.current) return;
@@ -131,7 +179,9 @@ export default function RequestPlaygroundModal({
       if (dlg && typeof dlg.close === "function" && dlg.open) {
         dlg.close();
       }
-      previousFocusRef.current?.focus();
+      if (previousFocusRef.current?.isConnected) {
+        previousFocusRef.current.focus();
+      }
     };
   }, []);
 
@@ -174,13 +224,39 @@ export default function RequestPlaygroundModal({
     setValidationError(uxT(locale, "playground.aborted"));
   };
 
+  const buildPayloadOptions = (promptText: string): PlaygroundPayloadOptions | undefined => {
+    const temperature = parseOptionalTemperature(temperatureDraft);
+    const nonEmptyTurns = priorTurns.filter(turn => turn.content.trim().length > 0);
+    const turns = nonEmptyTurns.length > 0
+      ? [...nonEmptyTurns, { role: "user" as const, content: promptText }]
+      : undefined;
+    const trimmedTier = serviceTier.trim();
+    if (temperature === undefined && !effort && !trimmedTier && !turns) {
+      return undefined;
+    }
+    return {
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(effort ? { effort } : {}),
+      ...(trimmedTier ? { serviceTier: trimmedTier } : {}),
+      ...(turns ? { turns } : {}),
+    };
+  };
+
   const runLane = async (
     targetModel: string,
     maxTokens: number | undefined,
     ac: AbortController,
     update: (updater: (prev: LaneState) => LaneState) => void,
   ) => {
-    const payload = buildPlaygroundPayload(endpoint, targetModel, systemPrompt, userPrompt, stream, maxTokens);
+    const payload = buildPlaygroundPayload(
+      endpoint,
+      targetModel,
+      systemPrompt,
+      userPrompt,
+      stream,
+      maxTokens,
+      buildPayloadOptions(userPrompt),
+    );
     try {
       const result = await executePlaygroundRequest({
         apiBase,
@@ -195,7 +271,11 @@ export default function RequestPlaygroundModal({
       update((prev) => ({
         ...prev,
         telemetry: result.telemetry,
-        errorMsg: result.httpErrorStatus !== null ? uxT(locale, "playground.statusLabel", { status: result.httpErrorStatus }) : null,
+        errorMsg: result.httpErrorStatus !== null
+          ? (result.errorDetail
+            ? `${uxT(locale, "playground.httpError", { status: result.httpErrorStatus })}: ${result.errorDetail}`
+            : uxT(locale, "playground.httpError", { status: result.httpErrorStatus }))
+          : null,
       }));
     } catch (error) {
       if (ac.signal.aborted) return;
@@ -247,13 +327,15 @@ export default function RequestPlaygroundModal({
 
   const handleCopyCurl = async () => {
     const maxTokens = parseOptionalMaxTokens(maxTokensDraft);
+    const effectiveUserPrompt = userPrompt.trim() || "...";
     const payload = buildPlaygroundPayload(
       endpoint,
       modelA.trim() || DEFAULT_PLAYGROUND_MODEL,
       systemPrompt,
-      userPrompt.trim() || "...",
+      effectiveUserPrompt,
       stream,
       maxTokens,
+      buildPayloadOptions(effectiveUserPrompt),
     );
     const cmd = buildPlaygroundCurl(apiBase, endpoint, payload);
     try {
@@ -297,7 +379,14 @@ export default function RequestPlaygroundModal({
               {uxT(locale, "playground.throughputLabel", { rate: lane.telemetry.throughputCps })}
             </span>
           )}
-          {lane.telemetry.tokens !== null && (
+          {lane.telemetry.inputTokens !== null && lane.telemetry.outputTokens !== null ? (
+            <span className="playground-chip">
+              {uxT(locale, "playground.tokensSplitLabel", {
+                input: lane.telemetry.inputTokens,
+                output: lane.telemetry.outputTokens,
+              })}
+            </span>
+          ) : lane.telemetry.tokens !== null && (
             <span className="playground-chip">
               {uxT(locale, "playground.tokensLabel", { count: lane.telemetry.tokens })}
             </span>
@@ -350,7 +439,6 @@ export default function RequestPlaygroundModal({
             <div className="segmented playground-mode-switch" role="group" aria-label={uxT(locale, "playground.title")}>
               <button
                 type="button"
-                className={`btn btn-sm${mode === "single" ? " btn-primary" : " btn-ghost"}`}
                 aria-pressed={mode === "single"}
                 disabled={sending}
                 onClick={() => setMode("single")}
@@ -359,7 +447,6 @@ export default function RequestPlaygroundModal({
               </button>
               <button
                 type="button"
-                className={`btn btn-sm${mode === "compare" ? " btn-primary" : " btn-ghost"}`}
                 aria-pressed={mode === "compare"}
                 disabled={sending}
                 onClick={() => setMode("compare")}
@@ -397,28 +484,24 @@ export default function RequestPlaygroundModal({
               <label htmlFor={modelAInputId}>
                 {mode === "compare" ? uxT(locale, "playground.modelA") : uxT(locale, "playground.model")}
               </label>
-              <input
+              <Combobox
                 id={modelAInputId}
-                type="text"
-                className="input"
-                list={modelListId}
                 value={modelA}
+                options={models}
                 placeholder={uxT(locale, "playground.modelPlaceholder")}
-                onChange={(e) => setModelA(e.target.value)}
+                onChange={setModelA}
                 disabled={sending}
               />
             </div>
             {mode === "compare" ? (
               <div className="playground-field">
                 <label htmlFor={modelBInputId}>{uxT(locale, "playground.modelB")}</label>
-                <input
+                <Combobox
                   id={modelBInputId}
-                  type="text"
-                  className="input"
-                  list={modelListId}
                   value={modelB}
+                  options={models}
                   placeholder={uxT(locale, "playground.modelPlaceholder")}
-                  onChange={(e) => setModelB(e.target.value)}
+                  onChange={setModelB}
                   disabled={sending}
                 />
               </div>
@@ -441,9 +524,40 @@ export default function RequestPlaygroundModal({
             )}
           </div>
 
-          <datalist id={modelListId}>
-            {models.map((id) => <option key={id} value={id} />)}
-          </datalist>
+          <div className="playground-grid">
+            <div className="playground-field">
+              <label htmlFor={temperatureId}>{uxT(locale, "playground.temperature")}</label>
+              <input
+                id={temperatureId}
+                type="number"
+                min={0}
+                max={2}
+                step={0.1}
+                className="input"
+                value={temperatureDraft}
+                placeholder={uxT(locale, "playground.temperaturePlaceholder")}
+                onChange={(e) => setTemperatureDraft(e.target.value)}
+                disabled={sending}
+              />
+            </div>
+            <div className="playground-field">
+              <label htmlFor={effortId}>{uxT(locale, "playground.reasoningEffort")}</label>
+              <Select
+                id={effortId}
+                fullWidth
+                value={effort}
+                disabled={sending}
+                onChange={(v) => setEffort(v as PlaygroundEffort)}
+                options={[
+                  { value: "", label: uxT(locale, "playground.effortDefault") },
+                  { value: "low", label: t("models.reasoningEffort.low") },
+                  { value: "medium", label: t("models.reasoningEffort.medium") },
+                  { value: "high", label: t("models.reasoningEffort.high") },
+                  { value: "xhigh", label: t("models.reasoningEffort.xhigh") },
+                ]}
+              />
+            </div>
+          </div>
 
           {mode === "compare" && (
             <div className="playground-grid">
@@ -490,8 +604,70 @@ export default function RequestPlaygroundModal({
             </div>
           )}
 
+          {priorTurns.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {priorTurns.map((turn, idx) => (
+                <div key={idx} className="playground-turn-row">
+                  <div className="playground-turn-head">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      disabled={sending}
+                      onClick={() => setPriorTurns(prev => prev.map((item, i) => (
+                        i === idx ? { ...item, role: item.role === "user" ? "assistant" : "user" } : item
+                      )))}
+                    >
+                      {turn.role === "assistant"
+                        ? uxT(locale, "playground.roleAssistant")
+                        : uxT(locale, "playground.roleUser")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      disabled={sending}
+                      onClick={() => setPriorTurns(prev => prev.filter((_, i) => i !== idx))}
+                    >
+                      {uxT(locale, "playground.removeTurn")}
+                    </button>
+                  </div>
+                  <textarea
+                    className="input playground-textarea playground-turn-textarea"
+                    value={turn.content}
+                    disabled={sending}
+                    onChange={(e) => setPriorTurns(prev => prev.map((item, i) => (
+                      i === idx ? { ...item, content: e.target.value } : item
+                    )))}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="playground-field">
-            <label htmlFor={userInputId}>{uxT(locale, "playground.userPrompt")}</label>
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor={userInputId}>{uxT(locale, "playground.userPrompt")}</label>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={sending}
+                onClick={() => {
+                  if (priorTurns.length === 0 && userPrompt.trim()) {
+                    setPriorTurns([
+                      { role: "user", content: userPrompt },
+                      { role: "assistant", content: "" },
+                    ]);
+                    setUserPrompt("");
+                    return;
+                  }
+                  const nextRole = priorTurns.length > 0 && priorTurns[priorTurns.length - 1]!.role === "user"
+                    ? "assistant"
+                    : "user";
+                  setPriorTurns(prev => [...prev, { role: nextRole, content: "" }]);
+                }}
+              >
+                {uxT(locale, "playground.addTurn")}
+              </button>
+            </div>
             <textarea
               id={userInputId}
               className="input playground-textarea"
