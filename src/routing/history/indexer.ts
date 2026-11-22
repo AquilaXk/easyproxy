@@ -347,9 +347,14 @@ function destroyAndRecreate(
   }
   removeIndexFiles(path);
   const fresh = new Database(path, { create: true });
-  configureHistoryDbPragmas(fresh, busyTimeoutMs);
-  resetAndCreateSchema(fresh);
-  setMeta(fresh, HISTORY_META_KEYS.lastError, reason);
+  try {
+    configureHistoryDbPragmas(fresh, busyTimeoutMs);
+    resetAndCreateSchema(fresh);
+    setMeta(fresh, HISTORY_META_KEYS.lastError, reason);
+  } catch (error) {
+    try { fresh.close(); } catch { /* already unusable */ }
+    throw error;
+  }
   db = fresh;
   corruptHandle = null;
   validatedBuildPath = null;
@@ -398,21 +403,24 @@ function openIndexDb(busyTimeoutMs = DEFAULT_SQLITE_BUSY_TIMEOUT_MS): Database {
   return handle;
 }
 
-function ensureSchemaAndIdentity(dbHandle: Database): "ready" | "rebuilt" {
+function ensureSchemaAndIdentity(
+  dbHandle: Database,
+  busyTimeoutMs = DEFAULT_SQLITE_BUSY_TIMEOUT_MS,
+): "ready" | "rebuilt" {
   try {
     if (corruptHandle === dbHandle) {
-      destroyAndRecreate(dbPath, "integrity check failed; index rebuilt");
+      destroyAndRecreate(dbPath, "integrity check failed; index rebuilt", busyTimeoutMs);
       return "rebuilt";
     }
     const metaMap = readAllMeta(dbHandle);
     const storedVersion = metaMap.get(HISTORY_META_KEYS.schemaVersion) ?? null;
     if (storedVersion !== String(HISTORY_SCHEMA_VERSION)) {
-      destroyAndRecreate(dbPath, `schema version ${storedVersion ?? "missing"} -> ${HISTORY_SCHEMA_VERSION}`);
+      destroyAndRecreate(dbPath, `schema version ${storedVersion ?? "missing"} -> ${HISTORY_SCHEMA_VERSION}`, busyTimeoutMs);
       return "rebuilt";
     }
     const revision = sourceIdentity();
     if (!sourceIdentityMatches(dbHandle, revision, metaMap)) {
-      destroyAndRecreate(dbPath, "source identity changed; index rebuilt");
+      destroyAndRecreate(dbPath, "source identity changed; index rebuilt", busyTimeoutMs);
       return "rebuilt";
     }
     const check = integrity.inspect(dbHandle, dbPath);
@@ -422,7 +430,7 @@ function ensureSchemaAndIdentity(dbHandle: Database): "ready" | "rebuilt" {
     }
     if (check.state === "corrupt") {
       corruptHandle = dbHandle;
-      destroyAndRecreate(dbPath, "integrity check failed; index rebuilt");
+      destroyAndRecreate(dbPath, "integrity check failed; index rebuilt", busyTimeoutMs);
       return "rebuilt";
     }
     return "ready";
@@ -432,7 +440,7 @@ function ensureSchemaAndIdentity(dbHandle: Database): "ready" | "rebuilt" {
     // throws on the first statement; treat it as corrupt and rebuild.
     corruptHandle = dbHandle;
     integrity.markCorrupt(dbHandle);
-    destroyAndRecreate(dbPath, "index unreadable; rebuilt");
+    destroyAndRecreate(dbPath, "index unreadable; rebuilt", busyTimeoutMs);
     return "rebuilt";
   }
 }
@@ -551,7 +559,7 @@ function refreshOnceLockedSync(caller: RefreshCaller): RequestHistoryIndexMeta {
   if (workerRebuild) throw new RebuildHandedOff(workerRebuild);
   const busyTimeoutMs = caller === "routing" ? 0 : DEFAULT_SQLITE_BUSY_TIMEOUT_MS;
   openIndexDb(busyTimeoutMs);
-  const state = ensureSchemaAndIdentity(db!);
+  const state = ensureSchemaAndIdentity(db!, busyTimeoutMs);
   const handle = db!;
   const revision = sourceIdentity();
   if (state === "rebuilt") {
@@ -561,6 +569,13 @@ function refreshOnceLockedSync(caller: RefreshCaller): RequestHistoryIndexMeta {
       && Number(revision.size) > MAX_ROUTING_SYNC_TAIL_BYTES
       && Number(revision.size) < workerRebuildMinBytes
     ) {
+      // Pin the source identity onto the empty schema so subsequent same-tick
+      // routing reads hit the >64 KiB tail branch instead of recreating the DB.
+      recordSourceMeta(handle, revision);
+      setMeta(handle, HISTORY_META_KEYS.indexedOffset, 0);
+      setMeta(handle, HISTORY_META_KEYS.indexedRows, 0);
+      integrity.acceptRebuilt(handle, dbPath);
+      corruptHandle = null;
       scheduleAsyncCatchUp();
       return metaFor(handle);
     }

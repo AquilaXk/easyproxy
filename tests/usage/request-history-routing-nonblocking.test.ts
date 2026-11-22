@@ -8,6 +8,7 @@ import { flushConfigDirHardeningForTests } from "../../src/config/paths";
 import {
   closeRequestHistoryIndex,
   MAX_ROUTING_SYNC_TAIL_BYTES,
+  onRequestHistoryIndexInvalidated,
   openRequestHistoryIndex,
   openRequestHistoryIndexSync,
   requestHistoryDb,
@@ -120,5 +121,42 @@ describe("request-history non-blocking routing indexer", () => {
       if (caughtUpRows === 81) break;
     }
     expect(caughtUpRows).toBe(81);
+  });
+
+  test("same-tick repeated routing reads on unbuilt >64 KiB ledger do not repeatedly recreate the DB", async () => {
+    const chunkLines: string[] = [];
+    for (let i = 0; i < 80; i += 1) {
+      chunkLines.push(`${JSON.stringify(sampleEntry(`unbuilt-${i}`, 30_000 + i, "r".repeat(950)))}\n`);
+    }
+    const payload = chunkLines.join("");
+    expect(Buffer.byteLength(payload)).toBeGreaterThan(MAX_ROUTING_SYNC_TAIL_BYTES);
+    appendFileSync(usageLogPath(), payload, "utf8");
+
+    let invalidatedCount = 0;
+    const unsubscribe = onRequestHistoryIndexInvalidated(() => {
+      invalidatedCount += 1;
+    });
+    try {
+      const m1 = openRequestHistoryIndexSync();
+      const m2 = openRequestHistoryIndexSync();
+      const m3 = openRequestHistoryIndexSync();
+      expect(m1.indexedRows).toBe(0);
+      expect(m2.indexedRows).toBe(0);
+      expect(m3.indexedRows).toBe(0);
+      expect(invalidatedCount).toBe(1);
+      const timeoutRow = requestHistoryDb().query("PRAGMA busy_timeout").get() as { timeout: number };
+      expect(timeoutRow.timeout).toBe(5_000);
+    } finally {
+      unsubscribe();
+    }
+
+    let finalRows = 0;
+    for (let i = 0; i < 200; i += 1) {
+      await Bun.sleep(10);
+      const latest = await openRequestHistoryIndex();
+      finalRows = latest.indexedRows;
+      if (finalRows === 80) break;
+    }
+    expect(finalRows).toBe(80);
   });
 });

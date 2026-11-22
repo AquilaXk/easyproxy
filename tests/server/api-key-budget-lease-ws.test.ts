@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ServerWebSocket } from "bun";
-import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EpxConfig } from "../../src/types";
@@ -16,6 +16,7 @@ import {
   resetApiKeyBudgetsForTests,
 } from "../../src/server/api-key-budget";
 import { createAdmittedHttpTurn } from "../../src/server/admitted-http-turn";
+import { inboundBodyBudget, MAX_QUEUED_INBOUND_BODIES } from "../../src/server/inbound-body-budget";
 import { createWebsocketHandler } from "../../src/server/index/websocket-handler";
 import type { ServeOptionsContext } from "../../src/server/index/serve-options";
 import { MAX_ACTIVE_TURNS, tryAdmitTurn, type ActiveTurnLease } from "../../src/server/lifecycle";
@@ -444,5 +445,75 @@ describe("api-key-budget lease, rollback, persistence, and WS enforcement", () =
       status: 429,
       error: { type: "rate_limit_error", code: "rpm_limit_exceeded" },
     });
+  });
+
+  test("rolls back HTTP budget on pre-handler inboundBodyBudget 503 and replaces symlink ledger no-follow", async () => {
+    const policy = {
+      ...getDefaultConfig(),
+      apiKeys: [{
+        id: "key-body-busy",
+        name: "body-busy",
+        key: "epx_data_bodybusysecret01",
+        createdAt: "2026-11-22T00:00:00.000Z",
+        rpmLimit: 2,
+        maxDailyRequests: 2,
+        dailyTokenLimit: 500,
+      }],
+    };
+    const run = createAdmittedHttpTurn(
+      () => MAX_CONFIGURABLE_INBOUND_BODY_BYTES,
+      () => new Response("busy", { status: 503 }),
+    );
+    const bodyBusyStart = Date.now();
+    const bodyBusyLogCtx = { model: "unknown", provider: "unknown", apiKeyId: "key-body-busy" };
+    const satCtrl = new AbortController();
+    const heldLease = await inboundBodyBudget.acquire(inboundBodyBudget.capacity(), satCtrl.signal, 100);
+    expect(heldLease).not.toBeNull();
+    const queuedWaiters: Promise<unknown>[] = [];
+    for (let i = 0; i < MAX_QUEUED_INBOUND_BODIES; i += 1) {
+      queuedWaiters.push(inboundBodyBudget.acquire(1, satCtrl.signal, 5_000).catch(() => null));
+    }
+    try {
+      const gzipReq = new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: {
+          "x-easyproxy-api-key": "epx_data_bodybusysecret01",
+          "content-encoding": "gzip",
+          "content-length": "100",
+        },
+        body: new Uint8Array(100),
+      });
+      const res = await run(gzipReq, policy, async () => {
+        throw new Error("handler must not enter when inboundBodyBudget is exhausted");
+      }, { requestId: "req-body-busy-503", start: bodyBusyStart, logCtx: bodyBusyLogCtx });
+      expect(res.status).toBe(503);
+      await res.text();
+    } finally {
+      satCtrl.abort();
+      heldLease?.release();
+      await Promise.allSettled(queuedWaiters);
+    }
+    expect(getApiKeyBudgetSnapshot("key-body-busy", bodyBusyStart)).toEqual({
+      rpmCurrent: 0,
+      dailyRequestsUsed: 0,
+      dailyTokensUsed: 0,
+    });
+
+    if (process.platform !== "win32") {
+      const symHome = createTempHome("epx-budget-symlink-home-");
+      const outsideTarget = join(createTempHome("epx-budget-outside-"), "sentinel.txt");
+      writeFileSync(outsideTarget, "DO_NOT_OVERWRITE", "utf8");
+      const symLedger = join(symHome, "api-key-budgets.json");
+      symlinkSync(outsideTarget, symLedger);
+
+      process.env.EASYPROXY_HOME = symHome;
+      const lease = acquireApiKeyBudgetLease({ id: "sym-key", maxDailyRequests: 10 }, { now: bodyBusyStart });
+      expect(lease.allowed).toBe(true);
+      if (lease.allowed) lease.lease.settleTokens(10, bodyBusyStart);
+      flushApiKeyBudgets();
+
+      expect(readFileSync(outsideTarget, "utf8")).toBe("DO_NOT_OVERWRITE");
+      expect(lstatSync(symLedger).isSymbolicLink()).toBe(false);
+    }
   });
 });

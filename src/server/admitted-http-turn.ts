@@ -63,7 +63,6 @@ export function createAdmittedHttpTurn(
           return withCors(await normalizeMessagesProxyRefusal(req, map(refusal)), req, policy);
         }
         budgetLease = budget.lease;
-        if (refusalLog) refusalLog.logCtx.apiKeyBudgetLease = budgetLease;
       }
     }
     const lease = tryAdmitTurn(sessionLaneIdFromRequest(req.headers), req.signal);
@@ -90,6 +89,7 @@ export function createAdmittedHttpTurn(
     try {
       const response = await runAdmittedBodyWork(req, policy, configuredLimit(), () => {
         handlerEntered = true;
+        if (refusalLog && budgetLease) refusalLog.logCtx.apiKeyBudgetLease = budgetLease;
         return work(lease);
       }, refusalLog,
       options?.mapRefusal, options?.onAdmissionError ? error => {

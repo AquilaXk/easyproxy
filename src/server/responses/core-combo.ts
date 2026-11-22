@@ -1358,7 +1358,7 @@ export async function executeComboResponses(
       method: req.method,
       headers: childHeaders,
     });
-    attachParsedRequestBody(childRequest, structuredClone(childBody));
+    attachParsedRequestBody(childRequest, childBody);
     linkRequestSessionLane(req, childRequest);
     let resolvedAuth: CodexAuthContext | undefined;
     let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;

@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { EpxApiKeyEntry } from "../types";
-import { atomicWriteFile } from "../config/atomic-write";
+import { atomicWriteFileNoFollow } from "../config/atomic-write";
 import { getConfigDir } from "../config/paths";
 import { registerOptionalShutdownHook } from "../lib/optional-shutdown-hooks";
 import { Float64RingBuffer } from "../lib/ring-buffer";
@@ -201,7 +201,7 @@ function flushStoreSync(store: ConfigDirBudgetStore): void {
     return;
   }
   try {
-    atomicWriteFile(store.ledgerPath, serializeStoreLedger(store));
+    atomicWriteFileNoFollow(store.ledgerPath, serializeStoreLedger(store));
     store.dirty = false;
   } catch {
     // Keep dirty state false when directory is transient/disappearing under teardown.
