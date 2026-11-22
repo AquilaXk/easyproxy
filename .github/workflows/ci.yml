@@ -18,7 +18,7 @@ jobs:
   gates:
     name: gates
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -31,6 +31,14 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: runtime
+
+      - name: Cache Bun packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
+          restore-keys: |
+            bun-cache-${{ runner.os }}-
 
       - name: Install dependencies
         run: |
@@ -57,20 +65,42 @@ jobs:
           bun run structure:check
           bun run skill:surface:check
           bun run docs:clients:check
+          bun scripts/release-version-sources.ts check
+          bun scripts/generate-update-trust-root.ts --check
 
-      - name: Lint and build GUI
+      - name: Lint, test, and build GUI
         run: |
           bun run lint:gui
+          bun run --cwd gui test
           bun run build:gui
 
-      - name: Layout and CI contract tests
+      - name: Layout, contract, and changed-file tests
         run: |
-          bun test tests/test-layout.test.ts tests/test-layout-tooling.test.ts tests/ci-workflows/ tests/lab/core-lab-boundary.test.ts tests/server/startup-prompt.test.ts
+          bun test tests/test-layout.test.ts tests/test-layout-tooling.test.ts tests/ci-workflows/ tests/lab/core-lab-boundary.test.ts tests/server/startup-prompt.test.ts tests/update/ tests/lib/spend-*.test.ts tests/lib/standalone-native-helpers.test.ts tests/claude-integration/messages-overflow-baseline-contract.test.ts tests/claude-integration/claude-uncoded-context-overflow.test.ts tests/clients/link-child-update-launcher.test.ts tests/server/management-client-config-route.test.ts tests/providers/aside-client.test.ts
+          if git rev-parse --verify --quiet 'HEAD^1^{commit}' >/dev/null; then
+            bash scripts/ci/run-changed-tests.sh
+          fi
 
-  native-rust:
-    name: native rust
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  cross-platform:
+    name: cross-platform (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            os: ubuntu-latest
+            target: bun-linux-x64
+            exe: epx
+          - label: darwin-arm64
+            os: macos-15
+            target: bun-darwin-arm64
+            exe: epx
+          - label: windows-x64
+            os: windows-latest
+            target: bun-windows-x64
+            exe: epx.exe
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -83,29 +113,91 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: |
+            native/epx-child
+            native/remote-workspace-helper
+            desktop/src-tauri
+
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
         with:
-          role: test-runner
+          role: runtime
+
+      - name: Cache Bun packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
+          restore-keys: |
+            bun-cache-${{ runner.os }}-
 
       - name: Install dependencies
+        shell: bash
         run: bun install --frozen-lockfile
 
       - name: Test native Rust helpers
+        shell: bash
         run: |
           bun run test:remote-workspace-helper
           bun run test:epx-child
 
-  macos-menubar:
-    name: macos menubar
-    runs-on: macos-15
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          persist-credentials: false
-          submodules: false
+      - name: Build GUI, native helpers, and standalone bundle
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          bun run build:gui
+          bun run build:epx-child
+          bun run build:remote-workspace-helper
+          bun scripts/build-standalone.ts --target "$TARGET" --out "dist/standalone/${TARGET}"
 
-      - name: Run MenuBarCoreTests
-        run: swift run --package-path app MenuBarCoreTests
+      - name: Smoke-check standalone bundle
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          set -euo pipefail
+          bundle="dist/standalone/${TARGET}"
+          triple="${TARGET#bun-}"
+          child_exe="epx-child"
+          if [[ "$TARGET" == bun-windows-* ]]; then
+            child_exe="epx-child.exe"
+          fi
+          test ! -e "${bundle}/.worker-bundles"
+          test -f "${bundle}/native-bin/${triple}/${child_exe}"
+          test -f "${bundle}/native-bin/${triple}/SHA256SUMS"
+          (
+            cd "${bundle}/native-bin/${triple}"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum -c SHA256SUMS
+            else
+              shasum -a 256 -c SHA256SUMS
+            fi
+          )
+          if [ "${RUNNER_OS:-}" = "macOS" ]; then
+            test -f "${bundle}/native-bin/darwin-arm64/easyproxy-remote-workspace-helper"
+          elif [ "${RUNNER_OS:-}" = "Windows" ]; then
+            test -f "${bundle}/native-bin/win32-x64/easyproxy-remote-workspace-helper.exe"
+          fi
+          "${bundle}/${EXE}" --version
+          "${bundle}/${EXE}" __keyring-load-check
+
+      - name: Run Windows suite
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bun test tests/windows/
+
+      - name: Run macOS native and desktop tests
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift run --package-path app MenuBarCoreTests
+          swift run --package-path app NativeTrayTests
+          bun run --cwd desktop prepare-sidecar
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib -- --test-threads=1

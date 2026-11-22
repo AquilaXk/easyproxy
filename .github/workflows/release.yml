@@ -41,6 +41,8 @@ jobs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       publish: ${{ steps.meta.outputs.publish }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      source_sha: ${{ steps.meta.outputs.source_sha }}
+      is_tag_push: ${{ steps.meta.outputs.is_tag_push }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -55,6 +57,14 @@ jobs:
         with:
           role: runtime
 
+      - name: Cache Bun packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
+          restore-keys: |
+            bun-cache-${{ runner.os }}-
+
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
@@ -67,20 +77,44 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           GIT_REF: ${{ github.ref }}
           CHANNEL: ${{ inputs.tag }}
+          EXPECTED_SHA: ${{ inputs.expected-sha }}
           DRY_RUN: ${{ inputs.dry-run }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$GIT_REF" != "refs/heads/main" ]; then
             echo "::error::Release workflow_dispatch must run from main."
             exit 1
           fi
+          source_sha="$(git rev-parse HEAD)"
+          if [ -n "${EXPECTED_SHA:-}" ]; then
+            if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::expected-sha must be a full 40-character lowercase commit SHA."
+              exit 1
+            fi
+            if [ "$source_sha" != "$EXPECTED_SHA" ]; then
+              echo "::error::Checked-out commit ${source_sha} does not match expected-sha ${EXPECTED_SHA}."
+              exit 1
+            fi
+            if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+              auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+              git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            fi
+            if ! git merge-base --is-ancestor "$EXPECTED_SHA" origin/main; then
+              echo "::error::expected-sha ${EXPECTED_SHA} is not an ancestor of origin/main."
+              exit 1
+            fi
+          fi
           bun scripts/check-repo-hygiene.ts
           bun scripts/release-version-sources.ts check
+          bun scripts/generate-update-trust-root.ts --check
           bun run typecheck
           bun run typecheck:tsc
           bun run privacy:scan
           pkg_version="$(node -p "require('./package.json').version")"
+          is_tag_push="false"
           if [[ "$GIT_REF" == refs/tags/v* ]]; then
+            is_tag_push="true"
             tag_version="${REF_NAME#v}"
             if [ "$tag_version" != "$pkg_version" ]; then
               echo "::error::Tag ${REF_NAME} does not match package.json version ${pkg_version}"
@@ -102,6 +136,8 @@ jobs:
             echo "release_tag=v${pkg_version}"
             echo "publish=${publish}"
             echo "prerelease=${prerelease}"
+            echo "source_sha=${source_sha}"
+            echo "is_tag_push=${is_tag_push}"
           } >> "$GITHUB_OUTPUT"
 
   standalone:
@@ -116,20 +152,23 @@ jobs:
           - label: darwin-arm64
             os: macos-15
             target: bun-darwin-arm64
+            exe: epx
             archive: easyproxy-darwin-arm64.tar.gz
           - label: linux-x64
             os: ubuntu-latest
             target: bun-linux-x64
+            exe: epx
             archive: easyproxy-linux-x64.tar.gz
           - label: windows-x64
             os: windows-latest
             target: bun-windows-x64
+            exe: epx.exe
             archive: easyproxy-windows-x64.zip
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ inputs.expected-sha || github.sha }}
+          ref: ${{ needs.verify.outputs.source_sha }}
           persist-credentials: false
           submodules: false
 
@@ -138,15 +177,31 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: |
+            native/epx-child
+            native/remote-workspace-helper
+
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
         with:
           role: runtime
 
+      - name: Cache Bun packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
+          restore-keys: |
+            bun-cache-${{ runner.os }}-
+
       - name: Build GUI and standalone binary
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
+          EXE: ${{ matrix.exe }}
           ARCHIVE: ${{ matrix.archive }}
         run: |
           set -euo pipefail
@@ -155,6 +210,30 @@ jobs:
           bun run build:epx-child
           bun run build:remote-workspace-helper
           bun scripts/build-standalone.ts --target "$TARGET" --out "dist/standalone/${TARGET}"
+          bundle="dist/standalone/${TARGET}"
+          triple="${TARGET#bun-}"
+          child_exe="epx-child"
+          if [[ "$TARGET" == bun-windows-* ]]; then
+            child_exe="epx-child.exe"
+          fi
+          test ! -e "${bundle}/.worker-bundles"
+          test -f "${bundle}/native-bin/${triple}/${child_exe}"
+          test -f "${bundle}/native-bin/${triple}/SHA256SUMS"
+          (
+            cd "${bundle}/native-bin/${triple}"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum -c SHA256SUMS
+            else
+              shasum -a 256 -c SHA256SUMS
+            fi
+          )
+          if [ "${RUNNER_OS:-}" = "macOS" ]; then
+            test -f "${bundle}/native-bin/darwin-arm64/easyproxy-remote-workspace-helper"
+          elif [ "${RUNNER_OS:-}" = "Windows" ]; then
+            test -f "${bundle}/native-bin/win32-x64/easyproxy-remote-workspace-helper.exe"
+          fi
+          "${bundle}/${EXE}" --version
+          "${bundle}/${EXE}" __keyring-load-check
           mkdir -p dist/release-assets
           if [[ "$ARCHIVE" == *.zip ]]; then
             powershell.exe -NoProfile -Command "Compress-Archive -Path 'dist/standalone/${TARGET}/*' -DestinationPath 'dist/release-assets/${ARCHIVE}' -Force"
@@ -195,9 +274,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.verify.outputs.release_tag }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          IS_TAG_PUSH: ${{ needs.verify.outputs.is_tag_push }}
         run: |
           set -euo pipefail
-          flags=(--verify-tag --generate-notes)
+          flags=(--generate-notes)
+          if [ "$IS_TAG_PUSH" = "true" ]; then
+            flags+=(--verify-tag)
+          else
+            flags+=(--target "$SOURCE_SHA")
+          fi
           if [ "$PRERELEASE" = "true" ]; then
             flags+=(--prerelease)
           fi
