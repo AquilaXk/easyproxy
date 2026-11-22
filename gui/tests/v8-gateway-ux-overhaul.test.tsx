@@ -372,8 +372,10 @@ describe("Antigravity v8 gateway UX & polish", () => {
   });
 
   test("UsageLatencyPanel renders P50/P95 latency, TTFT, fallback rate, and Switch localizes fallback aria-label", async () => {
-    globalThis.fetch = (async () =>
-      Response.json({
+    let fetchedUrl = "";
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      fetchedUrl = String(input);
+      return Response.json({
         totalRequests: 120,
         fallbackRate: 0.05,
         durationMs: { p50: 420, p95: 1850, sampleCount: 120 },
@@ -381,8 +383,8 @@ describe("Antigravity v8 gateway UX & polish", () => {
         breakdown: [
           { provider: "openai", model: "gpt-5", requests: 90, successRate: 0.98, p50DurationMs: 390 },
         ],
-      })
-    ) as unknown as typeof fetch;
+      });
+    }) as unknown as typeof fetch;
 
     win.localStorage.setItem("epx-lang", "ko");
     const host = document.createElement("div");
@@ -392,12 +394,14 @@ describe("Antigravity v8 gateway UX & polish", () => {
     await act(async () => {
       root!.render(
         <LanguageProvider>
-          <UsageLatencyPanel apiBase="http://127.0.0.1:8787" locale="ko" />
+          <UsageLatencyPanel apiBase="" locale="ko" />
           <Switch on={true} onClick={() => {}} />
         </LanguageProvider>,
       );
       await new Promise(r => setTimeout(r, 15));
     });
+
+    expect(fetchedUrl).toBe("/api/routing-analytics");
 
     expect(host.textContent).toContain("420ms");
     expect(host.textContent).toContain("1.85");

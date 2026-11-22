@@ -113,7 +113,7 @@ export function UsageLatencyPanel({
   const [state, setState] = useState<{ apiBase: string; summary: RoutingAnalyticsSummary | null } | null>(null);
 
   useEffect(() => {
-    if (!enabled || !apiBase) return;
+    if (!enabled) return;
     let cancelled = false;
     const ac = new AbortController();
     void fetch(`${apiBase}/api/routing-analytics`, { signal: ac.signal })
