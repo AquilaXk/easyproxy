@@ -59,6 +59,9 @@ jobs:
 
       - name: Typecheck and static invariants
         run: |
+          bun run audit:high
+          bun audit --audit-level=moderate
+          (cd gui && bun audit --audit-level=moderate)
           bun run typecheck
           bun run typecheck:tsc
           bun run privacy:scan

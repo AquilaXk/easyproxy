@@ -8,7 +8,6 @@ One maintainer, one list. Add a line when work is found, delete it when it lands
 - [ ] Verify desktop shell and WidgetKit snapshot integration on clean macOS, Windows, and Linux hosts for `v0.1.0`.
 
 ## Security & Supply-Chain Hardening
-- [ ] Upgrade transitive Hono and fast-uri overrides to clear bun audit advisories and enforce audit in CI.
 - [ ] Enforce outbound destination policy on Cursor/Devin connection probes, expand secret-guard token prefixes, fix least-used combo preview mutation, and harden Cursor H2 pool eviction.
 
 ## Performance & Architecture Debt

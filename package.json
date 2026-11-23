@@ -52,7 +52,7 @@
     "typecheck:tsc": "bun x tsc --noEmit",
     "hygiene": "bun scripts/check-repo-hygiene.ts",
     "typecheck:gui:if-changed": "bun scripts/typecheck-gui-if-changed.ts",
-    "audit:high": "bun audit --audit-level=high && cd gui && bun audit --audit-level=high --ignore=GHSA-fc5q-39xc-vjpf",
+    "audit:high": "bun audit --audit-level=high && cd gui && bun audit --audit-level=high",
     "privacy:scan": "bun scripts/privacy-scan.ts",
     "favicons": "bun scripts/brand-favicons.ts",
     "favicons:check": "bun scripts/brand-favicons.ts --check",
@@ -99,10 +99,10 @@
     "wreq-js": "2.3.1"
   },
   "overrides": {
-    "@hono/node-server": "2.1.0",
+    "@hono/node-server": "^2.1.6",
     "body-parser": "2.4.0",
-    "fast-uri": "^3.1.7",
-    "hono": "4.13.13",
+    "fast-uri": "^3.1.9",
+    "hono": "^4.13.16",
     "ip-address": "^10.7.4",
     "qs": "^6.16.1"
   },
