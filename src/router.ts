@@ -21,16 +21,20 @@ import {
   PROVIDER_REGISTRY,
   providerCodexAccountMode,
 } from "./providers/registry";
-const PROVIDER_REGISTRY_BY_ID = new Map(PROVIDER_REGISTRY.map(entry => [entry.id, entry]));
+const PROVIDER_REGISTRY_BY_ID = new Map(PROVIDER_REGISTRY.map((entry, index) => [entry.id, { index, entry }]));
 let cachedRegistryLength = PROVIDER_REGISTRY.length;
 
 function getRegistryEntry(id: string) {
-  if (PROVIDER_REGISTRY.length !== cachedRegistryLength) {
-    PROVIDER_REGISTRY_BY_ID.clear();
-    for (const entry of PROVIDER_REGISTRY) PROVIDER_REGISTRY_BY_ID.set(entry.id, entry);
-    cachedRegistryLength = PROVIDER_REGISTRY.length;
+  const hit = PROVIDER_REGISTRY_BY_ID.get(id);
+  if (hit && PROVIDER_REGISTRY.length === cachedRegistryLength && PROVIDER_REGISTRY[hit.index] === hit.entry) {
+    return hit.entry;
   }
-  return PROVIDER_REGISTRY_BY_ID.get(id);
+  PROVIDER_REGISTRY_BY_ID.clear();
+  PROVIDER_REGISTRY.forEach((entry, index) => {
+    PROVIDER_REGISTRY_BY_ID.set(entry.id, { index, entry });
+  });
+  cachedRegistryLength = PROVIDER_REGISTRY.length;
+  return PROVIDER_REGISTRY_BY_ID.get(id)?.entry;
 }
 // Imported from the module directly rather than through the registry facade, which is at its
 // file-size cap.

@@ -36,7 +36,7 @@ import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { decodeServerSentEvents } from "../lib/sse-decoder";
 import { isLikelyRealAnthropicThinkingSignature } from "../responses/reasoning-envelope";
 import { isTranslatorBudgetExceededError, retainTranslatedEventBatch, type TranslatorBudget } from "../lib/translator-budget";
-import { readBoundedUpstreamJson, upstreamJsonErrorEvent } from "./bounded-json-response";
+import { readBoundedUpstreamJson, handleBoundedUpstreamJsonError } from "./bounded-json-response";
 import { isReasoningEffortOmitted, modelRecordValue } from "../reasoning-effort";
 import { resolveThinkingEnabled } from "../clients/reasoning-controls";
 import { resolveReasoningCapabilities } from "../providers/reasoning-capabilities";
@@ -1713,8 +1713,7 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
       try {
         ({ parsed, byteLength: responseBytes } = await readBoundedUpstreamJson(response));
       } catch (error) {
-        tierMetadata?.markResponseUnparseable();
-        return [upstreamJsonErrorEvent(error, "anthropic response was not valid JSON")];
+        return handleBoundedUpstreamJsonError(error, tierMetadata, "anthropic response was not valid JSON");
       }
       // `response.json()` resolves a body of `null` to `null` without throwing, so the cast below
       // used to reach `json.content` on it — the #1219 defect at the buffered body root. The

@@ -35,9 +35,8 @@ import type { ManagementContext } from "./context";
  * deliberately hides fetch failures behind stale/static fallbacks, so a catalog-presence check would
  * let a static-catalog provider with a fake key "pass" — this endpoint never uses it.
  */
-export async function handleProviderTestRoute(ctx: ManagementContext): Promise<Response | null> {
+export async function handleProviderTestRoute(ctx: ManagementContext): Promise<Response> {
   const { req, url, config, convergeCodexCatalog } = ctx;
-  if (url.pathname !== "/api/providers/test" || req.method !== "POST") return null;
 
   const name = url.searchParams.get("name")?.trim();
   if (!name || !isValidProviderName(name) || !hasOwnProvider(config.providers, name)) {

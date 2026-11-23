@@ -906,8 +906,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
 
   if (url.pathname === "/api/providers/test-completion" && req.method === "POST") return (await import("./provider-completion-test")).handleProviderCompletionTestRoute(ctx);
 
-  const testRouteResponse = await handleProviderTestRoute(ctx);
-  if (testRouteResponse) return testRouteResponse;
+  if (url.pathname === "/api/providers/test" && req.method === "POST") {
+    return handleProviderTestRoute(ctx);
+  }
 
   if (url.pathname === "/api/providers" && req.method === "DELETE") {
     const name = url.searchParams.get("name")?.trim();

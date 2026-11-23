@@ -39,7 +39,7 @@ import {
   unnamedToolCallEvent,
   usageFromOpenAIChat,
 } from "./openai-chat/response-events";
-import { readBoundedUpstreamJson, upstreamJsonErrorEvent } from "./bounded-json-response";
+import { handleBoundedUpstreamJsonError, readBoundedUpstreamJson } from "./bounded-json-response";
 import { formatOpenAIChatErrorBody, OpenAIChatError, unwrapChatCompletionPayload, upstreamErrorEvent } from "./openai-chat/errors";
 import { messagesToChatFormat } from "./openai-chat/messages";
 import { withOpenAIChatToolNames } from "./openai-chat/tool-name-registry";
@@ -690,12 +690,10 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
       try {
         ({ parsed, byteLength: responseBytes } = await readBoundedUpstreamJson(response));
       } catch (error) {
-        tierMetadata?.markResponseUnparseable();
-        return [upstreamJsonErrorEvent(error, "upstream response was not valid JSON")];
+        return handleBoundedUpstreamJsonError(error, tierMetadata, "upstream response was not valid JSON");
       }
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        tierMetadata?.markResponseUnparseable();
-        return [upstreamJsonErrorEvent(null, "upstream response was not a JSON object")];
+        return handleBoundedUpstreamJsonError(null, tierMetadata, "upstream response was not a JSON object");
       }
       const json = parsed as Record<string, unknown>;
       if (Object.hasOwn(json, "service_tier")) {

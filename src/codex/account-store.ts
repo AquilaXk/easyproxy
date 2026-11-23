@@ -173,6 +173,8 @@ interface CodexAccountStoreCacheEntry {
   mtimeNs: bigint;
   ctimeNs: bigint;
   size: bigint;
+  reader: unknown;
+  readerImpl: unknown;
   records: CodexAccountStore;
 }
 
@@ -189,9 +191,12 @@ function sameBigIntStat(a: BigIntStats, b: BigIntStats | CodexAccountStoreCacheE
 /** Retain read/parse failure separately for consumers that must preserve existing evidence. */
 function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStoreResult {
   const path = codexAccountsPath();
-  const readFileMocked = "mock" in fsNs.readFileSync;
+  const currentReader: unknown = fsNs.readFileSync;
+  const currentReaderImpl: unknown = (fsNs.readFileSync as { getMockImplementation?: () => unknown }).getMockImplementation?.();
+  const cacheMatchesReader = (entry: CodexAccountStoreCacheEntry): boolean =>
+    entry.reader === currentReader && entry.readerImpl === currentReaderImpl;
   let statBefore: BigIntStats | null = null;
-  if (!readFileMocked && codexAccountStoreCache !== null && codexAccountStoreCache.path === path) {
+  if (codexAccountStoreCache !== null && codexAccountStoreCache.path === path && cacheMatchesReader(codexAccountStoreCache)) {
     try {
       statBefore = lstatSync(path, { bigint: true });
     } catch {
@@ -216,10 +221,10 @@ function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStor
     codexAccountStoreCache = null;
   }
   if (
-    !readFileMocked
-    && statBefore?.isFile()
-    && codexAccountStoreCache !== null
+    codexAccountStoreCache !== null
     && codexAccountStoreCache.path === path
+    && cacheMatchesReader(codexAccountStoreCache)
+    && statBefore?.isFile()
     && sameBigIntStat(statBefore, codexAccountStoreCache)
   ) {
     const records = clone ? structuredClone(codexAccountStoreCache.records) : codexAccountStoreCache.records;
@@ -250,7 +255,7 @@ function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStor
   } catch {
     statAfter = null;
   }
-  if (!readFileMocked && statBefore?.isFile() && statAfter?.isFile() && sameBigIntStat(statBefore, statAfter)) {
+  if (statBefore?.isFile() && statAfter?.isFile() && sameBigIntStat(statBefore, statAfter)) {
     codexAccountStoreCache = {
       path,
       dev: statAfter.dev,
@@ -258,6 +263,8 @@ function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStor
       mtimeNs: statAfter.mtimeNs,
       ctimeNs: statAfter.ctimeNs,
       size: statAfter.size,
+      reader: currentReader,
+      readerImpl: currentReaderImpl,
       records: clone ? structuredClone(normalized) : normalized,
     };
   } else {

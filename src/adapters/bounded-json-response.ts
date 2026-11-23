@@ -1,6 +1,8 @@
 import { assertJsonNestingDepth, JsonNestingDepthExceededError } from "../lib/json-depth-guard";
 import { readBoundedResponseBytes } from "../lib/bounded-body";
+import { ResponseBodyInactivityError } from "../lib/response-body-inactivity";
 import { TRANSLATOR_MAX_TURN_BYTES } from "../lib/translator-budget";
+import type { AdapterTierMetadata } from "../providers/fastwire";
 import type { AdapterEvent } from "../types";
 
 export class UpstreamResponseTooLargeError extends Error {
@@ -22,6 +24,20 @@ export function upstreamJsonErrorEvent(error: unknown, fallbackMessage: string):
     status: 502,
     errorType: "upstream_error",
   };
+}
+
+/**
+ * Re-throw body inactivity timeouts so response delivery classifies stalls as 504,
+ * while converting size, nesting, and parse errors to unparseable 502 adapter events.
+ */
+export function handleBoundedUpstreamJsonError(
+  error: unknown,
+  tierMetadata: AdapterTierMetadata | undefined,
+  fallbackMessage: string,
+): [Extract<AdapterEvent, { type: "error" }>] {
+  if (error instanceof ResponseBodyInactivityError) throw error;
+  tierMetadata?.markResponseUnparseable();
+  return [upstreamJsonErrorEvent(error, fallbackMessage)];
 }
 
 /**
