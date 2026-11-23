@@ -236,6 +236,58 @@ fn unknown<T>(_: T) -> LoginState {
     LoginState::Unknown
 }
 
+#[cfg_attr(all(unix, not(test)), allow(dead_code))]
+fn posix_plist_from_str(home: &str) -> String {
+    let base = home.trim_end_matches('/');
+    format!("{base}/Library/LaunchAgents/{SERVICE}.plist")
+}
+
+#[cfg_attr(all(unix, not(test)), allow(dead_code))]
+fn posix_sibling_from_str(app: &str) -> Option<String> {
+    if app == "/" {
+        return None;
+    }
+    let (dir, _) = app.rsplit_once('/')?;
+    Some(if dir.is_empty() {
+        "/epx".to_string()
+    } else {
+        format!("{dir}/epx")
+    })
+}
+
+fn launch_agent_plist(home: &Path) -> PathBuf {
+    #[cfg(unix)]
+    {
+        home.join("Library")
+            .join("LaunchAgents")
+            .join(format!("{SERVICE}.plist"))
+    }
+    #[cfg(not(unix))]
+    {
+        home.to_str()
+            .map(|s| PathBuf::from(posix_plist_from_str(s)))
+            .unwrap_or_else(|| {
+                home.join("Library")
+                    .join("LaunchAgents")
+                    .join(format!("{SERVICE}.plist"))
+            })
+    }
+}
+
+fn proxy_sibling(app: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        Some(app.parent()?.join("epx"))
+    }
+    #[cfg(not(unix))]
+    {
+        match app.to_str() {
+            Some(s) => posix_sibling_from_str(s).map(PathBuf::from),
+            None => Some(app.parent()?.join("epx")),
+        }
+    }
+}
+
 fn capture(
     probe: &dyn Probe,
     plist: &Path,
@@ -271,7 +323,7 @@ fn capture(
     if app != current_app {
         return Err(LoginState::OtherCopy);
     }
-    let sibling = app.parent().ok_or(LoginState::Unknown)?.join("epx");
+    let sibling = proxy_sibling(&app).ok_or(LoginState::Unknown)?;
     let proxy = probe.realpath(&sibling).map_err(unknown)?;
     probe.executable(&app).map_err(unknown)?;
     probe.executable(&proxy).map_err(unknown)?;
@@ -309,10 +361,7 @@ fn capture(
 
 /// Judge this copy's Start at Login registration. `current_app` must already be resolved.
 pub fn classify(probe: &dyn Probe, home: &Path, uid: u32, current_app: &Path) -> LoginState {
-    let plist = home
-        .join("Library")
-        .join("LaunchAgents")
-        .join(format!("{SERVICE}.plist"));
+    let plist = launch_agent_plist(home);
     let domain = format!("gui/{uid}");
     let first = match capture(probe, &plist, &domain, current_app) {
         Ok(first) => first,
@@ -392,10 +441,7 @@ pub enum Migration {
 }
 
 pub fn migration(probe: &dyn Probe, home: &Path, current_app: &Path) -> Migration {
-    let plist = home
-        .join("Library")
-        .join("LaunchAgents")
-        .join(format!("{SERVICE}.plist"));
+    let plist = launch_agent_plist(home);
     let plist_identity = match probe.identity(&plist) {
         Ok(identity) => identity,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Migration::Absent,
@@ -1086,5 +1132,17 @@ mod tests {
             line_value("program = \rprogram = /y", "program = "),
             Some("/y")
         );
+    }
+
+    #[test]
+    fn posix_fixture_paths_preserve_forward_slashes() {
+        assert_eq!(posix_plist_from_str(HOME), PLIST);
+        assert_eq!(posix_plist_from_str("/fixture/home/"), PLIST);
+        assert_eq!(
+            posix_sibling_from_str(APP).as_deref(),
+            Some("/fixture/EasyProxy.app/Contents/MacOS/epx")
+        );
+        assert_eq!(posix_sibling_from_str("/top-app").as_deref(), Some("/epx"));
+        assert_eq!(posix_sibling_from_str("/"), None);
     }
 }
