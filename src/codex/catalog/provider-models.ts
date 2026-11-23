@@ -604,10 +604,10 @@ async function fetchProviderModelsUncached(
       );
     }
     const rawConfiguredBase = typeof prov.baseUrl === "string" ? prov.baseUrl.trim() : "";
-    const devinDegraded = () => {
+    const devinDegraded = (reason: "blocked" | "network" = "blocked") => {
       if (claimPublication()) {
         markModelsFetchFailure(name, undefined, authorityIdentity);
-        markProviderDiscoveryFailed(name, { reason: "invalid_response" });
+        markProviderDiscoveryFailed(name, { reason });
       }
       const stale = getStaleCached(name, authorityIdentity);
       return observed(
@@ -620,7 +620,7 @@ async function fetchProviderModelsUncached(
         skipDns: true,
         isCanonicalUrl: isRegistryModelDiscoveryUrl,
       });
-      if (!rawCheck.ok) return devinDegraded();
+      if (!rawCheck.ok) return devinDegraded(rawCheck.failureReason);
     }
     // The OAuth snapshot owns both values: never combine one account's durable
     // key with the registry's default host or another account's tenant host.
@@ -631,13 +631,13 @@ async function fetchProviderModelsUncached(
         skipDns: name === "devin",
         isCanonicalUrl: isRegistryModelDiscoveryUrl,
       });
-      if (!targetCheck.ok) return devinDegraded();
+      if (!targetCheck.ok) return devinDegraded(targetCheck.failureReason);
     }
     const destVerified = await verifyBespokeDestination(name, prov, destination, {
       skipDns: hasFreshCachedCatalog(apiKey, destination),
       isCanonicalUrl: isRegistryModelDiscoveryUrl,
     });
-    if (!destVerified.ok) return devinDegraded();
+    if (!destVerified.ok) return devinDegraded(destVerified.failureReason);
     const liveResult = await fetchDevinUsableModels({
       apiKey,
       baseUrl: destination,
@@ -719,10 +719,10 @@ async function fetchProviderModelsUncached(
         "degraded",
       );
     }
-    const cursorDegraded = () => {
+    const cursorDegraded = (reason: "blocked" | "network" = "blocked") => {
       if (claimPublication()) {
         markModelsFetchFailure(name, undefined, authorityIdentity);
-        markProviderDiscoveryFailed(name, { reason: "invalid_response" });
+        markProviderDiscoveryFailed(name, { reason });
       }
       const staleCursor = getStaleCached(name, authorityIdentity);
       return observed(
@@ -742,7 +742,7 @@ async function fetchProviderModelsUncached(
         skipDns: true,
         isCanonicalUrl: isRegistryModelDiscoveryUrl,
       });
-      if (!rawCheck.ok) return cursorDegraded();
+      if (!rawCheck.ok) return cursorDegraded(rawCheck.failureReason);
     }
     const cursorFetch = (prov as EpxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch;
     const useCallerHttp1Fetch = isPinnedHttp1(prov.upstreamHttpVersion) && typeof cursorFetch === "function";
@@ -751,7 +751,7 @@ async function fetchProviderModelsUncached(
       skipDns,
       isCanonicalUrl: isRegistryModelDiscoveryUrl,
     });
-    if (!verified.ok) return cursorDegraded();
+    if (!verified.ok) return cursorDegraded(verified.failureReason);
     const liveResult = await fetchCursorUsableModels({
       apiKey,
       baseUrl: canonicalCursorBase,

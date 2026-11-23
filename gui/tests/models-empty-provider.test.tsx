@@ -729,6 +729,7 @@ test("Cursor discovery failure exposes provider status and badge", async () => {
       [provider]: {
         adapter: "cursor",
         baseUrl,
+        allowPrivateNetwork: true,
         apiKey: "bad-token",
         models: ["auto"],
       },

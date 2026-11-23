@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CursorH2SessionPool } from "../../src/adapters/cursor/h2-pool";
 import { gatherRoutedModels } from "../../src/codex/catalog";
-import { clearModelCache } from "../../src/codex/model-cache";
+import { clearModelCache, getProviderDiscoveryStatus } from "../../src/codex/model-cache";
 import { getDefaultConfig } from "../../src/config";
 import { resolvePublicAddresses } from "../../src/lib/destination-policy";
 import { setBespokeProbeAddressResolverForTests } from "../../src/lib/provider-outbound";
@@ -129,6 +129,8 @@ describe("bespoke provider probe SSRF enforcement", () => {
 
     expect(models.some(m => m.provider === "ssrf-cursor-probe" && m.id === "auto")).toBe(true);
     expect(models.some(m => m.provider === "ssrf-devin-probe" && m.id === "swe-1-7")).toBe(true);
+    expect(getProviderDiscoveryStatus("ssrf-cursor-probe")).toEqual({ status: "failed", reason: "blocked" });
+    expect(getProviderDiscoveryStatus("ssrf-devin-probe")).toEqual({ status: "failed", reason: "blocked" });
     expect(fetchCalls).toBe(0);
   });
 

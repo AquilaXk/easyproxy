@@ -170,7 +170,7 @@ export function setBespokeProbeAddressResolverForTests(
 
 export type BespokeDestinationResult =
   | { ok: true; pinnedAddress?: PinnedAddress }
-  | { ok: false; error: string };
+  | { ok: false; error: string; failureReason: "blocked" | "network" };
 
 function warnProxyBoundaryOnce(): void {
   if (proxyBoundaryWarned) return;
@@ -371,12 +371,12 @@ export async function verifyBespokeDestination(
   try {
     parsed = new URL(url);
   } catch {
-    return { ok: false, error: "provider URL is invalid" };
+    return { ok: false, error: "provider URL is invalid", failureReason: "blocked" };
   }
   const assessment = assessUrlDestination(url);
-  if (!assessment) return { ok: false, error: "provider URL is invalid" };
+  if (!assessment) return { ok: false, error: "provider URL is invalid", failureReason: "blocked" };
   if (assessment.kind === "metadata" || assessment.kind === "link-local" || assessment.kind === "unspecified") {
-    return { ok: false, error: `provider URL targets ${assessment.detail}` };
+    return { ok: false, error: `provider URL targets ${assessment.detail}`, failureReason: "blocked" };
   }
   const allowPrivate = providerAllowsPrivateNetwork(name, provider);
   if (!allowPrivate) {
@@ -384,7 +384,7 @@ export async function verifyBespokeDestination(
       baseUrl: url,
       allowPrivateNetwork: false,
     });
-    if (destinationError) return { ok: false, error: destinationError };
+    if (destinationError) return { ok: false, error: destinationError, failureReason: "blocked" };
   }
   const isCleartext = parsed.protocol !== "https:";
   if (isCleartext) {
@@ -393,7 +393,7 @@ export async function verifyBespokeDestination(
       && parsed.protocol === "http:"
       && (host === "localhost" || host.endsWith(".localhost") || localCleartextAddressAllowed(host));
     if (!localCleartext) {
-      return { ok: false, error: "provider POST URL must use HTTPS" };
+      return { ok: false, error: "provider POST URL must use HTTPS", failureReason: "blocked" };
     }
   }
   if (options.skipDns === true) return { ok: true };
@@ -412,7 +412,13 @@ export async function verifyBespokeDestination(
       ? { ok: true, pinnedAddress: route.pinned }
       : { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    const isDnsNetworkError = error instanceof DestinationDnsResolutionError
+      || (error instanceof Error && error.name === "DestinationDnsResolutionError");
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      failureReason: isDnsNetworkError ? "network" : "blocked",
+    };
   }
 }
 
