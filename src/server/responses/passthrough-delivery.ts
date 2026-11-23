@@ -1454,8 +1454,8 @@ export async function deliverPassthroughResponse(
       const clientBody = relaySseWithFailedTail(
         rewrittenBody,
         upstream,
-        reason => {
-          responseEffects.responseCompletionCancelled = true;
+        (reason, terminalReceived) => {
+          if (!terminalReceived) responseEffects.responseCompletionCancelled = true;
           clientGone.abort(reason);
         },
         { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions, maskCredential: synthesizedCopyMask, redactForwardedEvidence: forwardedEvidenceRedaction,

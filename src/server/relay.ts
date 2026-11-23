@@ -304,7 +304,7 @@ export function refusalFailedTailFrame(
 export function relaySseWithFailedTail(
   body: ReadableStream<Uint8Array>,
   upstream: AbortController,
-  onClientGone?: (reason?: unknown) => void,
+  onClientGone?: (reason?: unknown, terminalReceived?: boolean) => void,
   opts?: { upstreamError?: string; terminalBoundary?: CodexSafetyBufferingFilterOptions; maskCredential?: (text: string) => string;
     /** See {@link SseTerminalOutputBoundaryOptions.redactForwardedEvidence}. */
     redactForwardedEvidence?: (block: string) => string;
@@ -349,7 +349,7 @@ export function relaySseWithFailedTail(
     // Notify the tee inspection branch as well. It has already received the
     // same terminal-bearing upstream chunk, so its bounded drain records the
     // real terminal and then releases the turn/upstream keep-alive connection.
-    onClientGone?.(reason);
+    onClientGone?.(reason, true);
     reader.cancel(reason).catch(() => {});
     terminalBoundary.dispose();
     return "terminal";
@@ -423,7 +423,7 @@ export function relaySseWithFailedTail(
     },
     cancel(reason) {
       terminalBoundary.dispose();
-      if (onClientGone) onClientGone(reason);
+      if (onClientGone) onClientGone(reason, false);
       else upstream.abort(reason);
       reader.cancel(reason).catch(() => {});
     },
