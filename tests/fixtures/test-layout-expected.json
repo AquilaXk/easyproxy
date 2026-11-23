@@ -849,5 +849,6 @@
   "request-history-routing-nonblocking.test.ts": "usage",
   "management-body-bounds.test.ts": "server", "hotpath-index-parity.test.ts": "server", "adapter-bounded-response.test.ts": "responses",
   "cli-operator-deferred-verbs.test.ts": "cli", "ci-run-changed-tests-contract.test.ts": "ci-workflows",
-  "combo-least-used-preview.test.ts": "routing", "management-provider-probe-ssrf.test.ts": "server"
+  "combo-least-used-preview.test.ts": "routing", "management-provider-probe-ssrf.test.ts": "server",
+  "sse-single-pass-fastpath.test.ts": "responses"
 }

@@ -24,6 +24,7 @@ export function normalizeResponsesIncompleteReason<T>(payload: T): T {
 
 /** Identity for malformed JSON and unchanged metadata, preserving upstream framing on SSE. */
 export function rewriteResponsesIncompleteReasonJson(json: string): string {
+  if (!json.includes("incomplete_details") && !json.includes("\\u")) return json;
   let payload: unknown;
   try { payload = JSON.parse(json); } catch { return json; }
   const normalized = normalizeResponsesIncompleteReason(payload);

@@ -161,6 +161,7 @@ export function scrubSelfNamedToolCallNamespaceInJson(
   text: string,
   authorization: SelfNamedNamespaceScrubAuthorization,
 ): string {
+  if (!authorization?.customToolCallNames?.size && !authorization?.functionCallNames?.size) return text;
   if (!text.includes("\"namespace\"")) return text;
   let payload: unknown;
   try {

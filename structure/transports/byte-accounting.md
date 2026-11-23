@@ -280,16 +280,18 @@ regular-expression split and intermediate line array. Colonless `data` fields, o
 space after the colon, multiline joining, UTF-8 text and mixed CR/LF/CRLF input retain their
 event-stream semantics. Payload and event-field repairs use the shared line rules, including
 policy failures, custom tools, Copilot and Grok events; identity rewrites preserve
-original wire bytes. `src/server/relay.ts` re-exports the canonical extractor and block splitter.
-Empty byte results across the relay and `src/server/sse-frame-buffer.ts` reuse one immutable
-zero-length view; non-empty frame ownership,
-frame limits, cancellation and wire ownership remain bounded. The byte framer and inspection share
-an unfinished-byte count for the native combo replay observer, without exposing or copying its buffer. They share
-one CR/LF/CRLF delimiter scanner; WebSocket projection uses the canonical data extractor. A terminal
-CR dispatches without awaiting EOF. A later LF extends that delimiter: byte delivery returns a
-framing-only continuation, excluded from event-count limits and the next event's byte cap;
-inspection consumes it without creating an event. The text rewrite relay keeps that continuation
-outside rewrite/drop callbacks and settles injected nonfinal CR delimiters as CRLF.
+original wire bytes. `src/server/relay.ts` re-exports the canonical extractor, block splitter
+and `src/server/sse-terminal-boundary.ts` boundary. Empty byte results across the relay and
+`src/server/sse-frame-buffer.ts` reuse one immutable zero-length view; non-empty frame ownership,
+frame limits, cancellation and wire ownership remain bounded. The framer, inspector,
+`src/server/relay-eager.ts` and `src/server/sse-payload-rewrite.ts` run a single-pass `indexOf`
+scan, share the unfinished-byte count without copying for the replay observer, fuse lazy block
+rewrites into the boundary, and return zero-copy `subarray` views without decoding/parsing
+ordinary deltas; WebSocket projection uses the canonical extractor. A terminal CR dispatches without awaiting
+EOF. A later LF extends that delimiter: byte delivery returns a framing-only continuation, excluded
+from event-count limits and the next event's byte cap; inspection consumes it without creating an
+event. The text rewrite relay keeps that continuation outside rewrite/drop callbacks and settles
+injected nonfinal CR delimiters as CRLF.
 The relay counts actual client enqueues, including late LF continuations suppressed by the Messages
 filter; with no emitted chunk it keeps reading through the next event or EOF.
 `tests/responses/sse-payload-rewrite-continuation.test.ts` binds that progress across rewrite, tap

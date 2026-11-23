@@ -394,13 +394,20 @@ describe("gateway hotpath & protocol hygiene", () => {
     expect(rewrite(escapedFailed).join("\n")).not.toContain(secret);
   });
 
-  test("BoundedSseFrameBuffer retains <=16 KiB scratch buffer across frames and drops oversized >16 KiB buffers", () => {
+  test("BoundedSseFrameBuffer uses zero-copy views on single chunks, retains <=16 KiB scratch across split frames, and drops oversized >16 KiB buffers", () => {
     const enc = new TextEncoder();
     const framer = new BoundedSseFrameBuffer();
     const internal = framer as unknown as { candidate: Uint8Array; candidateBytes: number };
 
     const f1 = enc.encode(`data: ${"x".repeat(4096)}\n\n`);
-    const out1 = framer.feed(f1);
+    const outSingle = framer.feed(f1);
+    expect(outSingle).toHaveLength(1);
+    expect(outSingle[0]!.block.byteLength).toBe(f1.byteLength - 2);
+    expect(outSingle[0]!.block.buffer).toBe(f1.buffer);
+    expect(internal.candidate.byteLength).toBe(0);
+
+    expect(framer.feed(f1.subarray(0, 100))).toEqual([]);
+    const out1 = framer.feed(f1.subarray(100));
     expect(out1).toHaveLength(1);
     expect(out1[0]!.block.byteLength).toBe(f1.byteLength - 2);
     const scratchAfter1 = internal.candidate;
@@ -408,20 +415,23 @@ describe("gateway hotpath & protocol hygiene", () => {
     expect(scratchAfter1.byteLength).toBeLessThanOrEqual(16 * 1024);
 
     const f2 = enc.encode(`data: ${"y".repeat(4096)}\n\n`);
-    const out2 = framer.feed(f2);
+    expect(framer.feed(f2.subarray(0, 100))).toEqual([]);
+    const out2 = framer.feed(f2.subarray(100));
     expect(out2).toHaveLength(1);
     expect(out2[0]!.block).not.toBe(out1[0]!.block);
     expect(internal.candidate).toBe(scratchAfter1);
 
-    // Oversized frame (> 16 KiB) emits intact and resets internal scratch to EMPTY_BYTES.
+    // Oversized split frame (> 16 KiB) emits intact and resets internal scratch to EMPTY_BYTES.
     const fLarge = enc.encode(`data: ${"z".repeat(20 * 1024)}\n\n`);
-    const outLarge = framer.feed(fLarge);
+    expect(framer.feed(fLarge.subarray(0, 100))).toEqual([]);
+    const outLarge = framer.feed(fLarge.subarray(100));
     expect(outLarge).toHaveLength(1);
     expect(outLarge[0]!.block.byteLength).toBe(fLarge.byteLength - 2);
     expect(internal.candidate.byteLength).toBe(0);
 
     // clear() still drops a retained small scratch buffer.
-    framer.feed(f1);
+    expect(framer.feed(f1.subarray(0, 100))).toEqual([]);
+    expect(framer.feed(f1.subarray(100))).toHaveLength(1);
     expect(internal.candidate.byteLength).toBeGreaterThan(0);
     framer.clear();
     expect(internal.candidate.byteLength).toBe(0);

@@ -871,7 +871,10 @@ export async function deliverPassthroughResponse(
         rewriteResponsesIncompleteReasonJson,
         createImageGenCallRestoreRewrite(imageGenCallAliases),
         // #3217: a call whose namespace repeats its own name is unroutable in codex-rs.
-        createSelfNamedToolCallNamespaceScrubRewrite(selfNamedNamespaceScrubAuthorization),
+        (selfNamedNamespaceScrubAuthorization?.customToolCallNames?.size ?? 0) > 0
+          || (selfNamedNamespaceScrubAuthorization?.functionCallNames?.size ?? 0) > 0
+          ? createSelfNamedToolCallNamespaceScrubRewrite(selfNamedNamespaceScrubAuthorization)
+          : undefined,
         responseEffects.routedMuseToolNameAliases.size > 0
           ? createMuseToolNameRestoreRewrite(responseEffects.routedMuseToolNameAliases)
           : undefined,

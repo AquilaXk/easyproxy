@@ -31,16 +31,15 @@ import {
   doneFrame,
   failedTailFrame,
   refusalFailedTailFrame,
+  SseBoundaryRewriteError,
   upstreamErrorTailFrame,
 } from "./relay";
 import {
-  nextSseBlock,
   payloadRewriteAsBlockRewrite,
-  replaceSseDataPayload,
-  sseDataPayload,
   type SseBlockRewrite,
   type SsePayloadRewrite,
 } from "./sse-payload-rewrite";
+import { EMPTY_BYTES } from "./sse-frame-buffer";
 import type { TranslatorBudget } from "../lib/translator-budget";
 import type { BareUpstreamError } from "./bare-upstream-error";
 import { carryPacedStream, isPacedStream, PACED_READ_AHEAD_BYTES } from "../lib/paced-stream";
@@ -127,9 +126,15 @@ export function relaySseEagerBounded(
   const terminalEncoder = new TextEncoder();
   const adapterEofFrame = adapterEofIncompleteFrame(terminalEncoder);
   const terminalSentinel = doneFrame(terminalEncoder);
-  const terminalBoundary = createSseTerminalOutputBoundary({ ...opts?.terminalBoundary, maskCredential: opts?.maskCredential, redactForwardedEvidence: opts?.redactForwardedEvidence });
   const activeRewrite: SseBlockRewrite | undefined = hooks.rewriteBlocks
     ?? (hooks.rewritePayload ? payloadRewriteAsBlockRewrite(hooks.rewritePayload) : undefined);
+  const terminalBoundary = createSseTerminalOutputBoundary({
+    ...opts?.terminalBoundary,
+    maskCredential: opts?.maskCredential,
+    redactForwardedEvidence: opts?.redactForwardedEvidence,
+    ...(activeRewrite ? { postRewriteBlocks: activeRewrite } : {}),
+    ...(opts?.rewriteBudget ? { rewriteBudget: opts.rewriteBudget } : {}),
+  });
   const encodeFailedTail = (error: unknown): Uint8Array | null => {
     try {
       return failedTailFrame(terminalEncoder, error, opts?.maskCredential);
@@ -157,64 +162,6 @@ export function relaySseEagerBounded(
     } catch {
       return null;
     }
-  };
-  const rewriteDecoder = activeRewrite ? new TextDecoder() : null;
-  const rewriteEncoder = activeRewrite ? new TextEncoder() : null;
-  const rewriteBudget = opts?.rewriteBudget;
-  let frameBuffer = "";
-  let frameBufferBytes = 0;
-  /** Frame complete SSE blocks and rewrite each block's data payload in place. */
-  const rewriteOutbound = (value: Uint8Array): Uint8Array => {
-    let out = "";
-    const fragment = rewriteDecoder!.decode(value, { stream: true });
-    if (rewriteBudget) {
-      const nextBytes = frameBufferBytes + rewriteEncoder!.encode(fragment).byteLength;
-      const reservation = rewriteBudget.reserveTransient(nextBytes, { kind: "live_transient" });
-      try {
-        frameBuffer += fragment;
-        reservation.commitRetained();
-        rewriteBudget.releaseRetained(frameBufferBytes, { kind: "live_transient" });
-        frameBufferBytes = nextBytes;
-      } catch (error) {
-        reservation.release();
-        throw error;
-      }
-    } else {
-      frameBuffer += fragment;
-      frameBufferBytes += value.byteLength;
-    }
-    for (;;) {
-      const next = nextSseBlock(frameBuffer);
-      if (!next) break;
-      for (const outBlock of activeRewrite!(next.block)) {
-        out += outBlock + next.delimiter;
-      }
-      frameBuffer = next.rest;
-    }
-    if (rewriteBudget) {
-      const remaining = rewriteEncoder!.encode(frameBuffer).byteLength;
-      rewriteBudget.releaseRetained(frameBufferBytes - remaining, { kind: "live_transient" });
-      frameBufferBytes = remaining;
-    } else {
-      frameBufferBytes = rewriteEncoder!.encode(frameBuffer).byteLength;
-    }
-    return rewriteEncoder!.encode(out);
-  };
-  /** Flush any trailing partial block at upstream end (rewrite applied, matching the pull relay). */
-  const flushRewriteTail = (): Uint8Array => {
-    if (!activeRewrite) return new Uint8Array(0);
-    // Decoder-flushed bytes logically follow everything already decoded.
-    let tail = frameBuffer + rewriteDecoder!.decode();
-    const rewritten = activeRewrite(tail);
-    // Multiple emitted blocks must stay separately framed (#893 review);
-    // join places the delimiter only between blocks, never after the last.
-    tail = rewritten.join(tail.includes("\r\n") ? "\r\n\r\n" : "\n\n");
-    frameBuffer = "";
-    if (rewriteBudget && frameBufferBytes > 0) {
-      rewriteBudget.releaseRetained(frameBufferBytes, { kind: "live_transient" });
-    }
-    frameBufferBytes = 0;
-    return rewriteEncoder!.encode(tail);
   };
   let queuedBytes = 0;
   let cancelled = false;
@@ -305,18 +252,17 @@ export function relaySseEagerBounded(
         if (upstream.signal.aborted) break;
         if (upstreamDone) {
           hooks.finishInspection();
-          const boundedTail = terminalBoundary.finish();
-          let clientTail = boundedTail;
+          let clientTail: Uint8Array<ArrayBufferLike> = EMPTY_BYTES;
           let rewriteFailed = false;
           let rewriteError: unknown;
-          if (activeRewrite) {
-            try {
-              const rewritten = rewriteOutbound(boundedTail);
-              clientTail = joinUint8Arrays(rewritten, flushRewriteTail());
-            } catch (error) {
+          try {
+            clientTail = terminalBoundary.finish();
+          } catch (error) {
+            if (error instanceof SseBoundaryRewriteError) {
               rewriteFailed = true;
-              rewriteError = error;
-              clientTail = new Uint8Array(0);
+              rewriteError = error.cause;
+            } else {
+              throw error;
             }
           }
           if (rewriteFailed) {
@@ -375,21 +321,19 @@ export function relaySseEagerBounded(
           }
           continue;
         }
-        const terminalBounded = terminalBoundary.feed(value);
         let outbound: Uint8Array;
-        if (activeRewrite) {
-          try {
-            outbound = rewriteOutbound(terminalBounded);
-          } catch (error) {
+        try {
+          outbound = terminalBoundary.feed(value);
+        } catch (error) {
+          if (error instanceof SseBoundaryRewriteError) {
             // Preserve the first rewrite failure across the teardown flush. A
             // second empty flush may succeed, but the terminal bytes still
             // must not bypass the failed rewrite or become DONE-only output.
             priorRewriteFailure = true;
-            priorRewriteError = error;
-            throw error;
+            priorRewriteError = error.cause;
+            throw error.cause;
           }
-        } else {
-          outbound = terminalBounded;
+          throw error;
         }
         if (outbound.byteLength > 0) {
           queuedBytes += outbound.byteLength;
@@ -423,34 +367,29 @@ export function relaySseEagerBounded(
       // A read can fail after delivering an unterminated terminal block. Flush
       // both observers before deciding whether this is a synthetic reset so
       // eager mode matches the tee/pull boundary semantics at EOF.
-      let boundedTail: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+      let clientTail: Uint8Array<ArrayBufferLike> = EMPTY_BYTES;
       let tailTerminal = false;
       let tailDone = false;
-      try { hooks.finishInspection(); } catch { /* preserve the original read failure */ }
-      try {
-        boundedTail = terminalBoundary.finish();
-        tailTerminal = terminalBoundary.terminalSeen();
-        tailDone = terminalBoundary.doneSeen();
-      } catch {
-        // A near-cap ambiguous delimiter tail may itself overflow at EOF.
-        // Preserve the original read/framing failure and continue emitting
-        // the bounded failed tail instead of letting cleanup throw again.
-      }
-      let clientTail: Uint8Array<ArrayBufferLike> = boundedTail;
       let rewriteFailed = false;
       let rewriteError: unknown;
+      try { hooks.finishInspection(); } catch { /* preserve the original read failure */ }
       if (priorRewriteFailure) {
         rewriteFailed = true;
         rewriteError = priorRewriteError;
-        clientTail = new Uint8Array(0);
-      } else if (activeRewrite) {
+      } else {
         try {
-          const rewritten = rewriteOutbound(boundedTail);
-          clientTail = joinUint8Arrays(rewritten, flushRewriteTail());
+          clientTail = terminalBoundary.finish();
+          tailTerminal = terminalBoundary.terminalSeen();
+          tailDone = terminalBoundary.doneSeen();
         } catch (error) {
-          rewriteFailed = true;
-          rewriteError = error;
-          clientTail = new Uint8Array(0);
+          if (error instanceof SseBoundaryRewriteError) {
+            rewriteFailed = true;
+            rewriteError = error.cause;
+            clientTail = EMPTY_BYTES;
+          }
+          // Otherwise a near-cap ambiguous delimiter tail may itself overflow at EOF.
+          // Preserve the original read/framing failure and continue emitting
+          // the bounded failed tail instead of letting cleanup throw again.
         }
       }
       if (clientTail.byteLength > 0 && canDeliver()) {
@@ -458,7 +397,7 @@ export function relaySseEagerBounded(
         try { controllerRef?.enqueue(clientTail); } catch { /* client already torn down */ }
       }
       if (rewriteFailed && canDeliver()) {
-        // Never bypass a client rewrite after it fails: boundedTail can contain
+        // Never bypass a client rewrite after it fails: clientTail can contain
         // provider metadata or content that the active rewrite was required to
         // remove. Emit one safe failed envelope instead. When inspection has
         // already reported the real upstream terminal, this is a delivery
@@ -506,13 +445,6 @@ export function relaySseEagerBounded(
     } finally {
       upstream.signal.removeEventListener("abort", wakeUp);
       upstream.signal.removeEventListener("abort", wakeParkedRead);
-      // Release any retained rewrite-buffer bytes on every teardown path
-      // (error, cancel, upstream abort) — consumption/EOF release alone
-      // leaves them charged.
-      if (rewriteBudget && frameBufferBytes > 0) {
-        try { rewriteBudget.releaseRetained(frameBufferBytes, { kind: "live_transient" }); } catch { /* teardown must not throw */ }
-        frameBufferBytes = 0;
-      }
       terminalBoundary.dispose();
       if (syntheticKind && canDeliver()) {
         if (syntheticReason === undefined) hooks.onSynthetic(syntheticKind);
@@ -530,7 +462,6 @@ export function relaySseEagerBounded(
       // Signal-driven cancellation need not have invoked the body's cancel hook.
       try { controllerRef?.close(); } catch { /* already closed/errored */ }
       try { hooks.disposeInspection?.(); } catch { /* inspection teardown must not block lifecycle cleanup */ }
-      try { activeRewrite?.dispose?.(); } catch { /* rewrite teardown must not block lifecycle cleanup */ }
       fireDone();
     }
   };
@@ -553,13 +484,4 @@ export function relaySseEagerBounded(
       markClientGone();
     },
   }));
-}
-
-function joinUint8Arrays(first: Uint8Array, second: Uint8Array): Uint8Array {
-  if (first.byteLength === 0) return second;
-  if (second.byteLength === 0) return first;
-  const joined = new Uint8Array(first.byteLength + second.byteLength);
-  joined.set(first);
-  joined.set(second, first.byteLength);
-  return joined;
 }

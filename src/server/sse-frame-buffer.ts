@@ -1,8 +1,10 @@
 import { isCyberPolicyCode, isCyberPolicyMessage } from "../lib/errors";
+import type { TranslatorBudget } from "../lib/translator-budget";
 import { sseDataPayload } from "./sse-payload-rewrite";
 
 export const MAX_CLIENT_SSE_FRAME_BYTES = 4 * 1024 * 1024;
 const REUSABLE_SCRATCH_BYTES = 16 * 1024;
+const LIVE_TRANSIENT_SCOPE = { kind: "live_transient" as const };
 
 export const EMPTY_BYTES = new Uint8Array(0);
 
@@ -10,6 +12,36 @@ export const EMPTY_BYTES = new Uint8Array(0);
 const DELIMITERS = new Map([
   "\n", "\n\n", "\n\r", "\n\r\n", "\r\r", "\r\r\n", "\r\n\n", "\r\n\r", "\r\n\r\n",
 ].map(text => [text, Uint8Array.from(text, char => char.charCodeAt(0))]));
+const DELIMITER_NL_CR_LF = DELIMITERS.get("\n\r\n")!;
+const DELIMITER_CR_CR_LF = DELIMITERS.get("\r\r\n")!;
+const DELIMITER_CRLF_CR_LF = DELIMITERS.get("\r\n\r\n")!;
+
+/** Settle a trailing CR delimiter before appending another block after it. */
+export function settledCrDelimiter(delimiter: Uint8Array): Uint8Array {
+  const len = delimiter.byteLength;
+  if (len === 0 || delimiter[len - 1] !== 13) return delimiter;
+  if (len === 2) return delimiter[0] === 10 ? DELIMITER_NL_CR_LF : DELIMITER_CR_CR_LF;
+  if (len === 3 && delimiter[0] === 13 && delimiter[1] === 10) return DELIMITER_CRLF_CR_LF;
+  const settled = new Uint8Array(len + 1);
+  settled.set(delimiter);
+  settled[len] = 10;
+  return settled;
+}
+
+/** Skip non-delimiter payload bytes using native byte search across tail + chunk. */
+export function findNextSseDelimiterCandidate(
+  startIndex: number,
+  tailLength: number,
+  chunk: Uint8Array,
+): number {
+  if (startIndex < tailLength) return startIndex;
+  const offset = startIndex - tailLength;
+  const lf = chunk.indexOf(10, offset);
+  const cr = chunk.indexOf(13, offset);
+  if (lf === -1) return tailLength + (cr === -1 ? chunk.byteLength : cr);
+  if (cr === -1) return tailLength + lf;
+  return tailLength + (lf < cr ? lf : cr);
+}
 
 export class SseFrameTooLargeError extends Error {
   readonly maxBytes: number;
@@ -92,6 +124,10 @@ function copyRange(
 
 const UTF8_DECODER = new TextDecoder();
 const BACKSLASH_U_BYTES = Uint8Array.from([0x5c, 0x75]);
+const DONE_MARKER_BYTES = Uint8Array.from([0x5b, 0x44, 0x4f, 0x4e, 0x45, 0x5d]); // "[DONE]"
+const SAFETY_BUFFERING_BYTES = Uint8Array.from([
+  0x73, 0x61, 0x66, 0x65, 0x74, 0x79, 0x5f, 0x62, 0x75, 0x66, 0x66, 0x65, 0x72, 0x69, 0x6e, 0x67,
+]); // "safety_buffering"
 const QUOTED_ERROR_BYTES = Uint8Array.from([0x22, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x22]); // "\"error\""
 const QUOTED_RESPONSE_DOT_BYTES = Uint8Array.from([
   0x22, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e,
@@ -157,6 +193,61 @@ function mayCarryResponsesTerminalEvent(block: Uint8Array): boolean {
   return false;
 }
 
+function isDataFieldLineStart(block: Uint8Array, lineStart: number, lineEnd: number): boolean {
+  const lineLen = lineEnd - lineStart;
+  if (lineLen < 4) return false;
+  if (
+    block[lineStart] !== 0x64
+    || block[lineStart + 1] !== 0x61
+    || block[lineStart + 2] !== 0x74
+    || block[lineStart + 3] !== 0x61
+  ) {
+    return false;
+  }
+  return lineLen === 4 || block[lineStart + 4] === 0x3a;
+}
+
+/**
+ * Zero-decode byte precheck for terminal boundary inspection.
+ *
+ * Returns `false` for ordinary single-data delta and keepalive frames so
+ * callers can skip UTF-8 decoding and `JSON.parse`. Any multi-line `data:`
+ * block returns `true` so split tokens (`[DO\ndata: NE]` or `"response.\ndata: completed"`)
+ * can never bypass inspection.
+ */
+export function mayRequireTerminalBoundaryInspection(
+  block: Uint8Array,
+  dropSafetyBuffering: boolean,
+): boolean {
+  const len = block.byteLength;
+  if (len === 0) return false;
+  let dataLineCount = 0;
+  let lineStart = 0;
+  const hasCr = block.indexOf(13) !== -1;
+  while (lineStart < len) {
+    const lf = block.indexOf(10, lineStart);
+    let lineEnd: number;
+    if (!hasCr) {
+      lineEnd = lf === -1 ? len : lf;
+    } else {
+      const cr = block.indexOf(13, lineStart);
+      lineEnd = lf === -1 ? (cr === -1 ? len : cr) : (cr === -1 ? lf : (lf < cr ? lf : cr));
+    }
+    if (isDataFieldLineStart(block, lineStart, lineEnd)) {
+      dataLineCount += 1;
+      if (dataLineCount > 1) return true;
+    }
+    if (lineEnd >= len) break;
+    lineStart = hasCr && block[lineEnd] === 13 && lineEnd + 1 < len && block[lineEnd + 1] === 10
+      ? lineEnd + 2
+      : lineEnd + 1;
+  }
+  if (mayCarryResponsesTerminalEvent(block)) return true;
+  if (blockContainsSubarray(block, DONE_MARKER_BYTES)) return true;
+  if (dropSafetyBuffering && blockContainsSubarray(block, SAFETY_BUFFERING_BYTES)) return true;
+  return false;
+}
+
 /**
  * True when a complete SSE block already commits a Responses terminal event.
  *
@@ -218,13 +309,15 @@ function isResponsesTerminalFrame(block: Uint8Array): boolean {
 export class BoundedSseFrameBuffer {
   private readonly maxFrameBytes: number;
   private readonly maxFramesPerFeed: number;
+  private readonly transientBudget?: TranslatorBudget;
   private delimiterTail: Uint8Array = EMPTY_BYTES;
   private candidate: Uint8Array = EMPTY_BYTES;
   private candidateBytes = 0;
+  private budgetChargedBytes = 0;
   private disposed = false;
   private pendingLineFeed = false;
 
-  constructor(maxFrameBytes = MAX_CLIENT_SSE_FRAME_BYTES) {
+  constructor(maxFrameBytes = MAX_CLIENT_SSE_FRAME_BYTES, transientBudget?: TranslatorBudget) {
     if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes <= 0) {
       throw new RangeError("maxFrameBytes must be a positive safe integer");
     }
@@ -233,9 +326,49 @@ export class BoundedSseFrameBuffer {
     // is independent of candidate bytes. Keep frame count proportional to the
     // configured byte budget while leaving ample room for real Responses events.
     this.maxFramesPerFeed = Math.max(1, Math.ceil(maxFrameBytes / 1024));
+    this.transientBudget = transientBudget;
+  }
+
+  private syncBudget(targetBytes: number): void {
+    const budget = this.transientBudget;
+    if (!budget) return;
+    const prevBytes = this.budgetChargedBytes;
+    if (targetBytes === prevBytes) return;
+    if (targetBytes === 0) {
+      budget.releaseRetained(prevBytes, LIVE_TRANSIENT_SCOPE);
+      this.budgetChargedBytes = 0;
+      return;
+    }
+    if (targetBytes < prevBytes) {
+      budget.releaseRetained(prevBytes - targetBytes, LIVE_TRANSIENT_SCOPE);
+      this.budgetChargedBytes = targetBytes;
+      return;
+    }
+    let reservation: ReturnType<TranslatorBudget["reserveTransient"]>;
+    try {
+      reservation = budget.reserveTransient(targetBytes, LIVE_TRANSIENT_SCOPE);
+    } catch (err) {
+      this.clear();
+      this.disposed = true;
+      throw err;
+    }
+    try {
+      reservation.commitRetained();
+      if (prevBytes > 0) budget.releaseRetained(prevBytes, LIVE_TRANSIENT_SCOPE);
+      this.budgetChargedBytes = targetBytes;
+    } catch (err) {
+      reservation.release();
+      this.clear();
+      this.disposed = true;
+      throw err;
+    }
   }
 
   private clear(): void {
+    if (this.transientBudget && this.budgetChargedBytes > 0) {
+      this.transientBudget.releaseRetained(this.budgetChargedBytes, LIVE_TRANSIENT_SCOPE);
+      this.budgetChargedBytes = 0;
+    }
     this.delimiterTail = EMPTY_BYTES;
     this.candidate = EMPTY_BYTES;
     this.candidateBytes = 0;
@@ -260,21 +393,42 @@ export class BoundedSseFrameBuffer {
     this.candidate = grown;
   }
 
-  private retain(slice: Uint8Array): void {
-    if (slice.byteLength === 0) return;
-    const nextBytes = this.candidateBytes + slice.byteLength;
+  private retainSliceRange(
+    start: number,
+    end: number,
+    tailLength: number,
+    previousTail: Uint8Array,
+    chunk: Uint8Array,
+  ): void {
+    const sliceLen = end - start;
+    if (sliceLen <= 0) return;
+    const nextBytes = this.candidateBytes + sliceLen;
     if (nextBytes > this.maxFrameBytes) {
       this.clear();
       this.disposed = true;
       throw new SseFrameTooLargeError(this.maxFrameBytes);
     }
+    const remainingTailAfter = Math.max(0, tailLength - end);
+    this.syncBudget(nextBytes + remainingTailAfter);
     this.ensureCapacity(nextBytes);
-    this.candidate.set(slice, this.candidateBytes);
+    let writeAt = this.candidateBytes;
+    if (start < tailLength) {
+      const tailPart = previousTail.subarray(start, Math.min(end, tailLength));
+      this.candidate.set(tailPart, writeAt);
+      writeAt += tailPart.byteLength;
+    }
+    if (end > tailLength) {
+      const chunkPart = chunk.subarray(Math.max(0, start - tailLength), end - tailLength);
+      this.candidate.set(chunkPart, writeAt);
+    }
     this.candidateBytes = nextBytes;
   }
 
-  private takeCandidate(): Uint8Array {
-    if (this.candidateBytes === 0) return EMPTY_BYTES;
+  private takeCandidate(remainingTail = 0): Uint8Array {
+    if (this.candidateBytes === 0) {
+      this.syncBudget(remainingTail);
+      return EMPTY_BYTES;
+    }
     const block = this.candidate.slice(0, this.candidateBytes);
     // Keep a bounded scratch buffer across frames to avoid reallocating 4 KiB+
     // per SSE frame on long streams, while releasing rare multi-MiB frames.
@@ -282,31 +436,27 @@ export class BoundedSseFrameBuffer {
     if (this.candidate.byteLength > REUSABLE_SCRATCH_BYTES) {
       this.candidate = EMPTY_BYTES;
     }
+    this.syncBudget(remainingTail);
     return block;
   }
 
-  feed(chunk: Uint8Array): BoundedSseFrame[] {
-    if (this.disposed) return [];
-    if (chunk.byteLength === 0) return [];
+  feedWithPrefix(chunk: Uint8Array): { frames: BoundedSseFrame[]; prefixEnd: number | null } {
+    if (this.disposed || chunk.byteLength === 0) {
+      return { frames: [], prefixEnd: null };
+    }
 
     const frames: BoundedSseFrame[] = [];
     let completedFrames = 0;
     const previousTail = this.delimiterTail;
     this.delimiterTail = EMPTY_BYTES;
     const tailLength = previousTail.byteLength;
+    const entryCandidateBytes = this.candidateBytes;
     const totalLength = tailLength + chunk.byteLength;
+    let hadContinuation = false;
+    let lastFrameEnd = 0;
     const byteAt = (index: number): number => index < tailLength
       ? previousTail[index]!
       : chunk[index - tailLength]!;
-    const retainRange = (start: number, end: number): void => {
-      if (end <= start) return;
-      if (start < tailLength) {
-        this.retain(previousTail.subarray(start, Math.min(end, tailLength)));
-      }
-      if (end > tailLength) {
-        this.retain(chunk.subarray(Math.max(0, start - tailLength), end - tailLength));
-      }
-    };
 
     try {
       let index = 0;
@@ -314,11 +464,14 @@ export class BoundedSseFrameBuffer {
         // The prior event was already dispatched on CR. Preserve its later LF without
         // charging it to the next event or letting it pair with another line ending.
         frames.push({ block: EMPTY_BYTES, delimiter: DELIMITERS.get("\n")!, continuation: true });
+        hadContinuation = true;
         index = 1;
       }
       this.pendingLineFeed = false;
       let retainedThrough = index;
       while (index < totalLength) {
+        index = findNextSseDelimiterCandidate(index, tailLength, chunk);
+        if (index >= totalLength) break;
         const delimiterLength = sseDelimiterLengthAt(index, totalLength, byteAt);
         if (delimiterLength === undefined) break;
         if (delimiterLength > 0) {
@@ -327,24 +480,66 @@ export class BoundedSseFrameBuffer {
             this.disposed = true;
             throw new SseFrameCountLimitError(this.maxFramesPerFeed);
           }
-          retainRange(retainedThrough, index);
-          const block = this.takeCandidate();
+          let block: Uint8Array;
+          if (this.candidateBytes === 0 && retainedThrough >= tailLength) {
+            const blockLen = index - retainedThrough;
+            if (blockLen > this.maxFrameBytes) {
+              this.clear();
+              this.disposed = true;
+              throw new SseFrameTooLargeError(this.maxFrameBytes);
+            }
+            const totalSliceBytes = blockLen + delimiterLength;
+            if (this.transientBudget && totalSliceBytes > 0) {
+              let reservation: ReturnType<TranslatorBudget["reserveTransient"]>;
+              try {
+                reservation = this.transientBudget.reserveTransient(totalSliceBytes, LIVE_TRANSIENT_SCOPE);
+              } catch (err) {
+                this.clear();
+                this.disposed = true;
+                throw err;
+              }
+              try {
+                reservation.commitRetained();
+                this.transientBudget.releaseRetained(totalSliceBytes, LIVE_TRANSIENT_SCOPE);
+              } catch (err) {
+                reservation.release();
+                this.clear();
+                this.disposed = true;
+                throw err;
+              }
+            }
+            block = blockLen === 0
+              ? EMPTY_BYTES
+              : chunk.subarray(retainedThrough - tailLength, index - tailLength);
+          } else {
+            this.retainSliceRange(retainedThrough, index, tailLength, previousTail, chunk);
+            const remainingTailAfter = Math.max(0, tailLength - (index + delimiterLength));
+            block = this.takeCandidate(remainingTailAfter);
+          }
           const delimiter = delimiterBytesAt(index, delimiterLength, byteAt);
           frames.push({ block, delimiter });
           completedFrames += 1;
           index += delimiterLength;
           this.pendingLineFeed = index === totalLength && byteAt(index - 1) === 13;
+          lastFrameEnd = index;
           retainedThrough = index;
           continue;
         }
         index += 1;
       }
 
-      retainRange(retainedThrough, index);
+      this.retainSliceRange(retainedThrough, index, tailLength, previousTail, chunk);
       if (index < totalLength) {
-        this.delimiterTail = copyRange(index, totalLength, tailLength, previousTail, chunk);
+        const nextTail = copyRange(index, totalLength, tailLength, previousTail, chunk);
+        this.syncBudget(this.candidateBytes + nextTail.byteLength);
+        this.delimiterTail = nextTail;
+      } else {
+        this.syncBudget(this.candidateBytes);
       }
-      return frames;
+      const prefixEnd = tailLength === 0 && entryCandidateBytes === 0 && !hadContinuation && lastFrameEnd > 0
+        ? lastFrameEnd
+        : null;
+      return { frames, prefixEnd };
     } catch (err) {
       const framingError = err instanceof SseFrameTooLargeError
         || err instanceof SseFrameCountLimitError;
@@ -354,10 +549,17 @@ export class BoundedSseFrameBuffer {
         // than retroactively replacing the committed terminal with a 502.
         this.clear();
         this.disposed = true;
-        return frames;
+        const prefixEnd = tailLength === 0 && entryCandidateBytes === 0 && !hadContinuation && lastFrameEnd > 0
+          ? lastFrameEnd
+          : null;
+        return { frames, prefixEnd };
       }
       throw err;
     }
+  }
+
+  feed(chunk: Uint8Array): BoundedSseFrame[] {
+    return this.feedWithPrefix(chunk).frames;
   }
 
   /** Bytes retained for an unfinished frame, including a possible delimiter prefix. */
@@ -369,9 +571,19 @@ export class BoundedSseFrameBuffer {
   finish(): Uint8Array {
     if (this.disposed) return EMPTY_BYTES;
     try {
-      this.retain(this.delimiterTail);
-      this.delimiterTail = EMPTY_BYTES;
-      return this.takeCandidate();
+      if (this.delimiterTail.byteLength > 0) {
+        const nextBytes = this.candidateBytes + this.delimiterTail.byteLength;
+        if (nextBytes > this.maxFrameBytes) {
+          this.clear();
+          this.disposed = true;
+          throw new SseFrameTooLargeError(this.maxFrameBytes);
+        }
+        this.ensureCapacity(nextBytes);
+        this.candidate.set(this.delimiterTail, this.candidateBytes);
+        this.candidateBytes = nextBytes;
+        this.delimiterTail = EMPTY_BYTES;
+      }
+      return this.takeCandidate(0);
     } finally {
       this.clear();
       this.disposed = true;

@@ -45,6 +45,11 @@ export function composeSseBlockRewrites(...rewrites: SseBlockRewrite[]): SseBloc
   const composed: SseBlockRewrite = (block: string) => {
     let blocks: readonly string[] = [block];
     for (const rewrite of active) {
+      if (disposed || blocks.length === 0) return [];
+      if (blocks.length === 1) {
+        blocks = rewrite(blocks[0]!);
+        continue;
+      }
       const next: string[] = [];
       for (const current of blocks) {
         if (disposed) return [];
@@ -193,13 +198,20 @@ export function sseDataPayload(block: string): string | null {
   let found = false;
   let lineStart = 0;
   const len = block.length;
+  const hasCr = block.includes("\r");
 
   while (lineStart < len) {
-    let lineEnd = lineStart;
-    while (lineEnd < len && block.charCodeAt(lineEnd) !== 13 && block.charCodeAt(lineEnd) !== 10) lineEnd += 1;
+    const lf = block.indexOf("\n", lineStart);
+    let lineEnd: number;
+    if (!hasCr) {
+      lineEnd = lf === -1 ? len : lf;
+    } else {
+      const cr = block.indexOf("\r", lineStart);
+      lineEnd = lf === -1 ? (cr === -1 ? len : cr) : (cr === -1 ? lf : (lf < cr ? lf : cr));
+    }
     let nextStart = lineEnd;
     if (nextStart < len) {
-      nextStart += block.charCodeAt(lineEnd) === 13 && block.charCodeAt(lineEnd + 1) === 10 ? 2 : 1;
+      nextStart += hasCr && block.charCodeAt(lineEnd) === 13 && block.charCodeAt(lineEnd + 1) === 10 ? 2 : 1;
     }
 
     const lineLen = lineEnd - lineStart;
@@ -282,6 +294,23 @@ export function relaySseWithPayloadRewrite(
   return relaySseWithBlockRewrite(body, payloadRewriteAsBlockRewrite(rewrite), translatorBudget, frameHooks, clientFilter);
 }
 
+export type PendingSseBlockRewrite = {
+  source: ReadableStream<Uint8Array>;
+  rewrite: SseBlockRewrite;
+  translatorBudget: TranslatorBudget;
+};
+
+const pendingSseBlockRewrites = new WeakMap<ReadableStream<Uint8Array>, PendingSseBlockRewrite>();
+
+/** Consume a lazy block-rewrite shell so a downstream terminal relay can fuse it in one pass. */
+export function takePendingSseBlockRewrite(
+  stream: ReadableStream<Uint8Array>,
+): PendingSseBlockRewrite | undefined {
+  const pending = pendingSseBlockRewrites.get(stream);
+  if (pending) pendingSseBlockRewrites.delete(stream);
+  return pending;
+}
+
 /**
  * Relay an SSE body through a single JS pull wrapper, applying a block-level
  * rewrite that may emit zero or more blocks per upstream event (lifecycle
@@ -295,7 +324,8 @@ export function relaySseWithBlockRewrite(
   frameHooks?: MessagesSseFrameHooks,
   clientFilter?: MessagesSseErrorFilter,
 ): ReadableStream<Uint8Array> {
-  const reader = body.getReader();
+  const canFuse = !frameHooks && !clientFilter;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = canFuse ? null : body.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   const buffer = createSseBlockBuffer(translatorBudget);
@@ -304,6 +334,7 @@ export function relaySseWithBlockRewrite(
   let cancelled = false;
   let pendingLineFeed = false;
   let pendingLineFeedVisible = false;
+  let wrapped: ReadableStream<Uint8Array> | undefined;
   const disposeRewrite = (): void => {
     if (disposed) return;
     disposed = true;
@@ -385,8 +416,10 @@ export function relaySseWithBlockRewrite(
     return 0;
   };
 
-  return carryPacedStream(body, new ReadableStream<Uint8Array>({
+  wrapped = carryPacedStream(body, new ReadableStream<Uint8Array>({
     async pull(controller) {
+      if (canFuse && wrapped) pendingSseBlockRewrites.delete(wrapped);
+      const activeReader = (reader ??= body.getReader());
       try {
         // A network chunk is not an SSE-event boundary. Bun may not issue a
         // second pull after a fulfilled pull enqueues nothing, so keep reading
@@ -394,7 +427,7 @@ export function relaySseWithBlockRewrite(
         // reached. This also handles block rewrites that intentionally drop an
         // event without parking the client stream.
         for (;;) {
-          const { done, value } = await reader.read();
+          const { done, value } = await activeReader.read();
           // A cancel raced this pending read: never feed the rewriter again
           // after its disposal (#893 review).
           if (cancelled) return;
@@ -418,15 +451,20 @@ export function relaySseWithBlockRewrite(
         disposeRewrite();
         // Cancelling one tee branch waits for its sibling. Surface the failure
         // now so downstream can abort upstream and release the inspection branch.
-        void reader.cancel(error).catch(() => {});
+        void (reader ? reader.cancel(error) : body.cancel(error)).catch(() => {});
         controller.error(error);
       }
     },
     cancel(reason) {
+      if (canFuse && wrapped) pendingSseBlockRewrites.delete(wrapped);
       cancelled = true;
       buffer.clear();
       disposeRewrite();
-      reader.cancel(reason).catch(() => {});
+      void (reader ? reader.cancel(reason) : body.cancel(reason)).catch(() => {});
     },
   }, pacedQueuingStrategy(body)));
+  if (canFuse) {
+    pendingSseBlockRewrites.set(wrapped, { source: body, rewrite, translatorBudget });
+  }
+  return wrapped;
 }
