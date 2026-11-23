@@ -664,6 +664,7 @@
     "request-history-routing-nonblocking.test.ts": "usage",
     "management-body-bounds.test.ts": "server",
     "hotpath-index-parity.test.ts": "server",
-    "adapter-bounded-response.test.ts": "responses"
+    "adapter-bounded-response.test.ts": "responses",
+    "cli-operator-deferred-verbs.test.ts": "cli"
   }
 }

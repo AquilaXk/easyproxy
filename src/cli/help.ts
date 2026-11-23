@@ -85,7 +85,9 @@ Usage:
   epx message <sub>           Codex queued messages, explicit SSH peers and foreground ownership
   epx effort [sub]            Inspect and configure reasoning effort caps and defaults
   epx fallback <sub>          Turn model or provider fallback off per scope; per-device local fallback
-  epx observe <sub>           Logs, usage, storage, memory, and debug data
+  epx observe <sub>           Logs, usage, storage, memory, low-quota events, and debug data
+  epx workflow-budget <sub>   Live workflow budgets, root clear, and workflow count ceilings
+  epx guardrails <sub>        Outbound secret guardrails, tool-output compression, and dry-run
   epx inspect <sub>           Effective config, catalog, analytics, pacing, client-config
   epx route <sub>             Routing features (to, combo, policy)
   epx logs [filters]          Alias of epx observe logs

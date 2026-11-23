@@ -16,12 +16,12 @@ const PREAMBLE = `<!-- ${OWNER}. Do not edit by hand. -->\n<!-- Regenerate: bun 
 
 // Navigation groups, not command dispatch. New roots require an explicit assignment.
 const DOMAINS = [
-  { name: "lifecycle", roots: ["codex-provider", "chatgpt", "status", "resolve", "capabilities", "sync", "start", "stop", "restart", "service", "gui"] },
+  { name: "lifecycle", roots: ["codex-provider", "chatgpt", "status", "resolve", "capabilities", "sync", "start", "stop", "restart", "service", "gui", "update", "tray", "telemetry"] },
   { name: "providers-models", roots: ["provider", "models", "alias"] },
   { name: "accounts", roots: ["account", "auth", "login", "logout"] },
-  { name: "agents-routing", roots: ["agent", "combo", "route", "fallback", "v2", "effort", "memory", "message", "advisor"] },
+  { name: "agents-routing", roots: ["agent", "combo", "route", "fallback", "v2", "effort", "memory", "message", "advisor", "workflow-budget", "guardrails"] },
   { name: "integrations", roots: ["claude", "integration", "commandcode", "grok", "codex-shim"] },
-  { name: "observe-system", roots: ["companion", "usage", "logs", "storage", "inspect", "system", "observe", "debug", "export", "import", "cost", "update", "config", "tray", "telemetry"] },
+  { name: "observe-system", roots: ["companion", "usage", "logs", "storage", "inspect", "system", "observe", "debug", "export", "import", "cost", "config"] },
   { name: "access-remote", roots: ["link", "remote-workspace", "hub", "connect", "disconnect", "api", "access"] },
   { name: "lab", roots: ["lab"] },
 ];

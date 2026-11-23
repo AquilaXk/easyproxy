@@ -485,8 +485,24 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
   },
   {
     name: "observe",
-    usage: "epx observe <logs|usage|storage|memory|debug|claude-inbound|injection> ...",
-    summary: "Inspect proxy requests, usage, storage, memory, and debug data.",
+    usage: "epx observe <logs|usage|storage|memory|debug|claude-inbound|injection|low-quota-events> ...",
+    summary: "Inspect proxy requests, usage, storage, memory, low-quota events, and debug data.",
+  },
+  {
+    name: "workflow-budget",
+    usage: "epx workflow-budget <status|clear|settings> ...",
+    summary: "Inspect or clear live workflow budgets and configure workflow count ceilings.",
+    details: [
+      "`settings set` accepts `--max-concurrent-children <2..64>`, `--max-physical-sends <1..10000>`, and `--max-distinct-children <1..1024>`; `interactiveReserve` and window duration remain fixed read-only properties.",
+    ],
+  },
+  {
+    name: "guardrails",
+    usage: "epx guardrails <status|set|dry-run> ...",
+    summary: "Inspect or update outbound secret guardrails and tool-output compression, or run a dry-run.",
+    details: [
+      "`--secret-mode` accepts `off`, `redact`, or `block`. `dry-run` evaluates `--text` or `--file` locally and on the proxy without changing live config or stats.",
+    ],
   },
   {
     name: "inspect",
@@ -498,10 +514,10 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
   },
   {
     name: "logs",
-    usage: "epx logs [filters] [--follow] [--json|--jsonl|--events]; epx logs history [selectors] [--cursor <token>] [--json|--jsonl]; epx logs get <request-id> [--json]",
-    summary: "Read or follow request logs.",
+    usage: "epx logs [filters] [--follow] [--json|--jsonl|--events]; epx logs history [selectors] [--cursor <token>] [--json|--jsonl]; epx logs get <request-id> [--json]; epx logs low-quota-events [--limit <0..100>] [--json]",
+    summary: "Read or follow request logs and low-quota events.",
     details: [
-      "Default reads the recent ring. `history` pages the derived index with a resumable cursor; `get` reads one canonical row; `explain` is the route-decision view.",
+      "Default reads the recent ring. `history` pages the derived index with a resumable cursor; `get` reads one canonical row; `explain` is the route-decision view; `low-quota-events` reads bounded Codex low-quota event history.",
     ],
   },
   {

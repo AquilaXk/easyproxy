@@ -8,7 +8,7 @@
 Use these declarations to choose a task, then check its flags and authority before execution.
 Non-mutating probes may still contact providers, consume quota or refresh caches.
 
-Declared capabilities: 71.
+Declared capabilities: 79.
 
 ### `epx agent subagents force`
 
@@ -1347,6 +1347,178 @@ State-changing: no. JSON mode: `payload`.
 | `--json` | boolean | Emit the result as JSON. |
 
 - Alias of observe memory.
+
+### `epx workflow-budget status`
+
+Usage: `epx workflow-budget status [--root <id>] [--limit <n>] [--json]`
+
+Inspect tracked workflow-budget roots and recent refusal or clear events.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/workflow-budget` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--root` | string | Filter to one non-empty tracked root identifier of at most 200 characters. |
+| `--limit` | number | Non-negative root and event limit (events capped at 64 by server). |
+| `--json` | boolean | Emit the workflow-budget status payload as JSON. |
+
+- Also accepted without `status` (`epx workflow-budget [--root <id>] [--limit <n>] [--json]`). Reads live process memory for active turns, windowed physical sends, distinct children, and recent events.
+- When --root is specified, an untracked root returns root: null alongside HTTP 200.
+
+### `epx workflow-budget clear`
+
+Usage: `epx workflow-budget clear [<root-id>] [--root <id>] [--json]`
+
+Clear windowed workflow-budget send and child counts for one root.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/workflow-budget/clear` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--root` | string | Root identifier to clear (mutually exclusive with positional <root-id>; non-empty, <= 200 chars). |
+| `--json` | boolean | Emit the clear receipt as JSON. |
+
+- Accepts either a positional <root-id> or --root <id>, never both; sends { root } and leaves active counts, lifetime sends, and token spend ledgers intact.
+- Returns exit 4 when the target root is not tracked (404 unknown_root).
+
+### `epx workflow-budget settings show`
+
+Usage: `epx workflow-budget settings show [--json]`
+
+Inspect live workflow-budget count ceilings, built-in defaults, bounds, and fixed settings.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/workflow-budget/settings` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit workflow-budget settings as JSON. |
+
+- Also accepted without `show` (`epx workflow-budget settings [--json]`). Displays maxConcurrentChildren, maxPhysicalSends, maxDistinctChildren, and read-only interactiveReserve and windowMs values.
+
+### `epx workflow-budget settings set`
+
+Usage: `epx workflow-budget settings set [--max-concurrent-children <2..64>] [--max-physical-sends <1..10000>] [--max-distinct-children <1..1024>] [--json]`
+
+Update per-install workflow-budget count ceilings.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| PUT | `/api/workflow-budget/settings` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--max-concurrent-children` | number | Maximum concurrent children per root (integer 2..64). |
+| `--max-physical-sends` | number | Maximum windowed physical sends per root (integer 1..10000). |
+| `--max-distinct-children` | number | Maximum distinct children per window (integer 1..1024). |
+| `--json` | boolean | Emit the updated workflow-budget settings as JSON. |
+
+- Preserves omitted ceilings and never accepts interactiveReserve (read-only fixed setting).
+- Settings changes apply to future decisions without resetting tracked root usage.
+
+### `epx workflow-budget settings reset`
+
+Usage: `epx workflow-budget settings reset [--json]`
+
+Reset persisted workflow-budget count ceilings to built-in defaults.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| PUT | `/api/workflow-budget/settings` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--reset` | boolean | Alias accepted with `epx workflow-budget settings --reset`. |
+| `--json` | boolean | Emit the reset workflow-budget settings as JSON. |
+
+- Sends JSON null to remove the persisted workflowBudget block and restore built-in defaults.
+
+### `epx guardrails status`
+
+Usage: `epx guardrails status [--json]`
+
+Inspect outbound secret guardrails, tool-output compression settings, and live hygiene counters.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/gateway-guardrails` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit guardrail settings and live hygiene stats as JSON. |
+
+- Also accepted without `status` (`epx guardrails [--json]`). Reads current effective outboundSecretGuard, toolOutputCompression, and process hygiene counters.
+
+### `epx guardrails set`
+
+Usage: `epx guardrails set [--secret-mode <off|redact|block>] [--compress <on|off>] [--min-chars <512..500000>] [--head-chars <0..100000>] [--tail-chars <0..100000>] [--strip-ansi <on|off>] [--reset-secret-guard] [--reset-compression] [--json]`
+
+Update outbound secret guardrails or tool-output compression settings.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| PUT | `/api/gateway-guardrails` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--secret-mode` | string | Outbound secret guard mode: off \| redact \| block. |
+| `--compress` | string | Tool-output compression toggle: on \| off. |
+| `--min-chars` | number | Minimum output length before compression applies (integer 512..500000). |
+| `--head-chars` | number | Leading characters preserved when compressing (integer 0..100000). |
+| `--tail-chars` | number | Trailing characters preserved when compressing (integer 0..100000). |
+| `--strip-ansi` | string | Strip ANSI escapes before compression: on \| off. |
+| `--reset-secret-guard` | boolean | Reset outboundSecretGuard to defaults (cannot combine with --secret-mode). |
+| `--reset-compression` | boolean | Reset toolOutputCompression to defaults (cannot combine with compression flags). |
+| `--json` | boolean | Emit updated guardrail settings and stats as JSON. |
+
+- Persists validated outboundSecretGuard or toolOutputCompression sections; requires at least one setting or reset flag.
+- Each modified section replaces that section in persisted config using the schema defaults for omitted compression fields.
+
+### `epx guardrails dry-run`
+
+Usage: `epx guardrails dry-run (--text <str> | --file <path>) [--secret-mode <off|redact|block>] [--compress <on|off>] [--min-chars <512..500000>] [--head-chars <0..100000>] [--tail-chars <0..100000>] [--strip-ansi <on|off>] [--json]`
+
+Evaluate outbound secret guardrails and tool-output compression on synthetic text without mutating state.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/gateway-guardrails/dry-run` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--text` | string | Inline text to evaluate (mutually exclusive with --file; max 65536 chars). |
+| `--file` | string | Regular non-symlink UTF-8 file to evaluate (max 262144 bytes, decoded max 65536 chars). |
+| `--secret-mode` | string | Override outbound secret guard mode for preview: off \| redact \| block. |
+| `--compress` | string | Override tool-output compression toggle: on \| off. |
+| `--min-chars` | number | Override minimum length for compression (integer 512..500000). |
+| `--head-chars` | number | Override leading preserved characters (integer 0..100000). |
+| `--tail-chars` | number | Override trailing preserved characters (integer 0..100000). |
+| `--strip-ansi` | string | Override ANSI stripping: on \| off. |
+| `--json` | boolean | Emit dry-run findings and preview output as JSON. |
+
+- Rejects symlinks, non-regular files, byte reads above 262144, text above 65536 characters, and serialized bodies above 524288 bytes before sending a request.
+- Does not mutate live configuration or outbound hygiene counters.
 
 ### `epx route to`
 

@@ -16,6 +16,7 @@ import { followLogs } from "./log-follow";
 import { handleLogFilterCommand } from "./log-view-filter";
 import { handleLogGetCommand, handleLogHistoryCommand } from "./log-history";
 import { followInjection } from "./injection-follow";
+import { handleLowQuotaEventsCommand } from "./low-quota-events";
 import type { ObserveStreamDeps } from "./observe-stream";
 import { formatUsageReport } from "./usage-report";
 import { handleUsageCompareCommand } from "./usage-compare";
@@ -37,6 +38,7 @@ const USAGE = `Usage:
   epx logs filter [selectors] [--scan-limit <1..2000>] [--limit <1..2000>] [--json|--jsonl]
   epx logs rebuild-index
   epx logs index-status
+  epx logs low-quota-events [--limit <0..100>] [--json]
   epx observe usage [--range <today|1d|7d|30d|all>] [--surface <all|codex|claude|grok>]
       [--since <epoch-ms|ISO-datetime>] [--until <epoch-ms|ISO-datetime>]
       [--provider <name>] [--model <id>] [--api-key-id <id>] [--search <text>] [--top <1-1000>] [--json]
@@ -46,7 +48,8 @@ const USAGE = `Usage:
   epx observe memory [--json]
   epx observe debug [--json]
   epx observe claude-inbound [--limit <n>] [--json]
-  epx observe injection [--limit <n>] [--follow [--jsonl]] [--json]`;
+  epx observe injection [--limit <n>] [--follow [--jsonl]] [--json]
+  epx observe low-quota-events [--limit <0..100>] [--json]`;
 
 type LogEntry = Record<string, unknown> & { id?: string | number; timestamp?: string; provider?: string; model?: string; status?: number };
 
@@ -332,6 +335,7 @@ export async function handleObserveCommand(argv: string[], deps: ObserveStreamDe
       else if (action === "explain") await explain(rest.slice(1), deps);
       else if (action === "rebuild-index") await rebuildIndex(rest.slice(1), deps);
       else if (action === "index-status") await indexStatus(rest.slice(1), deps);
+      else if (action === "low-quota-events") await handleLowQuotaEventsCommand(rest.slice(1), deps);
       else streamExit = await logs(rest, deps);
     }
     else if (sub === "usage") {
@@ -343,6 +347,7 @@ export async function handleObserveCommand(argv: string[], deps: ObserveStreamDe
     else if (sub === "debug") await simple("/api/debug", rest, deps);
     else if (sub === "claude-inbound") await simple("/api/claude/inbound-debug", rest, deps);
     else if (sub === "injection") streamExit = await injection(rest, deps);
+    else if (sub === "low-quota-events") await handleLowQuotaEventsCommand(rest, deps);
     else throw new CliUsageError(`unknown observe command ${sub}`, USAGE);
   });
   return exit || streamExit;

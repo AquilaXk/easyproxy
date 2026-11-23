@@ -8,30 +8,7 @@
 Use these declarations to choose a task, then check its flags and authority before execution.
 Non-mutating probes may still contact providers, consume quota or refresh caches.
 
-Declared capabilities: 105.
-
-### `epx update`
-
-Plan or apply an EasyProxy update.
-
-State-changing: yes. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--plan` | boolean | Preview an orchestrated update with --json. |
-| `--yes` | boolean | Apply an orchestrated update with --json. |
-| `--json` | boolean | Emit a versioned plan or result. |
-| `--tag` | string | Select latest or preview for the legacy update or plan. |
-| `--version` | string | Select an exact version for a plan or apply. |
-| `--expect-plan` | string | Require the apply plan to match this planToken. |
-| `--not-after` | string | Refuse mutation after this Unix millisecond deadline. |
-| `--desktop` | boolean | Update a Windows Desktop installation headlessly (signature-verified MSI). |
-| `--check` | boolean | With --desktop, report the published and serving versions without installing. |
-
-- Orchestrated exit codes: 0 verified or up-to-date; 10 refused; 11 previous version verified; 12 uncertain; 64 usage.
-- --desktop exit codes: 0 done or up to date; 1 nothing installed; 2 old runtime still serving or reboot pending; 3 installer uncertain; 64 usage.
+Declared capabilities: 95.
 
 ### `epx companion`
 
@@ -1746,92 +1723,6 @@ State-changing: yes. JSON mode: `payload`.
 
 - Settings only; no usage timeline request.
 
-### `epx tray install`
-
-Usage: `epx tray install [--no-start] [--json]`
-
-Windows tray install.
-
-State-changing: yes. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--no-start` | boolean | Install without starting the tray. |
-| `--json` | boolean | Emit the result as JSON. |
-
-- Local Windows-only tray lifecycle; no management API. Status on other platforms reports unsupported.
-- Lifecycle writes require Windows.
-
-### `epx tray start`
-
-Usage: `epx tray start [--json]`
-
-Windows tray start.
-
-State-changing: yes. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--json` | boolean | Emit the result as JSON. |
-
-- Local Windows-only tray lifecycle; no management API. Status on other platforms reports unsupported.
-- Lifecycle writes require Windows.
-
-### `epx tray stop`
-
-Usage: `epx tray stop [--json]`
-
-Windows tray stop.
-
-State-changing: yes. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--json` | boolean | Emit the result as JSON. |
-
-- Local Windows-only tray lifecycle; no management API. Status on other platforms reports unsupported.
-- Lifecycle writes require Windows.
-
-### `epx tray status`
-
-Usage: `epx tray status [--json]`
-
-Windows tray status.
-
-State-changing: no. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--json` | boolean | Emit the result as JSON. |
-
-- Local Windows-only tray lifecycle; no management API. Status on other platforms reports unsupported.
-- Lifecycle writes require Windows.
-
-### `epx tray uninstall`
-
-Usage: `epx tray uninstall [--json]`
-
-Windows tray uninstall.
-
-State-changing: yes. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--json` | boolean | Emit the result as JSON. |
-
-- Local Windows-only tray lifecycle; no management API. Status on other platforms reports unsupported.
-- remove aliases uninstall.
-
 ### `epx system health`
 
 Usage: `epx system health [--json]`
@@ -1876,114 +1767,40 @@ State-changing: no. JSON mode: `payload`.
 - start/end are epoch seconds. The end must match the request-time bucket or its immediate successor after an observed rollover; stale windows are refused. Empty series still includes metadata; missingMeasurements and truncated remain visible instead of implying measured complete zero traffic.
 - Uses existing query validation and checks applied model/provider-exclusion scope. It does not change companion settings or request inference.
 
-### `epx telemetry status`
+### `epx observe low-quota-events`
 
-Usage: `epx telemetry status [--json]`
+Usage: `epx observe low-quota-events [--limit <0..100>] [--json]`
 
-Inspect anonymous telemetry consent status and the daily payload preview.
-
-State-changing: no. JSON mode: `payload`.
-
-| Method | Route |
-|---|---|
-| GET | `/api/telemetry` |
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--json` | boolean | Emit the telemetry status and preview as JSON. |
-
-- Reads live status from the running proxy and falls back to local configuration and ledger preview when the proxy is stopped.
-- Previews the oldest eligible unsent day, or the latest completed day with previewEligible = false when no day is eligible. Never creates or transmits a telemetry install identifier.
-
-### `epx telemetry enable`
-
-Usage: `epx telemetry enable [--json]`
-
-Opt in to anonymous daily usage telemetry.
-
-State-changing: yes. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--json` | boolean | Emit the updated telemetry status as JSON. |
-
-- Requires an interactive human terminal, prints the telemetry disclosure block, and asks for confirmation before recording telemetry.decision = accepted.
-- Refuses with agent_consent_required when agent-driven and with tty_required when non-interactive or running under EPX_SERVICE.
-
-### `epx telemetry disable`
-
-Usage: `epx telemetry disable [--json]`
-
-Opt out of anonymous daily usage telemetry and delete the local telemetry identifier.
-
-State-changing: yes. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--json` | boolean | Emit the updated telemetry status as JSON. |
-
-- Writes telemetry.decision = declined in local config.json and removes telemetry-id.json.
-- Always permitted, including in agent-driven sessions.
-
-### `epx telemetry profile status`
-
-Usage: `epx telemetry profile status [--json]`
-
-Inspect the opt-in public leaderboard profile, its next submission preview and its ranks.
+Inspect bounded recent Codex low-quota notification and pause-save events.
 
 State-changing: no. JSON mode: `payload`.
 
 | Method | Route |
 |---|---|
-| GET | `/api/telemetry/profile` |
-| GET | `/api/telemetry/profile/rank` |
+| GET | `/api/codex-auth/low-quota-events` |
 
 | Flag | Value | Meaning |
 |---|---|---|
-| `--json` | boolean | Emit the profile status, preview and ranks as JSON. |
+| `--limit` | number | Maximum events to return (integer 0..100; server default 20). |
+| `--json` | boolean | Emit the low-quota event list as JSON. |
 
-- Reads live status from the running proxy and falls back to the local profile file when the proxy is stopped.
-- Never prints the profile secret.
+- Reads the live server's bounded low-quota event ledger without emitting notifications. Also available as `epx logs low-quota-events`.
 
-### `epx telemetry profile connect`
+### `epx logs low-quota-events`
 
-Usage: `epx telemetry profile connect --handle <handle> [--name <display name>] [--avatar <colour>] [--json]`
+Usage: `epx logs low-quota-events [--limit <0..100>] [--json]`
 
-Create an opt-in public leaderboard profile.
+Inspect bounded recent Codex low-quota notification and pause-save events.
 
-State-changing: yes. JSON mode: `envelope`.
-
-Drives no management route.
-
-| Flag | Value | Meaning |
-|---|---|---|
-| `--handle` | string | Public handle: 3 to 24 lowercase letters, digits or hyphens. |
-| `--name` | string | Public display name; defaults to the handle. |
-| `--avatar` | string | Avatar colour from the fixed palette; default blue. |
-| `--json` | boolean | Emit the connected profile as JSON. |
-
-- Requires an interactive human terminal and anonymous telemetry turned on, prints the public-profile disclosure, and asks for confirmation (default no).
-- Refuses with agent_consent_required when agent-driven and with tty_required when non-interactive or running under EPX_SERVICE.
-
-### `epx telemetry profile disconnect`
-
-Usage: `epx telemetry profile disconnect [--json]`
-
-Delete the public leaderboard profile and all its data on the server.
-
-State-changing: yes. JSON mode: `envelope`.
+State-changing: no. JSON mode: `payload`.
 
 | Method | Route |
 |---|---|
-| DELETE | `/api/telemetry/profile` |
+| GET | `/api/codex-auth/low-quota-events` |
 
 | Flag | Value | Meaning |
 |---|---|---|
-| `--json` | boolean | Emit the disconnect outcome as JSON. |
+| `--limit` | number | Maximum events to return (integer 0..100; server default 20). |
+| `--json` | boolean | Emit the low-quota event list as JSON. |
 
-- Always permitted, including in agent-driven sessions and while anonymous telemetry is off.
-- Uses the running proxy when available and otherwise deletes directly; an unreachable telemetry service leaves the deletion pending for the proxy to retry.
+- Reads the live server's bounded low-quota event ledger without emitting notifications. Also available as `epx observe low-quota-events`.

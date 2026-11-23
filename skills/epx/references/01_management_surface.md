@@ -25,12 +25,12 @@ These answer in the CLI head and never reach the proxy, so they work with nothin
 
 | Chapter | Declared capabilities |
 |---|---|
-| [lifecycle](01_surface_lifecycle.md) | 14 |
+| [lifecycle](01_surface_lifecycle.md) | 26 |
 | [providers-models](01_surface_providers-models.md) | 54 |
 | [accounts](01_surface_accounts.md) | 44 |
-| [agents-routing](01_surface_agents-routing.md) | 71 |
+| [agents-routing](01_surface_agents-routing.md) | 79 |
 | [integrations](01_surface_integrations.md) | 41 |
-| [observe-system](01_surface_observe-system.md) | 105 |
+| [observe-system](01_surface_observe-system.md) | 95 |
 | [access-remote](01_surface_access-remote.md) | 55 |
 | [lab](01_surface_lab.md) | 21 |
 
@@ -137,7 +137,7 @@ Original invocation order. These headings preserve links to the previous single-
 
 ### `epx update`
 
-[State-changing task](01_surface_observe-system.md#epx-update)
+[State-changing task](01_surface_lifecycle.md#epx-update)
 
 ### `epx capabilities`
 
@@ -1389,23 +1389,23 @@ Original invocation order. These headings preserve links to the previous single-
 
 ### `epx tray install`
 
-[State-changing task](01_surface_observe-system.md#epx-tray-install)
+[State-changing task](01_surface_lifecycle.md#epx-tray-install)
 
 ### `epx tray start`
 
-[State-changing task](01_surface_observe-system.md#epx-tray-start)
+[State-changing task](01_surface_lifecycle.md#epx-tray-start)
 
 ### `epx tray stop`
 
-[State-changing task](01_surface_observe-system.md#epx-tray-stop)
+[State-changing task](01_surface_lifecycle.md#epx-tray-stop)
 
 ### `epx tray status`
 
-[Read-oriented task](01_surface_observe-system.md#epx-tray-status)
+[Read-oriented task](01_surface_lifecycle.md#epx-tray-status)
 
 ### `epx tray uninstall`
 
-[State-changing task](01_surface_observe-system.md#epx-tray-uninstall)
+[State-changing task](01_surface_lifecycle.md#epx-tray-uninstall)
 
 ### `epx system health`
 
@@ -1417,27 +1417,67 @@ Original invocation order. These headings preserve links to the previous single-
 
 ### `epx telemetry status`
 
-[Read-oriented task](01_surface_observe-system.md#epx-telemetry-status)
+[Read-oriented task](01_surface_lifecycle.md#epx-telemetry-status)
 
 ### `epx telemetry enable`
 
-[State-changing task](01_surface_observe-system.md#epx-telemetry-enable)
+[State-changing task](01_surface_lifecycle.md#epx-telemetry-enable)
 
 ### `epx telemetry disable`
 
-[State-changing task](01_surface_observe-system.md#epx-telemetry-disable)
+[State-changing task](01_surface_lifecycle.md#epx-telemetry-disable)
 
 ### `epx telemetry profile status`
 
-[Read-oriented task](01_surface_observe-system.md#epx-telemetry-profile-status)
+[Read-oriented task](01_surface_lifecycle.md#epx-telemetry-profile-status)
 
 ### `epx telemetry profile connect`
 
-[State-changing task](01_surface_observe-system.md#epx-telemetry-profile-connect)
+[State-changing task](01_surface_lifecycle.md#epx-telemetry-profile-connect)
 
 ### `epx telemetry profile disconnect`
 
-[State-changing task](01_surface_observe-system.md#epx-telemetry-profile-disconnect)
+[State-changing task](01_surface_lifecycle.md#epx-telemetry-profile-disconnect)
+
+### `epx workflow-budget status`
+
+[Read-oriented task](01_surface_agents-routing.md#epx-workflow-budget-status)
+
+### `epx workflow-budget clear`
+
+[State-changing task](01_surface_agents-routing.md#epx-workflow-budget-clear)
+
+### `epx workflow-budget settings show`
+
+[Read-oriented task](01_surface_agents-routing.md#epx-workflow-budget-settings-show)
+
+### `epx workflow-budget settings set`
+
+[State-changing task](01_surface_agents-routing.md#epx-workflow-budget-settings-set)
+
+### `epx workflow-budget settings reset`
+
+[State-changing task](01_surface_agents-routing.md#epx-workflow-budget-settings-reset)
+
+### `epx guardrails status`
+
+[Read-oriented task](01_surface_agents-routing.md#epx-guardrails-status)
+
+### `epx guardrails set`
+
+[State-changing task](01_surface_agents-routing.md#epx-guardrails-set)
+
+### `epx guardrails dry-run`
+
+[Read-oriented task](01_surface_agents-routing.md#epx-guardrails-dry-run)
+
+### `epx observe low-quota-events`
+
+[Read-oriented task](01_surface_observe-system.md#epx-observe-low-quota-events)
+
+### `epx logs low-quota-events`
+
+[Read-oriented task](01_surface_observe-system.md#epx-logs-low-quota-events)
 
 ### `epx disconnect`
 
@@ -1669,6 +1709,6 @@ Original invocation order. These headings preserve links to the previous single-
 
 ## Counts
 
-- declared capabilities: 405
-- of those, state-changing: 254
+- declared capabilities: 415
+- of those, state-changing: 258
 - head-resolved invocations: 2

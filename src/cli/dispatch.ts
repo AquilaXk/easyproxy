@@ -832,6 +832,14 @@ const commandRunners: Record<string, CommandRunner> = {
     const { handleObserveCommand } = await import("./observe");
     return await handleObserveCommand(deps.args.slice(1), { findLiveProxy: deps.findLiveProxy });
   },
+  "workflow-budget": async deps => {
+    const { handleWorkflowBudgetCommand } = await import("./workflow-budget");
+    return await handleWorkflowBudgetCommand(deps.args.slice(1), { findLiveProxy: deps.findLiveProxy });
+  },
+  guardrails: async deps => {
+    const { handleGuardrailsCommand } = await import("./guardrails");
+    return await handleGuardrailsCommand(deps.args.slice(1), { findLiveProxy: deps.findLiveProxy });
+  },
   inspect: async deps => {
     const { handleInspectCommand } = await import("./inspect");
     return await handleInspectCommand(deps.args.slice(1));

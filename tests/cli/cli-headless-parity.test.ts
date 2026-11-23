@@ -639,8 +639,9 @@ describe("headless GUI parity CLI", () => {
       ["/api/protocols", "epx api protocols/explain/policy"],
       ["/api/settings", "epx system"],
       ["/api/native-reasoning-retention", "(none — dedicated live CLI deferred; local policy via epx config)"],
-      ["/api/workflow-budget/settings", "(none — dedicated live CLI deferred; local ceilings via epx config)"],
-      ["/api/gateway-guardrails", "(none — dedicated live CLI deferred; local policy via epx config)"],
+      ["/api/workflow-budget/settings", "epx workflow-budget settings"],
+      ["/api/workflow-budget", "epx workflow-budget"],
+      ["/api/gateway-guardrails", "epx guardrails"],
       // Routing Intelligence (RI-04..RI-10): profiles + dry-run are mirrored by
       // `epx route policy`. Analytics is GUI-first for now; the same request
       // history remains available through observe/index tooling.
