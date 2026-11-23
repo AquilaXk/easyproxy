@@ -28,8 +28,8 @@ export interface UpdaterManifest {
 }
 
 export const platformFiles: Record<string, string> = {
-  "darwin-aarch64": "macos.app.tar.gz",
-  "darwin-x86_64": "macos.app.tar.gz",
+  "darwin-aarch64": "macos-arm64.app.tar.gz",
+  "darwin-x86_64": "macos-x64.app.tar.gz",
   "windows-x86_64": "windows-x64.msi",
   // The AppImage is the plugin's default Linux target: it keeps the plain os-arch key so
   // AppImage installs from releases before the deb target existed keep resolving updates.

@@ -112,7 +112,11 @@ try {
     }
   }
   Write-SignedOutput "false"
-  if ($FailOnError) { throw }
+  if ($FailOnError -or $Trust -eq "release") { throw }
   Write-Host "::warning::$name ships unsigned: $reason"
   Write-Outcome "$name ships unsigned: $reason"
+} finally {
+  if ($stage -and (Test-Path -LiteralPath $stage)) {
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }

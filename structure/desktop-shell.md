@@ -498,13 +498,9 @@ trusted-comment signature. Missing or malformed fields fail before publication.
 the pinned public key and emits their digest in `src/update/update-trust-anchor.mjs`;
 `--check` detects drift. These files do not yet authorize
 updates or change the Tauri updater's existing trust configuration.
-On macOS, in-app updates download `EasyProxy-<version>-macos.app.tar.gz`; the DMG is for
-the first installation.
+On macOS, in-app updates download per-arch `EasyProxy-<version>-macos-arm64.app.tar.gz` or `macos-x64.app.tar.gz` (`updater-manifest.ts`); DMGs remain first-install packages. On Windows, `updater.rs` checks OS Authenticode (`Status=Valid`, signer + timestamp) over a bounded private temp `.msi` before draining the runtime.
 
-The Tauri updater public key and endpoint are checked in to
-`desktop/src-tauri/tauri.conf.json`. Private updater and Apple signing credentials are
-provided only as release secrets. Windows certificate signing is not wired yet, so MSI
-users may see a SmartScreen warning.
+`desktop/scripts/prepare-sidecar.ts` clears stale resource dirs, bundles `native-bin` alongside `keyring` (`resources/native-bin` in `tauri.conf.json`), ad-hoc signs them + updates `SHA256SUMS` on darwin, and signs Developer ID Mach-Os during release builds. Windows release builds fail closed through SignPath (`windows-signing-plan.sh`) unless `DRY_RUN=true`.
 
 The app's own version comes from `desktop/src-tauri/tauri.conf.json` and `Cargo.toml` (mirrored
 in `Cargo.lock`), not from `package.json`, and the release workflow injects none. Those files move
@@ -513,23 +509,8 @@ to build when they disagree with the requested version; see `ops/docs-and-releas
 
 ## Widget snapshot
 
-The macOS desktop shell writes the WidgetKit snapshot to
-`~/Library/Containers/com.easyproxy.desktop.widget/Data/Library/Application Support/EasyProxy/snapshot.json`.
-The schema version is `1`; the Rust writer refreshes it every five minutes after an
-immediate first write. The WidgetKit appex reads this privacy-safe file and performs no
-network access.
-
-The WidgetKit extension in `app/` needs three things that Xcode's app-extension target
-would supply on its own, and SwiftPM has no such target: `@main` on
-`EasyProxyWidgetBundle`, the `-e _NSExtensionMain` linker entry, and
-`-application-extension` — the compiler spelling of `APPLICATION_EXTENSION_API_ONLY` — all
-in `app/Package.swift`. Any one missing yields a widget that never appears: without
-`@main` the linker drops the bundle and the extension registers with nothing to offer, and
-without the entry override ExtensionFoundation traps during bootstrap. Nothing observable
-distinguishes these from a working widget, because the bundle still builds, signs and
-registers. `com.apple.security.app-sandbox` is also mandatory — `pkd` refuses to register
-an unsandboxed plug-in at all — which is why the shell writes its snapshot into the
-extension's own container rather than a shared App Group, which ad-hoc signing cannot use.
+Developer ID builds (`APPLE_TEAM_ID`) configure `EasyProxyAppGroup` (`<TEAM_ID>.com.easyproxy.desktop`) in `build-widget.sh` + app entitlements and share `~/Library/Group Containers/<group>/Library/Application Support/EasyProxy/snapshot.json` between `widget.rs` and `app/Sources/EasyProxyWidget/SnapshotReader.swift`. Ad-hoc builds fall back to `~/Library/Containers/com.easyproxy.desktop.widget/Data/...` and refuse creating that directory unless `Data` already exists (`containermanagerd` sandbox). Schema `1` refreshes every five minutes.
+WidgetKit SwiftPM keeps `@main`, `-e _NSExtensionMain`, `-application-extension`, and `app-sandbox` (`app/Package.swift`) so `pkd` registers the plug-in.
 
 ## The tray icon opens a usage popup
 

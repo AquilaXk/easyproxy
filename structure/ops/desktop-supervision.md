@@ -241,7 +241,7 @@ Content-Length only refuses early. The transport is injected; no production sett
 loopback mock.
 
 `headless.ts` holds the home's sync/update mutex for an apply (`--check` only reads), writes the
-verified bytes (`wx`) into a fresh staging directory, reads them back and verifies again.
+verified bytes (`wx`) into a fresh staging directory, reads them back and verifies again. On Windows, after minisign + MSI magic verification (`verifyDesktopInstaller`), it verifies OS Authenticode (`verifyWindowsMsiAuthenticode` via `Get-AuthenticodeSignature` over `$env:EPX_MSI_PATH`, requiring `Status=Valid`, signer, and timestamp) before `moveAsideOwnImage` or `msiexec`.
 `staging.ts` places that directory: for an elevated token (`TokenElevation`; an unreadable token
 counts as elevated) it is `<GetSystemDirectory parent>\Temp\epx-desktop-update-<random>`, created by
 `CreateDirectoryW` with `D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;RC;;;OW)`, so no non-elevated

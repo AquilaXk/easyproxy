@@ -41,6 +41,8 @@ jobs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       publish: ${{ steps.meta.outputs.publish }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      dist_tag: ${{ steps.meta.outputs.dist_tag }}
+      dry_run: ${{ steps.meta.outputs.dry_run }}
       source_sha: ${{ steps.meta.outputs.source_sha }}
       is_tag_push: ${{ steps.meta.outputs.is_tag_push }}
     steps:
@@ -112,9 +114,11 @@ jobs:
         run: |
           set -euo pipefail
           source_sha="$(git rev-parse HEAD)"
+          bun run hygiene
           bun scripts/check-repo-hygiene.ts
           bun scripts/release-version-sources.ts check
           bun scripts/generate-update-trust-root.ts --check
+          bun run structure:check
           bun run typecheck
           bun run typecheck:tsc
           bun run privacy:scan
@@ -122,6 +126,7 @@ jobs:
           is_tag_push="false"
           if [[ "$GIT_REF" == refs/tags/v* ]]; then
             is_tag_push="true"
+            dry_run="false"
             tag_version="${REF_NAME#v}"
             if [ "$tag_version" != "$pkg_version" ]; then
               echo "::error::Tag ${REF_NAME} does not match package.json version ${pkg_version}"
@@ -129,29 +134,34 @@ jobs:
             fi
             publish="true"
           else
+            dry_run="${DRY_RUN:-true}"
             publish="false"
-            if [ "${DRY_RUN:-true}" = "false" ]; then
+            if [ "$dry_run" = "false" ]; then
               publish="true"
             fi
           fi
           prerelease="false"
+          dist_tag="latest"
           if [[ "$pkg_version" == *-* ]] || [ "${CHANNEL:-latest}" = "preview" ]; then
             prerelease="true"
+            dist_tag="preview"
           fi
           {
             echo "version=${pkg_version}"
             echo "release_tag=v${pkg_version}"
             echo "publish=${publish}"
             echo "prerelease=${prerelease}"
+            echo "dist_tag=${dist_tag}"
+            echo "dry_run=${dry_run}"
             echo "source_sha=${source_sha}"
             echo "is_tag_push=${is_tag_push}"
           } >> "$GITHUB_OUTPUT"
 
-  standalone:
+  package-standalone:
     name: standalone (${{ matrix.label }})
     needs: verify
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -159,18 +169,33 @@ jobs:
           - label: darwin-arm64
             os: macos-15
             target: bun-darwin-arm64
+            ext: tar.gz
             exe: epx
-            archive: easyproxy-darwin-arm64.tar.gz
-          - label: linux-x64
-            os: ubuntu-latest
-            target: bun-linux-x64
+            convenience: easyproxy-darwin-arm64.tar.gz
+          - label: darwin-x64
+            os: macos-15-intel
+            target: bun-darwin-x64
+            ext: tar.gz
             exe: epx
-            archive: easyproxy-linux-x64.tar.gz
+            convenience: ""
           - label: windows-x64
             os: windows-latest
             target: bun-windows-x64
+            ext: zip
             exe: epx.exe
-            archive: easyproxy-windows-x64.zip
+            convenience: easyproxy-windows-x64.zip
+          - label: linux-x64
+            os: ubuntu-latest
+            target: bun-linux-x64
+            ext: tar.gz
+            exe: epx
+            convenience: easyproxy-linux-x64.tar.gz
+          - label: linux-arm64
+            os: ubuntu-24.04-arm
+            target: bun-linux-arm64
+            ext: tar.gz
+            exe: epx
+            convenience: ""
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -200,32 +225,197 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
-          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
+          key: bun-cache-${{ runner.os }}-${{ matrix.label }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
           restore-keys: |
-            bun-cache-${{ runner.os }}-
+            bun-cache-${{ runner.os }}-${{ matrix.label }}-
 
       - name: Build GUI and standalone binary
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-          EXE: ${{ matrix.exe }}
-          ARCHIVE: ${{ matrix.archive }}
         run: |
           set -euo pipefail
           bun install --frozen-lockfile
+          bun install --cwd gui --frozen-lockfile
           bun run build:gui
           bun run build:epx-child
           bun run build:remote-workspace-helper
           bun scripts/build-standalone.ts --target "$TARGET" --out "dist/standalone/${TARGET}"
+
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            eval "value=\${$name:-}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            if [ "${DRY_RUN:-}" != "true" ]; then
+              echo "::error::A real release needs the full Apple signing and notarization credential set."
+              echo "::error::Missing:$missing"
+              exit 1
+            fi
+            echo "STANDALONE_SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "Signing credentials incomplete, leaving standalone binary unsigned/ad-hoc:$missing"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/easyproxy-signing.keychain-db"
+          echo "EASYPROXY_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "STANDALONE_SIGNING_CONFIGURED=true" >> "$GITHUB_ENV"
+          keychain_password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          certificate="$RUNNER_TEMP/easyproxy-signing.p12"
+          trap 'shred -u "$certificate" 2>/dev/null || rm -Pf "$certificate" 2>/dev/null || true' EXIT
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # shellcheck disable=SC2046
+          security list-keychain -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+      - name: Sign macOS standalone bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "${STANDALONE_SIGNING_CONFIGURED:-false}" != "true" ]; then
+            if [ "${DRY_RUN:-}" != "true" ]; then
+              echo "::error::Refusing unsigned macOS standalone release."
+              exit 1
+            fi
+            exit 0
+          fi
+          bundle="dist/standalone/${TARGET}"
+          verify_signed() {
+            local file="$1"
+            codesign --verify --strict "$file"
+            local desc
+            desc="$(codesign -dvvv "$file" 2>&1)"
+            grep -q "TeamIdentifier=$APPLE_TEAM_ID" <<<"$desc"
+            grep -q "flags=.*runtime" <<<"$desc"
+            grep -q "Timestamp=" <<<"$desc"
+          }
+          shopt -s nullglob
+          for addon in "${bundle}/keyring/"*.darwin-*.node; do
+            codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$addon"
+            verify_signed "$addon"
+          done
+          if [ -d "${bundle}/native-bin" ]; then
+            while IFS= read -r -d '' file; do
+              case "$(head -c 4 "$file" | xxd -p)" in
+                cefaedfe|cffaedfe|feedface|feedfacf|cafebabe|bebafeca|cafebabf|bfbafeca) ;;
+                *) continue ;;
+              esac
+              codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$file"
+              verify_signed "$file"
+            done < <(find "${bundle}/native-bin" -type f -print0)
+            for triple_dir in "${bundle}/native-bin/"*; do
+              [ -d "$triple_dir" ] || continue
+              if [ -f "$triple_dir/epx-child" ]; then
+                (cd "$triple_dir" && shasum -a 256 epx-child > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+              fi
+            done
+          fi
+          codesign --force --timestamp --options runtime --entitlements desktop/src-tauri/Entitlements.plist --sign "$MACOS_SIGN_IDENTITY" "${bundle}/epx"
+          verify_signed "${bundle}/epx"
+
+      - name: Decide Windows code signing
+        id: windows-signing
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          SIGNPATH_CONFIGURED: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: bash scripts/ci/windows-signing-plan.sh
+
+      - name: Upload the unsigned Windows binary for signing
+        id: unsigned-epx
+        if: steps.windows-signing.outputs.mode == 'sign'
+        continue-on-error: ${{ needs.verify.outputs.dry_run == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: signpath-unsigned-${{ matrix.target }}
+          path: dist/standalone/${{ matrix.target }}/epx.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign the Windows binary through SignPath
+        id: sign-epx
+        if: steps.windows-signing.outputs.mode == 'sign' && steps.unsigned-epx.outcome == 'success'
+        continue-on-error: ${{ needs.verify.outputs.dry_run == 'true' }}
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092
+        timeout-minutes: 65
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ steps.windows-signing.outputs.policy }}
+          artifact-configuration-slug: windows-standalone-zip
+          github-artifact-id: ${{ steps.unsigned-epx.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: ${{ runner.temp }}/signpath-signed-epx
+
+      - name: Swap in the verified signed Windows binary
+        id: swap-epx
+        if: steps.windows-signing.outputs.mode == 'sign'
+        continue-on-error: ${{ needs.verify.outputs.dry_run == 'true' }}
+        shell: pwsh
+        env:
+          STANDALONE_TARGET: ${{ matrix.target }}
+          SIGNPATH_OUTCOME: ${{ steps.sign-epx.outcome }}
+          SIGNING_TRUST: ${{ steps.windows-signing.outputs.trust }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          ./scripts/ci/apply-signed-windows-artifact.ps1 `
+            -Target "dist/standalone/$env:STANDALONE_TARGET/epx.exe" `
+            -SignedDirectory (Join-Path $env:RUNNER_TEMP "signpath-signed-epx") `
+            -SubmitOutcome "$env:SIGNPATH_OUTCOME" `
+            -Trust $env:SIGNING_TRUST `
+            -FailOnError:($env:DRY_RUN -ne "true")
+
+      - name: Smoke-check and archive standalone bundle
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXE: ${{ matrix.exe }}
+          EXT: ${{ matrix.ext }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          CONVENIENCE: ${{ matrix.convenience }}
+        run: |
+          set -euo pipefail
           bundle="dist/standalone/${TARGET}"
           triple="${TARGET#bun-}"
           child_exe="epx-child"
+          helper_exe="easyproxy-remote-workspace-helper"
           if [[ "$TARGET" == bun-windows-* ]]; then
             child_exe="epx-child.exe"
+            helper_exe="easyproxy-remote-workspace-helper.exe"
           fi
           test ! -e "${bundle}/.worker-bundles"
           test -f "${bundle}/native-bin/${triple}/${child_exe}"
           test -f "${bundle}/native-bin/${triple}/SHA256SUMS"
+          test -f "${bundle}/native-bin/${triple}/${helper_exe}"
           (
             cd "${bundle}/native-bin/${triple}"
             if command -v sha256sum >/dev/null 2>&1; then
@@ -234,47 +424,656 @@ jobs:
               shasum -a 256 -c SHA256SUMS
             fi
           )
-          if [ "${RUNNER_OS:-}" = "macOS" ]; then
-            test -f "${bundle}/native-bin/darwin-arm64/easyproxy-remote-workspace-helper"
-          elif [ "${RUNNER_OS:-}" = "Windows" ]; then
-            test -f "${bundle}/native-bin/win32-x64/easyproxy-remote-workspace-helper.exe"
-          fi
           "${bundle}/${EXE}" --version
           "${bundle}/${EXE}" __keyring-load-check
+
           mkdir -p dist/release-assets
-          if [[ "$ARCHIVE" == *.zip ]]; then
-            powershell.exe -NoProfile -Command "Compress-Archive -Path 'dist/standalone/${TARGET}/*' -DestinationPath 'dist/release-assets/${ARCHIVE}' -Force"
+          archive="epx-${VERSION}-${TARGET}.${EXT}"
+          if [[ "$EXT" == "zip" ]]; then
+            powershell.exe -NoProfile -Command "Compress-Archive -Path 'dist/standalone/${TARGET}/*' -DestinationPath 'dist/release-assets/${archive}' -Force"
           else
-            tar -C "dist/standalone/${TARGET}" -czf "dist/release-assets/${ARCHIVE}" .
+            tar -C "dist/standalone/${TARGET}" -czf "dist/release-assets/${archive}" .
+          fi
+          (cd dist/release-assets && sha256sum -b "$archive" > "${archive}.sha256")
+          if [ -n "${CONVENIENCE:-}" ]; then
+            cp "dist/release-assets/${archive}" "dist/release-assets/${CONVENIENCE}"
+            (cd dist/release-assets && sha256sum -b "$CONVENIENCE" > "${CONVENIENCE}.sha256")
           fi
 
-      - name: Upload standalone archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Notarize macOS standalone Mach-Os
+        if: runner.os == 'macOS' && env.STANDALONE_SIGNING_CONFIGURED == 'true'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          zip_path="$RUNNER_TEMP/notarize-${TARGET}.zip"
+          trap 'rm -f "$zip_path"' EXIT
+          ditto -c -k --keepParent "dist/standalone/${TARGET}" "$zip_path"
+          xcrun notarytool submit "$zip_path" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+
+      - name: Record Windows standalone signing outcome
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          SIGNING_MODE: ${{ steps.windows-signing.outputs.mode }}
+          SIGNING_TRUST: ${{ steps.windows-signing.outputs.trust }}
+          SIGNED: ${{ steps.swap-epx.outputs.signed }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/windows-signing-outcome.sh standalone dist/windows-signing-outcomes "dist/release-assets/epx-${VERSION}-${TARGET}.zip"
+
+      - name: Upload Windows standalone signing outcome
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-signing-outcome-standalone
+          path: dist/windows-signing-outcomes/standalone.json
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Remove Apple signing keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          if [ -n "${EASYPROXY_SIGNING_KEYCHAIN:-}" ] && [ -f "${EASYPROXY_SIGNING_KEYCHAIN}" ]; then
+            security delete-keychain "${EASYPROXY_SIGNING_KEYCHAIN}"
+          fi
+
+      - name: Upload standalone release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: standalone-${{ matrix.label }}
-          path: dist/release-assets/${{ matrix.archive }}
+          path: dist/release-assets/*
           if-no-files-found: error
+          retention-days: 5
+
+  package-desktop:
+    name: desktop (${{ matrix.label }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macos-arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg,app
+          - label: macos-x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg,app
+          - label: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: msi
+          - label: linux-x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          persist-credentials: false
+          submodules: false
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libdbus-1-dev \
+            patchelf \
+            file
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: |
+            desktop/src-tauri
+            native/epx-child
+            native/remote-workspace-helper
+
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: runtime
+
+      - name: Cache Bun packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ matrix.label }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
+          restore-keys: |
+            bun-cache-${{ runner.os }}-${{ matrix.label }}-
+
+      - name: Build GUI, native helpers, and Tauri sidecar
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun install --cwd gui --frozen-lockfile
+          bun run build:gui
+          bun run build:epx-child
+          bun run build:remote-workspace-helper
+          bun run --cwd desktop prepare-sidecar -- --target "$TARGET"
+
+      - name: Decide Windows code signing
+        id: windows-signing
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          SIGNPATH_CONFIGURED: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: bash scripts/ci/windows-signing-plan.sh
+
+      - name: Import the release signing certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            eval "value=\${$name:-}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            if [ "${DRY_RUN:-}" != "true" ]; then
+              echo "::error::A real release needs the full signing and notarization credential set."
+              echo "::error::Missing:$missing"
+              exit 1
+            fi
+            echo "DESKTOP_SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "Signing credentials are incomplete, so this build stays ad-hoc signed:$missing"
+            echo "It is usable for local validation and is not a release asset."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/easyproxy-signing.keychain-db"
+          echo "EASYPROXY_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "DESKTOP_SIGNING_CONFIGURED=true" >> "$GITHUB_ENV"
+          keychain_password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          certificate="$RUNNER_TEMP/easyproxy-signing.p12"
+          trap 'shred -u "$certificate" 2>/dev/null || rm -Pf "$certificate" 2>/dev/null || true' EXIT
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # shellcheck disable=SC2046
+          security list-keychain -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+      - name: Prepare macOS Tauri entitlements override
+        if: runner.os == 'macOS'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          cfg="$RUNNER_TEMP/easyproxy-tauri-config.json"
+          if [ -n "${APPLE_TEAM_ID:-}" ] && [ "${DESKTOP_SIGNING_CONFIGURED:-false}" = "true" ]; then
+            if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+              echo "::error::APPLE_TEAM_ID must be 10 uppercase alphanumeric characters."
+              exit 1
+            fi
+            ent="$RUNNER_TEMP/Entitlements.signed.plist"
+            python3 - "$APPLE_TEAM_ID" desktop/src-tauri/Entitlements.plist "$ent" "$cfg" <<'PY'
+          import json, plistlib, sys
+          team_id, src_plist, dst_plist, dst_cfg = sys.argv[1:5]
+          with open(src_plist, "rb") as f:
+              data = plistlib.load(f)
+          data["com.apple.security.application-groups"] = [f"{team_id}.com.easyproxy.desktop"]
+          with open(dst_plist, "wb") as f:
+              plistlib.dump(data, f, fmt=plistlib.FMT_XML)
+          with open(dst_cfg, "w", encoding="utf-8") as f:
+              json.dump({"bundle": {"macOS": {"entitlements": dst_plist}}}, f)
+          PY
+          else
+            printf '{}\n' > "$cfg"
+          fi
+          echo "TAURI_BUNDLE_CONFIG_PATH=$cfg" >> "$GITHUB_ENV"
+
+      - name: Build WidgetKit extension
+        if: runner.os == 'macOS'
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIDGET_SIGN_REQUIRED: ${{ env.DESKTOP_SIGNING_CONFIGURED == 'true' && '1' || '0' }}
+        run: bash desktop/scripts/build-widget.sh
+
+      - name: Verify the extension carries the release signature
+        if: runner.os == 'macOS'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          appex=desktop/src-tauri/widget/EasyProxyWidget.appex
+          if [ -z "${APPLE_TEAM_ID:-}" ]; then
+            if [ "${DRY_RUN:-}" != "true" ]; then
+              echo "::error::A real release cannot assert its own signature without APPLE_TEAM_ID."
+              exit 1
+            fi
+            echo "No team configured; skipping the signature assertion for this non-release build."
+            exit 0
+          fi
+          codesign --verify --strict --deep "$appex"
+          description="$(codesign -dvvv "$appex" 2>&1)"
+          echo "$description"
+          echo "$description" | grep -q "TeamIdentifier=$APPLE_TEAM_ID"
+          echo "$description" | grep -q "flags=.*runtime"
+          echo "$description" | grep -q "Timestamp="
+
+      - name: Sign the packaged keyring addons and native-bin helpers
+        if: runner.os == 'macOS'
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          addons=(desktop/src-tauri/resources/keyring/*.darwin-*.node)
+          if [ "${#addons[@]}" -eq 0 ]; then
+            echo "::error::No macOS keyring addon was prepared for the bundle."
+            exit 1
+          fi
+          if [ "${DESKTOP_SIGNING_CONFIGURED:-false}" != "true" ]; then
+            if [ "${DRY_RUN:-}" != "true" ]; then
+              echo "::error::A real release must sign the packaged keyring addons and native-bin helpers."
+              exit 1
+            fi
+            echo "No signing material; packaged addons and helpers stay as prepared for this non-release build."
+            exit 0
+          fi
+          sign_and_verify() {
+            local file="$1"
+            codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$file"
+            codesign --verify --strict "$file"
+            local description
+            description="$(codesign -dvvv "$file" 2>&1)"
+            echo "$description"
+            grep -q "TeamIdentifier=$APPLE_TEAM_ID" <<<"$description"
+            grep -q "flags=.*runtime" <<<"$description"
+            grep -q "Timestamp=" <<<"$description"
+          }
+          for addon in "${addons[@]}"; do
+            sign_and_verify "$addon"
+          done
+          if [ -d desktop/src-tauri/resources/native-bin ]; then
+            while IFS= read -r -d '' file; do
+              case "$(head -c 4 "$file" | xxd -p)" in
+                cefaedfe|cffaedfe|feedface|feedfacf|cafebabe|bebafeca|cafebabf|bfbafeca) ;;
+                *) continue ;;
+              esac
+              sign_and_verify "$file"
+            done < <(find desktop/src-tauri/resources/native-bin -type f -print0)
+            for triple_dir in desktop/src-tauri/resources/native-bin/*; do
+              [ -d "$triple_dir" ] || continue
+              if [ -f "$triple_dir/epx-child" ]; then
+                (cd "$triple_dir" && shasum -a 256 epx-child > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+              fi
+            done
+          fi
+
+      - name: Assert Tauri updater signing key for releases
+        if: needs.verify.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_UPDATER_KEY" != "true" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is required for non-dry-run desktop releases."
+            exit 1
+          fi
+
+      - name: Build desktop bundles
+        if: runner.os != 'Linux'
+        working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: bunx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "${{ runner.os == 'macOS' && env.TAURI_BUNDLE_CONFIG_PATH || '{}' }}"
+
+      - name: Verify macOS app runtime and Mach-O signatures
+        if: runner.os == 'macOS'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+          DESKTOP_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=("desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle/macos/"*.app)
+          if [ "${#apps[@]}" -ne 1 ]; then
+            echo "::error::Expected one built .app bundle, found ${#apps[@]}"
+            exit 1
+          fi
+          app="${apps[0]}"
+          if [ -n "${APPLE_TEAM_ID:-}" ] || [ "${DRY_RUN:-}" != "true" ]; then
+            if [ -z "${APPLE_TEAM_ID:-}" ]; then
+              echo "::error::A real release cannot verify its bundle without APPLE_TEAM_ID."
+              exit 1
+            fi
+            codesign -dvvv "$app" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID"
+          fi
+          bash desktop/scripts/verify-macos-runtime.sh "$app"
+
+      - name: Locate the Windows installer for signing
+        id: windows-msi
+        if: steps.windows-signing.outputs.mode == 'sign'
+        continue-on-error: ${{ needs.verify.outputs.dry_run == 'true' }}
+        shell: bash
+        env:
+          DESKTOP_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          installers=("desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle/msi/"*.msi)
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "::error::Expected one MSI to sign, found ${#installers[@]}."
+            exit 1
+          fi
+          echo "path=${installers[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the unsigned Windows installer for signing
+        id: unsigned-msi
+        if: steps.windows-signing.outputs.mode == 'sign' && steps.windows-msi.outcome == 'success'
+        continue-on-error: ${{ needs.verify.outputs.dry_run == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: signpath-unsigned-${{ matrix.target }}
+          path: ${{ steps.windows-msi.outputs.path }}
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign the Windows installer through SignPath
+        id: sign-msi
+        if: steps.windows-signing.outputs.mode == 'sign' && steps.unsigned-msi.outcome == 'success'
+        continue-on-error: ${{ needs.verify.outputs.dry_run == 'true' }}
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092
+        timeout-minutes: 65
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ steps.windows-signing.outputs.policy }}
+          artifact-configuration-slug: windows-msi-zip
+          github-artifact-id: ${{ steps.unsigned-msi.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: ${{ runner.temp }}/signpath-signed-msi
+
+      - name: Swap in the verified signed Windows installer
+        id: swap-msi
+        if: steps.windows-signing.outputs.mode == 'sign' && steps.windows-msi.outcome == 'success'
+        continue-on-error: ${{ needs.verify.outputs.dry_run == 'true' }}
+        shell: pwsh
+        env:
+          MSI_PATH: ${{ steps.windows-msi.outputs.path }}
+          SIGNPATH_OUTCOME: ${{ steps.sign-msi.outcome }}
+          SIGNING_TRUST: ${{ steps.windows-signing.outputs.trust }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          ./scripts/ci/apply-signed-windows-artifact.ps1 `
+            -Target "$env:MSI_PATH" `
+            -SignedDirectory (Join-Path $env:RUNNER_TEMP "signpath-signed-msi") `
+            -SubmitOutcome "$env:SIGNPATH_OUTCOME" `
+            -Trust $env:SIGNING_TRUST `
+            -Installer `
+            -UpdaterSignature `
+            -FailOnError:($env:DRY_RUN -ne "true")
+
+      - name: Build Linux AppImage bundle
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/easyproxy-appimage-target
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          bunx tauri build --ci --target ${{ matrix.target }} --bundles appimage
+          mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/appimage
+          cp -r "${CARGO_TARGET_DIR}/${{ matrix.target }}/release/bundle/appimage/." src-tauri/target/${{ matrix.target }}/release/bundle/appimage/
+
+      - name: Build Linux deb bundle
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/easyproxy-deb-target
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          bunx tauri build --ci --target ${{ matrix.target }} --bundles deb
+          mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/deb
+          cp -r "${CARGO_TARGET_DIR}/${{ matrix.target }}/release/bundle/deb/." src-tauri/target/${{ matrix.target }}/release/bundle/deb/
+
+      - name: Verify Linux sidecar and keyring inside AppImage
+        if: runner.os == 'Linux'
+        env:
+          DESKTOP_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=("desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle/appimage/"*.AppImage)
+          if [ "${#appimages[@]}" -ne 1 ]; then
+            echo "::error::Expected one AppImage, found ${#appimages[@]}"
+            exit 1
+          fi
+          bash desktop/scripts/verify-linux-sidecar.sh "${appimages[0]}"
+
+      - name: Collect desktop release assets
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          bun desktop/scripts/collect-release-assets.ts \
+            --version "$VERSION" \
+            --target "$TARGET" \
+            --out dist/release-assets
+
+      - name: Record Windows desktop signing outcome
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          SIGNING_MODE: ${{ steps.windows-signing.outputs.mode }}
+          SIGNING_TRUST: ${{ steps.windows-signing.outputs.trust }}
+          SIGNED: ${{ steps.swap-msi.outputs.signed }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/windows-signing-outcome.sh desktop dist/windows-signing-outcomes "dist/release-assets/EasyProxy-${VERSION}-windows-x64.msi"
+
+      - name: Upload Windows desktop signing outcome
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-signing-outcome-desktop
+          path: dist/windows-signing-outcomes/desktop.json
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          if [ -n "${EASYPROXY_SIGNING_KEYCHAIN:-}" ] && [ -f "${EASYPROXY_SIGNING_KEYCHAIN}" ]; then
+            security delete-keychain "${EASYPROXY_SIGNING_KEYCHAIN}"
+          fi
+
+      - name: Upload desktop release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: desktop-${{ matrix.label }}
+          path: dist/release-assets/*
+          if-no-files-found: error
+          retention-days: 5
+
+  verify-release:
+    name: verify release bundle
+    needs: [verify, package-standalone, package-desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: runtime
+
+      - name: Download standalone release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: standalone-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Download desktop release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: desktop-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Verify release bundle, checksums, and updater signatures
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          args=(
+            --version "$VERSION"
+            --dir dist/release
+            --repo "$GITHUB_REPOSITORY"
+            --sha "$SOURCE_SHA"
+            --receipt-out dist/verify/release-receipt.json
+          )
+          if [ "$DRY_RUN" != "true" ] || [ "$HAS_UPDATER_KEY" = "true" ]; then
+            args+=(--manifest-out dist/release/latest.json --require-signatures)
+          fi
+          bun desktop/scripts/verify-release-assets.ts "${args[@]}"
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-bundle
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Upload verification receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-receipt
+          path: dist/verify/release-receipt.json
+          if-no-files-found: error
+          retention-days: 5
 
   publish-release:
     name: github release
-    needs: [verify, standalone]
+    needs: [verify, verify-release]
     if: needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - name: Download artifacts
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: runtime
+
+      - name: Download verified release bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: artifacts
+          name: release-bundle
+          path: dist/release
+
+      - name: Download release receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-receipt
+          path: dist/verify
+
+      - name: Download Windows signing outcomes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: windows-signing-outcome-*
+          path: dist/windows-signing-outcomes
           merge-multiple: true
 
-      - name: Compute SHA256SUMS.txt
+      - name: Build release changelog and signing footer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          DIST_TAG: ${{ needs.verify.outputs.dist_tag }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: |
-          cd artifacts
-          sha256sum easyproxy-* > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          set -euo pipefail
+          bun scripts/build-release-changelog.ts \
+            --version "$VERSION" \
+            --dist-tag "$DIST_TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --out dist/release-notes.md \
+            --windows-signing-outcomes dist/windows-signing-outcomes \
+            --release-receipt dist/verify/release-receipt.json
 
       - name: Create or update GitHub Release
         env:
@@ -285,7 +1084,7 @@ jobs:
           IS_TAG_PUSH: ${{ needs.verify.outputs.is_tag_push }}
         run: |
           set -euo pipefail
-          flags=(--generate-notes)
+          flags=(--notes-file dist/release-notes.md)
           if [ "$IS_TAG_PUSH" = "true" ]; then
             flags+=(--verify-tag)
           else
@@ -295,7 +1094,8 @@ jobs:
             flags+=(--prerelease)
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" artifacts/* --clobber
+            gh release upload "$TAG" dist/release/* --clobber
+            gh release edit "$TAG" --notes-file dist/release-notes.md
           else
-            gh release create "$TAG" artifacts/* --title "EasyProxy ${TAG}" "${flags[@]}"
+            gh release create "$TAG" dist/release/* --title "EasyProxy ${TAG}" "${flags[@]}"
           fi

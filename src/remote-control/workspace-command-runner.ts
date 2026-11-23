@@ -13,7 +13,8 @@ import {
   statSync,
 } from "node:fs";
 import { arch } from "node:os";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import path, { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { packagedDesktopResourceDir } from "../lib/keyring-native";
 import { isStandaloneBinary, standaloneRoot } from "../lib/standalone";
 import type {
   RemoteWorkspaceCommandRequest,
@@ -206,6 +207,7 @@ export function discoverRemoteWorkspaceNativeHelper(options: {
   platform?: NodeJS.Platform;
   architecture?: string;
   standaloneRootDir?: string;
+  execPath?: string;
 } = {}): RemoteWorkspaceNativeHelperDescriptor | undefined {
   const platform = options.platform ?? process.platform;
   if (platform !== "darwin" && platform !== "win32") return undefined;
@@ -214,16 +216,34 @@ export function discoverRemoteWorkspaceNativeHelper(options: {
     ? "easyproxy-remote-workspace-helper.exe"
     : "easyproxy-remote-workspace-helper";
   const standaloneDir = options.standaloneRootDir
-    ?? (isStandaloneBinary() ? standaloneRoot() : undefined);
+    ?? (!options.execPath && isStandaloneBinary() ? standaloneRoot() : undefined);
+  const execDir = options.execPath
+    ? dirname(options.execPath)
+    : isStandaloneBinary()
+      ? dirname(process.execPath)
+      : undefined;
+  const desktopNativeBinDirs: string[] = [];
+  for (const baseDir of [execDir, standaloneDir]) {
+    if (!baseDir) continue;
+    const resourceDir = packagedDesktopResourceDir(baseDir, platform, path);
+    if (resourceDir) {
+      const nativeDir = join(resourceDir, "native-bin");
+      if (!desktopNativeBinDirs.includes(nativeDir)) desktopNativeBinDirs.push(nativeDir);
+    }
+  }
   const candidates = [
     ...(standaloneDir ? [join(standaloneDir, "native-bin", `${platform}-${architecture}`, executable)] : []),
+    ...(execDir && execDir !== standaloneDir
+      ? [join(execDir, "native-bin", `${platform}-${architecture}`, executable)]
+      : []),
+    ...desktopNativeBinDirs.map(nativeDir => join(nativeDir, `${platform}-${architecture}`, executable)),
     // Signed release bundles place the helper here.
     `${import.meta.dir}/../../native-bin/${platform}-${architecture}/${executable}`,
     // Source/private-dogfood builds produced by `bun run build:remote-workspace-helper`.
     `${import.meta.dir}/../../native/remote-workspace-helper/target/release/${executable}`,
   ];
   for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue;
+    try { lstatSync(candidate); } catch { continue; }
     try {
       return pinRemoteWorkspaceNativeHelper(candidate);
     } catch {

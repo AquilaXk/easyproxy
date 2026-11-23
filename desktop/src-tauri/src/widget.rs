@@ -9,7 +9,8 @@ mod macos {
     use serde_json::{json, Value};
     use std::{
         fs,
-        path::PathBuf,
+        io::Read,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
     use uuid::Uuid;
@@ -237,11 +238,116 @@ mod macos {
         })
     }
 
-    fn snapshot_path() -> PathBuf {
+    const MAX_PLIST_BYTES: usize = 256 * 1024;
+    const APP_GROUP_SUFFIX: &str = ".com.easyproxy.desktop";
+
+    struct SnapshotTarget {
+        path: PathBuf,
+        fallback_container_data: Option<PathBuf>,
+    }
+
+    fn is_valid_app_group(value: &str) -> bool {
+        let bytes = value.as_bytes();
+        bytes.len() == 10 + APP_GROUP_SUFFIX.len()
+            && bytes[..10]
+                .iter()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            && &value[10..] == APP_GROUP_SUFFIX
+    }
+
+    fn strip_xml_comments(input: &str) -> Option<String> {
+        let mut out = String::with_capacity(input.len());
+        let mut rest = input;
+        while let Some(start) = rest.find("<!--") {
+            out.push_str(&rest[..start]);
+            let after_open = &rest[start + 4..];
+            let end = after_open.find("-->")?;
+            rest = &after_open[end + 3..];
+        }
+        out.push_str(rest);
+        Some(out)
+    }
+
+    fn extract_app_group(plist_xml: &str) -> Option<String> {
+        let cleaned = strip_xml_comments(plist_xml)?;
+        let marker = "<key>EasyProxyAppGroup</key>";
+        let key_idx = cleaned.find(marker)?;
+        let after_key = cleaned[key_idx + marker.len()..].trim_start();
+        let after_open = after_key.strip_prefix("<string>")?;
+        let close_idx = after_open.find("</string>")?;
+        let value = &after_open[..close_idx];
+        if is_valid_app_group(value) {
+            Some(value.to_string())
+        } else {
+            None
+        }
+    }
+
+    fn read_plist_bounded(path: &Path) -> Option<String> {
+        let meta = fs::symlink_metadata(path).ok()?;
+        if meta.file_type().is_symlink() || !meta.is_file() {
+            return None;
+        }
+        let file = fs::File::open(path).ok()?;
+        let mut buf = Vec::with_capacity((meta.len() as usize).min(MAX_PLIST_BYTES));
+        file.take((MAX_PLIST_BYTES + 1) as u64)
+            .read_to_end(&mut buf)
+            .ok()?;
+        if buf.len() > MAX_PLIST_BYTES {
+            return None;
+        }
+        String::from_utf8(buf).ok()
+    }
+
+    fn discover_app_group_from_exe(exe_path: &Path) -> Option<String> {
+        let contents_dir = exe_path.parent()?.parent()?;
+        let candidates = [
+            contents_dir.join("PlugIns/EasyProxyWidget.appex/Contents/Info.plist"),
+            contents_dir.join("Info.plist"),
+        ];
+        for candidate in candidates {
+            if let Some(xml) = read_plist_bounded(&candidate) {
+                if let Some(group) = extract_app_group(&xml) {
+                    return Some(group);
+                }
+            }
+        }
+        None
+    }
+
+    fn snapshot_target_for_home(home: &Path, app_group: Option<&str>) -> SnapshotTarget {
+        if let Some(group) = app_group.filter(|g| is_valid_app_group(g)) {
+            SnapshotTarget {
+                path: home
+                    .join("Library/Group Containers")
+                    .join(group)
+                    .join("Library/Application Support/EasyProxy/snapshot.json"),
+                fallback_container_data: None,
+            }
+        } else {
+            let container_data = home.join("Library/Containers/com.easyproxy.desktop.widget/Data");
+            SnapshotTarget {
+                path: container_data.join("Library/Application Support/EasyProxy/snapshot.json"),
+                fallback_container_data: Some(container_data),
+            }
+        }
+    }
+
+    fn snapshot_target() -> SnapshotTarget {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        home.join("Library/Containers/com.easyproxy.desktop.widget/Data/Library/Application Support/EasyProxy/snapshot.json")
+        let app_group = std::env::current_exe()
+            .ok()
+            .and_then(|exe| discover_app_group_from_exe(&exe));
+        snapshot_target_for_home(&home, app_group.as_deref())
+    }
+
+    fn has_real_directory(path: &Path) -> bool {
+        match fs::symlink_metadata(path) {
+            Ok(meta) => meta.is_dir() && !meta.file_type().is_symlink(),
+            Err(_) => false,
+        }
     }
 
     fn now_seconds() -> f64 {
@@ -302,11 +408,21 @@ mod macos {
 
     static LAST_RELOAD: std::sync::Mutex<Option<f64>> = std::sync::Mutex::new(None);
 
-    fn write_if_changed(
-        path: &std::path::Path,
+    fn write_if_changed_with_guard(
+        path: &Path,
+        fallback_container_data: Option<&Path>,
         previous: Option<&Snapshot>,
         snapshot: &Snapshot,
     ) -> std::io::Result<bool> {
+        if let Some(data_dir) = fallback_container_data {
+            let container_root_ok = data_dir
+                .parent()
+                .map(has_real_directory)
+                .unwrap_or(false);
+            if !container_root_ok || !has_real_directory(data_dir) {
+                return Ok(false);
+            }
+        }
         if !should_write(previous, snapshot) {
             return Ok(false);
         }
@@ -329,17 +445,31 @@ mod macos {
         Ok(true)
     }
 
+    #[cfg(test)]
+    fn write_if_changed(
+        path: &Path,
+        previous: Option<&Snapshot>,
+        snapshot: &Snapshot,
+    ) -> std::io::Result<bool> {
+        write_if_changed_with_guard(path, None, previous, snapshot)
+    }
+
     extern "C" {
         fn epx_widget_reload_timelines();
     }
 
     /// Persist the snapshot and, when it was actually written, ask WidgetKit to reload the widget.
     fn publish(snapshot: &Snapshot) {
-        let path = snapshot_path();
-        let previous = fs::read(&path)
+        let target = snapshot_target();
+        let previous = fs::read(&target.path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Snapshot>(&bytes).ok());
-        match write_if_changed(&path, previous.as_ref(), snapshot) {
+        match write_if_changed_with_guard(
+            &target.path,
+            target.fallback_container_data.as_deref(),
+            previous.as_ref(),
+            snapshot,
+        ) {
             Ok(true) => {
                 let now = now_seconds();
                 let mut last = LAST_RELOAD
@@ -693,6 +823,125 @@ mod macos {
                 stopped_snapshot(None).endpoint_display,
                 "127.0.0.1:10100"
             );
+        }
+
+        #[test]
+        fn extracts_only_valid_app_group_ids_from_plist_xml() {
+            let valid = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <!-- <key>EasyProxyAppGroup</key><string>BADCOMMENT.com.easyproxy.desktop</string> -->
+  <key>CFBundleIdentifier</key>
+  <string>com.easyproxy.desktop.widget</string>
+  <key>EasyProxyAppGroup</key>
+  <string>ABCD1234EF.com.easyproxy.desktop</string>
+</dict>
+</plist>"#;
+            assert_eq!(
+                extract_app_group(valid).as_deref(),
+                Some("ABCD1234EF.com.easyproxy.desktop")
+            );
+
+            for invalid in [
+                r#"<dict><key>EasyProxyAppGroup</key><string>short.com.easyproxy.desktop</string></dict>"#,
+                r#"<dict><key>EasyProxyAppGroup</key><string>abcd1234ef.com.easyproxy.desktop</string></dict>"#,
+                r#"<dict><key>EasyProxyAppGroup</key><string>ABCD1234EF.com.other.app</string></dict>"#,
+                r#"<dict><key>EasyProxyAppGroup</key><string>../ABCD1234EF.com.easyproxy.desktop</string></dict>"#,
+                r#"<dict><!-- unclosed<key>EasyProxyAppGroup</key><string>ABCD1234EF.com.easyproxy.desktop</string>"#,
+            ] {
+                assert_eq!(extract_app_group(invalid), None, "must reject: {invalid}");
+            }
+        }
+
+        #[test]
+        fn resolves_group_container_or_guarded_fallback_target() {
+            let home = Path::new("/Users/tester");
+            let grouped =
+                snapshot_target_for_home(home, Some("ABCD1234EF.com.easyproxy.desktop"));
+            assert_eq!(
+                grouped.path,
+                home.join("Library/Group Containers/ABCD1234EF.com.easyproxy.desktop/Library/Application Support/EasyProxy/snapshot.json")
+            );
+            assert!(grouped.fallback_container_data.is_none());
+
+            let fallback = snapshot_target_for_home(home, None);
+            assert_eq!(
+                fallback.path,
+                home.join("Library/Containers/com.easyproxy.desktop.widget/Data/Library/Application Support/EasyProxy/snapshot.json")
+            );
+            assert_eq!(
+                fallback.fallback_container_data,
+                Some(home.join("Library/Containers/com.easyproxy.desktop.widget/Data"))
+            );
+        }
+
+        #[test]
+        fn fallback_write_refuses_missing_or_symlinked_sandbox_container_while_group_writes() {
+            let root = std::env::temp_dir().join(format!(
+                "epx-widget-container-guard-{}-{}",
+                std::process::id(),
+                Uuid::new_v4()
+            ));
+            fs::create_dir_all(&root).unwrap();
+
+            let snap = stopped_snapshot(Some("127.0.0.1:10100"));
+            let fallback = snapshot_target_for_home(&root, None);
+            // Missing Containers/com.easyproxy.desktop.widget/Data: must refuse without creating it.
+            let wrote = write_if_changed_with_guard(
+                &fallback.path,
+                fallback.fallback_container_data.as_deref(),
+                None,
+                &snap,
+            )
+            .unwrap();
+            assert!(!wrote);
+            assert!(!root.join("Library/Containers").exists());
+
+            // Symlinked Data directory must also be refused.
+            let real_target = root.join("symlink-dest");
+            fs::create_dir_all(&real_target).unwrap();
+            let container_root = root.join("Library/Containers/com.easyproxy.desktop.widget");
+            fs::create_dir_all(&container_root).unwrap();
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&real_target, container_root.join("Data")).unwrap();
+                let wrote_sym = write_if_changed_with_guard(
+                    &fallback.path,
+                    fallback.fallback_container_data.as_deref(),
+                    None,
+                    &snap,
+                )
+                .unwrap();
+                assert!(!wrote_sym);
+                assert!(!real_target.join("Library").exists());
+                fs::remove_file(container_root.join("Data")).unwrap();
+            }
+
+            // Real sandbox container directory allows writing.
+            fs::create_dir_all(container_root.join("Data")).unwrap();
+            let wrote_real = write_if_changed_with_guard(
+                &fallback.path,
+                fallback.fallback_container_data.as_deref(),
+                None,
+                &snap,
+            )
+            .unwrap();
+            assert!(wrote_real);
+            assert!(fallback.path.exists());
+
+            // App Group target creates Group Containers directory tree and writes snapshot.
+            let grouped = snapshot_target_for_home(&root, Some("ABCD1234EF.com.easyproxy.desktop"));
+            let wrote_grouped = write_if_changed_with_guard(
+                &grouped.path,
+                grouped.fallback_container_data.as_deref(),
+                None,
+                &snap,
+            )
+            .unwrap();
+            assert!(wrote_grouped);
+            assert!(grouped.path.exists());
+
+            let _ = fs::remove_dir_all(&root);
         }
     }
 }

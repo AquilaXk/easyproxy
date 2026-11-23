@@ -8,11 +8,12 @@ policy and the maintainer setup live in `docs-site/src/content/docs/reference/co
 
 The Windows legs of `package-standalone` (`epx.exe`) and `package-desktop` (the MSI) in
 `.github/workflows/release.yml` each decide once, through `scripts/ci/windows-signing-plan.sh`, whether to sign:
-no `SIGNPATH_API_TOKEN` or an incomplete configuration skips, `release-signing` signs with release trust, and any
-other policy signs dry runs only with test trust. Every SignPath step continues on error, so signing never fails a
-release. `scripts/ci/apply-signed-windows-artifact.ps1` verifies the returned file (`scripts/ci/verify-authenticode.ps1`),
-re-signs the MSI's Tauri updater signature over the signed bytes, swaps it in, and restores the original on any
-failure. It writes the step output `signed=true` only after the verified swap, and `signed=false` otherwise.
+non-dry-run builds fail closed unless `SIGNPATH_API_TOKEN` is configured with `SIGNPATH_SIGNING_POLICY_SLUG=release-signing`,
+while `dry-run` builds skip when unconfigured or sign with `test` trust for non-release policies.
+Non-dry-run SignPath or swap steps pass `-FailOnError:($env:DRY_RUN -ne "true")`, and
+`scripts/ci/apply-signed-windows-artifact.ps1` fails closed whenever `$FailOnError` or `$Trust -eq "release"` (retaining warning fallback only in dry-run `test` trust) and always cleans its staging temp dir. `scripts/ci/verify-authenticode.ps1`
+accepts `-SubjectPattern` (defaulting to `WINDOWS_SIGNING_SUBJECT_REGEX` or SignPath Foundation) and verifies both the MSI and every extracted `*.exe`, `*.dll`, and `*.node` binary before swapping in and regenerating the Tauri `.sig`.
+It writes the step output `signed=true` only after the verified swap, and `signed=false` otherwise.
 
 ## The signing outcome in the release body
 

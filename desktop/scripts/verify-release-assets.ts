@@ -41,13 +41,20 @@ export interface ReleaseVerificationReceipt {
   checksumsVerified: number;
   signaturesVerified: number;
   manifestPlatforms: string[];
+  assets: Record<string, string>;
 }
+
+export const STANDALONE_CONVENIENCE_ARCHIVES = [
+  "easyproxy-darwin-arm64.tar.gz",
+  "easyproxy-linux-x64.tar.gz",
+  "easyproxy-windows-x64.zip",
+] as const;
 
 /**
  * The expected file set, derived from the producer tables rather than restated.
  * Signatures are required only for the assets the updater actually signs — the
- * unique suffixes in platformFiles — because the DMG and the deb are not updater
- * targets and are never signed.
+ * unique suffixes in platformFiles (including linux-x86_64-deb .deb.sig) —
+ * because only the DMG is unsigned by the Tauri updater.
  */
 export function expectedReleaseAssets(options: {
   version: string;
@@ -58,6 +65,9 @@ export function expectedReleaseAssets(options: {
   for (const target of sharedStandaloneTargets) {
     const archive = standaloneArchiveName(options.version, target);
     expected.push(archive, `${archive}.sha256`);
+  }
+  for (const alias of STANDALONE_CONVENIENCE_ARCHIVES) {
+    expected.push(alias, `${alias}.sha256`);
   }
   const updaterSuffixes = new Set(Object.values(platformFiles));
   for (const target of options.desktopTargets) {
@@ -100,9 +110,10 @@ export function releaseMatrixTargets(workflowText: string): {
  * must equal the checksum file's own name minus the suffix: a foo.sha256 naming
  * bar would leave foo's bytes unchecked while bar's are checked twice.
  */
-export function verifyChecksums(dir: string): number {
+export function verifyChecksumsWithDigests(dir: string): { count: number; assets: Record<string, string> } {
   const checksumFiles = readdirSync(dir).filter(name => name.endsWith(".sha256")).sort();
   if (checksumFiles.length === 0) throw new Error(`No .sha256 files found in ${dir}`);
+  const assets: Record<string, string> = {};
   for (const checksumFile of checksumFiles) {
     const content = readFileSync(join(dir, checksumFile), "utf8");
     const match = /^([0-9a-f]{64}) [ *](\S+)\r?\n$/.exec(content);
@@ -119,8 +130,13 @@ export function verifyChecksums(dir: string): number {
     if (actual !== digest) {
       throw new Error(`Checksum mismatch for ${recorded}: recorded ${digest}, computed ${actual}`);
     }
+    assets[recorded] = digest;
   }
-  return checksumFiles.length;
+  return { count: checksumFiles.length, assets };
+}
+
+export function verifyChecksums(dir: string): number {
+  return verifyChecksumsWithDigests(dir).count;
 }
 
 export interface MinisignPublicKey {
@@ -236,7 +252,14 @@ export function verifyReleaseAssets(options: VerifyReleaseAssetsOptions): Releas
     throw new Error(`Missing expected release assets:\n${missing.join("\n")}`);
   }
 
-  const checksumsVerified = verifyChecksums(dir);
+  const { count: checksumsVerified, assets } = verifyChecksumsWithDigests(dir);
+  for (const name of expected) {
+    if (name.endsWith(".sha256") || name.endsWith(".sig") || name in assets) continue;
+    assets[name] = createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
+  }
+  const sortedAssets = Object.fromEntries(
+    Object.entries(assets).sort(([a], [b]) => a.localeCompare(b)),
+  );
 
   const updaterKey = loadUpdaterPublicKey(
     join(repoRoot, "desktop", "src-tauri", "tauri.conf.json"),
@@ -281,6 +304,7 @@ export function verifyReleaseAssets(options: VerifyReleaseAssetsOptions): Releas
     checksumsVerified,
     signaturesVerified,
     manifestPlatforms,
+    assets: sortedAssets,
   };
   if (options.receiptOut) {
     atomicWrite(options.receiptOut, `${JSON.stringify(receipt, null, 2)}\n`);

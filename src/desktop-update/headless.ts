@@ -10,6 +10,7 @@
  * earlier install whose old runtime is still serving. Every dependency is injected; the
  * production wiring is in `./cli.ts`.
  */
+import { win32 } from "node:path";
 import { DESKTOP_ACQUIRE_LIMITS, DESKTOP_UPDATE_FEED_URL } from "./trust";
 import { DesktopAcquireError, type AcquireTimers } from "./acquire";
 import { compareToInstalled, DesktopUpdateRefusal, parseDesktopFeed, verifyDesktopInstaller } from "./release";
@@ -17,6 +18,7 @@ import { describeMsiOutcome, isInstalled, runMsiInstall, type InstallerSpawn, ty
 import { settleRuntime, type RuntimeOutcome, type RuntimeReplaceDeps } from "./runtime";
 import { desktopUpdateCommand, type WindowsDesktopInstall } from "./install";
 import { computeVersionSkew } from "../cli/version-skew";
+import { trustedWindowsSystemDirectory } from "../service/desktop-supervision.mjs";
 
 export const HEADLESS_RESULT_SCHEMA = "epx.desktop.headless-update/1";
 
@@ -88,8 +90,156 @@ export interface HeadlessDeps {
   readInstalledVersion(epxExe: string): Promise<string | null>;
   runtime: RuntimeReplaceDeps;
   log(line: string): void;
+  /** Optional override or test hook for OS Authenticode verification of the staged MSI. */
+  verifyAuthenticode?: (msiPath: string) => Promise<void> | void;
   /** Fixture key for tests only; the production composition never sets it and uses the embedded key. */
   fixturePublicKey?: string;
+}
+
+export const WINDOWS_AUTHENTICODE_PS_SCRIPT = [
+  "$ErrorActionPreference='Stop'",
+  "$s=Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath $env:EPX_MSI_PATH",
+  "[pscustomobject]@{ status=[string]$s.Status; hasSigner=($null -ne $s.SignerCertificate); hasTimestamp=($null -ne $s.TimeStamperCertificate); subject=$(if ($s.SignerCertificate) { [string]$s.SignerCertificate.Subject } else { '' }); message=[string]$s.StatusMessage } | Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress",
+].join("; ");
+
+const AUTHENTICODE_TIMEOUT_MS = 20_000;
+const MAX_AUTHENTICODE_OUTPUT_BYTES = 64 * 1024;
+
+export interface AuthenticodeSpawnResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut?: boolean;
+}
+
+export interface VerifyAuthenticodeDeps {
+  powershellPath?: () => string;
+  spawn?: (
+    command: string,
+    args: readonly string[],
+    env: Record<string, string | undefined>,
+    timeoutMs: number,
+  ) => Promise<AuthenticodeSpawnResult>;
+}
+
+async function readBoundedStream(stream: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<string> {
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      const take = Math.min(value.byteLength, maxBytes - total);
+      if (take > 0) {
+        chunks.push(take === value.byteLength ? value : value.subarray(0, take));
+        total += take;
+      }
+      if (total >= maxBytes) {
+        await reader.cancel().catch(() => {});
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function defaultAuthenticodeSpawn(
+  command: string,
+  args: readonly string[],
+  env: Record<string, string | undefined>,
+  timeoutMs: number,
+): Promise<AuthenticodeSpawnResult> {
+  const child = Bun.spawn([command, ...args], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+    windowsHide: true,
+  });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { child.kill(); } catch { /* exited */ }
+  }, timeoutMs);
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      readBoundedStream(child.stdout, MAX_AUTHENTICODE_OUTPUT_BYTES),
+      readBoundedStream(child.stderr, MAX_AUTHENTICODE_OUTPUT_BYTES),
+      child.exited,
+    ]);
+    return { exitCode, stdout, stderr, timedOut };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function verifyWindowsMsiAuthenticode(
+  msiPath: string,
+  deps: VerifyAuthenticodeDeps = {},
+): Promise<void> {
+  let result: AuthenticodeSpawnResult;
+  try {
+    const psPath = deps.powershellPath
+      ? deps.powershellPath()
+      : win32.join(trustedWindowsSystemDirectory(), "WindowsPowerShell", "v1.0", "powershell.exe");
+    const runner = deps.spawn ?? defaultAuthenticodeSpawn;
+    result = await runner(
+      psPath,
+      ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_AUTHENTICODE_PS_SCRIPT],
+      { ...process.env, EPX_MSI_PATH: msiPath },
+      AUTHENTICODE_TIMEOUT_MS,
+    );
+  } catch (error) {
+    throw new DesktopUpdateRefusal(
+      "signature_invalid",
+      `Authenticode verification could not run (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  if (result.timedOut) {
+    throw new DesktopUpdateRefusal(
+      "signature_invalid",
+      "Authenticode verification timed out before validating the MSI",
+    );
+  }
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim() || `exit code ${String(result.exitCode)}`;
+    throw new DesktopUpdateRefusal(
+      "signature_invalid",
+      `Authenticode verification failed (${detail.slice(0, 240)})`,
+    );
+  }
+  let parsed: {
+    status?: unknown;
+    hasSigner?: unknown;
+    hasTimestamp?: unknown;
+    message?: unknown;
+  };
+  try {
+    parsed = JSON.parse(result.stdout.trim()) as typeof parsed;
+  } catch {
+    throw new DesktopUpdateRefusal(
+      "signature_invalid",
+      "Authenticode verification returned unreadable output",
+    );
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new DesktopUpdateRefusal("signature_invalid", "Authenticode output is empty");
+  }
+  const status = typeof parsed.status === "string" ? parsed.status : "Unknown";
+  if (status !== "Valid" || parsed.hasSigner !== true || parsed.hasTimestamp !== true) {
+    const reason = typeof parsed.message === "string" && parsed.message.trim()
+      ? parsed.message.trim()
+      : `status=${status}, signer=${String(parsed.hasSigner)}, timestamp=${String(parsed.hasTimestamp)}`;
+    throw new DesktopUpdateRefusal(
+      "signature_invalid",
+      `MSI Authenticode check rejected package (${reason.slice(0, 240)})`,
+    );
+  }
 }
 
 export const INSTALLER_TIMEOUT_MS = 15 * 60_000;
@@ -206,6 +356,11 @@ export async function runHeadlessDesktopUpdate(options: { check: boolean }, deps
     logPath = deps.staging.join(dir, "msiexec.log");
     deps.staging.write(msiPath, bytes);
     verifyDesktopInstaller(deps.staging.read(msiPath), candidate, deps.fixturePublicKey);
+    if (deps.verifyAuthenticode) {
+      await deps.verifyAuthenticode(msiPath);
+    } else if (!deps.fixturePublicKey && process.platform === "win32") {
+      await verifyWindowsMsiAuthenticode(msiPath);
+    }
     try { moved = deps.moveAsideOwnImage(); }
     catch (error) {
       throw new Error(`the running ${deps.install.epxExe} could not be moved aside for the installer (${error instanceof Error ? error.message : String(error)}); run this from an elevated terminal`);

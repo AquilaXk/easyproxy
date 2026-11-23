@@ -3,13 +3,15 @@
 # the GitHub-hosted Windows image already carries.
 #
 #   -Path             PE files (or MSIs) to verify directly.
-#   -Msi              An installer to verify, together with every .exe it installs. The MSI's own
-#                     signature must pass before "msiexec /a" expands it (an administrative
-#                     image, nothing is installed).
+#   -Msi              An installer to verify, together with every .exe, .dll, and .node binary it
+#                     installs. The MSI's own signature must pass before "msiexec /a" expands it
+#                     (an administrative image, nothing is installed).
 #   -RequireInnerExe  File names that must be among the executables inside -Msi; a sweep that
 #                     finds fewer files than expected must not pass by inspecting nothing.
 #   -MinimumInnerExe  The fewest executables -Msi may contain (default 1).
-#   -Trust release    A production signature: Status Valid, a SignPath Foundation signer, an RFC
+#   -SubjectPattern   Regex matching the expected release certificate Subject (defaults to
+#                     WINDOWS_SIGNING_SUBJECT_REGEX or SignPath Foundation CN).
+#   -Trust release    A production signature: Status Valid, matching release signer subject, an RFC
 #                     3161 timestamp, and "signtool verify /pa" succeeding. Fails closed.
 #   -Trust test       A test-signing run: the self-signed test root is untrusted on the runner, so
 #                     the chain cannot validate. Every file must still carry a signature whose hash
@@ -20,11 +22,23 @@ param(
   [string]$Msi = "",
   [string[]]$RequireInnerExe = @(),
   [int]$MinimumInnerExe = 1,
+  [string]$SubjectPattern = $env:WINDOWS_SIGNING_SUBJECT_REGEX,
   [Parameter(Mandatory = $true)][ValidateSet("release", "test")][string]$Trust
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+$effectiveSubjectPattern = if ([string]::IsNullOrWhiteSpace($SubjectPattern)) {
+  '(^|,\s*)CN="?SignPath Foundation"?(,|$)'
+} else {
+  $SubjectPattern
+}
+try {
+  $null = [regex]::new($effectiveSubjectPattern)
+} catch {
+  throw "Invalid SubjectPattern regex '$effectiveSubjectPattern': $($_.Exception.Message)"
+}
 
 $targets = [System.Collections.Generic.List[string]]::new()
 foreach ($candidate in $Path) {
@@ -75,8 +89,8 @@ function Test-AuthenticodeFile {
     if ($status -ne "Valid") {
       $failures.Add("$Target is signed but not trusted (status ${status}: $($signature.StatusMessage))")
     }
-    if ($certificate.Subject -notmatch '(^|,\s*)CN="?SignPath Foundation"?(,|$)') {
-      $failures.Add("$Target is signed by '$($certificate.Subject)', not SignPath Foundation")
+    if ($certificate.Subject -notmatch $effectiveSubjectPattern) {
+      $failures.Add("$Target is signed by '$($certificate.Subject)', which does not match /$effectiveSubjectPattern/")
     }
     if (-not $signature.TimeStamperCertificate) {
       $failures.Add("$Target has no timestamp, so its signature expires with the certificate")
@@ -103,37 +117,46 @@ function Assert-AuthenticodeVerified {
   }
 }
 
-if ($msiPath) {
-  # "msiexec /a" makes the Windows Installer engine parse the package, so the installer itself
-  # must pass the same signature contract as the files it carries before extraction may run.
-  Test-AuthenticodeFile $msiPath
-  Assert-AuthenticodeVerified
+$scratch = ""
+try {
+  if ($msiPath) {
+    # "msiexec /a" makes the Windows Installer engine parse the package, so the installer itself
+    # must pass the same signature contract as the files it carries before extraction may run.
+    Test-AuthenticodeFile $msiPath
+    Assert-AuthenticodeVerified
 
-  $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("epx-msi-" + [guid]::NewGuid().ToString("N"))
-  $image = Join-Path $scratch "image"
-  $log = Join-Path $scratch "administrative-image.log"
-  New-Item -ItemType Directory -Path $image -Force | Out-Null
-  $arguments = @("/a", "`"$msiPath`"", "/qn", "TARGETDIR=`"$image`"", "/l*v", "`"$log`"")
-  $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru -NoNewWindow
-  if ($process.ExitCode -ne 0) {
-    if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 40 | Write-Host }
-    throw "msiexec /a could not expand $msiPath (exit code $($process.ExitCode))"
-  }
-  $inner = @(Get-ChildItem -LiteralPath $image -Recurse -File -Filter "*.exe")
-  Write-Host "The installer carries $($inner.Count) executable(s): $(($inner | ForEach-Object Name) -join ', ')"
-  if ($inner.Count -lt [Math]::Max(1, $MinimumInnerExe)) {
-    throw "Found $($inner.Count) executable(s) inside $msiPath, expected at least $MinimumInnerExe; the sweep would miss files."
-  }
-  foreach ($name in $RequireInnerExe) {
-    if (-not ($inner | Where-Object { $_.Name -ieq $name })) {
-      throw "$name is missing from the administrative image of $msiPath"
+    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("epx-msi-" + [guid]::NewGuid().ToString("N"))
+    $image = Join-Path $scratch "image"
+    $log = Join-Path $scratch "administrative-image.log"
+    New-Item -ItemType Directory -Path $image -Force | Out-Null
+    $arguments = @("/a", "`"$msiPath`"", "/qn", "TARGETDIR=`"$image`"", "/l*v", "`"$log`"")
+    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru -NoNewWindow
+    if ($process.ExitCode -ne 0) {
+      if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 40 | Write-Host }
+      throw "msiexec /a could not expand $msiPath (exit code $($process.ExitCode))"
     }
+    $innerPe = @(Get-ChildItem -LiteralPath $image -Recurse -File -Include *.exe,*.dll,*.node)
+    $innerExe = @($innerPe | Where-Object { $_.Extension -ieq ".exe" })
+    $innerNativeCount = @($innerPe | Where-Object { $_.Extension -ieq ".dll" -or $_.Extension -ieq ".node" }).Count
+    Write-Host "The installer carries $($innerExe.Count) executable(s) and $innerNativeCount native module(s)/DLL(s): $(($innerPe | ForEach-Object Name) -join ', ')"
+    if ($innerExe.Count -lt [Math]::Max(1, $MinimumInnerExe)) {
+      throw "Found $($innerExe.Count) executable(s) inside $msiPath, expected at least $MinimumInnerExe; the sweep would miss files."
+    }
+    foreach ($name in $RequireInnerExe) {
+      if (-not ($innerExe | Where-Object { $_.Name -ieq $name })) {
+        throw "$name is missing from the administrative image of $msiPath"
+      }
+    }
+    foreach ($file in $innerPe) { $targets.Add($file.FullName) }
   }
-  foreach ($file in $inner) { $targets.Add($file.FullName) }
-}
 
-foreach ($target in $targets) {
-  Test-AuthenticodeFile $target
+  foreach ($target in $targets) {
+    Test-AuthenticodeFile $target
+  }
+} finally {
+  if ($scratch -and (Test-Path -LiteralPath $scratch)) {
+    Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 
 # One signing request per artifact signs every file with the same certificate. A second signer

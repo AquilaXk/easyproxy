@@ -486,7 +486,7 @@
     "reasoning-retention.test.ts": "responses", "reasoning-retention-quota.test.ts": "responses", "reasoning-archive-http.test.ts": "responses", "reasoning-archive-ws.test.ts": "responses",
     "reasoning-retention-routing.test.ts": "responses", "reasoning-retention-v2.test.ts": "responses", "reasoning-metadata.test.ts": "codex-integration", "reasoning-replay-identity.test.ts": "adapters",
     "reasoning-replay-robustness.test.ts": "adapters", "reasoning-replay-scope-source.test.ts": "lib", "redact.test.ts": "lib", "relay-eager.test.ts": "server",
-    "release-version-sources.test.ts": "ci-workflows", "remove-tree-helper.test.ts": "lib", "fixture-teardown-helper.test.ts": "ci-workflows", "replay-refusal-parity.test.ts": "server",
+    "release-packaging-contract.test.ts": "ci-workflows", "release-version-sources.test.ts": "ci-workflows", "remove-tree-helper.test.ts": "lib", "fixture-teardown-helper.test.ts": "ci-workflows", "replay-refusal-parity.test.ts": "server",
     "repo-hygiene.test.ts": "ci-workflows", "request-decompress.test.ts": "usage", "request-evidence.test.ts": "usage", "request-history-index.test.ts": "usage",
     "request-history-integrity.test.ts": "usage", "request-log-attempt-identity.test.ts": "usage", "request-log-conversation.test.ts": "usage", "request-log-estimate-cap.test.ts": "usage",
     "request-log-jev.test.ts": "usage", "request-body-log.test.ts": "usage", "request-decompress-ratio.test.ts": "usage", "request-log-nonstream.test.ts": "usage",

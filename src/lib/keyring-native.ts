@@ -56,6 +56,33 @@ function runtimeAsset(platform: NodeJS.Platform, arch: string): KeyringNativeAss
 }
 
 /**
+ * Deterministic desktop resource directory relative to a compiled sidecar directory.
+ * Returns `undefined` for ordinary standalone archives and non-desktop bundle shapes.
+ */
+export function packagedDesktopResourceDir(
+  executableDir: string,
+  platform: NodeJS.Platform = process.platform,
+  pathApi: typeof posix | typeof win32 = platform === "win32" ? win32 : posix,
+): string | undefined {
+  const { basename, dirname, join, resolve } = pathApi;
+  const resolved = resolve(executableDir);
+  if (platform === "linux") {
+    const usrDir = dirname(resolved);
+    // Tauri installs resources at usr/lib/<productName> while its sidecar is usr/bin/epx.
+    // Restrict that fallback to the exact bundle shape; ordinary standalone archives keep the
+    // executable-owned adjacent directory as their only candidate.
+    return basename(resolved) === "bin" && basename(usrDir) === "usr"
+      ? join(usrDir, "lib", PACKAGED_DESKTOP_PRODUCT_NAME)
+      : undefined;
+  }
+  if (platform === "darwin") {
+    // Tauri resources live in Contents/Resources while its external binary lives in Contents/MacOS.
+    return join(resolved, "..", "Resources");
+  }
+  return undefined;
+}
+
+/**
  * Deterministic packaged-addon paths. Never search cwd: a desktop command can be launched from an
  * arbitrary directory, and loading a same-named native file from there would turn cwd into code.
  */
@@ -76,26 +103,16 @@ export function packagedKeyringCandidates({
   if (!asset) return [];
   // Paths follow the target platform's rules rather than the host's, so a candidate list is the
   // same whether it is computed on that platform or simulated from another one.
-  const { basename, dirname, join, resolve } = platform === "win32" ? win32 : posix;
+  const pathApi = platform === "win32" ? win32 : posix;
+  const { join, resolve } = pathApi;
   const executableDir = resolve(root);
   const adjacent = join(executableDir, "keyring", asset.filename);
-  if (platform === "linux") {
-    const usrDir = dirname(executableDir);
-    // Tauri installs resources at usr/lib/<productName> while its sidecar is usr/bin/epx.
-    // Restrict that fallback to the exact bundle shape; ordinary standalone archives keep the
-    // executable-owned adjacent directory as their only candidate.
-    return basename(executableDir) === "bin" && basename(usrDir) === "usr"
-      ? [adjacent, join(usrDir, "lib", PACKAGED_DESKTOP_PRODUCT_NAME, "keyring", asset.filename)]
-      : [adjacent];
-  }
-  if (platform !== "darwin") return [adjacent];
-  return [
-    // Prefer the executable-owned sibling. A standalone layout must not let an unrelated
-    // app-shaped ../Resources tree override the addon distributed with that executable.
-    adjacent,
-    // Tauri resources live in Contents/Resources while its external binary lives in Contents/MacOS.
-    join(executableDir, "..", "Resources", "keyring", asset.filename),
-  ];
+  const resourceDir = packagedDesktopResourceDir(executableDir, platform, pathApi);
+  // Prefer the executable-owned sibling. A standalone layout must not let an unrelated
+  // app-shaped ../Resources or ../lib/EasyProxy tree override the addon distributed with it.
+  return resourceDir
+    ? [adjacent, join(resourceDir, "keyring", asset.filename)]
+    : [adjacent];
 }
 
 const nodeRequire = createRequire(import.meta.url);

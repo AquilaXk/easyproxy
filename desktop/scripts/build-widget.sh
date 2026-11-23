@@ -84,6 +84,32 @@ version_core="${version%%-*}"
 plutil -replace CFBundleShortVersionString -string "$version_core" "$output_dir/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$version_core" "$output_dir/Contents/Info.plist"
 
+entitlements_file="$package_dir/Widget.entitlements"
+if [[ -n "${APPLE_TEAM_ID:-}" ]]; then
+  if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+    echo "Invalid APPLE_TEAM_ID: expected 10 uppercase alphanumeric characters." >&2
+    exit 1
+  fi
+  app_group="${APPLE_TEAM_ID}.com.easyproxy.desktop"
+  plutil -replace EasyProxyAppGroup -string "$app_group" "$output_dir/Contents/Info.plist"
+  plutil -convert xml1 "$output_dir/Contents/Info.plist"
+  entitlements_file="$build_root/Widget.signed.entitlements"
+  cat > "$entitlements_file" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>${app_group}</string>
+  </array>
+</dict>
+</plist>
+PLIST
+fi
+
 # Sign inside out over every Mach-O the bundle actually contains, chosen by magic bytes rather
 # than by name. Today that set is the single widget executable, but a name or extension filter
 # is the thing that fails silently when it stops being true: a helper tool or an embedded
@@ -103,7 +129,7 @@ for member in "${mach_o_members[@]}"; do
 done
 
 # The bundle seal goes on last and is the only signature that carries the entitlements.
-codesign --force --sign "$sign_identity" --entitlements "$package_dir/Widget.entitlements" \
+codesign --force --sign "$sign_identity" --entitlements "$entitlements_file" \
   --options runtime "${timestamp_arg[@]}" "$output_dir"
 
 codesign --verify --deep --strict "$output_dir"

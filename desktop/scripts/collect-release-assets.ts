@@ -23,12 +23,12 @@ export const bundlesByTarget: Record<string, BundleSpec[]> = {
     { kind: "app.tar.gz", dir: "macos", name: "macos.app.tar.gz" },
   ],
   "aarch64-apple-darwin": [
-    { kind: "dmg", dir: "dmg", name: "macos.dmg" },
-    { kind: "app.tar.gz", dir: "macos", name: "macos.app.tar.gz" },
+    { kind: "dmg", dir: "dmg", name: "macos-arm64.dmg" },
+    { kind: "app.tar.gz", dir: "macos", name: "macos-arm64.app.tar.gz" },
   ],
   "x86_64-apple-darwin": [
-    { kind: "dmg", dir: "dmg", name: "macos.dmg" },
-    { kind: "app.tar.gz", dir: "macos", name: "macos.app.tar.gz" },
+    { kind: "dmg", dir: "dmg", name: "macos-x64.dmg" },
+    { kind: "app.tar.gz", dir: "macos", name: "macos-x64.app.tar.gz" },
   ],
   "x86_64-pc-windows-msvc": [{ kind: "msi", dir: "msi", name: "windows-x64.msi" }],
   "x86_64-unknown-linux-gnu": [

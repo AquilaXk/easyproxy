@@ -19,12 +19,14 @@
 #   - release-signing: sign; the verifier then requires a trusted chain (trust=release).
 #   - Any other policy (test-signing): sign dry runs only (trust=test). A self-signed test
 #     certificate is never attached to a public release, so a real release skips with a notice.
-set -uo pipefail
+set -euo pipefail
 
 output="${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 configured="${SIGNPATH_CONFIGURED:-false}"
+org_id="${SIGNPATH_ORGANIZATION_ID:-}"
+project="${SIGNPATH_PROJECT_SLUG:-}"
 policy="${SIGNPATH_SIGNING_POLICY:-}"
-dry_run="${DRY_RUN:-true}"
+dry_run="${DRY_RUN:-}"
 
 emit() {
   {
@@ -34,33 +36,52 @@ emit() {
   } >> "$output"
 }
 
-if [ "$configured" != "true" ]; then
-  if [ "$dry_run" != "true" ]; then
-    echo "::notice::SIGNPATH_API_TOKEN is not configured; this release ships unsigned Windows binaries."
-  else
-    echo "SignPath is not configured for this run; Windows binaries stay unsigned."
+fail_or_skip() {
+  local level="$1"
+  local message="$2"
+  if [ "$dry_run" = "true" ]; then
+    echo "${level}${message} Windows binaries stay unsigned."
+    emit skip "" ""
+    exit 0
   fi
-  emit skip "" ""
-  exit 0
+  echo "::error::$message"
+  exit 1
+}
+
+if [ "$configured" != "true" ]; then
+  if [ "$dry_run" = "true" ]; then
+    echo "SignPath is not configured for this dry run; Windows binaries stay unsigned."
+    emit skip "" ""
+    exit 0
+  fi
+  echo "::error::SIGNPATH_API_TOKEN is not configured; release builds refuse to ship unsigned Windows binaries."
+  exit 1
 fi
 
 missing=""
-[ -n "${SIGNPATH_ORGANIZATION_ID:-}" ] || missing="$missing SIGNPATH_ORGANIZATION_ID"
-[ -n "${SIGNPATH_PROJECT_SLUG:-}" ] || missing="$missing SIGNPATH_PROJECT_SLUG"
+[ -n "$org_id" ] || missing="$missing SIGNPATH_ORGANIZATION_ID"
+[ -n "$project" ] || missing="$missing SIGNPATH_PROJECT_SLUG"
 [ -n "$policy" ] || missing="$missing SIGNPATH_SIGNING_POLICY_SLUG"
 if [ -n "$missing" ]; then
-  echo "::warning::SIGNPATH_API_TOKEN is set but repository variables are missing:$missing. Windows binaries stay unsigned."
-  emit skip "" ""
-  exit 0
+  fail_or_skip "::warning::" "SIGNPATH_API_TOKEN is set but repository variables are missing:$missing."
 fi
 
-# The slug reaches a GitHub Actions output and a SignPath API call; anything that is not a plain
-# slug could forge a second output line, so it is refused rather than passed through.
+# Reject whitespace or control characters that could forge workflow outputs or API slugs.
+case "$org_id" in
+  *[!A-Za-z0-9_-]*)
+    fail_or_skip "::warning::" "SIGNPATH_ORGANIZATION_ID contains invalid characters."
+    ;;
+esac
+
+case "$project" in
+  *[!A-Za-z0-9_-]*)
+    fail_or_skip "::warning::" "SIGNPATH_PROJECT_SLUG contains invalid characters."
+    ;;
+esac
+
 case "$policy" in
   *[!a-z0-9-]*)
-    echo "::warning::SIGNPATH_SIGNING_POLICY_SLUG is not a lowercase slug. Windows binaries stay unsigned."
-    emit skip "" ""
-    exit 0
+    fail_or_skip "::warning::" "SIGNPATH_SIGNING_POLICY_SLUG is not a lowercase slug."
     ;;
 esac
 
@@ -77,5 +98,5 @@ if [ "$dry_run" = "true" ]; then
   exit 0
 fi
 
-echo "::notice::SIGNPATH_SIGNING_POLICY_SLUG is '$policy', not release-signing. A test certificate never ships, so this release's Windows binaries stay unsigned."
-emit skip "" ""
+echo "::error::SIGNPATH_SIGNING_POLICY_SLUG is '$policy', not release-signing. Release builds refuse to ship unsigned or test-signed Windows binaries."
+exit 1

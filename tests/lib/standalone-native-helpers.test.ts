@@ -172,4 +172,106 @@ describe("standalone native helper staging and $bunfs resolution", () => {
       })).toBeUndefined();
     }
   });
+
+  test("resolves packaged macOS .app and Linux usr/bin desktop native-bin layouts and rejects unsafe helpers", () => {
+    const root = makeTempDir("desktop-native-bin");
+    const macAppExec = join(root, "EasyProxy.app", "Contents", "MacOS", "epx");
+    const macChildDir = join(root, "EasyProxy.app", "Contents", "Resources", "native-bin", "darwin-arm64");
+    mkdirSync(join(macAppExec, ".."), { recursive: true });
+    mkdirSync(macChildDir, { recursive: true });
+    const macChildPath = join(macChildDir, "epx-child");
+    const macChildBytes = Buffer.from("mac-desktop-child", "utf8");
+    const macChildDigest = createHash("sha256").update(macChildBytes).digest("hex");
+    writeFileSync(macChildPath, macChildBytes, { mode: 0o755 });
+    writeFileSync(join(macChildDir, "SHA256SUMS"), `${macChildDigest}  epx-child\n`, { mode: 0o644 });
+    const macHelperPath = join(macChildDir, "easyproxy-remote-workspace-helper");
+    writeFileSync(macHelperPath, "#!/bin/sh\necho helper\n", { mode: 0o755 });
+    if (process.platform !== "win32") {
+      chmodSync(macChildPath, 0o755);
+      chmodSync(join(macChildDir, "SHA256SUMS"), 0o644);
+      chmodSync(macHelperPath, 0o755);
+    }
+
+    const macChild = resolveChildBinarySource("darwin-arm64", {
+      hostPlatform: "darwin",
+      hostArch: "arm64",
+      repoRoot: join(root, "absent-repo"),
+      execPath: macAppExec,
+      allowLocalRelease: false,
+      env: {},
+    });
+    expect(macChild.ok).toBe(true);
+    if (macChild.ok) {
+      expect(macChild.artifact.source).toBe("sidecar");
+      expect(macChild.artifact.sha256).toBe(macChildDigest);
+    }
+
+    const macHelper = discoverRemoteWorkspaceNativeHelper({
+      platform: "darwin",
+      architecture: "arm64",
+      execPath: macAppExec,
+    });
+    expect(macHelper).toBeDefined();
+    expect(macHelper?.sha256).toBe(createHash("sha256").update(readFileSync(macHelperPath)).digest("hex"));
+
+    if (process.platform !== "win32") {
+      chmodSync(macHelperPath, 0o775);
+      expect(discoverRemoteWorkspaceNativeHelper({
+        platform: "darwin",
+        architecture: "arm64",
+        execPath: macAppExec,
+      })).toBeUndefined();
+      chmodSync(macHelperPath, 0o755);
+
+      chmodSync(macChildPath, 0o775);
+      expect(resolveChildBinarySource("darwin-arm64", {
+        hostPlatform: "darwin",
+        hostArch: "arm64",
+        repoRoot: join(root, "absent-repo"),
+        execPath: macAppExec,
+        allowLocalRelease: false,
+        env: {},
+      })).toEqual({ ok: false, reason: "checksum_mismatch" });
+    }
+
+    const linuxBundleExec = join(root, "appimage", "usr", "bin", "epx");
+    const linuxChildDir = join(root, "appimage", "usr", "lib", "EasyProxy", "native-bin", "linux-x64");
+    mkdirSync(join(linuxBundleExec, ".."), { recursive: true });
+    mkdirSync(linuxChildDir, { recursive: true });
+    const linuxChildPath = join(linuxChildDir, "epx-child");
+    const linuxChildBytes = Buffer.from("linux-desktop-child", "utf8");
+    const linuxChildDigest = createHash("sha256").update(linuxChildBytes).digest("hex");
+    writeFileSync(linuxChildPath, linuxChildBytes, { mode: 0o755 });
+    writeFileSync(join(linuxChildDir, "SHA256SUMS"), `${linuxChildDigest}  epx-child\n`, { mode: 0o644 });
+    if (process.platform !== "win32") {
+      chmodSync(linuxChildPath, 0o755);
+      chmodSync(join(linuxChildDir, "SHA256SUMS"), 0o644);
+    }
+
+    const linuxChild = resolveChildBinarySource("linux-x64", {
+      hostPlatform: "linux",
+      hostArch: "x64",
+      repoRoot: join(root, "absent-repo"),
+      execPath: linuxBundleExec,
+      allowLocalRelease: false,
+      env: {},
+    });
+    expect(linuxChild.ok).toBe(true);
+    if (linuxChild.ok) {
+      expect(linuxChild.artifact.source).toBe("sidecar");
+      expect(linuxChild.artifact.sha256).toBe(linuxChildDigest);
+    }
+
+    const nonUsrExec = join(root, "appimage", "opt", "bin", "epx");
+    mkdirSync(join(nonUsrExec, ".."), { recursive: true });
+    expect(resolveChildBinarySource("linux-x64", {
+      hostPlatform: "linux",
+      hostArch: "x64",
+      repoRoot: join(root, "absent-repo"),
+      execPath: nonUsrExec,
+      easyproxyHome: join(root, "empty-home"),
+      allowLocalRelease: false,
+      env: {},
+    })).toEqual({ ok: false, reason: "artifact_not_found" });
+  });
 });

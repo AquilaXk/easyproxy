@@ -610,7 +610,7 @@
   "reasoning-effort.test.ts": "codex-integration", "reasoning-envelope.test.ts": "responses", "reasoning-retention.test.ts": "responses", "reasoning-retention-quota.test.ts": "responses",
   "reasoning-archive-http.test.ts": "responses", "reasoning-archive-ws.test.ts": "responses", "reasoning-retention-routing.test.ts": "responses", "reasoning-retention-v2.test.ts": "responses",
   "reasoning-metadata.test.ts": "codex-integration", "reasoning-replay-identity.test.ts": "adapters", "reasoning-replay-robustness.test.ts": "adapters", "reasoning-replay-scope-source.test.ts": "lib",
-  "redact.test.ts": "lib", "relay-eager.test.ts": "server", "release-version-sources.test.ts": "ci-workflows", "remote-catalog.test.ts": "clients",
+  "redact.test.ts": "lib", "relay-eager.test.ts": "server", "release-packaging-contract.test.ts": "ci-workflows", "release-version-sources.test.ts": "ci-workflows", "remote-catalog.test.ts": "clients",
   "remote-control-prototype.test.ts": "clients", "remote-workspace-activation.test.ts": "clients", "remote-workspace-agent-wire.test.ts": "clients", "remote-workspace-app-server.integration.test.ts": "clients",
   "remote-workspace-claude.integration.test.ts": "clients", "remote-workspace-cli-runtimes.test.ts": "clients", "remote-workspace-cli.test.ts": "clients", "remote-workspace-codex-runtime.test.ts": "clients",
   "remote-workspace-command-runner.test.ts": "clients", "remote-workspace-device.test.ts": "clients", "remote-workspace-hub.test.ts": "clients", "remote-workspace-linux-confinement.test.ts": "clients",

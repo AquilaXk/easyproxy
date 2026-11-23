@@ -23,7 +23,8 @@
     ],
     "resources": {
       "resources/gui/dist": "gui/dist",
-      "resources/keyring": "keyring"
+      "resources/keyring": "keyring",
+      "resources/native-bin": "native-bin"
     },
     "icon": [
       "icons/icon.icns",

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import path, { basename, dirname, join, resolve } from "node:path";
 import { getConfigDir } from "../config/paths";
+import { packagedDesktopResourceDir } from "../lib/keyring-native";
 import { packageVersion } from "../lib/package-version";
 import { isStandaloneBinary, standaloneRoot } from "../lib/standalone";
 
@@ -191,6 +192,18 @@ export function resolveChildBinarySource(
   const execDir = dirname(options.execPath ?? process.execPath);
   const resolvedStandaloneRoot = options.standaloneRootDir
     ?? (!options.execPath && isStandaloneBinary() ? standaloneRoot() : undefined);
+  const desktopNativeBinDirs: string[] = [];
+  const desktopBaseDirs = [
+    ...(options.execPath || isStandaloneBinary() ? [execDir] : []),
+    ...(resolvedStandaloneRoot && resolvedStandaloneRoot !== execDir ? [resolvedStandaloneRoot] : []),
+  ];
+  for (const baseDir of desktopBaseDirs) {
+    const resourceDir = packagedDesktopResourceDir(baseDir, hostPlatform, path);
+    if (resourceDir) {
+      const nativeDir = join(resourceDir, "native-bin");
+      if (!desktopNativeBinDirs.includes(nativeDir)) desktopNativeBinDirs.push(nativeDir);
+    }
+  }
   const sidecarCandidates = [
     join(repoRoot, "native-bin", targetTriple, plainExe),
     join(repoRoot, "native-bin", artifactFile),
@@ -202,6 +215,10 @@ export function resolveChildBinarySource(
           join(resolvedStandaloneRoot, "native-bin", targetTriple, plainExe),
         ]
       : []),
+    ...desktopNativeBinDirs.flatMap(nativeDir => [
+      join(nativeDir, targetTriple, plainExe),
+      join(nativeDir, artifactFile),
+    ]),
   ];
   for (const candidate of sidecarCandidates) {
     const res = verifyManifestCandidate(candidate, targetTriple, "sidecar", hostPlatform);

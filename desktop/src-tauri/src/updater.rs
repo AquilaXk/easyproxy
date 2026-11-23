@@ -459,6 +459,18 @@ pub async fn install(app: &AppHandle, update: Update) -> Result<(), InstallFailu
         .await
         .map_err(|error| InstallFailure::package(PackageStep::Download, error))?;
 
+    #[cfg(target_os = "windows")]
+    let package = tauri::async_runtime::spawn_blocking(move || {
+        verify_windows_msi_package(&package)?;
+        Ok::<Vec<u8>, InstallFailure>(package)
+    })
+    .await
+    .map_err(|error| {
+        InstallFailure::new(format!(
+            "The update was downloaded, but Authenticode verification task panicked: {error}. Installation has not started."
+        ))
+    })??;
+
     // Then stop the runtime, and confirm it stopped, *before* anything is replaced. Asking for the
     // restart after `install` is the shape that does not work: the pinned Windows installer hands off
     // to the installer process and ends this one, so the call after it is never reached and the
@@ -508,6 +520,193 @@ fn recover_after_failed_install(app: &AppHandle) {
 
 pub fn update_label(version: &str) -> String {
     format!("Install update v{version}")
+}
+
+#[cfg(target_os = "windows")]
+const MAX_WINDOWS_MSI_BYTES: usize = 1024 * 1024 * 1024;
+
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_AUTHENTICODE_PS_SCRIPT: &str = concat!(
+    "$ErrorActionPreference='Stop'; ",
+    "$s=Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath $env:EPX_UPDATE_MSI_PATH; ",
+    "[pscustomobject]@{ status=[string]$s.Status; hasSigner=($null -ne $s.SignerCertificate); ",
+    "hasTimestamp=($null -ne $s.TimeStamperCertificate); message=[string]$s.StatusMessage } ",
+    "| Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress"
+);
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_powershell_path_from(system_root: Option<&str>) -> std::path::PathBuf {
+    let base = system_root
+        .map(str::trim)
+        .filter(|root| {
+            !root.is_empty()
+                && !root.contains('\0')
+                && (root.starts_with("\\\\")
+                    || (root.len() >= 3
+                        && root.as_bytes()[0].is_ascii_alphabetic()
+                        && root.as_bytes()[1] == b':'
+                        && (root.as_bytes()[2] == b'\\' || root.as_bytes()[2] == b'/')))
+        })
+        .unwrap_or(r"C:\Windows");
+    let trimmed = base.trim_end_matches(['\\', '/']);
+    std::path::PathBuf::from(format!(
+        r"{trimmed}\System32\WindowsPowerShell\v1.0\powershell.exe"
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_powershell_path() -> std::path::PathBuf {
+    let env_root = std::env::var("SystemRoot")
+        .ok()
+        .or_else(|| std::env::var("WINDIR").ok());
+    windows_powershell_path_from(env_root.as_deref())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_authenticode_command_args() -> [&'static str; 4] {
+    [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        WINDOWS_AUTHENTICODE_PS_SCRIPT,
+    ]
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn classify_windows_authenticode_output(
+    succeeded: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<(), String> {
+    if !succeeded {
+        let err = String::from_utf8_lossy(stderr);
+        let out = String::from_utf8_lossy(stdout);
+        let detail = if !err.trim().is_empty() {
+            err.trim()
+        } else {
+            out.trim()
+        };
+        let bounded: String = detail.chars().take(240).collect();
+        return Err(format!(
+            "Windows Authenticode verification process failed ({bounded})"
+        ));
+    }
+    if stdout.len() > 64 * 1024 {
+        return Err("Windows Authenticode verification output exceeded size limit".into());
+    }
+    let trimmed = String::from_utf8_lossy(stdout).trim().to_string();
+    let value: serde_json::Value = serde_json::from_str(&trimmed)
+        .map_err(|_| "Windows Authenticode verification returned invalid output".to_string())?;
+    let status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+    let has_signer = value
+        .get("hasSigner")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_timestamp = value
+        .get("hasTimestamp")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if status == "Valid" && has_signer && has_timestamp {
+        return Ok(());
+    }
+    let message = value
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(240).collect::<String>())
+        .unwrap_or_else(|| {
+            format!("status={status}, signer={has_signer}, timestamp={has_timestamp}")
+        });
+    Err(format!(
+        "Downloaded MSI failed Windows Authenticode verification ({message})"
+    ))
+}
+
+#[cfg(any(target_os = "windows", test))]
+struct TempMsiFile {
+    path: std::path::PathBuf,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl TempMsiFile {
+    fn create_with_bytes_limit(bytes: &[u8], max_bytes: usize) -> Result<Self, std::io::Error> {
+        use std::io::Write;
+        if bytes.len() > max_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "downloaded MSI exceeded maximum verification size",
+            ));
+        }
+        let path = std::env::temp_dir().join(format!(
+            "epx-update-verify-{}-{}.msi",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let guard = Self { path: path.clone() };
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        Ok(guard)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn create_with_bytes(bytes: &[u8]) -> Result<Self, std::io::Error> {
+        Self::create_with_bytes_limit(bytes, MAX_WINDOWS_MSI_BYTES)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl Drop for TempMsiFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn verify_windows_msi_package(bytes: &[u8]) -> Result<(), InstallFailure> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let temp_msi = TempMsiFile::create_with_bytes(bytes).map_err(|error| {
+        InstallFailure::new(format!(
+            "The update was downloaded, but Authenticode staging failed: {error}. Installation has not started."
+        ))
+    })?;
+    let powershell = windows_powershell_path();
+    let output = Command::new(&powershell)
+        .args(windows_authenticode_command_args())
+        .env("EPX_UPDATE_MSI_PATH", temp_msi.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|error| {
+            InstallFailure::new(format!(
+                "The update was downloaded, but Windows Authenticode verification could not run: {error}. Installation has not started."
+            ))
+        })?;
+    classify_windows_authenticode_output(
+        output.status.success(),
+        &output.stdout,
+        &output.stderr,
+    )
+    .map_err(|reason| {
+        InstallFailure::new(format!("{reason}. Installation has not started."))
+    })
 }
 
 pub fn start_background_checks(app: AppHandle) {
@@ -573,8 +772,9 @@ pub async fn check_and_show(app: &AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        after_install_failure, linux_updater_target, update_label, CheckGeneration,
-        DesktopUpdateState, InstallClaim, UiProjection,
+        after_install_failure, classify_windows_authenticode_output, linux_updater_target,
+        update_label, windows_authenticode_command_args, windows_powershell_path_from,
+        CheckGeneration, DesktopUpdateState, InstallClaim, TempMsiFile, UiProjection,
     };
     use crate::exit::{DrainVerdict, ExitCoordinator, ExitDecision, ExitReason};
     use crate::tray_availability::TrayAvailability;
@@ -1006,5 +1206,60 @@ mod tests {
     fn unbundled_builds_keep_the_default_updater_key() {
         // Dev builds and any format without a patcher entry resolve the default key.
         assert_eq!(linux_updater_target(None), None);
+    }
+
+    #[test]
+    fn windows_authenticode_powershell_path_and_args_are_strict() {
+        assert_eq!(
+            windows_powershell_path_from(Some(r"D:\Windows\")),
+            std::path::PathBuf::from(r"D:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+        );
+        assert_eq!(
+            windows_powershell_path_from(Some("relative\\path")),
+            std::path::PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+        );
+        assert_eq!(
+            windows_powershell_path_from(None),
+            std::path::PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+        );
+        let args = windows_authenticode_command_args();
+        assert_eq!(args[0], "-NoProfile");
+        assert_eq!(args[1], "-NonInteractive");
+        assert_eq!(args[2], "-Command");
+        assert!(args[3].contains("$env:EPX_UPDATE_MSI_PATH"));
+    }
+
+    #[test]
+    fn windows_authenticode_classifier_accepts_only_valid_signed_timestamped_msi() {
+        let valid = br#"{"status":"Valid","hasSigner":true,"hasTimestamp":true,"message":"Signature verified."}"#;
+        assert!(classify_windows_authenticode_output(true, valid, b"").is_ok());
+
+        for bad in [
+            br#"{"status":"HashMismatch","hasSigner":true,"hasTimestamp":true,"message":"bad hash"}"#.as_slice(),
+            br#"{"status":"NotSigned","hasSigner":false,"hasTimestamp":false,"message":"unsigned"}"#.as_slice(),
+            br#"{"status":"Valid","hasSigner":true,"hasTimestamp":false,"message":"no stamp"}"#.as_slice(),
+            br#"{"status":"Valid","hasSigner":false,"hasTimestamp":true,"message":"no signer"}"#.as_slice(),
+            b"not-json".as_slice(),
+        ] {
+            assert!(
+                classify_windows_authenticode_output(true, bad, b"").is_err(),
+                "must reject: {}",
+                String::from_utf8_lossy(bad)
+            );
+        }
+        assert!(classify_windows_authenticode_output(false, b"", b"boom").is_err());
+    }
+
+    #[test]
+    fn temp_msi_guard_cleans_up_on_drop_and_rejects_oversize() {
+        let payload = b"msi-bytes";
+        assert!(TempMsiFile::create_with_bytes_limit(payload, 4).is_err());
+        let captured = {
+            let guard = TempMsiFile::create_with_bytes_limit(payload, 64).unwrap();
+            assert!(guard.path.exists());
+            assert_eq!(std::fs::read(&guard.path).unwrap(), payload);
+            guard.path.clone()
+        };
+        assert!(!captured.exists());
     }
 }
