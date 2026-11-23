@@ -29,7 +29,8 @@ verify_member() {
   python3 - "$role" "$scratch/$role.plist" "$scratch/$role-signature.log" "$team_id" <<'PY'
 import pathlib, plistlib, re, sys
 role, entitlements, signature, team_id = sys.argv[1:]
-actual = plistlib.loads(pathlib.Path(entitlements).read_bytes())
+raw = pathlib.Path(entitlements).read_bytes()
+actual = plistlib.loads(raw) if raw.strip() else {}
 if team_id:
     app_group = f"{team_id}.com.easyproxy.desktop"
     if role == "widget":
@@ -48,15 +49,23 @@ if team_id:
             raise SystemExit(f"Unexpected {role} entitlements: {sorted(extra_keys)}")
         if "com.apple.security.application-groups" in actual and actual["com.apple.security.application-groups"] != [app_group]:
             raise SystemExit(f"Unexpected {role} application-groups: {actual['com.apple.security.application-groups']!r}")
+    text = pathlib.Path(signature).read_text()
+    if not re.search(r"flags=.*\bruntime\b", text):
+        raise SystemExit(f"Missing hardened runtime on {role}")
+    if not re.search(rf"^TeamIdentifier={re.escape(team_id)}$", text, re.MULTILINE):
+        raise SystemExit(f"Missing TeamIdentifier={team_id} on {role}")
 else:
-    expected = {"com.apple.security.app-sandbox": True} if role == "widget" else {"com.apple.security.cs.allow-jit": True}
-    if actual != expected:
-        raise SystemExit(f"Unexpected {role} entitlement dictionary")
-text = pathlib.Path(signature).read_text()
-if not re.search(r"flags=.*\bruntime\b", text):
-    raise SystemExit(f"Missing hardened runtime on {role}")
-if team_id and not re.search(rf"^TeamIdentifier={re.escape(team_id)}$", text, re.MULTILINE):
-    raise SystemExit(f"Missing TeamIdentifier={team_id} on {role}")
+    if role == "widget":
+        if actual != {"com.apple.security.app-sandbox": True}:
+            raise SystemExit(f"Unexpected {role} entitlement dictionary: {actual!r}")
+    elif role == "app":
+        if actual != {"com.apple.security.cs.allow-jit": True}:
+            raise SystemExit(f"Unexpected {role} entitlement dictionary: {actual!r}")
+    elif role == "epx":
+        # Tauri ad-hoc signing (`signingIdentity: "-"`) may omit entitlements on external binaries,
+        # but if entitlements exist they must strictly carry allow-jit only.
+        if actual and actual != {"com.apple.security.cs.allow-jit": True}:
+            raise SystemExit(f"Unexpected {role} entitlement dictionary: {actual!r}")
 PY
 }
 verify_member app "$app"
@@ -128,6 +137,15 @@ for member in machos:
             raise SystemExit(f"Missing TeamIdentifier={team_id} on {member}")
         if not re.search(r"flags=.*\bruntime\b", info):
             raise SystemExit(f"Missing hardened runtime on {member}")
+
+native_bin_root = app_dir / "Contents" / "Resources" / "native-bin"
+sums_files = sorted(native_bin_root.glob("*/SHA256SUMS"))
+if not sums_files:
+    raise SystemExit(f"Missing packaged native-bin SHA256SUMS inside {native_bin_root}")
+for sums_file in sums_files:
+    check = subprocess.run(["shasum", "-a", "256", "-c", "SHA256SUMS"], cwd=str(sums_file.parent), capture_output=True, text=True)
+    if check.returncode != 0:
+        raise SystemExit(f"native-bin checksum verification failed in {sums_file.parent}: {check.stdout.strip()} {check.stderr.strip()}")
 
 print(f"Verified {len(machos)} Mach-O binaries inside {app_dir.name}")
 PY

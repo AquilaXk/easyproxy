@@ -1,26 +1,40 @@
 #!/usr/bin/env bash
 # Run only on a Linux packaging runner, against the completed AppImage.
-# Usage: verify-linux-sidecar.sh [appimage-bundle-dir]
+# Usage: verify-linux-sidecar.sh [appimage-bundle-dir-or-file]
 # The release workflow builds each Linux format in its own Cargo target and stages the AppImage
-# into an isolated read-only directory, which it passes here; a local build keeps the default.
+# into an isolated directory, which it passes here; a local build keeps the default.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-bundle="${1:-$root/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage}"
+target="${1:-$root/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage}"
 original="$root/desktop/src-tauri/binaries/epx-x86_64-unknown-linux-gnu"
-shopt -s nullglob
-images=("$bundle"/*.AppImage)
-if [ "${#images[@]}" -ne 1 ]; then
-  echo "Expected exactly one completed AppImage" >&2
+if [ -f "$target" ]; then
+  image="$target"
+elif [ -d "$target" ]; then
+  shopt -s nullglob
+  images=("$target"/*.AppImage)
+  if [ "${#images[@]}" -ne 1 ]; then
+    echo "Expected exactly one completed AppImage in $target, found ${#images[@]}" >&2
+    exit 1
+  fi
+  image="${images[0]}"
+else
+  echo "AppImage target does not exist: $target" >&2
   exit 1
 fi
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 cd "$scratch"
-"${images[0]}" --appimage-extract > /dev/null
+"$image" --appimage-extract > /dev/null
 sidecar="$scratch/squashfs-root/usr/bin/epx"
 keyring="$scratch/squashfs-root/usr/lib/EasyProxy/keyring/keyring.linux-x64-gnu.node"
+native_bin_dir="$scratch/squashfs-root/usr/lib/EasyProxy/native-bin/linux-x64"
 test ! -L "$sidecar"
 test -f "$keyring"
+test ! -L "$native_bin_dir/epx-child"
+test -f "$native_bin_dir/epx-child"
+test -x "$native_bin_dir/epx-child"
+test -f "$native_bin_dir/SHA256SUMS"
+(cd "$native_bin_dir" && sha256sum -c SHA256SUMS)
 cmp "$original" "$sidecar"
 sha256sum "$original" "$sidecar"
 mkdir "$scratch/home"

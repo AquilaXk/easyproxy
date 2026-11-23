@@ -407,15 +407,17 @@ jobs:
           bundle="dist/standalone/${TARGET}"
           triple="${TARGET#bun-}"
           child_exe="epx-child"
-          helper_exe="easyproxy-remote-workspace-helper"
           if [[ "$TARGET" == bun-windows-* ]]; then
             child_exe="epx-child.exe"
-            helper_exe="easyproxy-remote-workspace-helper.exe"
           fi
           test ! -e "${bundle}/.worker-bundles"
           test -f "${bundle}/native-bin/${triple}/${child_exe}"
           test -f "${bundle}/native-bin/${triple}/SHA256SUMS"
-          test -f "${bundle}/native-bin/${triple}/${helper_exe}"
+          if [[ "$TARGET" == bun-darwin-* ]]; then
+            test -f "${bundle}/native-bin/${triple}/easyproxy-remote-workspace-helper"
+          elif [[ "$TARGET" == bun-windows-* ]]; then
+            test -f "${bundle}/native-bin/win32-x64/easyproxy-remote-workspace-helper.exe"
+          fi
           (
             cd "${bundle}/native-bin/${triple}"
             if command -v sha256sum >/dev/null 2>&1; then
@@ -658,7 +660,7 @@ jobs:
               json.dump({"bundle": {"macOS": {"entitlements": dst_plist}}}, f)
           PY
           else
-            printf '{}\n' > "$cfg"
+            printf '{"bundle":{"macOS":{"signingIdentity":"-"}}}\n' > "$cfg"
           fi
           echo "TAURI_BUNDLE_CONFIG_PATH=$cfg" >> "$GITHUB_ENV"
 
@@ -894,12 +896,13 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          appimages=("desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle/appimage/"*.AppImage)
+          appimage_dir="desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle/appimage"
+          appimages=("$appimage_dir/"*.AppImage)
           if [ "${#appimages[@]}" -ne 1 ]; then
             echo "::error::Expected one AppImage, found ${#appimages[@]}"
             exit 1
           fi
-          bash desktop/scripts/verify-linux-sidecar.sh "${appimages[0]}"
+          bash desktop/scripts/verify-linux-sidecar.sh "$appimage_dir"
 
       - name: Collect desktop release assets
         shell: bash

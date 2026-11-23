@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stageStandaloneNativeHelpers } from "../../scripts/standalone-native-helpers";
+import { packagedDesktopResourceDir, packagedKeyringCandidates } from "../../src/lib/keyring-native";
 import { resolveChildBinarySource } from "../../src/link/child-binary-source";
 import { discoverRemoteWorkspaceNativeHelper } from "../../src/remote-control/workspace-command-runner";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -273,5 +274,35 @@ describe("standalone native helper staging and $bunfs resolution", () => {
       allowLocalRelease: false,
       env: {},
     })).toEqual({ ok: false, reason: "artifact_not_found" });
+
+    // Standalone macOS directory outside Contents/MacOS must not resolve ../Resources/native-bin or ../Resources/keyring.
+    const nonAppMacDir = join(root, "standalone-mac", "bin");
+    const nonAppSiblingResources = join(root, "standalone-mac", "Resources", "native-bin", "darwin-arm64");
+    const fakeNonAppHelperBytes = Buffer.from("#!/bin/sh\necho non-app-standalone\n", "utf8");
+    const fakeNonAppHelperSha = createHash("sha256").update(fakeNonAppHelperBytes).digest("hex");
+    mkdirSync(nonAppMacDir, { recursive: true });
+    mkdirSync(nonAppSiblingResources, { recursive: true });
+    writeFileSync(join(nonAppSiblingResources, "epx-child"), macChildBytes, { mode: 0o755 });
+    writeFileSync(join(nonAppSiblingResources, "SHA256SUMS"), `${macChildDigest}  epx-child\n`, { mode: 0o644 });
+    writeFileSync(join(nonAppSiblingResources, "easyproxy-remote-workspace-helper"), fakeNonAppHelperBytes, { mode: 0o755 });
+    expect(packagedDesktopResourceDir(nonAppMacDir, "darwin")).toBeUndefined();
+    expect(packagedKeyringCandidates({ root: nonAppMacDir, platform: "darwin", arch: "arm64" })).toEqual([
+      join(nonAppMacDir, "keyring", "keyring.darwin-arm64.node"),
+    ]);
+    expect(resolveChildBinarySource("darwin-arm64", {
+      hostPlatform: "darwin",
+      hostArch: "arm64",
+      repoRoot: join(root, "absent-repo"),
+      execPath: join(nonAppMacDir, "epx"),
+      easyproxyHome: join(root, "empty-home"),
+      allowLocalRelease: false,
+      env: {},
+    })).toEqual({ ok: false, reason: "artifact_not_found" });
+    const nonAppResolvedHelper = discoverRemoteWorkspaceNativeHelper({
+      platform: "darwin",
+      architecture: "arm64",
+      execPath: join(nonAppMacDir, "epx"),
+    });
+    expect(nonAppResolvedHelper?.sha256).not.toBe(fakeNonAppHelperSha);
   });
 });

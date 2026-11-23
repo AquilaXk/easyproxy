@@ -168,6 +168,23 @@ describe("release workflow and per-arch macOS packaging contracts", () => {
     expect(platformFiles["linux-x86_64"]).toBe("linux-x86_64.AppImage");
     expect(platformFiles["linux-x86_64-deb"]).toBe("linux-amd64.deb");
     expect(platformFiles["windows-x86_64"]).toBe("windows-x64.msi");
+
+    // Review fixes: Windows/Linux helper check, Linux AppImage dir, macOS ad-hoc signingIdentity, SHA256SUMS checks.
+    expect(workflow).toContain('test -f "${bundle}/native-bin/win32-x64/easyproxy-remote-workspace-helper.exe"');
+    expect(workflow).not.toContain('test -f "${bundle}/native-bin/${triple}/${helper_exe}"');
+    expect(workflow).toContain('bash desktop/scripts/verify-linux-sidecar.sh "$appimage_dir"');
+    expect(workflow).toContain('{"bundle":{"macOS":{"signingIdentity":"-"}}}');
+
+    const verifyLinux = readFileSync(repoPath("desktop", "scripts", "verify-linux-sidecar.sh"), "utf8");
+    expect(verifyLinux).toContain('if [ -f "$target" ]');
+    expect(verifyLinux).toContain('elif [ -d "$target" ]');
+    expect(verifyLinux).toContain("usr/lib/EasyProxy/native-bin/linux-x64");
+    expect(verifyLinux).toContain("sha256sum -c SHA256SUMS");
+
+    const verifyMac = readFileSync(repoPath("desktop", "scripts", "verify-macos-runtime.sh"), "utf8");
+    expect(verifyMac).toContain("actual = plistlib.loads(raw) if raw.strip() else {}");
+    expect(verifyMac).toContain('shasum", "-a", "256", "-c", "SHA256SUMS"');
+    expect(verifyMac).toContain("signingIdentity");
   });
 
   test("expectedReleaseAssets includes all versioned standalone archives, convenience aliases, and desktop updater signatures", () => {

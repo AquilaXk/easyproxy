@@ -633,7 +633,11 @@ struct TempMsiFile {
 
 #[cfg(any(target_os = "windows", test))]
 impl TempMsiFile {
-    fn create_with_bytes_limit(bytes: &[u8], max_bytes: usize) -> Result<Self, std::io::Error> {
+    fn create_at_path_limit(
+        path: &std::path::Path,
+        bytes: &[u8],
+        max_bytes: usize,
+    ) -> Result<Self, std::io::Error> {
         use std::io::Write;
         if bytes.len() > max_bytes {
             return Err(std::io::Error::new(
@@ -641,24 +645,38 @@ impl TempMsiFile {
                 "downloaded MSI exceeded maximum verification size",
             ));
         }
-        let path = std::env::temp_dir().join(format!(
-            "epx-update-verify-{}-{}.msi",
-            std::process::id(),
-            Uuid::new_v4()
-        ));
-        let guard = Self { path: path.clone() };
+        // Only take ownership of `path` after `create_new` succeeds so `Drop` can never unlink a
+        // pre-existing file on `AlreadyExists` or permission errors, while write errors clean up.
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&path)?;
+            .open(path)?;
+        let guard = Self {
+            path: path.to_path_buf(),
+        };
         file.write_all(bytes)?;
         file.flush()?;
         Ok(guard)
     }
 
+    #[cfg(test)]
+    fn create_with_bytes_limit(bytes: &[u8], max_bytes: usize) -> Result<Self, std::io::Error> {
+        let path = std::env::temp_dir().join(format!(
+            "epx-update-verify-{}-{}.msi",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        Self::create_at_path_limit(&path, bytes, max_bytes)
+    }
+
     #[cfg(target_os = "windows")]
     fn create_with_bytes(bytes: &[u8]) -> Result<Self, std::io::Error> {
-        Self::create_with_bytes_limit(bytes, MAX_WINDOWS_MSI_BYTES)
+        let path = std::env::temp_dir().join(format!(
+            "epx-update-verify-{}-{}.msi",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        Self::create_at_path_limit(&path, bytes, MAX_WINDOWS_MSI_BYTES)
     }
 
     #[cfg(target_os = "windows")]
@@ -674,6 +692,56 @@ impl Drop for TempMsiFile {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_AUTHENTICODE_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(any(target_os = "windows", test))]
+const MAX_AUTHENTICODE_PIPE_BYTES: usize = 64 * 1024;
+
+#[cfg(any(target_os = "windows", test))]
+fn read_bounded_pipe<R: std::io::Read>(mut reader: R, limit: usize) -> Vec<u8> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    let _ = reader
+        .by_ref()
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut out);
+    out
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn wait_for_child_with_timeout(
+    child: &mut std::process::Child,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<std::process::ExitStatus, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "Windows Authenticode verification timed out after {}s",
+                        timeout.as_secs()
+                    ));
+                }
+                let remaining = deadline.saturating_duration_since(now);
+                std::thread::sleep(poll_interval.min(remaining));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "Windows Authenticode verification wait failed: {error}"
+                ));
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn verify_windows_msi_package(bytes: &[u8]) -> Result<(), InstallFailure> {
     use std::os::windows::process::CommandExt;
@@ -686,25 +754,42 @@ fn verify_windows_msi_package(bytes: &[u8]) -> Result<(), InstallFailure> {
         ))
     })?;
     let powershell = windows_powershell_path();
-    let output = Command::new(&powershell)
+    let mut child = Command::new(&powershell)
         .args(windows_authenticode_command_args())
         .env("EPX_UPDATE_MSI_PATH", temp_msi.path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
+        .spawn()
         .map_err(|error| {
             InstallFailure::new(format!(
                 "The update was downloaded, but Windows Authenticode verification could not run: {error}. Installation has not started."
             ))
         })?;
-    classify_windows_authenticode_output(
-        output.status.success(),
-        &output.stdout,
-        &output.stderr,
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_thread = std::thread::spawn(move || {
+        stdout_pipe
+            .map(|r| read_bounded_pipe(r, MAX_AUTHENTICODE_PIPE_BYTES))
+            .unwrap_or_default()
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        stderr_pipe
+            .map(|r| read_bounded_pipe(r, MAX_AUTHENTICODE_PIPE_BYTES))
+            .unwrap_or_default()
+    });
+    let status = wait_for_child_with_timeout(
+        &mut child,
+        WINDOWS_AUTHENTICODE_TIMEOUT,
+        Duration::from_millis(50),
     )
     .map_err(|reason| {
+        InstallFailure::new(format!("{reason}. Installation has not started."))
+    })?;
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+    classify_windows_authenticode_output(status.success(), &stdout, &stderr).map_err(|reason| {
         InstallFailure::new(format!("{reason}. Installation has not started."))
     })
 }
@@ -773,14 +858,18 @@ pub async fn check_and_show(app: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::{
         after_install_failure, classify_windows_authenticode_output, linux_updater_target,
-        update_label, windows_authenticode_command_args, windows_powershell_path_from,
-        CheckGeneration, DesktopUpdateState, InstallClaim, TempMsiFile, UiProjection,
+        read_bounded_pipe, update_label, wait_for_child_with_timeout,
+        windows_authenticode_command_args, windows_powershell_path_from, CheckGeneration,
+        DesktopUpdateState, InstallClaim, TempMsiFile, UiProjection, MAX_AUTHENTICODE_PIPE_BYTES,
+        WINDOWS_AUTHENTICODE_TIMEOUT,
     };
     use crate::exit::{DrainVerdict, ExitCoordinator, ExitDecision, ExitReason};
     use crate::tray_availability::TrayAvailability;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc};
+    use std::time::Duration;
     use tauri_utils::config::BundleType;
+    use uuid::Uuid;
 
     #[test]
     fn install_failures_publish_only_the_stage_and_download_advice() {
@@ -1251,9 +1340,22 @@ mod tests {
     }
 
     #[test]
-    fn temp_msi_guard_cleans_up_on_drop_and_rejects_oversize() {
+    fn temp_msi_guard_cleans_up_on_drop_and_preserves_existing_collisions() {
         let payload = b"msi-bytes";
         assert!(TempMsiFile::create_with_bytes_limit(payload, 4).is_err());
+
+        // Pre-existing file collision must fail without unlinking the caller's existing file.
+        let collision = std::env::temp_dir().join(format!(
+            "epx-update-collision-{}-{}.msi",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        std::fs::write(&collision, b"existing-owner").unwrap();
+        let err = TempMsiFile::create_at_path_limit(&collision, payload, 64);
+        assert!(err.is_err());
+        assert_eq!(std::fs::read(&collision).unwrap(), b"existing-owner");
+        let _ = std::fs::remove_file(&collision);
+
         let captured = {
             let guard = TempMsiFile::create_with_bytes_limit(payload, 64).unwrap();
             assert!(guard.path.exists());
@@ -1261,5 +1363,42 @@ mod tests {
             guard.path.clone()
         };
         assert!(!captured.exists());
+    }
+
+    #[test]
+    fn windows_authenticode_child_waiter_enforces_timeout_and_bounded_pipe() {
+        assert_eq!(WINDOWS_AUTHENTICODE_TIMEOUT.as_secs(), 20);
+        assert_eq!(MAX_AUTHENTICODE_PIPE_BYTES, 64 * 1024);
+
+        let oversized = vec![b'a'; 128];
+        let bounded = read_bounded_pipe(std::io::Cursor::new(oversized), 32);
+        assert_eq!(bounded.len(), 33);
+
+        #[cfg(unix)]
+        {
+            let mut fast = std::process::Command::new("/bin/sh")
+                .args(["-c", "exit 0"])
+                .spawn()
+                .unwrap();
+            let ok_status = wait_for_child_with_timeout(
+                &mut fast,
+                Duration::from_secs(2),
+                Duration::from_millis(5),
+            )
+            .unwrap();
+            assert!(ok_status.success());
+
+            let mut slow = std::process::Command::new("/bin/sh")
+                .args(["-c", "sleep 5"])
+                .spawn()
+                .unwrap();
+            let err = wait_for_child_with_timeout(
+                &mut slow,
+                Duration::from_millis(50),
+                Duration::from_millis(5),
+            )
+            .unwrap_err();
+            assert!(err.contains("timed out"));
+        }
     }
 }

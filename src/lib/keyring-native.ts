@@ -76,8 +76,11 @@ export function packagedDesktopResourceDir(
       : undefined;
   }
   if (platform === "darwin") {
+    const contentsDir = dirname(resolved);
     // Tauri resources live in Contents/Resources while its external binary lives in Contents/MacOS.
-    return join(resolved, "..", "Resources");
+    return basename(resolved) === "MacOS" && basename(contentsDir) === "Contents"
+      ? join(contentsDir, "Resources")
+      : undefined;
   }
   return undefined;
 }
