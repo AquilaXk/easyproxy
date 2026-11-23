@@ -40,7 +40,7 @@ const SECRET_RULES: readonly SecretRule[] = [
   { kind: "github_token", mask: RULE_GITHUB, pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
   { kind: "aws_access_key", mask: RULE_AWS, pattern: /\bAKIA[0-9A-Z]{16}\b/g },
   { kind: "google_api_key", mask: RULE_GOOGLE, pattern: /\bAIza[0-9A-Za-z_-]{35}\b/g },
-  { kind: "easyproxy_token", mask: RULE_EPX, pattern: /\bepx_data_[A-Za-z0-9_-]{16,}/g },
+  { kind: "easyproxy_token", mask: RULE_EPX, pattern: /\bepx_(?:data|admin|session|pair)_[A-Za-z0-9_-]{16,}/g },
   { kind: "slack_token", mask: RULE_SLACK, pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g },
 ];
 

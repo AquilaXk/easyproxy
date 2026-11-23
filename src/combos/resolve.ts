@@ -526,7 +526,7 @@ export function pickComboTarget(
     let state = selectionState.get(comboId);
     if (!state) {
       state = { successes: 0, currentWeights: new Map(), successfulUses: new Map() };
-      selectionState.set(comboId, state);
+      if (!options.preview) selectionState.set(comboId, state);
     }
     let fewestUses = Number.POSITIVE_INFINITY;
     for (let index = 0; index < combo.targets.length; index++) {

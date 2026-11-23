@@ -7,7 +7,7 @@ import {
   providerDestinationConfigError,
   resolvePublicAddresses,
 } from "./destination-policy";
-import { pinnedHttpGet, pinnedHttpPost } from "./pinned-http";
+import { pinnedHttpGet, pinnedHttpPost, type PinnedAddress } from "./pinned-http";
 import { configuredOutboundFetch, effectiveProxyFor, noProxyMatches, normalizeProxyHostname, schemeMatchedProxyFor } from "./proxy-env";
 import { InvalidProviderEgressError, resolveProviderEgress } from "./provider-egress";
 import { publicProviderBaseUrl } from "./provider-url";
@@ -159,6 +159,18 @@ function transparentFakeIpException(
 
 let proxyBoundaryWarned = false;
 let proxyDnsDegradationWarned = false;
+let bespokeAddressResolverForTests: typeof resolvePublicAddresses | null = null;
+
+/** Test-only override for DNS resolution during bespoke destination verification. */
+export function setBespokeProbeAddressResolverForTests(
+  next: typeof resolvePublicAddresses | null,
+): void {
+  bespokeAddressResolverForTests = next;
+}
+
+export type BespokeDestinationResult =
+  | { ok: true; pinnedAddress?: PinnedAddress }
+  | { ok: false; error: string };
 
 function warnProxyBoundaryOnce(): void {
   if (proxyBoundaryWarned) return;
@@ -230,6 +242,180 @@ function withDefaultOutboundUserAgent(
   return { ...init, headers: { ...(headers ?? {}), "User-Agent": PROVIDER_OUTBOUND_DEFAULT_USER_AGENT } };
 }
 
+type ResolvedOutboundRoute =
+  | { kind: "proxied"; proxy?: string }
+  | { kind: "pinned"; pinned: PinnedAddress };
+
+async function resolveOutboundRoute(
+  name: string,
+  provider: ProviderOutboundConfig,
+  url: string,
+  parsed: URL,
+  label: string,
+  localCleartextPost: boolean,
+  resolveAddresses: typeof resolvePublicAddresses,
+  isCanonicalUrl: (name: string, url: string) => boolean,
+): Promise<ResolvedOutboundRoute> {
+  // The provider's own route, decided against this request URL. `inherit` leaves every value
+  // below as the global decision computed it.
+  const egress = resolveProviderEgress({ providerName: name, provider, url: parsed });
+  const providerProxy = egress.kind === "proxy" ? egress.proxyUrl : null;
+  // Snapshot the proxy fetch would actually use once, before the DNS await, so admission
+  // and transport below reason about the same value. `null` here means "no proxy fetch
+  // would actually use", even if some other proxy variable is set.
+  const globalProxy = effectiveProxyFor(parsed);
+  // The request leaves the DNS-pinned transport only when a proxy will actually carry it:
+  // a proxy variable fetch would use for this URL that NO_PROXY does not exempt.
+  // A scheme-mismatched or unusable variable, a NO_PROXY match, or an ALL_PROXY
+  // this target's scheme cannot use must not downgrade pinning or admit
+  // proxy-only DNS answers.
+  //
+  // A provider route replaces that decision outright rather than combining with it. An
+  // explicit provider proxy applies even where global NO_PROXY exempts the host, because the
+  // operator named this proxy for this provider; `providers.<name>.noProxy` is the exemption
+  // that belongs to that choice, and `resolveProviderEgress` has already applied it. A
+  // provider pinned to `direct` keeps the DNS-pinned transport, which reaches the peer
+  // through no proxy at all — the one route on this path that needs nothing from Bun.
+  const proxyApplies = egress.kind === "inherit"
+    ? globalProxy !== null && !noProxyMatches(parsed)
+    : providerProxy !== null;
+  // A cleartext body must go straight to the local peer: a proxy (global or provider route, and
+  // the DNS-failure proxy degradation below, which needs one) would carry it off-host unencrypted.
+  if (localCleartextPost && proxyApplies) {
+    throw new ProviderOutboundPolicyError(
+      `a cleartext provider ${label} cannot use an outbound proxy; add ${normalizeProxyHostname(parsed.hostname)} to NO_PROXY`,
+    );
+  }
+  // The IPv6 fake-IP gate keeps its stricter documented condition — a
+  // scheme-matched variable or a SOCKS5 ALL_PROXY, never a non-SOCKS
+  // ALL_PROXY — even when proxyApplies admits one for the transport
+  // decision, because admission binds the fetch to this value explicitly.
+  // An explicit provider proxy is exactly such a binding: the fetch below is pinned to it.
+  const bindingProxy = egress.kind === "inherit"
+    ? schemeMatchedProxyFor(parsed)
+    : providerProxy;
+  const allowMihomoIpv6FakeIp = (bindingProxy !== null && (providerProxy !== null || !noProxyMatches(parsed)))
+    || transparentFakeIpException(url, parsed, isCanonicalUrl, name);
+  const allowPrivate = providerAllowsPrivateNetwork(name, provider);
+  let resolved: Awaited<ReturnType<typeof resolvePublicAddresses>>;
+  try {
+    resolved = await resolveAddresses(url, {
+      context: "provider URL",
+      allowPrivateNetwork: allowPrivate,
+      // Clash/Surge/Mihomo fake-IP DNS (198.18.0.0/15) answers are admitted only
+      // when this exact host will use the configured outbound proxy: the hostname
+      // then rides the proxy as an ordinary CONNECT instead of failing as a private
+      // destination or being pin-connected to the fake-IP (credit #1748). A NO_PROXY
+      // match is a direct route, so it keeps the benchmark answer rejected. Image/Lab
+      // fetch never passes this flag.
+      //
+      // TUN-mode transparency: with no proxy env, Clash/Surge/Mihomo TUN still
+      // intercepts the fake-IP destination itself, so the REGISTRY's own fixed
+      // discovery URL stays reachable by pin-connecting through the TUN. The
+      // proof is on the final request URL — not the provider name — because an
+      // OAuth/forward name matches any baseUrl by design while the bearer is
+      // pinned to the registry destination independently.
+      allowBenchmarkAddresses: proxyApplies
+        || transparentFakeIpException(url, parsed, isCanonicalUrl, name),
+      // Mihomo IPv6 fake-IP (fdfe:dcba:9876::/48) answers are admitted either when bound
+      // to a scheme-matched proxy (#3462) or under the TUN transparency exception for a
+      // canonical registry/accounting destination.
+      allowMihomoIpv6FakeIp,
+    });
+  } catch (error) {
+    const dnsResolutionFailed = error instanceof DestinationDnsResolutionError
+      || (error instanceof Error && error.name === "DestinationDnsResolutionError");
+    if (!dnsResolutionFailed) {
+      throw new ProviderOutboundPolicyError(error instanceof Error ? error.message : "provider destination was blocked");
+    }
+    if (!proxyApplies) throw error;
+    warnProxyBoundaryOnce();
+    warnProxyDnsDegradationOnce();
+    return { kind: "proxied", ...(providerProxy ? { proxy: providerProxy } : {}) };
+  }
+  // A canonical TUN exception with no scheme-matched proxy must retain the
+  // validated address, even when an unrelated HTTP_PROXY/ALL_PROXY is present.
+  if (proxyApplies && !resolved.privateNetwork) {
+    warnProxyBoundaryOnce();
+    const proxy = providerProxy ?? ((allowMihomoIpv6FakeIp && bindingProxy) ? bindingProxy : undefined);
+    return { kind: "proxied", ...(proxy ? { proxy } : {}) };
+  }
+  if (proxyApplies && resolved.privateNetwork) {
+    const hostname = normalizeProxyHostname(parsed.hostname);
+    throw new Error(
+      `provider URL resolves to a private-network destination; add ${hostname} to NO_PROXY before using allowPrivateNetwork with an outbound proxy`,
+    );
+  }
+  if (localCleartextPost
+    && !resolved.addresses.every(answer => localCleartextAddressAllowed(answer.address))) {
+    throw new ProviderOutboundPolicyError(`a cleartext provider ${label} resolved outside the local address allowlist`);
+  }
+  return { kind: "pinned", pinned: pickPinnedAddress(resolved.addresses) };
+}
+
+/**
+ * Validate a bespoke provider discovery/probe destination (e.g. Cursor Connect or Devin
+ * gRPC-Web) and resolve a peer IP for pinning so callers do not perform a second DNS lookup.
+ */
+export async function verifyBespokeDestination(
+  name: string,
+  provider: ProviderOutboundConfig,
+  url: string,
+  options: {
+    skipDns?: boolean;
+    isCanonicalUrl?: (name: string, url: string) => boolean;
+    resolveAddresses?: typeof resolvePublicAddresses;
+  } = {},
+): Promise<BespokeDestinationResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, error: "provider URL is invalid" };
+  }
+  const assessment = assessUrlDestination(url);
+  if (!assessment) return { ok: false, error: "provider URL is invalid" };
+  if (assessment.kind === "metadata" || assessment.kind === "link-local" || assessment.kind === "unspecified") {
+    return { ok: false, error: `provider URL targets ${assessment.detail}` };
+  }
+  const allowPrivate = providerAllowsPrivateNetwork(name, provider);
+  if (!allowPrivate) {
+    const destinationError = providerDestinationConfigError(name, {
+      baseUrl: url,
+      allowPrivateNetwork: false,
+    });
+    if (destinationError) return { ok: false, error: destinationError };
+  }
+  const isCleartext = parsed.protocol !== "https:";
+  if (isCleartext) {
+    const host = unbracketedHostname(parsed).toLowerCase();
+    const localCleartext = allowPrivate
+      && parsed.protocol === "http:"
+      && (host === "localhost" || host.endsWith(".localhost") || localCleartextAddressAllowed(host));
+    if (!localCleartext) {
+      return { ok: false, error: "provider POST URL must use HTTPS" };
+    }
+  }
+  if (options.skipDns === true) return { ok: true };
+  try {
+    const route = await resolveOutboundRoute(
+      name,
+      provider,
+      url,
+      parsed,
+      "POST",
+      isCleartext,
+      bespokeAddressResolverForTests ?? options.resolveAddresses ?? resolvePublicAddresses,
+      options.isCanonicalUrl ?? (() => false),
+    );
+    return route.kind === "pinned"
+      ? { ok: true, pinnedAddress: route.pinned }
+      : { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function providerOutboundRequest(
   name: string,
   provider: ProviderOutboundConfig,
@@ -296,127 +482,37 @@ async function providerOutboundRequest(
     return provider.fetch(url, { ...init, method, redirect: "manual" });
   }
   const parsed = postUrl ?? new URL(url);
-  // The provider's own route, decided against this request URL. `inherit` leaves every value
-  // below exactly as the global decision computed it.
-  const egress = resolveProviderEgress({ providerName: name, provider, url: parsed });
-  const providerProxy = egress.kind === "proxy" ? egress.proxyUrl : null;
-  // Snapshot the proxy fetch would actually use once, before the DNS await, so admission
-  // and transport below reason about the same value. `null` here means "no proxy fetch
-  // would actually use", even if some other proxy variable is set.
-  const globalProxy = effectiveProxyFor(parsed);
-  // The request leaves the DNS-pinned transport only when a proxy will actually carry it:
-  // a proxy variable fetch would use for this URL that NO_PROXY does not exempt.
-  // A scheme-mismatched or unusable variable, a NO_PROXY match, or an ALL_PROXY
-  // this target's scheme cannot use must not downgrade pinning or admit
-  // proxy-only DNS answers.
-  //
-  // A provider route replaces that decision outright rather than combining with it. An
-  // explicit provider proxy applies even where global NO_PROXY exempts the host, because the
-  // operator named this proxy for this provider; `providers.<name>.noProxy` is the exemption
-  // that belongs to that choice, and `resolveProviderEgress` has already applied it. A
-  // provider pinned to `direct` keeps the DNS-pinned transport, which reaches the peer
-  // through no proxy at all — the one route on this path that needs nothing from Bun.
-  const proxyApplies = egress.kind === "inherit"
-    ? globalProxy !== null && !noProxyMatches(parsed)
-    : providerProxy !== null;
-  // A cleartext body must go straight to the local peer: a proxy (global or provider route, and
-  // the DNS-failure proxy degradation below, which needs one) would carry it off-host unencrypted.
-  if (localCleartextPost && proxyApplies) {
-    throw new ProviderOutboundPolicyError(
-      `a cleartext provider ${label} cannot use an outbound proxy; add ${normalizeProxyHostname(parsed.hostname)} to NO_PROXY`,
-    );
+  const route = await resolveOutboundRoute(
+    name,
+    provider,
+    url,
+    parsed,
+    label,
+    localCleartextPost,
+    dependencies.resolveAddresses ?? resolvePublicAddresses,
+    dependencies.isCanonicalUrl ?? (() => false),
+  );
+  assertSendAllowed();
+  if (route.kind === "proxied") {
+    return configuredOutboundFetch(url, {
+      ...init,
+      method,
+      redirect: "manual",
+      ...(route.proxy ? { proxy: route.proxy } : {}),
+    });
   }
-  const isCanonicalUrl = dependencies.isCanonicalUrl ?? (() => false);
-  // The IPv6 fake-IP gate keeps its stricter documented condition — a
-  // scheme-matched variable or a SOCKS5 ALL_PROXY, never a non-SOCKS
-  // ALL_PROXY — even when proxyApplies admits one for the transport
-  // decision, because admission binds the fetch to this value explicitly.
-  // An explicit provider proxy is exactly such a binding: the fetch below is pinned to it.
-  const bindingProxy = egress.kind === "inherit"
-    ? schemeMatchedProxyFor(parsed)
-    : providerProxy;
-  const allowMihomoIpv6FakeIp = (bindingProxy !== null && (providerProxy !== null || !noProxyMatches(parsed)))
-    || transparentFakeIpException(url, parsed, isCanonicalUrl, name);
-  const resolveAddresses = dependencies.resolveAddresses ?? resolvePublicAddresses;
   const pinnedGet = dependencies.pinnedGet ?? pinnedHttpGet;
   const pinnedPost = dependencies.pinnedPost ?? pinnedHttpPost;
-  const allowPrivate = providerAllowsPrivateNetwork(name, provider);
-  let resolved: Awaited<ReturnType<typeof resolvePublicAddresses>>;
-  try {
-    resolved = await resolveAddresses(url, {
-      context: "provider URL",
-      allowPrivateNetwork: allowPrivate,
-      // Clash/Surge/Mihomo fake-IP DNS (198.18.0.0/15) answers are admitted only
-      // when this exact host will use the configured outbound proxy: the hostname
-      // then rides the proxy as an ordinary CONNECT instead of failing as a private
-      // destination or being pin-connected to the fake-IP (credit #1748). A NO_PROXY
-      // match is a direct route, so it keeps the benchmark answer rejected. Image/Lab
-      // fetch never passes this flag.
-      //
-      // TUN-mode transparency: with no proxy env, Clash/Surge/Mihomo TUN still
-      // intercepts the fake-IP destination itself, so the REGISTRY's own fixed
-      // discovery URL stays reachable by pin-connecting through the TUN. The
-      // proof is on the final request URL — not the provider name — because an
-      // OAuth/forward name matches any baseUrl by design while the bearer is
-      // pinned to the registry destination independently.
-      allowBenchmarkAddresses: proxyApplies
-        || transparentFakeIpException(url, parsed, isCanonicalUrl, name),
-      // Mihomo IPv6 fake-IP (fdfe:dcba:9876::/48) answers are admitted either when bound
-      // to a scheme-matched proxy (#3462) or under the TUN transparency exception for a
-      // canonical registry/accounting destination.
-      allowMihomoIpv6FakeIp,
-    });
-  } catch (error) {
-    const dnsResolutionFailed = error instanceof DestinationDnsResolutionError
-      || (error instanceof Error && error.name === "DestinationDnsResolutionError");
-    if (!dnsResolutionFailed) {
-      throw new ProviderOutboundPolicyError(error instanceof Error ? error.message : "provider destination was blocked");
-    }
-    if (!proxyApplies) throw error;
-    warnProxyBoundaryOnce();
-    warnProxyDnsDegradationOnce();
-    // An explicit provider proxy stays pinned through the degradation too; re-inferring the
-    // route from the environment here would quietly move the request to a different exit.
-    assertSendAllowed();
-    return configuredOutboundFetch(url, {
-      ...init, method, redirect: "manual",
-      ...(providerProxy ? { proxy: providerProxy } : {}),
-    });
-  }
-  // A canonical TUN exception with no scheme-matched proxy must retain the
-  // validated address, even when an unrelated HTTP_PROXY/ALL_PROXY is present.
-  if (proxyApplies && !resolved.privateNetwork) {
-    warnProxyBoundaryOnce();
-    // When the Mihomo exception could have admitted an answer, pin the transport to the
-    // proxy the admission assumed instead of letting fetch re-infer it from the environment.
-    // An explicit provider proxy is always pinned, for the same reason and unconditionally:
-    // the operator named the exit for this provider, so the environment must not re-decide it.
-    const proxy = providerProxy ?? ((allowMihomoIpv6FakeIp && bindingProxy) ? bindingProxy : undefined);
-    assertSendAllowed();
-    return configuredOutboundFetch(url, { ...init, method, redirect: "manual", ...(proxy ? { proxy } : {}) });
-  }
-  if (proxyApplies && resolved.privateNetwork) {
-    const hostname = normalizeProxyHostname(parsed.hostname);
-    throw new Error(
-      `provider URL resolves to a private-network destination; add ${hostname} to NO_PROXY before using allowPrivateNetwork with an outbound proxy`,
-    );
-  }
-  if (localCleartextPost
-    && !resolved.addresses.every(answer => localCleartextAddressAllowed(answer.address))) {
-    throw new ProviderOutboundPolicyError(`a cleartext provider ${label} resolved outside the local address allowlist`);
-  }
   const requestOptions = {
     headers: init.headers,
     rejectUnauthorized: true,
     context: "provider response",
     ...(dependencies.maxPinnedErrorBytes === undefined ? {} : { maxErrorBytes: dependencies.maxPinnedErrorBytes }),
   };
-  const pinned = pickPinnedAddress(resolved.addresses);
-  assertSendAllowed();
   if (method === "POST") {
-    return pinnedPost(url, pinned, (init as ProviderPostInit).body, init.signal ?? undefined, requestOptions);
+    return pinnedPost(url, route.pinned, (init as ProviderPostInit).body, init.signal ?? undefined, requestOptions);
   }
-  return pinnedGet(url, pinned, init.signal ?? undefined, requestOptions);
+  return pinnedGet(url, route.pinned, init.signal ?? undefined, requestOptions);
 }
 
 export async function providerOutboundGet(

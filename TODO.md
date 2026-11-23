@@ -7,9 +7,6 @@ One maintainer, one list. Add a line when work is found, delete it when it lands
 - [ ] Configure Windows code-signing certificate secrets before publishing signed `.msi` installers.
 - [ ] Verify desktop shell and WidgetKit snapshot integration on clean macOS, Windows, and Linux hosts for `v0.1.0`.
 
-## Security & Supply-Chain Hardening
-- [ ] Enforce outbound destination policy on Cursor/Devin connection probes, expand secret-guard token prefixes, fix least-used combo preview mutation, and harden Cursor H2 pool eviction.
-
 ## Performance & Architecture Debt
 - [ ] Unify HTTP SSE passthrough into a single-pass scanner and bypass stream tee when no client block rewrite applies.
 - [ ] Eliminate redundant post-serialize JSON re-parsing, repeated combo body clones, and synchronous hot-path file I/O.

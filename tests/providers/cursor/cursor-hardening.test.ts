@@ -266,6 +266,7 @@ describe("Cursor live-model discovery hardening", () => {
           [provider]: {
             adapter: "cursor",
             baseUrl,
+            allowPrivateNetwork: true,
             apiKey: "bad-token",
             models: ["auto"],
           },
@@ -299,6 +300,7 @@ describe("Cursor live-model discovery hardening", () => {
             [provider]: {
               adapter: "cursor",
               baseUrl,
+              allowPrivateNetwork: true,
               apiKey: "test-token",
               models: ["auto"],
             },
@@ -381,6 +383,7 @@ describe("Cursor live-model discovery hardening", () => {
           [providerName]: {
             adapter: "cursor",
             baseUrl,
+            allowPrivateNetwork: true,
             apiKey: "test-token",
             models: ["auto"],
           },
@@ -485,6 +488,7 @@ describe("Cursor catalog discovery cooldown", () => {
             [providerName]: {
               adapter: "cursor",
               baseUrl,
+              allowPrivateNetwork: true,
               apiKey: "test-token",
               models: ["auto"],
             },

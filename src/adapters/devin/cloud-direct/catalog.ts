@@ -62,6 +62,7 @@ import * as crypto from 'crypto';
 import { buildMetadata } from './metadata.js';
 import { getCachedUserJwt } from './auth.js';
 import { encodeMessage, iterFields } from './wire.js';
+import { pinnedHttpPost, type PinnedAddress } from '../../../lib/pinned-http.js';
 import { resolveDevinApiBaseUrl } from '../../../oauth/devin/api-base.js';
 
 /** 10 minutes — see header. */
@@ -69,6 +70,7 @@ const CATALOG_TTL_MS = 10 * 60 * 1000;
 
 /** Catalog endpoint inactivity timeout. Cognition responds in <500ms steady-state. */
 const CATALOG_FETCH_TIMEOUT_MS = 10_000;
+const defaultGlobalFetch = globalThis.fetch;
 
 export interface ModelCatalogEntry {
   /** Cloud-side `model_uid` (e.g. `claude-opus-4-7-medium`). */
@@ -263,8 +265,8 @@ export function parseCatalogBuffer(buf: Buffer, apiKey: string, host: string): C
  * Uses only an internal timeout — caller cancellation is handled by
  * getCachedCatalog racing each caller's signal against the shared promise.
  */
-async function fetchCatalog(apiKey: string, host: string): Promise<CacheEntry> {
-  const userJwt = await getCachedUserJwt(apiKey, host);
+async function fetchCatalog(apiKey: string, host: string, pinnedAddress?: PinnedAddress): Promise<CacheEntry> {
+  const userJwt = await getCachedUserJwt(apiKey, host, undefined, pinnedAddress);
 
   const metadata = buildMetadata({
     apiKey,
@@ -288,15 +290,27 @@ async function fetchCatalog(apiKey: string, host: string): Promise<CacheEntry> {
   );
 
   let resp: Response;
+  const catalogUrl = `${resolveDevinApiBaseUrl(host)}/exa.api_server_pb.ApiServerService/GetCascadeModelConfigs`;
+  const headers = { 'Content-Type': 'application/proto', 'Connect-Protocol-Version': '1' };
   try {
-    resp = await fetch(`${resolveDevinApiBaseUrl(host)}/exa.api_server_pb.ApiServerService/GetCascadeModelConfigs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/proto', 'Connect-Protocol-Version': '1' },
-      body: new Uint8Array(reqBody),
-      // This body carries the api_key; a redirect would replay it elsewhere.
-      redirect: 'error',
-      signal: ac.signal,
-    });
+    resp = pinnedAddress && globalThis.fetch === defaultGlobalFetch
+      ? await pinnedHttpPost(catalogUrl, pinnedAddress, new Uint8Array(reqBody), ac.signal, {
+        headers,
+        rejectUnauthorized: true,
+        maxBytes: 16 * 1024 * 1024,
+        context: 'Devin discovery',
+      })
+      : await fetch(catalogUrl, {
+        method: 'POST',
+        headers,
+        body: new Uint8Array(reqBody),
+        // This body carries the api_key; a redirect would replay it elsewhere.
+        redirect: 'error',
+        signal: ac.signal,
+      });
+    if (resp.status >= 300 && resp.status < 400) {
+      throw new Error(`GetCascadeModelConfigs redirected unexpectedly (HTTP ${resp.status})`);
+    }
     if (!resp.ok) {
       // Status only: the error body can quote the api_key-bearing request.
       throw new Error(`GetCascadeModelConfigs failed (HTTP ${resp.status})`);
@@ -308,6 +322,16 @@ async function fetchCatalog(apiKey: string, host: string): Promise<CacheEntry> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Whether a fresh in-memory catalog already covers `(apiKey, host)` with no network call. */
+export function hasFreshCachedCatalog(apiKey: string, host: string): boolean {
+  return Boolean(
+    cached
+    && cached.apiKey === apiKey
+    && cached.host === host
+    && Date.now() - cached.fetchedAt < CATALOG_TTL_MS,
+  );
 }
 
 /**
@@ -326,6 +350,7 @@ export async function getCachedCatalog(
   apiKey: string,
   host: string,
   signal?: AbortSignal,
+  pinnedAddress?: PinnedAddress,
 ): Promise<CacheEntry | null> {
   if (cached && cached.apiKey === apiKey && cached.host === host) {
     if (Date.now() - cached.fetchedAt < CATALOG_TTL_MS) {
@@ -355,7 +380,7 @@ export async function getCachedCatalog(
     }
   }
 
-  const promise = fetchCatalog(apiKey, host);
+  const promise = fetchCatalog(apiKey, host, pinnedAddress);
   inFlight = promise;
   inFlightKey = key;
   const epochAtStart = cacheEpoch;

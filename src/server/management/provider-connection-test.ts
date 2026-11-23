@@ -1,8 +1,16 @@
-import { fetchCursorUsableModels } from "../../adapters/cursor/live-models";
+import { fetchCursorUsableModels, hasCursorUsableModelsFetcherForTests } from "../../adapters/cursor/live-models";
+import { hasFreshCachedCatalog } from "../../adapters/devin/cloud-direct";
 import { fetchDevinUsableModels } from "../../adapters/devin/live-models";
 import { probeJevDecisionProvider } from "../../combos/jev";
 import { hasOwnProvider, isValidProviderName } from "../../config";
-import { ProviderOutboundPolicyError, providerOutboundGet, providerOutboundPost, providerRedirectError } from "../../lib/provider-outbound";
+import {
+  ProviderOutboundPolicyError,
+  providerOutboundGet,
+  providerOutboundPost,
+  providerRedirectError,
+  verifyBespokeDestination,
+} from "../../lib/provider-outbound";
+import { isPinnedHttp1 } from "../../lib/upstream-http-version";
 import { resolveDevinApiBaseUrl } from "../../oauth/devin/api-base";
 import { captureModelsOAuthTarget, mayResolveModelsOAuth, modelsOAuthTargetMatches } from "../../oauth/model-discovery-auth";
 import { parseAntigravityAvailableModels } from "../../providers/antigravity-models";
@@ -26,6 +34,7 @@ import {
 import { invalidModelDiscoveryHint } from "../../providers/model-discovery-diagnostic";
 import { effectiveGoogleMode, getProviderRegistryEntry, providerMatchesRegistryTransport } from "../../providers/registry";
 import { isXaiGrokOAuth, readXaiLegacyPrivacyError, XAI_LEGACY_PRIVACY_MESSAGE } from "../../providers/xai-privacy-mode";
+import type { EpxProviderConfig } from "../../types";
 import { jsonResponse } from "../auth-cors";
 import type { ManagementContext } from "./context";
 
@@ -87,9 +96,37 @@ export async function handleProviderTestRoute(ctx: ManagementContext): Promise<R
   if (prov.adapter === "zed") return (await import("./zed-provider-probe")).probeZedProvider(prov, apiKey, snapshot?.providerUserId);
   if (prov.adapter === "cursor") {
     const started = Date.now();
+    const canonicalCursorBase = (name === "cursor"
+      ? getProviderRegistryEntry(name)?.baseUrl ?? prov.baseUrl
+      : prov.baseUrl) || "https://api2.cursor.sh";
+    const cursorTarget = canonicalCursorBase.replace(/\/+$/, "");
+    const rawCursorBase = typeof prov.baseUrl === "string" ? prov.baseUrl.trim() : "";
+    if (rawCursorBase && rawCursorBase.replace(/\/+$/, "") !== cursorTarget) {
+      const rawCheck = await verifyBespokeDestination(name, prov, rawCursorBase, {
+        skipDns: true,
+        isCanonicalUrl: isRegistryModelDiscoveryUrl,
+      });
+      if (!rawCheck.ok) {
+        return jsonResponse({ ok: false, latencyMs: Date.now() - started, error: rawCheck.error });
+      }
+    }
+    const cursorFetch = (prov as EpxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch;
+    const useCallerHttp1Fetch = isPinnedHttp1(prov.upstreamHttpVersion) && typeof cursorFetch === "function";
+    const skipDns = hasCursorUsableModelsFetcherForTests() || useCallerHttp1Fetch;
+    const verified = await verifyBespokeDestination(name, prov, cursorTarget, {
+      skipDns,
+      isCanonicalUrl: isRegistryModelDiscoveryUrl,
+    });
+    if (!verified.ok) {
+      return jsonResponse({ ok: false, latencyMs: Date.now() - started, error: verified.error });
+    }
     const live = await fetchCursorUsableModels({
       apiKey: apiKey ?? "",
-      baseUrl: prov.baseUrl,
+      baseUrl: canonicalCursorBase,
+      upstreamHttpVersion: prov.upstreamHttpVersion,
+      pinnedAddress: verified.pinnedAddress,
+      signal: AbortSignal.any([req.signal, AbortSignal.timeout(8_000)]),
+      ...(useCallerHttp1Fetch ? { fetch: cursorFetch } : {}),
     });
     const latencyMs = Date.now() - started;
     if (!live.ok) {
@@ -109,10 +146,40 @@ export async function handleProviderTestRoute(ctx: ManagementContext): Promise<R
   if (prov.adapter === "devin") {
     const started = Date.now();
     const configuredBase = name === "devin" ? getProviderRegistryEntry(name)?.baseUrl ?? prov.baseUrl : prov.baseUrl;
-    const destination = resolveDevinApiBaseUrl(snapshot?.apiBaseUrl ?? configuredBase);
+    const rawConfiguredBase = typeof prov.baseUrl === "string" ? prov.baseUrl.trim() : "";
+    if (rawConfiguredBase && rawConfiguredBase !== (configuredBase ?? "").trim()) {
+      const rawCheck = await verifyBespokeDestination(name, prov, rawConfiguredBase, {
+        skipDns: true,
+        isCanonicalUrl: isRegistryModelDiscoveryUrl,
+      });
+      if (!rawCheck.ok) {
+        return jsonResponse({ ok: false, latencyMs: Date.now() - started, error: rawCheck.error });
+      }
+    }
+    const rawBase = snapshot?.apiBaseUrl ?? configuredBase;
+    const destination = resolveDevinApiBaseUrl(rawBase);
+    const targetToCheck = rawBase && rawBase.trim().length > 0 ? rawBase.trim() : destination;
+    if (targetToCheck !== destination) {
+      const targetCheck = await verifyBespokeDestination(name, prov, targetToCheck, {
+        skipDns: name === "devin",
+        isCanonicalUrl: isRegistryModelDiscoveryUrl,
+      });
+      if (!targetCheck.ok) {
+        return jsonResponse({ ok: false, latencyMs: Date.now() - started, error: targetCheck.error });
+      }
+    }
+    const destVerified = await verifyBespokeDestination(name, prov, destination, {
+      skipDns: hasFreshCachedCatalog(apiKey ?? "", destination),
+      isCanonicalUrl: isRegistryModelDiscoveryUrl,
+    });
+    if (!destVerified.ok) {
+      return jsonResponse({ ok: false, latencyMs: Date.now() - started, error: destVerified.error });
+    }
     const liveResult = await fetchDevinUsableModels({
       apiKey: apiKey ?? "",
       baseUrl: destination,
+      pinnedAddress: destVerified.pinnedAddress,
+      signal: AbortSignal.any([req.signal, AbortSignal.timeout(8_000)]),
     });
     const latencyMs = Date.now() - started;
     if (!liveResult.ok) {

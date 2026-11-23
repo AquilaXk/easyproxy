@@ -32,9 +32,11 @@ import * as crypto from 'crypto';
 import { encodeMessage, iterFields } from './wire.js';
 import { buildMetadata } from './metadata.js';
 import { anySignal } from '../../../lib/abort.js';
+import { pinnedHttpPost, type PinnedAddress } from '../../../lib/pinned-http.js';
 import { validateDevinApiBaseUrl } from '../../../oauth/devin/api-base.js';
 
 const DEFAULT_HOST = 'https://server.codeium.com';
+const defaultGlobalFetch = globalThis.fetch;
 
 export interface MintedUserJwt {
   jwt: string;
@@ -69,6 +71,7 @@ export async function mintUserJwt(
   apiKey: string,
   host: string = DEFAULT_HOST,
   signal?: AbortSignal,
+  pinnedAddress?: PinnedAddress,
 ): Promise<MintedUserJwt> {
   const metadata = buildMetadata({
     apiKey,
@@ -97,22 +100,34 @@ export async function mintUserJwt(
     throw new CloudAuthError(`Refusing to mint a user_jwt against a non-Cognition host.`);
   }
   let resp: Response;
+  const jwtUrl = `${base}/exa.auth_pb.AuthService/GetUserJwt`;
+  const headers = {
+    'Content-Type': 'application/proto',
+    'Connect-Protocol-Version': '1',
+  };
   try {
-    resp = await fetch(`${base}/exa.auth_pb.AuthService/GetUserJwt`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/proto',
-      'Connect-Protocol-Version': '1',
-    },
-    body: new Uint8Array(req),
-    // A redirect would replay this POST - whose body holds the api_key - at
-    // whatever host Location names.
-    redirect: 'error',
-    signal: combinedSignal,
-    });
+    resp = pinnedAddress && globalThis.fetch === defaultGlobalFetch
+      ? await pinnedHttpPost(jwtUrl, pinnedAddress, new Uint8Array(req), combinedSignal, {
+        headers,
+        rejectUnauthorized: true,
+        maxBytes: 16 * 1024 * 1024,
+        context: 'Devin discovery',
+      })
+      : await fetch(jwtUrl, {
+        method: 'POST',
+        headers,
+        body: new Uint8Array(req),
+        // A redirect would replay this POST - whose body holds the api_key - at
+        // whatever host Location names.
+        redirect: 'error',
+        signal: combinedSignal,
+      });
   } finally {
     // The caller's signal belongs to a whole turn; do not keep a listener on it.
     composed?.cleanup();
+  }
+  if (resp.status >= 300 && resp.status < 400) {
+    throw new CloudAuthError(`GetUserJwt redirected unexpectedly (HTTP ${resp.status})`, resp.status);
   }
   const buf = Buffer.from(await resp.arrayBuffer());
 
@@ -209,7 +224,12 @@ function flightKey(apiKey: string, host: string): string {
  * share the same in-flight mint; concurrent callers for DIFFERENT keys each
  * get their own mint.
  */
-export async function getCachedUserJwt(apiKey: string, host: string = DEFAULT_HOST, signal?: AbortSignal): Promise<string> {
+export async function getCachedUserJwt(
+  apiKey: string,
+  host: string = DEFAULT_HOST,
+  signal?: AbortSignal,
+  pinnedAddress?: PinnedAddress,
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   if (cache && cache.apiKey === apiKey && cache.host === host && cache.expiresAt > now + 60) {
     return cache.jwt;
@@ -233,7 +253,7 @@ export async function getCachedUserJwt(apiKey: string, host: string = DEFAULT_HO
     const minted = await raceSignal(existing);
     return minted.jwt;
   }
-  const promise = mintUserJwt(apiKey, host);
+  const promise = mintUserJwt(apiKey, host, undefined, pinnedAddress);
   inFlight.set(key, promise);
   // Snapshot the epoch BEFORE awaiting the mint. If clearCachedUserJwt()
   // fires while we're awaiting (logout-during-mint), the epoch changes

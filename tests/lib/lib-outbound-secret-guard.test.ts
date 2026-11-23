@@ -82,6 +82,25 @@ describe("outbound-secret-guard", () => {
     expect(sanitized).not.toContain(awsKey);
   });
 
+  test("redacts and blocks admin, session, and pair easyproxy tokens", () => {
+    const adminToken = ["epx", "admin", "0123456789abcdef01"].join("_");
+    const sessionToken = ["epx", "session", "0123456789abcdef01"].join("_");
+    const pairToken = ["epx", "pair", "0123456789abcdef01"].join("_");
+
+    for (const token of [adminToken, sessionToken, pairToken]) {
+      const blocked = inspectAndApplyOutboundSecretGuard({ input: token }, { mode: "block" });
+      expect(blocked.blocked).toBe(true);
+      expect(blocked.matches).toBe(1);
+      expect(blocked.findings).toContain("easyproxy_token");
+
+      const payload = { input: `auth=${token}` };
+      const redacted = inspectAndApplyOutboundSecretGuard(payload, { mode: "redact" });
+      expect(redacted.blocked).toBe(false);
+      expect(redacted.redactions).toBe(1);
+      expect(payload.input).toBe("auth=[REDACTED:easyproxy_token]");
+    }
+  });
+
   test("blocks request without mutating payload when mode is block", () => {
     const secret = fakeOpenAiKey();
     const payload = { input: secret };

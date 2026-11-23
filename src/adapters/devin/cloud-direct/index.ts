@@ -66,6 +66,7 @@ export {
 
 export {
   getCachedCatalog,
+  hasFreshCachedCatalog,
   clearCachedCatalog,
   ModelNotAvailableError,
   type ModelCatalogEntry,

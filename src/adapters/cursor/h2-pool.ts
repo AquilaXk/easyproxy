@@ -1,7 +1,9 @@
 import http2 from "node:http2";
+import type { PinnedAddress } from "../../lib/pinned-http";
 import { registerOptionalShutdownHook } from "../../lib/optional-shutdown-hooks";
 
 const DEFAULT_MAX_SESSIONS = 8;
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const SESSION_CLOSE_TIMEOUT_MS = 2_000;
 
 interface PoolEntry {
@@ -20,9 +22,13 @@ interface PoolEntry {
  */
 export class CursorH2SessionPool {
   private readonly entries = new Map<string, PoolEntry>();
+  private readonly retired = new Set<PoolEntry>();
   private closed = false;
 
-  constructor(private readonly maxSessions = DEFAULT_MAX_SESSIONS) {}
+  constructor(
+    private readonly maxSessions = DEFAULT_MAX_SESSIONS,
+    private readonly idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS,
+  ) {}
 
   /**
    * Lazily registered on first use so a process that never talks to Cursor registers
@@ -39,12 +45,14 @@ export class CursorH2SessionPool {
     url: string,
     headers: http2.OutgoingHttpHeaders,
     credentialScope?: string,
+    pinnedAddress?: PinnedAddress,
   ): http2.ClientHttp2Stream {
     if (this.closed) throw new Error("Cursor H2 session pool is closed");
     this.armShutdownHook?.();
     const origin = new URL(url).origin;
-    const poolKey = credentialScope ? `${origin}\0${credentialScope}` : origin;
-    const entry = this.usableEntry(poolKey) ?? this.createEntry(origin, poolKey);
+    const pinScope = pinnedAddress ? `${pinnedAddress.address}/${pinnedAddress.family}` : "";
+    const poolKey = credentialScope || pinScope ? `${origin}\0${credentialScope ?? ""}\0${pinScope}` : origin;
+    const entry = this.usableEntry(poolKey) ?? this.createEntry(origin, poolKey, pinnedAddress);
     try {
       const stream = entry.session.request(headers);
       entry.streams.add(stream);
@@ -59,18 +67,26 @@ export class CursorH2SessionPool {
   async shutdown(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    const allEntries = new Set<PoolEntry>([...this.entries.values(), ...this.retired]);
+    this.entries.clear();
+    this.retired.clear();
     const pending: Promise<void>[] = [];
-    for (const entry of [...this.entries.values()]) {
+    for (const entry of allEntries) {
       for (const stream of [...entry.streams]) stream.destroy();
-      entry.session.close();
+      entry.streams.clear();
+      if (!entry.session.closed && !entry.session.destroyed) {
+        entry.session.close();
+      }
       if (entry.session.destroyed) continue;
       pending.push(new Promise<void>(resolve => {
-        const timer = setTimeout(resolve, SESSION_CLOSE_TIMEOUT_MS);
+        const timer = setTimeout(() => {
+          try { entry.session.destroy(); } catch { /* ignore */ }
+          resolve();
+        }, SESSION_CLOSE_TIMEOUT_MS);
         timer.unref?.();
         entry.session.once("close", () => { clearTimeout(timer); resolve(); });
       }));
     }
-    this.entries.clear();
     await Promise.all(pending);
   }
 
@@ -84,40 +100,85 @@ export class CursorH2SessionPool {
     return undefined;
   }
 
-  private createEntry(origin: string, poolKey = origin): PoolEntry {
-    const session = http2.connect(origin);
+  private createEntry(origin: string, poolKey = origin, pinnedAddress?: PinnedAddress): PoolEntry {
+    const connectOptions: http2.SecureClientSessionOptions | undefined = pinnedAddress
+      ? {
+        lookup(_hostname, lookupOptions, callback) {
+          const opts = typeof lookupOptions === "function" ? undefined : lookupOptions;
+          const cb = typeof lookupOptions === "function" ? lookupOptions : callback;
+          if (!cb) return;
+          if (opts && typeof opts === "object" && "all" in opts && opts.all) {
+            (cb as (error: NodeJS.ErrnoException | null, addresses: PinnedAddress[]) => void)(
+              null,
+              [{ address: pinnedAddress.address, family: pinnedAddress.family }],
+            );
+            return;
+          }
+          (cb as (error: NodeJS.ErrnoException | null, address: string, family: 4 | 6) => void)(
+            null,
+            pinnedAddress.address,
+            pinnedAddress.family as 4 | 6,
+          );
+        },
+      }
+      : undefined;
+    const session = connectOptions ? http2.connect(origin, connectOptions) : http2.connect(origin);
     const entry: PoolEntry = {
       session,
       streams: new Set(),
       usable: true,
     };
     this.entries.set(poolKey, entry);
-    session.once("goaway", () => { this.drain(entry, true); });
+    session.setTimeout(this.idleTimeoutMs, () => {
+      if (entry.streams.size === 0) this.drain(entry, true);
+    });
+    session.once("goaway", (errorCode: number) => {
+      if (errorCode === 0 && entry.streams.size > 0) this.retire(entry, true);
+      else this.drain(entry, true);
+    });
     session.on("error", () => { this.drain(entry, false); });
     session.once("close", () => {
       // Identity check: a stale close event from an old session must not evict
       // a healthy replacement entry that was created after drain() removed the old one.
       if (this.entries.get(poolKey) === entry) this.entries.delete(poolKey);
+      this.retired.delete(entry);
     });
-    // Enforce bound: evict oldest when over capacity.
+    // Enforce bound: retire oldest when over capacity without aborting active streams.
     while (this.entries.size > this.maxSessions) {
       const oldest = this.entries.keys().next().value;
       if (!oldest || oldest === poolKey) break;
       const old = this.entries.get(oldest);
-      if (old) this.drain(old, true);
+      if (!old) {
+        this.entries.delete(oldest);
+        continue;
+      }
+      if (old.streams.size > 0) {
+        this.retire(old, true);
+      } else {
+        this.drain(old, true);
+      }
     }
     return entry;
   }
 
-  private drain(entry: PoolEntry, closeSession: boolean): void {
+  private retire(entry: PoolEntry, closeSession: boolean): void {
     entry.usable = false;
-    for (const stream of [...entry.streams]) stream.destroy();
-    entry.streams.clear();
-    if (closeSession) entry.session.close();
-    // Remove from map by finding the matching key.
     for (const [key, value] of this.entries) {
       if (value === entry) { this.entries.delete(key); break; }
     }
+    if (!this.closed && !entry.session.destroyed) {
+      this.retired.add(entry);
+      if (closeSession && !entry.session.closed) {
+        entry.session.close();
+      }
+    }
+  }
+
+  private drain(entry: PoolEntry, closeSession: boolean): void {
+    for (const stream of [...entry.streams]) stream.destroy();
+    entry.streams.clear();
+    this.retire(entry, closeSession);
+    if (entry.session.destroyed) this.retired.delete(entry);
   }
 }
 

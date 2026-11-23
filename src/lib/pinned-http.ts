@@ -139,7 +139,7 @@ function pinnedHttpRequest(
   url: string,
   pinned: PinnedAddress,
   method: "GET" | "POST",
-  body: string | undefined,
+  body: string | Uint8Array | undefined,
   signal?: AbortSignal,
   options?: PinnedHttpRequestOptions,
 ): Promise<Response> {
@@ -440,7 +440,7 @@ export function pinnedHttpGet(
 export function pinnedHttpPost(
   url: string,
   pinned: PinnedAddress,
-  body: string,
+  body: string | Uint8Array,
   signal?: AbortSignal,
   options?: PinnedHttpRequestOptions,
 ): Promise<Response> {

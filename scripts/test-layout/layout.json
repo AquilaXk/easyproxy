@@ -666,6 +666,8 @@
     "hotpath-index-parity.test.ts": "server",
     "adapter-bounded-response.test.ts": "responses",
     "cli-operator-deferred-verbs.test.ts": "cli",
-    "ci-run-changed-tests-contract.test.ts": "ci-workflows"
+    "ci-run-changed-tests-contract.test.ts": "ci-workflows",
+    "combo-least-used-preview.test.ts": "routing",
+    "management-provider-probe-ssrf.test.ts": "server"
   }
 }

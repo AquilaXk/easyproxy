@@ -7,6 +7,7 @@
  * for the requested effort at request time. `DEVIN_STATIC_MODELS` is only a degraded-mode
  * fallback for when there is no API key or discovery fails.
  */
+import type { PinnedAddress } from "../../lib/pinned-http";
 import { getCachedCatalog, type CacheEntry, type ModelCatalogEntry } from "./cloud-direct";
 
 const DEFAULT_HOST = "https://server.codeium.com";
@@ -364,10 +365,11 @@ export async function fetchDevinUsableModels(opts: {
   apiKey: string;
   baseUrl?: string;
   signal?: AbortSignal;
+  pinnedAddress?: PinnedAddress;
 }): Promise<DevinUsableModelsResult> {
   try {
     const host = (opts.baseUrl || DEFAULT_HOST).replace(/\/$/, "");
-    const catalog = await getCachedCatalog(opts.apiKey, host, opts.signal);
+    const catalog = await getCachedCatalog(opts.apiKey, host, opts.signal, opts.pinnedAddress);
     if (!catalog) return { ok: false, error: "empty" };
     const bases = new Set<string>();
     const contextWindows: Record<string, number> = {};

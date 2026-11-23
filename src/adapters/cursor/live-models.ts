@@ -19,6 +19,7 @@ import { cursorH2Pool } from "./h2-pool";
 import { fromBinary } from "@bufbuild/protobuf";
 import type { UpstreamHttpVersion } from "../../types";
 import { readBoundedResponseBytes } from "../../lib/bounded-body";
+import { pinnedHttpPost, type PinnedAddress } from "../../lib/pinned-http";
 import {
   isPinnedHttp1,
   UpstreamHttpVersionTargetError,
@@ -38,7 +39,9 @@ export interface CursorUsableModelsOptions {
   baseUrl?: string;
   clientVersion?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
   upstreamHttpVersion?: UpstreamHttpVersion;
+  pinnedAddress?: PinnedAddress;
   /** Test/embedding seam. Production discovery uses Bun's global fetch in HTTP/1.1 mode. */
   fetch?: typeof globalThis.fetch;
 }
@@ -52,9 +55,28 @@ export function setFetchCursorUsableModelsForTests(next: CursorUsableModelsFetch
   cursorUsableModelsFetcherForTests = next;
 }
 
+export function hasCursorUsableModelsFetcherForTests(): boolean {
+  return cursorUsableModelsFetcherForTests !== null;
+}
+
 const RETRYABLE_DISCOVERY_ERRORS = new Set(["timeout", "transport"]);
 const DISCOVERY_RETRY_TIMEOUT_MS = 3_000;
 const CURSOR_MAX_DISCOVERED_MODELS = 500;
+
+async function waitRetryDelay(delayMs: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  return new Promise<boolean>(resolve => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 /**
  * Live discovery with ONE bounded retry for transient pre-response failures (a fresh transport
@@ -65,11 +87,14 @@ const CURSOR_MAX_DISCOVERED_MODELS = 500;
  */
 export async function fetchCursorUsableModels(opts: CursorUsableModelsOptions): Promise<CursorUsableModelsResult> {
   if (cursorUsableModelsFetcherForTests) return cursorUsableModelsFetcherForTests(opts);
+  if (opts.signal?.aborted) return { ok: false, error: "timeout", detail: "Request aborted" };
   const resolved = resolveCursorDiscoveryBaseUrl(opts.baseUrl ?? "https://api2.cursor.sh");
   if (!resolved.ok) return resolved;
   const first = await fetchCursorUsableModelsOnce({ ...opts, baseUrl: resolved.baseUrl });
   if (first.ok || !RETRYABLE_DISCOVERY_ERRORS.has(first.error)) return first;
-  await new Promise(resolve => setTimeout(resolve, 250 + Math.floor(Math.random() * 250)));
+  if (!(await waitRetryDelay(250 + Math.floor(Math.random() * 250), opts.signal))) {
+    return { ok: false, error: "timeout", detail: "Request aborted" };
+  }
   return fetchCursorUsableModelsOnce({
     ...opts,
     baseUrl: resolved.baseUrl,
@@ -155,18 +180,34 @@ async function fetchCursorUsableModelsHttp1Once(opts: CursorUsableModelsOptions)
   const timeoutMs = opts.timeoutMs ?? 8000;
   const controller = new AbortController();
   let timedOut = false;
+  let parentAborted = false;
+  const onParentAbort = () => {
+    parentAborted = true;
+    controller.abort(opts.signal?.reason);
+  };
+  if (opts.signal) {
+    if (opts.signal.aborted) {
+      return { ok: false, error: "timeout", detail: "Request aborted" };
+    }
+    opts.signal.addEventListener("abort", onParentAbort, { once: true });
+  }
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort(new DOMException(`No response within ${timeoutMs}ms`, "TimeoutError"));
   }, timeoutMs);
   try {
-    const init = withUpstreamHttpVersionValue(requestUrl, {
-      method: "POST",
-      headers: cursorDiscoveryHeaders(opts),
-      redirect: "manual",
-      signal: controller.signal,
-    }, opts.upstreamHttpVersion);
-    const response = await (opts.fetch ?? globalThis.fetch)(requestUrl, init);
+    const response = !opts.fetch && opts.pinnedAddress
+      ? await pinnedHttpPost(requestUrl, opts.pinnedAddress, "", controller.signal, {
+        headers: cursorDiscoveryHeaders(opts),
+        rejectUnauthorized: true,
+        context: "Cursor HTTP/1.1 discovery",
+      })
+      : await (opts.fetch ?? globalThis.fetch)(requestUrl, withUpstreamHttpVersionValue(requestUrl, {
+        method: "POST",
+        headers: cursorDiscoveryHeaders(opts),
+        redirect: "manual",
+        signal: controller.signal,
+      }, opts.upstreamHttpVersion));
     if (response.status === 401 || response.status === 403) {
       void response.body?.cancel().catch(() => undefined);
       return { ok: false, error: "auth", detail: `HTTP ${response.status}` };
@@ -192,17 +233,24 @@ async function fetchCursorUsableModelsHttp1Once(opts: CursorUsableModelsOptions)
     if (error instanceof UpstreamHttpVersionTargetError) {
       return { ok: false, error: "policy", detail: error.message };
     }
+    if (parentAborted) {
+      return { ok: false, error: "timeout", detail: "Request aborted" };
+    }
     return timedOut
       ? { ok: false, error: "timeout", detail: `No response within ${timeoutMs}ms` }
       : { ok: false, error: "transport", detail: "HTTP/1.1 request failed" };
   } finally {
     clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onParentAbort);
   }
 }
 
 async function fetchCursorUsableModelsHttp2Once(opts: CursorUsableModelsOptions): Promise<CursorUsableModelsResult> {
   const baseUrl = (opts.baseUrl ?? "https://api2.cursor.sh").replace(/\/+$/, "");
   const timeoutMs = opts.timeoutMs ?? 8000;
+  if (opts.signal?.aborted) {
+    return { ok: false, error: "timeout", detail: "Request aborted" };
+  }
 
   return new Promise<CursorUsableModelsResult>(resolve => {
     let settled = false;
@@ -212,30 +260,34 @@ async function fetchCursorUsableModelsHttp2Once(opts: CursorUsableModelsOptions)
       resolve(value);
     };
 
+    let req: http2.ClientHttp2Stream | undefined;
+    const onParentAbort = () => {
+      req?.destroy();
+      close({ ok: false, error: "timeout", detail: "Request aborted" });
+    };
+    const timer = setTimeout(() => {
+      // Cancel the borrowed pooled stream so it does not continue receiving
+      // body bytes after the caller has timed out (regression vs pre-pool behavior).
+      req?.destroy();
+      close({ ok: false, error: "timeout", detail: `No response within ${timeoutMs}ms` });
+    }, timeoutMs);
+    const close = (value: CursorUsableModelsResult): void => {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onParentAbort);
+      finish(value);
+    };
+    opts.signal?.addEventListener("abort", onParentAbort, { once: true });
 
-   const timer = setTimeout(() => {
-     // Cancel the borrowed pooled stream so it does not continue receiving
-     // body bytes after the caller has timed out (regression vs pre-pool behavior).
-     req?.destroy();
-     finish({ ok: false, error: "timeout", detail: `No response within ${timeoutMs}ms` });
-   }, timeoutMs);
-   const close = (value: CursorUsableModelsResult): void => {
-     clearTimeout(timer);
-     finish(value);
-   };
-
-
-   let req: http2.ClientHttp2Stream;
-   try {
-     const credentialScope = createHash("sha256").update(opts.apiKey).digest("hex").slice(0, 16);
+    try {
+      const credentialScope = createHash("sha256").update(opts.apiKey).digest("hex").slice(0, 16);
       req = cursorH2Pool.request(baseUrl, {
-       ":method": "POST",
-       ":path": CURSOR_GET_USABLE_MODELS_PATH,
-       ...cursorDiscoveryHeaders(opts),
-    }, credentialScope);
-   } catch {
-     return close({ ok: false, error: "transport", detail: "HTTP/2 request setup failed" });
-   }
+        ":method": "POST",
+        ":path": CURSOR_GET_USABLE_MODELS_PATH,
+        ...cursorDiscoveryHeaders(opts),
+      }, credentialScope, opts.pinnedAddress);
+    } catch {
+      return close({ ok: false, error: "transport", detail: "HTTP/2 request setup failed" });
+    }
 
     let status = 0;
     const chunks: Buffer[] = [];

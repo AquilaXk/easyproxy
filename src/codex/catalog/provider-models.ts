@@ -70,13 +70,14 @@ import { effectiveModelAliases } from "../../providers/default-aliases";
 import { routedSlug, slugEquals, slugEquivalenceKey, slugsEquivalent } from "../../providers/slug-codec";
 import { CODEX_GPT5_IDENTITY_LINE } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
-import { fetchCursorUsableModels } from "../../adapters/cursor/live-models";
+import { fetchCursorUsableModels, hasCursorUsableModelsFetcherForTests } from "../../adapters/cursor/live-models";
 import { cursorLiveRosterScope, recordLiveCursorClaudeModels, recordLiveCursorMaxModeModels } from "../../adapters/cursor/catalog";
 import { discoverQoderModels, markQoderDiscoveryCommitted, qoderDiscoveryJoinable, uncommittedQoderDiscovery } from "../../adapters/qoder/live-models";
 import { resolveQoderProfile } from "../../adapters/qoder/profiles";
 import { CODEBUDDY_PROFILES, type CodeBuddyProfile } from "../../adapters/codebuddy/profiles";
 import { fetchCodeBuddyModels } from "../../adapters/codebuddy/live-models";
 import { resolveProfileByBaseUrl } from "../../adapters/coding-agent/profile";
+import { hasFreshCachedCatalog } from "../../adapters/devin/cloud-direct";
 import { fetchDevinUsableModels } from "../../adapters/devin/live-models";
 import { resolveDevinApiBaseUrl } from "../../oauth/devin/api-base";
 import { resolveZedModels } from "../../providers/zed";
@@ -96,7 +97,9 @@ import {
   providerOutboundGet,
   providerOutboundPost,
   providerRedirectError,
+  verifyBespokeDestination,
 } from "../../lib/provider-outbound";
+import { isPinnedHttp1 } from "../../lib/upstream-http-version";
 import { redactSecretString } from "../../lib/redact";
 import { invalidModelDiscoveryHint, shouldWarnSkippedModelRows } from "../../providers/model-discovery-diagnostic";
 import {
@@ -600,11 +603,45 @@ async function fetchProviderModelsUncached(
         "degraded",
       );
     }
+    const rawConfiguredBase = typeof prov.baseUrl === "string" ? prov.baseUrl.trim() : "";
+    const devinDegraded = () => {
+      if (claimPublication()) {
+        markModelsFetchFailure(name, undefined, authorityIdentity);
+        markProviderDiscoveryFailed(name, { reason: "invalid_response" });
+      }
+      const stale = getStaleCached(name, authorityIdentity);
+      return observed(
+        withConfiguredRetention(stale ? applyConfigHintsToCachedModels(name, prov, stale, undefined, undefined, undefined, metadataConfigDir, false) : configured),
+        "degraded",
+      );
+    };
+    if (rawConfiguredBase && rawConfiguredBase !== (configuredBase ?? "").trim()) {
+      const rawCheck = await verifyBespokeDestination(name, prov, rawConfiguredBase, {
+        skipDns: true,
+        isCanonicalUrl: isRegistryModelDiscoveryUrl,
+      });
+      if (!rawCheck.ok) return devinDegraded();
+    }
     // The OAuth snapshot owns both values: never combine one account's durable
     // key with the registry's default host or another account's tenant host.
+    const rawBase = auth.oauthApiBaseUrl ?? configuredBase;
+    const targetToCheck = rawBase && rawBase.trim().length > 0 ? rawBase.trim() : destination;
+    if (targetToCheck !== destination) {
+      const targetCheck = await verifyBespokeDestination(name, prov, targetToCheck, {
+        skipDns: name === "devin",
+        isCanonicalUrl: isRegistryModelDiscoveryUrl,
+      });
+      if (!targetCheck.ok) return devinDegraded();
+    }
+    const destVerified = await verifyBespokeDestination(name, prov, destination, {
+      skipDns: hasFreshCachedCatalog(apiKey, destination),
+      isCanonicalUrl: isRegistryModelDiscoveryUrl,
+    });
+    if (!destVerified.ok) return devinDegraded();
     const liveResult = await fetchDevinUsableModels({
       apiKey,
       baseUrl: destination,
+      pinnedAddress: destVerified.pinnedAddress,
     });
     if (liveResult.ok) {
       // Live catalog is the source of truth — use the discovered base models
@@ -682,12 +719,45 @@ async function fetchProviderModelsUncached(
         "degraded",
       );
     }
+    const cursorDegraded = () => {
+      if (claimPublication()) {
+        markModelsFetchFailure(name, undefined, authorityIdentity);
+        markProviderDiscoveryFailed(name, { reason: "invalid_response" });
+      }
+      const staleCursor = getStaleCached(name, authorityIdentity);
+      return observed(
+        withConfiguredRetention(
+          staleCursor ? applyConfigHintsToCachedModels(name, prov, staleCursor, undefined, metadataModelIdCaseFold, captured.effectiveAlias, metadataConfigDir, false) : configured,
+        ),
+        "degraded",
+      );
+    };
+    const canonicalCursorBase = (name === "cursor"
+      ? getProviderRegistryEntry(name)?.baseUrl ?? prov.baseUrl
+      : prov.baseUrl) || "https://api2.cursor.sh";
+    const cursorTarget = canonicalCursorBase.replace(/\/+$/, "");
+    const rawCursorBase = typeof prov.baseUrl === "string" ? prov.baseUrl.trim() : "";
+    if (rawCursorBase && rawCursorBase.replace(/\/+$/, "") !== cursorTarget) {
+      const rawCheck = await verifyBespokeDestination(name, prov, rawCursorBase, {
+        skipDns: true,
+        isCanonicalUrl: isRegistryModelDiscoveryUrl,
+      });
+      if (!rawCheck.ok) return cursorDegraded();
+    }
     const cursorFetch = (prov as EpxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch;
+    const useCallerHttp1Fetch = isPinnedHttp1(prov.upstreamHttpVersion) && typeof cursorFetch === "function";
+    const skipDns = hasCursorUsableModelsFetcherForTests() || useCallerHttp1Fetch;
+    const verified = await verifyBespokeDestination(name, prov, cursorTarget, {
+      skipDns,
+      isCanonicalUrl: isRegistryModelDiscoveryUrl,
+    });
+    if (!verified.ok) return cursorDegraded();
     const liveResult = await fetchCursorUsableModels({
       apiKey,
-      baseUrl: prov.baseUrl,
+      baseUrl: canonicalCursorBase,
       upstreamHttpVersion: prov.upstreamHttpVersion,
-      ...(cursorFetch ? { fetch: cursorFetch } : {}),
+      pinnedAddress: verified.pinnedAddress,
+      ...(useCallerHttp1Fetch ? { fetch: cursorFetch } : {}),
     });
     if (liveResult.ok) {
       const available = filterCursorConfiguredModelsByLiveDiscovery(
@@ -704,7 +774,7 @@ async function fetchProviderModelsUncached(
       // Publish roster-derived state only for a discovery the cache accepted: a stale
       // in-flight capture (generation revoked by a credential/config change) must not
       // overwrite the spelling or Max-Mode evidence of the newer one.
-      const liveRosterScope = { provider: name, key: cursorLiveRosterScope(prov.baseUrl, apiKey) };
+      const liveRosterScope = { provider: name, key: cursorLiveRosterScope(canonicalCursorBase, apiKey) };
       recordLiveCursorClaudeModels(liveResult.models, liveRosterScope);
       // Live Max-Mode evidence feeds the umbrella resolver's ultra gate
       // (devlog 260828_cursor_umbrella_catalog; union with static evidence).
