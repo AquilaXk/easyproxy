@@ -2,7 +2,7 @@ import type { FailureDetail } from "../lib/failure-detail";
 import { boundedModelIdentity, knownModelIdentity } from "../lib/model-identity";
 import { boundedServiceTier } from "../lib/response-service-tier";
 import { createHash, type Hash } from "node:crypto";
-import { chmodSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, appendFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../config";
 import type { CodexAffinityMove, CodexAffinityReason } from "../codex/routing";
@@ -1182,6 +1182,22 @@ function usageLogPermissionCheckIsCurrent(
 function ensureUsageLogDir(now: number): void {
   const dir = getConfigDir();
   if (usageLogPermissionCheckIsCurrent(ensuredUsageLogDir, dir, now)) return;
+  if (ensuredUsageLogDir?.path === dir) {
+    try {
+      const st = statSync(dir);
+      if (process.platform === "win32" || (st.mode & 0o777) === 0o700) {
+        ensuredUsageLogDir.checkedAt = now;
+        return;
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException | null)?.code !== "ENOENT") throw err;
+      recordOwnedConfigPath(dir, usageLogPath());
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+    }
+    try { chmodSync(dir, 0o700); } catch { /* best-effort on platforms that ignore chmod */ }
+    ensuredUsageLogDir.checkedAt = now;
+    return;
+  }
   recordOwnedConfigPath(dir, usageLogPath());
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { chmodSync(dir, 0o700); } catch { /* best-effort on platforms that ignore chmod */ }
@@ -1212,10 +1228,21 @@ export function appendUsageEntry(entry: PersistedUsageEntry): void {
   const now = Date.now();
   const doAppend = (): void => {
     ensureUsageLogDir(now);
+    const fileKnown = ensuredUsageLogFile?.path === path;
     const filePermissionsCurrent = usageLogPermissionCheckIsCurrent(ensuredUsageLogFile, path, now);
     appendFileSync(path, line, { encoding: "utf-8", mode: 0o600 });
     if (!filePermissionsCurrent) {
-      try { chmodSync(path, 0o600); } catch { /* best-effort on platforms that ignore chmod */ }
+      let needsChmod = !fileKnown;
+      if (!needsChmod) {
+        try {
+          needsChmod = process.platform !== "win32" && (statSync(path).mode & 0o777) !== 0o600;
+        } catch {
+          needsChmod = true;
+        }
+      }
+      if (needsChmod) {
+        try { chmodSync(path, 0o600); } catch { /* best-effort on platforms that ignore chmod */ }
+      }
       ensuredUsageLogFile = { path, checkedAt: now };
     }
   };

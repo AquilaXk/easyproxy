@@ -8,7 +8,6 @@ One maintainer, one list. Add a line when work is found, delete it when it lands
 - [ ] Verify desktop shell and WidgetKit snapshot integration on clean macOS, Windows, and Linux hosts for `v0.1.0`.
 
 ## Performance & Architecture Debt
-- [ ] Eliminate redundant post-serialize JSON re-parsing, repeated combo body clones, and synchronous hot-path file I/O.
 - [ ] Add SQLite usage summary rollups, trim unused classic/GIF bundle bloat, deduplicate Rust ACL/lock FFI, and break the 9 remaining import cycles.
 
 ## Ecosystem & Protocol Parity

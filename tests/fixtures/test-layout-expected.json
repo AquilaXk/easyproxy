@@ -448,7 +448,7 @@
   "grok-selection.test.ts": "providers/xai", "grok-session-identity.test.ts": "providers/xai", "grok-status.test.ts": "providers/xai", "grok-sync.test.ts": "providers/xai",
   "grok-writer-boundary.test.ts": "providers/xai", "gui-api-error.test.ts": "gui", "html-lang-boot-script.test.ts": "gui", "gui-codex-usage-score-parity.test.ts": "gui",
   "gui-desktop-sidecar-script.test.ts": "gui", "gui-management-session.test.ts": "gui", "gui-pair-capability.test.ts": "gui", "gui-pair-client.test.ts": "gui",
-  "gui-pair-http.test.ts": "gui", "gui-static.test.ts": "gui", "gui-tray-vibrancy-surface.test.ts": "gui", "health-scoring.test.ts": "server", "hotpath-hygiene.test.ts": "server",
+  "gui-pair-http.test.ts": "gui", "gui-static.test.ts": "gui", "gui-tray-vibrancy-surface.test.ts": "gui", "health-scoring.test.ts": "server", "hotpath-hygiene.test.ts": "server", "hotpath-unit5.test.ts": "server",
   "history-migration-guardian.test.ts": "codex-integration", "history-epx-compaction-recovery.test.ts": "codex-integration", "history-paginated-openai-compat.test.ts": "codex-integration", "history-paginated-transition-destinations.test.ts": "codex-integration",
   "hub-gated-local-clients.test.ts": "cli", "hub-invite.test.ts": "cli", "hub-disable.test.ts": "cli", "hub-usage.test.ts": "server",
   "hub-usage-windows.test.ts": "server", "hyperbolic-provider.test.ts": "providers", "identity-neutralize.test.ts": "adapters", "identity-subagent.test.ts": "adapters",

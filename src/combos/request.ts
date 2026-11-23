@@ -1,4 +1,5 @@
 import { errorDestinationText, providerErrorDestinationLabel } from "../lib/error-destination";
+import { cloneResponsesRequestEnvelope } from "../lib/responses-envelope-copy";
 import type { EpxComboDefaultEffort, EpxComboDefaultEffortMode, EpxComboReasoningEffortMode, EpxComboTarget, EpxConfig } from "../types";
 import { isCodexReasoningEffort, isDeclaredReasoningEffort, resolveEffortAtOrBelow } from "../reasoning-effort";
 import { resolveComboId } from "./types";
@@ -69,7 +70,7 @@ export function concreteComboRequestBody(
   reasoningEffortMode: EpxComboReasoningEffortMode = "strict",
   defaultEffortMode: EpxComboDefaultEffortMode = "fallback",
 ): Record<string, unknown> {
-  const clone = structuredClone(body) as Record<string, unknown>;
+  const clone = cloneResponsesRequestEnvelope(body) as Record<string, unknown>;
   clone.model = `${target.provider}/${target.model}`;
   if (defaultEffortMode === "force" && (!defaultEffort || !isCodexReasoningEffort(defaultEffort))) {
     throw new Error("force combo default effort requires a valid defaultEffort");

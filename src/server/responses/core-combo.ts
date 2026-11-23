@@ -1354,12 +1354,17 @@ export async function executeComboResponses(
       }
     }
     const childHeaders = buildComboChildHeaders(req.headers);
+    const childBodyText = requestDispatchers.usesAttachedParsedBody ? undefined : JSON.stringify(childBody);
     const childRequest = new Request(req.url, {
       method: req.method,
       headers: childHeaders,
-      ...(requestDispatchers.usesAttachedParsedBody ? {} : { body: JSON.stringify(childBody) }),
+      ...(childBodyText === undefined ? {} : { body: childBodyText }),
     });
-    attachParsedRequestBody(childRequest, childBody);
+    attachParsedRequestBody(
+      childRequest,
+      childBody,
+      childBodyText === undefined ? undefined : Buffer.byteLength(childBodyText, "utf8"),
+    );
     linkRequestSessionLane(req, childRequest);
     let resolvedAuth: CodexAuthContext | undefined;
     let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;

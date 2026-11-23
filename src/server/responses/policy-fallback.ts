@@ -1,5 +1,6 @@
 import { comboFailureDecision, isProviderModerationRefusal } from "../../combos/failover";
 import { readBoundedResponseBody } from "../../lib/bounded-body";
+import { cloneResponsesRequestEnvelope } from "../../lib/responses-envelope-copy";
 import { isVerifiedModelNotInPlanResponse } from "../../lib/errors";
 import { isShadowSourceModel } from "../../lib/shadow-call";
 import { isNonReplayableResponse } from "../../lib/upstream-retry";
@@ -234,7 +235,10 @@ export async function handleResponsesWithPolicyFallback(
         // Recovery and other core preparation may mutate the parsed body in place. Keep an
         // immutable snapshot of the original wire body so a retry cannot serialize those
         // mutations. Object-identity metadata is re-established by each attempt, not serialized.
-        rawBody = structuredClone(body as Record<string, unknown>);
+        rawBody = cloneResponsesRequestEnvelope(body, {
+          shallowCopyToolsArray: true,
+          shallowCopyInputItems: true,
+        }) as Record<string, unknown>;
       }
     },
     onStoredPool401ReplayDispatched: () => {

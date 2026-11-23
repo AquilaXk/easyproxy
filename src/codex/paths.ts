@@ -2,6 +2,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { expandUserPath } from "../config";
+import { StatFileCache } from "../lib/stat-file-cache";
 import { defaultCodexHome } from "./home";
 import { codexHomeIsAbsent } from "./codex-home-owner";
 import { rootAssignmentKey, rootSourceLines, sourceAssignment } from "./toml-source-lines";
@@ -240,11 +241,17 @@ export function codexCatalogBindingForPath(configPath: string, catalogPath: stri
   return sameCodexCatalogPath(configPath, name, catalogPath) ? name : catalogPath;
 }
 
+const codexCatalogBindingCache = new StatFileCache<string | null>(bytes =>
+  readRootTomlString(bytes.toString("utf8"), "model_catalog_json"),
+);
+
 /** Read the configured binding, with no fallback when it cannot be read or is absent. */
 export function readCodexCatalogBinding(configPath?: string, configText?: string): string | null {
   try {
     configPath ??= activeCodexConfigPath();
-    const binding = readRootTomlString(configText ?? readFileSync(configPath, "utf8"), "model_catalog_json");
+    const binding = configText !== undefined
+      ? readRootTomlString(configText, "model_catalog_json")
+      : (codexCatalogBindingCache.read(configPath) ?? null);
     return binding ? resolveCodexCatalogPath(configPath, binding) : null;
   } catch { return null; }
 }

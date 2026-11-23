@@ -90,6 +90,7 @@ import {
   type UsageDebugBodyKind,
 } from "../usage/debug";
 import { MAX_LOG_SIZE } from "./request-log-filter";
+import { serializedJsonByteLength } from "./json-serialized-bytes";
 export { filterRequestLogs, filteredRequestLogCount, queryRequestLogs } from "./request-log-filter";
 import { enforceAppOwnedMemoryBudget, type RetainedStoreSnapshot } from "../lib/app-owned-memory";
 import { capEstimateAtContextWindow } from "../lib/token-estimate";
@@ -188,42 +189,59 @@ export function rebindCacheDiagnosticBody(
   cacheDiagnosticHooks()?.rebind(body, draft);
 }
 
-const requestLog: RequestLogEntry[] = [];
+const requestLogRing = new Array<RequestLogEntry | undefined>(MAX_LOG_SIZE);
+const requestLogRingBytes = new Float64Array(MAX_LOG_SIZE);
+let requestLogHead = 0;
+let requestLogCount = 0;
 const requestLogObserversForTests = new Set<(entry: RequestLogEntry) => void>();
-const requestLogEntryBytes = new WeakMap<RequestLogEntry, number>();
 let requestLogBytes = 0;
 /** True after hydrateRequestLogsFromDisk ran once in this process. */
 let requestLogsHydratedFromDisk = false;
 
 function retainedRequestLogBytes(entry: RequestLogEntry): number {
-  return Buffer.byteLength(JSON.stringify(entry), "utf8");
+  return serializedJsonByteLength(entry);
+}
+
+function clearRequestLogRing(): void {
+  requestLogRing.fill(undefined);
+  requestLogRingBytes.fill(0);
+  requestLogHead = 0;
+  requestLogCount = 0;
+  requestLogBytes = 0;
 }
 
 function removeOldestRequestLogEntry(): number {
-  const entry = requestLog.shift();
-  if (!entry) return 0;
-  const bytes = requestLogEntryBytes.get(entry) ?? retainedRequestLogBytes(entry);
-  requestLogEntryBytes.delete(entry);
+  if (requestLogCount === 0) return 0;
+  const entry = requestLogRing[requestLogHead];
+  const bytes = requestLogRingBytes[requestLogHead]!;
+  requestLogRing[requestLogHead] = undefined;
+  requestLogRingBytes[requestLogHead] = 0;
+  requestLogHead = (requestLogHead + 1) % MAX_LOG_SIZE;
+  requestLogCount -= 1;
   requestLogBytes = Math.max(0, requestLogBytes - bytes);
-  return bytes;
+  return entry ? bytes : 0;
 }
 
 function retainRequestLogEntry(entry: RequestLogEntry): void {
   const bytes = retainedRequestLogBytes(entry);
-  requestLog.push(entry);
-  requestLogEntryBytes.set(entry, bytes);
+  if (requestLogCount === MAX_LOG_SIZE) {
+    removeOldestRequestLogEntry();
+  }
+  const tail = (requestLogHead + requestLogCount) % MAX_LOG_SIZE;
+  requestLogRing[tail] = entry;
+  requestLogRingBytes[tail] = bytes;
+  requestLogCount += 1;
   requestLogBytes += bytes;
-  while (requestLog.length > MAX_LOG_SIZE) removeOldestRequestLogEntry();
   enforceAppOwnedMemoryBudget();
 }
 
 export function requestLogRetainedStoreSnapshot(): RetainedStoreSnapshot {
   return {
-    count: requestLog.length,
+    count: requestLogCount,
     bytes: requestLogBytes,
     evictableBytes: requestLogBytes,
     pinnedBytes: 0,
-    oldestAt: requestLog[0]?.timestamp ?? null,
+    oldestAt: requestLogCount > 0 ? (requestLogRing[requestLogHead]?.timestamp ?? null) : null,
   };
 }
 
@@ -374,7 +392,7 @@ export function hydrateRequestLogsFromDisk(
   reader: () => PersistedUsageEntry[] = () => readRecentUsageEntries(MAX_LOG_SIZE),
 ): number {
   if (requestLogsHydratedFromDisk) return 0;
-  if (requestLog.length > 0) {
+  if (requestLogCount > 0) {
     requestLogsHydratedFromDisk = true;
     return 0;
   }
@@ -408,8 +426,7 @@ export function hydrateRequestLogsFromDisk(
 export function rehydrateRequestLogsAfterLedgerReplacement(
   reader: () => PersistedUsageEntry[] = () => readRecentUsageEntries(MAX_LOG_SIZE),
 ): number {
-  requestLog.length = 0;
-  requestLogBytes = 0;
+  clearRequestLogRing();
   requestLogsHydratedFromDisk = false;
   return hydrateRequestLogsFromDisk(reader);
 }
@@ -1076,12 +1093,18 @@ function writeFinalRequestLog(
   }
 }
 
-export function getRequestLogEntries(): RequestLogEntry[] { return requestLog; }
+export function getRequestLogEntries(): RequestLogEntry[] {
+  if (requestLogCount === 0) return [];
+  const entries = new Array<RequestLogEntry>(requestLogCount);
+  for (let i = 0; i < requestLogCount; i += 1) {
+    entries[i] = requestLogRing[(requestLogHead + i) % MAX_LOG_SIZE]!;
+  }
+  return entries;
+}
 
 /** Test-only process-state reset for isolated integration harnesses. */
 export function clearRequestLogsForTests(): void {
-  requestLog.length = 0;
-  requestLogBytes = 0;
+  clearRequestLogRing();
   requestLogsHydratedFromDisk = false;
   requestLogObserversForTests.clear();
 }

@@ -416,8 +416,16 @@ export function readJsonRequestBody(
  * Admit a body the caller already parsed (a Remote Link WebSocket create, #8600) as if it had been read: its serialized
  * size is held to the same limit and observed by the same budget as the parse at the end of the bounded reader.
  */
-export function admitParsedJsonRequestBody(body: unknown, maxBytes: number, budget?: TranslatorBudget, req?: Request): unknown {
-  const parsedBytes = serializedJsonByteLength(body);
+export function admitParsedJsonRequestBody(
+  body: unknown,
+  maxBytes: number,
+  budget?: TranslatorBudget,
+  req?: Request,
+  knownSerializedBytes?: number,
+): unknown {
+  const parsedBytes = typeof knownSerializedBytes === "number" && Number.isFinite(knownSerializedBytes) && knownSerializedBytes >= 0
+    ? knownSerializedBytes
+    : serializedJsonByteLength(body);
   if (parsedBytes > maxBytes) {
     if (req) markRequestBodyRejected(req);
     throw new DecompressedBodyTooLargeError(parsedBytes, maxBytes, "decoded_exact");
@@ -430,15 +438,18 @@ export function admitParsedJsonRequestBody(body: unknown, maxBytes: number, budg
  * A parsed body bound to the one Request it stands for (#8600). It goes with that request alone: a request the pipeline
  * builds for a combo child, a recovery or a retry is another Request and reads its own body. Taken once, like a body.
  */
-const parsedBodies = new WeakMap<Request, unknown>();
+const parsedBodies = new WeakMap<Request, { body: unknown; knownSerializedBytes?: number }>();
 
-export function attachParsedRequestBody(req: Request, body: unknown): void {
-  parsedBodies.set(req, body);
+export function attachParsedRequestBody(req: Request, body: unknown, knownSerializedBytes?: number): void {
+  const validBytes = typeof knownSerializedBytes === "number" && Number.isFinite(knownSerializedBytes) && knownSerializedBytes >= 0
+    ? knownSerializedBytes
+    : undefined;
+  parsedBodies.set(req, validBytes === undefined ? { body } : { body, knownSerializedBytes: validBytes });
 }
 
-export function takeParsedRequestBody(req: Request): { body: unknown } | undefined {
-  if (!parsedBodies.has(req)) return undefined;
-  const body = parsedBodies.get(req);
+export function takeParsedRequestBody(req: Request): { body: unknown; knownSerializedBytes?: number } | undefined {
+  const entry = parsedBodies.get(req);
+  if (!entry) return undefined;
   parsedBodies.delete(req);
-  return { body };
+  return entry;
 }

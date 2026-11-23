@@ -45,6 +45,7 @@ import { repairUrlCitationAnnotations, scrubEpxCompactionItems, stripUnsupported
 import { notePlaintextReasoningDropped } from "./plaintext-reasoning-notice";
 import { stripCanonicalForwardPromptCacheOptions, stripDeprecatedPromptCacheRetention } from "./prompt-cache";
 import { isPlainObject } from "./internal";
+import { rememberTransientOutboundWireBody } from "../../lib/transient-outbound-body";
 import { usageFromResponsesPayload } from "./usage";
 import { normalizeToolSchemas, promoteClientLoadedTools, stripUnsupportedHostedTools } from "./tool-schema";
 import { annotateEmptyResponsesToolOutputs, backfillWebSearchQueries, normalizeResponsesToolResultAdjacency, repairOrphanedInputItems, repairOversizedReplayCallIds, repairUnidentifiedToolOutputItems, restoreBridgedWebSearchCalls } from "./tool-output-recovery";
@@ -553,7 +554,7 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         "passthrough_serialization",
         Buffer.byteLength(body, "utf8"),
       );
-      return {
+      const request: AdapterRequest = {
         url,
         method: "POST",
         headers,
@@ -570,6 +571,8 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         ...(convertedMuseToolNameAliases ? { convertedMuseToolNameAliases } : {}),
         ...(tierLog ? { tierLog } : {}),
       };
+      if (isPlainObject(wireBody)) rememberTransientOutboundWireBody(request, body, wireBody);
+      return request;
     },
 
     // The passthrough normally relays the upstream stream verbatim and never parses.

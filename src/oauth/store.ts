@@ -40,6 +40,7 @@ import { join } from "node:path";
 import { getConfigDir, atomicWriteFile, backupInvalidConfig, hardenConfigDir, hardenExistingSecret, withConfigMutationLockSync, loadConfig } from "../config";
 import { atomicWriteFileNoFollowUnclaimed } from "../config/atomic-write";
 import { assertNotRealHomeUnderTest } from "../lib/test-home-guard";
+import { StatFileCache } from "../lib/stat-file-cache";
 import { recordOwnedConfigPath, registerOwnedConfigPath, type OwnedPathRegistration } from "../lib/config-ownership";
 import {
   OAUTH_REFRESH_LOCK_WAIT_MS,
@@ -396,6 +397,7 @@ function loadAuthStoreInternal(): { store: AuthStore; hadLegacy: boolean } {
     result = normalizeAuthStore(JSON.parse(readFileSync(path, "utf-8")));
   } catch {
     backupInvalidConfig(path);
+    peekAuthStoreCache.invalidate(path);
     notifyAuthStoreLoaded({});
     return { store: {}, hadLegacy: false };
   }
@@ -435,15 +437,17 @@ export function normalizeAuthStoreBuffer(buffer: Uint8Array | null): AuthStoreBu
   }
 }
 
+const peekAuthStoreCache = new StatFileCache<AuthStore>(bytes => {
+  const snapshot = normalizeAuthStoreBuffer(bytes);
+  return snapshot.kind === "ready" ? snapshot.store : {};
+});
+
 /**
  * Observe-only auth store read for diagnostics (`epx doctor` / status).
  * Does not chmod paths or backup invalid JSON — corrupt files are treated as empty.
  */
 export function peekAuthStore(): AuthStore {
-  const path = getAuthStorePath();
-  if (!existsSync(path)) return {};
-  const snapshot = normalizeAuthStoreBuffer(readFileSync(path));
-  return snapshot.kind === "ready" ? snapshot.store : {};
+  return peekAuthStoreCache.read(getAuthStorePath()) ?? {};
 }
 
 /** Atomically write the auth store with owner-only permissions, then hand it to the opt-in decision-quota slot. */
@@ -456,7 +460,9 @@ function persist(store: AuthStore): void {
     try { chmodSync(dir, 0o700); } catch { /* best-effort on existing dir */ }
   }
   hardenConfigDir();
-  publishCredentialSync(() => atomicWriteFile(getAuthStorePath(), JSON.stringify(store, null, 2) + "\n"));
+  const path = getAuthStorePath();
+  publishCredentialSync(() => atomicWriteFile(path, JSON.stringify(store, null, 2) + "\n"));
+  peekAuthStoreCache.invalidate(path);
   notifyAuthStoreLoaded(store);
 }
 

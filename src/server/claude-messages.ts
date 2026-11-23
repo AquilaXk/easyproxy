@@ -677,6 +677,7 @@ async function handleClaudeMessagesWithBudget(
   let anthropicBody: unknown;
   let anthropicHostedAdvisorSelection: HostedAdvisorSelection | undefined;
   let internalBody: Rec;
+  let knownInternalBodyBytes: number | undefined;
   let cacheKeySource: ClaudeCacheKeySource = null;
   let nativeReasoningReplay: ReadonlyMap<string, string> | undefined;
   const nativeReasoningMint: { owner?: NativeReasoningOwner } = {};
@@ -907,6 +908,7 @@ async function handleClaudeMessagesWithBudget(
     if (fastRow) internalBody.service_tier = "priority";
     const internalBodyBytes = jsonUtf8Bytes(internalBody);
     translatorBudget.chargeRetained(internalBodyBytes, { kind: "request_copies" });
+    knownInternalBodyBytes = internalBodyBytes;
     if (directPlan) directSettingsBodyBytes = internalBodyBytes;
     cacheKeySource = translation.cacheKeySource;
     nativeReasoningReplay = translation.nativeReasoningReplay;
@@ -939,7 +941,10 @@ async function handleClaudeMessagesWithBudget(
   let requestTokenFloorKey: string | undefined;
   // Routed adapters only support streamed turns; always stream internally and fold
   // the translated Anthropic SSE into a message JSON for non-streaming clients.
-  internalBody.stream = true;
+  if (internalBody.stream !== true) {
+    internalBody.stream = true;
+    knownInternalBodyBytes = undefined;
+  }
 
   let clientEncoder: ClientEncoderOption | undefined;
   // Native ChatGPT passthrough (openai-responses forward) accepts only Codex-shaped
@@ -978,7 +983,9 @@ async function handleClaudeMessagesWithBudget(
       internalBody = translation.body;
       if (fastRow) internalBody.service_tier = "priority";
       internalBody.stream = true;
-      translatorBudget.chargeRetained(jsonUtf8Bytes(internalBody), { kind: "request_copies" });
+      const leaveBodyBytes = jsonUtf8Bytes(internalBody);
+      translatorBudget.chargeRetained(leaveBodyBytes, { kind: "request_copies" });
+      knownInternalBodyBytes = leaveBodyBytes;
       cacheKeySource = translation.cacheKeySource;
       nativeReasoningReplay = translation.nativeReasoningReplay;
       return undefined;
@@ -1014,6 +1021,12 @@ async function handleClaudeMessagesWithBudget(
     if (route.provider.adapter === "openai-responses") {
       // max_output_tokens is the caller's spend cap: the adapter strips it only for the canonical
       // ChatGPT backend that rejects it (#5753), so other Responses gateways keep the cap.
+      if (Object.hasOwn(internalBody, "temperature")
+        || Object.hasOwn(internalBody, "top_p")
+        || Object.hasOwn(internalBody, "stop")
+        || Object.hasOwn(internalBody, "user")) {
+        knownInternalBodyBytes = undefined;
+      }
       delete internalBody.temperature;
       delete internalBody.top_p;
       delete internalBody.stop;
@@ -1034,7 +1047,10 @@ async function handleClaudeMessagesWithBudget(
     if (internalBody.reasoning !== undefined) {
       const { supportedLadderFor } = await import("./effort-policy");
       const ladder = supportedLadderFor({ provider: route.provider, modelId: route.modelId });
-      if (ladder !== undefined && ladder.length === 0) delete internalBody.reasoning;
+      if (ladder !== undefined && ladder.length === 0) {
+        delete internalBody.reasoning;
+        knownInternalBodyBytes = undefined;
+      }
     }
   } catch (err) {
     if (err instanceof AdmissionModelDeniedError) {
@@ -1296,7 +1312,7 @@ async function handleClaudeMessagesWithBudget(
     method: "POST",
     headers,
   });
-  attachParsedRequestBody(internalReq, internalBody);
+  attachParsedRequestBody(internalReq, internalBody, knownInternalBodyBytes);
   linkRequestSessionLane(req, internalReq);
 
   // Request-log wiring mirrors the /v1/responses route: native passthrough finalizes

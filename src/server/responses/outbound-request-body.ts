@@ -1,7 +1,10 @@
+import { takeTransientOutboundWireBody } from "../../lib/transient-outbound-body";
 import { isPlainObject } from "../responses-snapshot-codec";
 
 /** Parse the physical outbound request without accepting arrays or primitive JSON. */
-export function parseOutboundRequestBody(bodyText: string): Record<string, unknown> | undefined {
+export function parseOutboundRequestBody(bodyText: string, request?: object): Record<string, unknown> | undefined {
+  const cached = takeTransientOutboundWireBody(request, bodyText);
+  if (cached) return isPlainObject(cached) ? cached : undefined;
   try {
     const body: unknown = JSON.parse(bodyText);
     return isPlainObject(body) ? body : undefined;
@@ -21,7 +24,9 @@ const TOOL_SCOPE_INPUT_TYPES = new Set(["additional_tools", "tool_search_output"
 export function outboundToolScope(body: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!body) return undefined;
   const scope: Record<string, unknown> = {};
-  for (const key of ["tools", "tool_choice", "parallel_tool_calls"]) if (Object.hasOwn(body, key)) scope[key] = body[key];
+  for (const key of ["tools", "tool_choice", "parallel_tool_calls"]) {
+    if (Object.hasOwn(body, key) && body[key] !== undefined) scope[key] = body[key];
+  }
   if (Array.isArray(body.input)) {
     scope.input = body.input.filter(item => isPlainObject(item) && typeof item.type === "string" && TOOL_SCOPE_INPUT_TYPES.has(item.type));
   }

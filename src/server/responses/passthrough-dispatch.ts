@@ -466,7 +466,7 @@ export async function preparePassthroughExchange(
     };
     let undeclaredToolGuardActive = false;
     const refreshUndeclaredToolGuard = (builtRequest: AdapterRequest): void => {
-      const outboundRequestBody = parseOutboundRequestBody(builtRequest.body);
+      const outboundRequestBody = parseOutboundRequestBody(builtRequest.body, builtRequest);
       outboundRequestScope = outboundToolScope(outboundRequestBody);
       providerExecutedCallTypes.clear();
       if (isXaiResponsesDestination(route.provider)) {

@@ -558,9 +558,11 @@ async function handleChatCompletionsWithBudget(
     }
   }
 
+  let internalBodyBytes: number;
   try {
+    internalBodyBytes = jsonUtf8Bytes(internalBody);
     translatorBudget.chargeRetained(
-      jsonUtf8Bytes(internalBody),
+      internalBodyBytes,
       { kind: "request_copies" },
     );
   } catch (err) {
@@ -578,7 +580,7 @@ async function handleChatCompletionsWithBudget(
     method: "POST",
     headers,
   });
-  attachParsedRequestBody(internalReq, internalBody);
+  attachParsedRequestBody(internalReq, internalBody, internalBodyBytes);
   linkRequestSessionLane(req, internalReq);
 
   const finalizeNativeLog = createFinalRequestLog(logIds, logCtx).finish;
