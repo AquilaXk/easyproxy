@@ -40,7 +40,7 @@ fn build_native_tray() {
             "-module-name",
             "NativeTray",
             "-target",
-            &format!("{arch}-apple-macos13.0"),
+            &format!("{arch}-apple-macos14.0"),
         ])
         .arg(if env::var("PROFILE").as_deref() == Ok("release") {
             "-O"

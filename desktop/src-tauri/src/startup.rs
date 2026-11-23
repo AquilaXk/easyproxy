@@ -1601,6 +1601,7 @@ fn finish(app: &AppHandle, started: Instant, endpoint: ProxyEndpoint) {
         app.try_state::<AppState>()
             .is_some_and(|state| state.owns_runtime()),
     );
+    crate::tray::refresh_now(app);
     let path = format!(
         "/?desktop_session={}#/usage",
         app.state::<crate::updater::DesktopUpdateState>()

@@ -451,6 +451,26 @@ mod macos {
         tauri::async_runtime::spawn(async move { write(proxy).await });
     }
 
+    fn stopped_snapshot(endpoint_display: Option<&str>) -> Snapshot {
+        Snapshot {
+            schema_version: 1,
+            state: "stopped".into(),
+            state_title: "Stopped".into(),
+            detail: Some("EasyProxy desktop proxy is stopped.".into()),
+            endpoint_display: endpoint_display.unwrap_or("127.0.0.1:10100").into(),
+            menu_title: None,
+            today: None,
+            quotas: Vec::new(),
+            chart: None,
+            last_updated: None,
+            generated_at: now_seconds(),
+        }
+    }
+
+    pub fn record_stopped(endpoint_display: Option<&str>) {
+        publish(&stopped_snapshot(endpoint_display));
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -660,11 +680,28 @@ mod macos {
             let result = chart(&value, &json!({ "settings": { "chartStyle": "line" } })).unwrap();
             assert_eq!(result.series.len(), 6);
         }
+
+        #[test]
+        fn stopped_snapshot_serializes_expected_fields() {
+            let mut snapshot = stopped_snapshot(Some("127.0.0.1:10200"));
+            snapshot.generated_at = 5.0;
+            assert_eq!(
+                serde_json::to_string(&snapshot).unwrap(),
+                r#"{"schemaVersion":1,"state":"stopped","stateTitle":"Stopped","detail":"EasyProxy desktop proxy is stopped.","endpointDisplay":"127.0.0.1:10200","menuTitle":null,"today":null,"quotas":[],"chart":null,"lastUpdated":null,"generatedAt":5.0}"#
+            );
+            assert_eq!(
+                stopped_snapshot(None).endpoint_display,
+                "127.0.0.1:10100"
+            );
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) use macos::refresh;
+pub(crate) use macos::{record_stopped, refresh};
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn refresh(_: &crate::proxy::ProxyClient) {}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn record_stopped(_: Option<&str>) {}

@@ -222,12 +222,17 @@ struct EasyProxyWidgetView: View {
             ForEach(Array(chart.series.enumerated()), id: \.offset) { index, series in
                 Path { path in
                     let maxValue = maxPoint(chart.series.flatMap(\.points))
-                    for pointIndex in series.points.indices {
-                        let x = series.points.count > 1
-                            ? size.width * CGFloat(pointIndex) / CGFloat(series.points.count - 1) : 0
-                        let y = size.height * (1 - CGFloat(series.points[pointIndex] / maxValue))
-                        if pointIndex == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                        else { path.addLine(to: CGPoint(x: x, y: y)) }
+                    if series.points.count == 1 {
+                        let y = size.height * (1 - CGFloat(series.points[0] / maxValue))
+                        path.move(to: CGPoint(x: 0, y: y))
+                        path.addLine(to: CGPoint(x: size.width, y: y))
+                    } else {
+                        for pointIndex in series.points.indices {
+                            let x = size.width * CGFloat(pointIndex) / CGFloat(series.points.count - 1)
+                            let y = size.height * (1 - CGFloat(series.points[pointIndex] / maxValue))
+                            if pointIndex == 0 { path.move(to: CGPoint(x: x, y: y)) }
+                            else { path.addLine(to: CGPoint(x: x, y: y)) }
+                        }
                     }
                 }
                 .stroke(seriesColor(index), lineWidth: 1.5)

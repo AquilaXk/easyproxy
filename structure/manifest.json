@@ -1348,8 +1348,7 @@
         "desktop/src-tauri/src/cli_command_record.rs",
         "desktop/src-tauri/src/cli_command_posix.rs",
         "desktop/src-tauri/src/cli_command_windows.rs",
-        "desktop/ui/cli.html",
-        "desktop/ui/cli.js"
+        "desktop/ui/cli.html"
       ]
     },
     {

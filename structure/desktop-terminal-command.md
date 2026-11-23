@@ -53,7 +53,7 @@ the owned entry and broadcasts Environment; a top-level `notifyPending` debt sur
 removal until a broadcast succeeds. Machine-Path conflicts are partial; open shells unobserved.
 
 The tray and desktop-only dashboard entry beside Desktop update open `desktop/ui/cli.html`;
-`desktop/ui/cli.js` renders only the newest status or action response and never sends a path.
+its inline script renders only the newest status or action response and never sends a path.
 `gui/src/lib/desktop-shell.ts` selects the platform's exact app origin. Four path-free commands
 are guarded by the main window's local CLI page; Back uses `return_to_dashboard`, guarded for
 the update and CLI pages, falling back to the startup page when no dashboard is ready. Removal

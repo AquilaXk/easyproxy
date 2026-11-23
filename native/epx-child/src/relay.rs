@@ -39,7 +39,7 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(1);
 const CONTROL_DEADLINE: Duration = Duration::from_secs(2);
 /// Connect bound for a request that shutdown can cancel: a socket can be registered for
 /// cancellation only once connected, so this bounds how long shutdown can wait on a connect.
-const CANCELLABLE_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const CANCELLABLE_CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
 const HEADER_AND_SSE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_CONCURRENT_WORKERS: usize = 32;
 const MAX_CONTROL_CONNECTIONS: usize = 256;
@@ -695,61 +695,64 @@ fn serve_foreground_inner(
 
     let parity_shared = Arc::clone(&shared);
     let parity_handle = thread::spawn(move || run_parity_loop(parity_shared));
-    let sem = Arc::new((Mutex::new(0usize), Condvar::new()));
-    let control_active = Arc::new(AtomicUsize::new(0));
+    {
+        let sem = Arc::new((Mutex::new(0usize), Condvar::new()));
+        let control_active = Arc::new(AtomicUsize::new(0));
 
-    for incoming in listener.incoming() {
-        if shared.stop_flag.load(Ordering::SeqCst) {
-            break;
-        }
-        let Ok(client_stream) = incoming else {
-            continue;
-        };
-        if shared.stop_flag.load(Ordering::SeqCst) {
-            break;
-        }
-        let sem_clone = Arc::clone(&sem);
-        let admitted = {
-            let (lock, _) = &*sem_clone;
-            let mut active = lock.lock().unwrap_or_else(|e| e.into_inner());
-            if *active < MAX_CONCURRENT_WORKERS {
-                *active += 1;
-                true
-            } else {
-                false
+        for incoming in listener.incoming() {
+            if shared.stop_flag.load(Ordering::SeqCst) {
+                break;
             }
-        };
-        if !admitted {
-            // Every worker is busy. Health checks and the authenticated shutdown still get a
-            // short-lived control thread, so a full worker pool cannot keep the shutdown
-            // connection from being handled. A control connection holds its slot for at most
-            // `CONTROL_DEADLINE` per request head; past `MAX_CONTROL_CONNECTIONS` concurrent
-            // ones, a new connection is closed unanswered.
-            if control_active.fetch_add(1, Ordering::SeqCst) >= MAX_CONTROL_CONNECTIONS {
-                control_active.fetch_sub(1, Ordering::SeqCst);
+            let Ok(client_stream) = incoming else {
+                continue;
+            };
+            if shared.stop_flag.load(Ordering::SeqCst) {
+                break;
+            }
+            let sem_clone = Arc::clone(&sem);
+            let admitted = {
+                let (lock, _) = &*sem_clone;
+                let mut active = lock.lock().unwrap_or_else(|e| e.into_inner());
+                if *active < MAX_CONCURRENT_WORKERS {
+                    *active += 1;
+                    true
+                } else {
+                    false
+                }
+            };
+            if !admitted {
+                // Every worker is busy. Health checks and the authenticated shutdown still get a
+                // short-lived control thread, so a full worker pool cannot keep the shutdown
+                // connection from being handled. A control connection holds its slot for at most
+                // `CONTROL_DEADLINE` per request head; past `MAX_CONTROL_CONNECTIONS` concurrent
+                // ones, a new connection is closed unanswered.
+                if control_active.fetch_add(1, Ordering::SeqCst) >= MAX_CONTROL_CONNECTIONS {
+                    control_active.fetch_sub(1, Ordering::SeqCst);
+                    continue;
+                }
+                let control_shared = Arc::clone(&shared);
+                let control_slot = ControlSlot(Arc::clone(&control_active));
+                thread::spawn(move || {
+                    // Returned however the thread ends, a panic included.
+                    let _slot = control_slot;
+                    let _ = handle_client_connection(
+                        client_stream,
+                        &control_shared,
+                        ConnectionMode::ControlOnly,
+                    );
+                });
                 continue;
             }
-            let control_shared = Arc::clone(&shared);
-            let control_slot = ControlSlot(Arc::clone(&control_active));
+            let worker_shared = Arc::clone(&shared);
+            let permit = WorkerPermit(sem_clone);
             thread::spawn(move || {
-                // Returned however the thread ends, a panic included.
-                let _slot = control_slot;
-                let _ = handle_client_connection(
-                    client_stream,
-                    &control_shared,
-                    ConnectionMode::ControlOnly,
-                );
+                // Returned however the worker ends, a panic included, so a panic never shrinks the pool.
+                let _permit = permit;
+                let _ = handle_client_connection(client_stream, &worker_shared, ConnectionMode::Full);
             });
-            continue;
         }
-        let worker_shared = Arc::clone(&shared);
-        let permit = WorkerPermit(sem_clone);
-        thread::spawn(move || {
-            // Returned however the worker ends, a panic included, so a panic never shrinks the pool.
-            let _permit = permit;
-            let _ = handle_client_connection(client_stream, &worker_shared, ConnectionMode::Full);
-        });
     }
+    drop(listener);
 
     shared.signal_shutdown();
     // Link WebSocket sockets close (1001, best effort) and are shut down within the close bound.

@@ -451,12 +451,18 @@ pub fn request_stop(app: &AppHandle) {
         if !claimed {
             return;
         }
+        let endpoint_display = app
+            .try_state::<AppState>()
+            .and_then(|s| s.proxy())
+            .map(|p| format!("{}:{}", p.endpoint().host, p.endpoint().port));
         let verdict = drain_current(&app).await;
         if verdict == DrainVerdict::Drained {
             if let Some(state) = app.try_state::<AppState>() {
                 state.release();
             }
             crate::tray::set_owned(&app, false);
+            crate::tray::clear_for_stop(&app);
+            crate::widget::record_stopped(endpoint_display.as_deref());
         } else {
             crate::logging::log_once("the runtime could not be stopped", verdict.describe());
         }
@@ -528,12 +534,22 @@ pub fn drain_now(app: &AppHandle, reason: ExitReason) {
 }
 
 async fn finish_and_exit_after(app: &AppHandle, reason: ExitReason) {
+    let endpoint_display = app
+        .try_state::<AppState>()
+        .and_then(|s| s.proxy())
+        .map(|p| format!("{}:{}", p.endpoint().host, p.endpoint().port));
     let verdict = drain_current(app).await;
     if let Some(coordinator) = app.try_state::<ExitCoordinator>() {
         coordinator.finish_drain(verdict);
     }
     match (reason, verdict) {
-        (ExitReason::UserQuit, _) => app.exit(0),
+        (ExitReason::UserQuit, verdict) => {
+            if verdict == DrainVerdict::Drained {
+                crate::tray::clear_for_stop(app);
+                crate::widget::record_stopped(endpoint_display.as_deref());
+            }
+            app.exit(0);
+        }
         (ExitReason::CoordinatedRestart, DrainVerdict::Drained) => {
             crate::process_spawn::with_spawn(|| app.restart());
         }

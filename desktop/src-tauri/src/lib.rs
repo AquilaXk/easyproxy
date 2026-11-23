@@ -397,6 +397,7 @@ pub fn run() {
                     .zoom_hotkeys_enabled(true)
                     .on_navigation(window::navigation_allowed(app.handle().clone()))
                     .on_new_window(window::open_new_windows_in_default_browser())
+                    .min_inner_size(360.0, 320.0)
                     // A hidden window still loads pages: wry builds this one with WebView2
                     // IsVisible=false, and the bootstrap page navigates to the dashboard URL
                     // afterwards, so the eval that a later show or hide would rely on has nowhere
@@ -422,7 +423,6 @@ pub fn run() {
             let builder = builder
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true)
-                .min_inner_size(360.0, 320.0)
                 .traffic_light_position(tauri::Position::Logical(tauri::LogicalPosition::new(
                     traffic_lights::X,
                     traffic_lights::y_for(traffic_lights::macos_major()),

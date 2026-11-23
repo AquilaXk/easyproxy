@@ -192,9 +192,12 @@ pub fn stop_owned_daemon(state: &ChildStateV1) -> Result<(), String> {
     if !send_attested_shutdown(port, &state.shutdown_secret) {
         return Err("child daemon did not accept the authenticated shutdown".to_owned());
     }
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut port_down = false;
     while Instant::now() < deadline {
-        let port_down = !is_port_bound(port);
+        if !port_down {
+            port_down = !is_port_bound(port);
+        }
         let pid_down = !process_is_alive(observed_pid);
         if port_down && pid_down {
             return Ok(());

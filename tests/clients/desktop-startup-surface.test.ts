@@ -394,6 +394,14 @@ describe("the bootstrap page reports only what it was told", () => {
     // asset origin does not satisfy 'self' — observed on Linux, where the page never ran a line.
     expect(markup).not.toContain("./main.js");
     expect(markup).toMatch(/<script nonce="__TAURI_SCRIPT_NONCE__">/);
+    for (const rel of ["desktop/ui/index.html", "desktop/ui/update.html", "desktop/ui/cli.html"]) {
+      const html = readFileSync(repoPath(rel), "utf8").replace(/<!--[\s\S]*?-->/g, "");
+      const scriptTags = html.match(/<script\b[^>]*>/g) ?? [];
+      expect(scriptTags.length).toBeGreaterThan(0);
+      for (const tag of scriptTags) {
+        expect(tag).toContain('nonce="__TAURI_SCRIPT_NONCE__"');
+      }
+    }
   });
 
   test("the handshake with the shell is bounded", () => {

@@ -8,7 +8,8 @@ const read = (path: string) => readFileSync(repoPath(path), "utf8");
 const lib = read("desktop/src-tauri/src/lib.rs");
 const policy = read("desktop/src-tauri/src/window.rs");
 const page = read("desktop/ui/cli.html");
-const script = read("desktop/ui/cli.js");
+const script = page.match(/<script id="cli-main" nonce="__TAURI_SCRIPT_NONCE__">([\s\S]*?)<\/script>/)?.[1];
+if (!script) throw new Error("missing inline cli.html main script");
 const commands = ["cli_status", "cli_set_enabled", "cli_install", "cli_remove"];
 
 function commandBody(name: string): string {
@@ -63,7 +64,12 @@ describe("desktop CLI command surface", () => {
     expect(lib).toContain("app.manage(cli_command::State::default())");
     expect(policy).toContain('url.path() == "/cli.html"');
     expect(policy).toContain('window.label() != "main"');
-    expect(page).toContain('<script src="cli.js"></script>');
+    expect(page).not.toContain("<script src=");
+    const scriptTags = page.match(/<script\b[^>]*>/g) ?? [];
+    expect(scriptTags).toHaveLength(2);
+    for (const tag of scriptTags) {
+      expect(tag).toContain('nonce="__TAURI_SCRIPT_NONCE__"');
+    }
     expect(read("desktop/src-tauri/tauri.conf.json")).toContain('"frontendDist": "../ui"');
   });
 

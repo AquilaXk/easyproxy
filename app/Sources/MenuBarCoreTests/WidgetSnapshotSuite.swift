@@ -106,5 +106,25 @@ enum WidgetSnapshotSuite {
             let mode = (try? FileManager.default.attributesOfItem(atPath: store.url.path)[.posixPermissions] as? NSNumber)?.intValue
             t.equal(mode, 0o600)
         }
+        t.test("widget snapshot: decodes stopped and foreign state payloads") {
+            let stoppedJSON = #"{"schemaVersion":1,"state":"stopped","stateTitle":"Stopped","detail":"EasyProxy desktop proxy is stopped.","endpointDisplay":"127.0.0.1:10100","menuTitle":null,"today":null,"quotas":[],"chart":null,"lastUpdated":null,"generatedAt":1700000000}"#
+            let stopped = try! JSONDecoder().decode(WidgetSnapshot.self, from: Data(stoppedJSON.utf8))
+            t.equal(stopped.schemaVersion, 1)
+            t.equal(stopped.state, "stopped")
+            t.equal(stopped.stateTitle, "Stopped")
+            t.equal(stopped.detail, "EasyProxy desktop proxy is stopped.")
+            t.equal(stopped.endpointDisplay, "127.0.0.1:10100")
+            t.expect(stopped.today == nil, "stopped today is nil")
+            t.expect(stopped.quotas.isEmpty, "stopped quotas are empty")
+            t.expect(stopped.chart == nil, "stopped chart is nil")
+            t.expect(stopped.lastUpdated == nil, "stopped lastUpdated is nil")
+
+            let foreignJSON = #"{"schemaVersion":1,"state":"foreign","stateTitle":"External runtime","detail":"This port is served by a runtime this app did not start.","endpointDisplay":"127.0.0.1:10200","menuTitle":null,"today":null,"quotas":[],"chart":null,"lastUpdated":null,"generatedAt":1700000001}"#
+            let foreign = try! JSONDecoder().decode(WidgetSnapshot.self, from: Data(foreignJSON.utf8))
+            t.equal(foreign.state, "foreign")
+            t.equal(foreign.stateTitle, "External runtime")
+            t.equal(foreign.detail, "This port is served by a runtime this app did not start.")
+            t.equal(foreign.endpointDisplay, "127.0.0.1:10200")
+        }
     }
 }

@@ -17,9 +17,13 @@ if [ ! -f "$_epx_cli" ] || [ ! -x "$_epx_cli" ]; then
   exit 127
 fi
 unset EPX_NODE_LAUNCH_CONTEXT EPX_PRE_BUN_ANTHROPIC_ENV
+_epx_od=/usr/bin/od
+[ -x "$_epx_od" ] || _epx_od=$(command -v od 2>/dev/null || :)
+_epx_awk=/usr/bin/awk
+[ -x "$_epx_awk" ] || _epx_awk=$(command -v awk 2>/dev/null || :)
 _epx_proof=
-if [ -r /dev/urandom ] && [ -x /usr/bin/od ] && [ -x /usr/bin/awk ]; then
-  _epx_proof=$(/usr/bin/od -An -tu1 -N32 /dev/urandom 2>/dev/null | /usr/bin/awk '
+if [ -r /dev/urandom ] && [ -n "$_epx_od" ] && [ -x "$_epx_od" ] && [ -n "$_epx_awk" ] && [ -x "$_epx_awk" ]; then
+  _epx_proof=$("$_epx_od" -An -tu1 -N32 /dev/urandom 2>/dev/null | "$_epx_awk" '
     BEGIN { a="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"; n=0; bits=0; count=0; out="" }
     { for (i=1; i<=NF; i++) {
         if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1
@@ -126,6 +130,22 @@ fn environment_temp_root(temp_dir: &Path) -> Option<PathBuf> {
     }
     None
 }
+fn is_volumes_temporary_path(path: &Path) -> bool {
+    use std::path::Component;
+    if !path.starts_with("/Volumes") {
+        return false;
+    }
+    let mut comps = path.components();
+    !matches!(
+        (comps.next(), comps.next(), comps.next(), comps.next()),
+        (
+            Some(Component::RootDir),
+            Some(Component::Normal(v)),
+            Some(Component::Normal(_vol)),
+            Some(Component::Normal(apps)),
+        ) if v == "Volumes" && apps == "Applications"
+    )
+}
 fn is_temporary_bundle_path(path: &Path, temp_dir: &Path) -> bool {
     let env_root = environment_temp_root(temp_dir);
     TEMPORARY_ROOTS
@@ -133,7 +153,7 @@ fn is_temporary_bundle_path(path: &Path, temp_dir: &Path) -> bool {
         .map(Path::new)
         .chain(env_root.as_deref())
         .any(|root| path.starts_with(root))
-        || path.starts_with("/Volumes")
+        || is_volumes_temporary_path(path)
 }
 fn has_app_translocation_marker(path: &Path) -> bool {
     path.components()
@@ -850,6 +870,22 @@ mod tests {
         }
     }
     #[test]
+    fn secondary_volume_applications_are_permanent_while_dmg_volumes_stay_temporary() {
+        let temp = std::env::temp_dir();
+        assert!(is_temporary_bundle_path(
+            Path::new("/Volumes/DMG/App.app/Contents/MacOS/app"),
+            &temp
+        ));
+        assert!(is_temporary_bundle_path(
+            Path::new("/Volumes/Applications/App.app/Contents/MacOS/app"),
+            &temp
+        ));
+        assert!(!is_temporary_bundle_path(
+            Path::new("/Volumes/Data/Applications/EasyProxy.app/Contents/MacOS/EasyProxy"),
+            &temp
+        ));
+    }
+    #[test]
     fn owned_and_desired_rc_paths_reconcile_without_losing_modified_ownership() {
         let t = Temp::new();
         let old = t.0.join("old");
@@ -1031,7 +1067,7 @@ mod tests {
         );
         assert!(context["codexCliInspectionEnv"].is_null());
         assert!(!text.contains("dummy"));
-        fs::remove_file(cli).unwrap();
+        fs::remove_file(&cli).unwrap();
         assert_eq!(
             with_spawn(|| std::process::Command::new(&shim).env_clear().output())
                 .unwrap()
@@ -1039,14 +1075,47 @@ mod tests {
                 .code(),
             Some(127)
         );
+        // Non-FHS distributions (e.g. NixOS) lack /usr/bin/od and /usr/bin/awk, resolving them on PATH.
+        record::atomic(&cli, None, inspect, 0o700).unwrap();
+        {
+            let _writer = crate::process_spawn::executable_write();
+            fs::write(
+                &shim,
+                render_shim(&cli, "owner")
+                    .unwrap()
+                    .replace("/usr/bin/od", "/no-such-od")
+                    .replace("/usr/bin/awk", "/no-such-awk"),
+            )
+            .unwrap();
+        }
+        let non_fhs = with_spawn(|| {
+            std::process::Command::new(&shim)
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .arg("status")
+                .output()
+        })
+        .unwrap();
+        assert!(non_fhs.status.success());
+        let non_fhs_lines: Vec<_> = std::str::from_utf8(&non_fhs.stdout).unwrap().lines().collect();
+        let non_fhs_ctx: serde_json::Value = serde_json::from_str(non_fhs_lines[0]).unwrap();
+        let non_fhs_proof = non_fhs_ctx["proof"].as_str().unwrap();
+        assert_eq!(non_fhs_proof.len(), 43);
+        assert_eq!(
+            non_fhs_lines[1],
+            format!("--epx-internal-launch-proof={non_fhs_proof}")
+        );
+        fs::remove_file(&cli).unwrap();
         // Exercise unavailable/malformed utility fallback without changing the machine's utilities.
         for rendered in [
             render_shim(&t.0.join("cli"), "owner")
                 .unwrap()
-                .replace("/usr/bin/od", "/no-such-od"),
+                .replace("/usr/bin/od", "/no-such-od")
+                .replace("command -v od", "command -v no-such-od"),
             render_shim(&t.0.join("cli"), "owner")
                 .unwrap()
-                .replace("/usr/bin/awk", "/no-such-awk"),
+                .replace("/usr/bin/awk", "/no-such-awk")
+                .replace("command -v awk", "command -v no-such-awk"),
             render_shim(&t.0.join("cli"), "owner")
                 .unwrap()
                 .replace("/dev/urandom", "/no-such-urandom"),

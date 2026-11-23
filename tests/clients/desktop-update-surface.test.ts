@@ -11,7 +11,7 @@ const tray = read("desktop/src-tauri/src/tray.rs");
 const windowPolicy = read("desktop/src-tauri/src/window.rs");
 
 function evaluatePage(invoke?: (name: string) => Promise<unknown>, userAgent?: string) {
-  const script = page.match(/<script nonce="__TAURI_SCRIPT_NONCE__">([\s\S]*?)<\/script>/)?.[1];
+  const script = [...page.matchAll(/<script nonce="__TAURI_SCRIPT_NONCE__">([\s\S]*?)<\/script>/g)].at(-1)?.[1];
   if (!script) throw new Error("update page script missing");
   const handlers = new Map<string, (event?: unknown) => void>();
   const nodes = new Map(["titlebar", "state", "error", "manual", "release", "check", "install", "back"].map(id => [id, {

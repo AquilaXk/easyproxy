@@ -147,10 +147,9 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     crate::tray_login::refresh(app);
 
-    let builder = TrayIconBuilder::with_id("main")
-        .icon(icon())
-        .icon_as_template(true)
-        .menu(&menu);
+    let builder = TrayIconBuilder::with_id("main").icon(icon()).menu(&menu);
+    #[cfg(target_os = "macos")]
+    let builder = builder.icon_as_template(true);
     // Attaching a menu makes the left click open that menu by default, which swallows the click
     // before `on_tray_icon_event` can do anything visible. On macOS and Windows that left the
     // usage popup with no way to open at all: the icon showed the menu, and the menu item that
@@ -305,6 +304,20 @@ fn refresh(app: &AppHandle, tray: &tauri::tray::TrayIcon<Wry>) {
     widget::refresh(&proxy);
 }
 
+pub(crate) fn refresh_now(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id("main") {
+        refresh(app, &tray);
+    }
+}
+
+pub(crate) fn clear_for_stop(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_title(None::<&str>);
+        #[cfg(not(target_os = "macos"))]
+        let _ = tray.set_tooltip(Some("EasyProxy"));
+    }
+}
+
 /// Take a copy of the menu handles, holding the lock only for the copy.
 ///
 /// Every Tauri menu setter dispatches to the main thread and waits for it. The tray is built *on*
@@ -377,6 +390,14 @@ fn refresh_title(app: &AppHandle, tray: &tauri::tray::TrayIcon<Wry>, proxy: &Pro
         let quotas = proxy.quotas().await.unwrap_or(Value::Null);
         let title = render_title(&settings, &usage, &quotas);
         let _ = tray.set_title(title.as_deref());
+        #[cfg(not(target_os = "macos"))]
+        {
+            let tooltip = match title.as_deref() {
+                Some(t) if !t.is_empty() => format!("EasyProxy — {t}"),
+                _ => "EasyProxy".to_owned(),
+            };
+            let _ = tray.set_tooltip(Some(tooltip));
+        }
         #[cfg(target_os = "macos")]
         apply_update_indicator(&app, update_pending(&app));
     });

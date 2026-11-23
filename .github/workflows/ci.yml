@@ -187,10 +187,24 @@ jobs:
           "${bundle}/${EXE}" --version
           "${bundle}/${EXE}" __keyring-load-check
 
-      - name: Run Windows suite
+      - name: Run Windows suite and desktop tests
         if: runner.os == 'Windows'
         shell: bash
-        run: bun scripts/test.ts ./tests/windows
+        run: |
+          set -euo pipefail
+          bun scripts/test.ts ./tests/windows
+          bun run --cwd desktop prepare-sidecar
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib -- --test-threads=1
+
+      - name: Install Linux desktop test dependencies and run desktop tests
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev patchelf
+          bun run --cwd desktop prepare-sidecar
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib -- --test-threads=1
 
       - name: Run macOS native and desktop tests
         if: runner.os == 'macOS'
