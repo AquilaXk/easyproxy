@@ -2,72 +2,21 @@
 
 The [desktop membership contract](../runtime.md#codex-desktop-process-membership) has adapter regression coverage on every host and real PowerShell prefilter regression coverage with synthetic CIM rows on Windows in `tests/clients/desktop-app-restart.test.ts`. A skipped Windows lane does not exercise that native filter; uid-dependent POSIX cases in `tests/clients/desktop-app-restart-posix.test.ts` are skipped on Windows.
 
-`.github/workflows/ci.yml` runs scoped Ubuntu checks for pull requests and has no push or
-schedule trigger. By default PRs run `gates` and `test changed`; a full Linux suite is selected
-for `ci:full` or CI, harness, toolchain and dependency changes. macOS and Windows jobs run on
-manual dispatch from `dev`, not on PRs. A full `lane=all` dispatch provides evidence for its exact
-source SHA; a PR green or a narrower dispatch is not full-platform evidence. After a batch of
-merges, maintainers run one full dispatch on `dev` rather than one per PR.
+`.github/workflows/ci.yml` triggers on pushes to `main`, pull requests to `main`, and manual
+`workflow_dispatch` runs with two jobs:
 
-The manual `windows-native-claim` lane runs the instrumented native-main quota
-provenance test on one hosted Windows runner, without starting the full matrix.
-It is diagnostic evidence only: it cannot mark a commit green for release.
+- **`gates` (`ubuntu-latest`)**: runs `scripts/check-repo-hygiene.ts` (scoped to `BASE_SHA..HEAD_SHA` when `BASE_SHA` is reachable), `bun run typecheck`, `bun run typecheck:tsc`, `bun run privacy:scan`, `bun run structure:check`, `bun run skill:surface:check`, `bun run docs:clients:check`, `scripts/release-version-sources.ts check`, `scripts/generate-update-trust-root.ts --check`, GUI lint/test/build, explicit contract tests (`tests/test-layout.test.ts`, `tests/test-layout-tooling.test.ts`, `tests/ci-workflows/`, `tests/lab/core-lab-boundary.test.ts`, `tests/update/`, `tests/lib/spend-*.test.ts`), and `scripts/ci/run-changed-tests.sh` with `BASE_SHA` passed from the event context.
+- **`cross-platform` (`linux-x64`, `darwin-arm64`, `windows-x64`)**: builds and tests native Rust helpers (`native/remote-workspace-helper`, `native/epx-child`), builds `gui/dist` and standalone `epx` bundles via `scripts/build-standalone.ts`, verifies `SHA256SUMS` and `__keyring-load-check` smoke runs, and runs platform desktop/native tests (`./tests/windows` on Windows, `MenuBarCoreTests` + `NativeTrayTests` on macOS, and `cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib -- --test-threads=1` on all three OSes).
 
-Two paths sit outside the `ci` filter on purpose and get narrow jobs instead of the full matrix.
-A change under `.github/actions/` runs `setup-action` on Linux for PRs and on Linux, Windows and macOS for full dispatch: it runs the
-composite Bun setup and requires the installed runtime to equal the version `package.json`
-declares. A change under `native/remote-workspace-helper/` runs `remote-helper` on the same three
-runners on full dispatch and Linux for PRs: `cargo fmt` on Linux, then `cargo clippy -D warnings` and `cargo test` everywhere, where
-the live confinement tests compile only on macOS and Windows. Both filters also list `ci.yml`,
-both stay pull-request scope like `docs` and `structure`, their outputs are validated before any
-job reads them, and the aggregate gate expects each job exactly when its filter output is `true`.
+`scripts/ci/run-changed-tests.sh` computes the merge base from `BASE_SHA` (falling back to `HEAD^1` only when `BASE_SHA` is empty, all-zeros, or absent locally), executes `bun scripts/test.ts --changed=<base>` while excluding `api-storage-policy*.test.ts`, `api-storage.test.ts`, and `api-usage.test.ts` from the shared pool, and then executes those excluded families in dedicated fresh `bun scripts/test.ts` processes whenever storage, usage, or management paths change, followed by `./tests/ci-workflows/file-size-ratchet.test.ts`.
 
-`privacy:scan` runs inside `gates`, and `gates` is scoped to the `ci` filter. The `privacy
-gate` job is its exact complement on pull requests — it runs wherever the `ci` filter declines —
-so every pull request scans exactly once and the coverage does not depend on an enumerated path
-list. The aggregate derives the same expectation from its `scoped` result.
-
-The macOS suite has four duration-weighted shards (`macos N/4`, `TEST_SHARD=N/4`), each capped
-at 20 minutes. With the widget/bundle job, `lane=all` requests at least five macOS jobs for five
-runner slots; a `ci.yml` change also selects the setup-action macOS leg. The unsharded `macos
-control` runs only on a `lane=macos-control` dispatch: on `lane=all` it repeated the suite the
-four shards had already passed on the same commit, on one worker, for 50 to 60 minutes, and
-every release waited for it. Release verification (`scripts/release.ts`) checks green `ci.yml` runs on `main`.
-Widget/bundle waits for `gates`, so the requests need not overlap and a queue is possible rather
-than guaranteed. The fourth shard adds setup overhead while dividing the same suite.
-
-No recovery retry can turn a failed workflow green. Linux, Windows, macOS shards and macOS control use
-`scripts/ci/run-bun-test-batches.sh`, but
-each lane owns its measured process shape: Linux keeps the default twelve files and 120 seconds;
-Windows uses six files and 480 seconds. macOS control uses twelve files, 300 seconds and one
-worker across an unsharded 1/1 selection. Windows and macOS control select all test families, while Linux leaves the
-storage-policy and api-usage families to its dedicated jobs. The Windows step disables the
-user-scoped test-run queue with `EPX_TEST_NO_QUEUE=1`: the batches already run sequentially in one
-dedicated job, and queueing a new batch behind a surviving process from the preceding batch spends
-the process timeout without executing tests. The per-process home isolation and live-home/service
-manager guards remain active because the preload installs them before the lock boundary.
+For duration-weighted sharded execution, `scripts/ci/run-bun-test-batches.sh` balances files using
+`scripts/ci/test-durations.tsv` (Linux/macOS) and `scripts/ci/test-durations.windows.tsv` (Windows, selected by `RUNNER_OS`, or overridden by `BUN_TEST_DURATIONS_FILE`). A batch closes before its predicted duration passes half the process timeout, `scripts/ci/test-durations.ts refresh` regenerates duration tables from hosted logs, and `EPX_TEST_NO_QUEUE=1` disables the user-scoped queue inside sequential batches while per-process home isolation and live-home guards stay active.
+Release verification (`scripts/release.ts`) checks green `ci.yml` runs on `main`.
 Test teardown follows the [sandbox cleanup contract](test-sandbox-cleanup.md).
 `tests/preload.ts` resolves cleanup dependencies after home/lock admission and before test cases; teardown awaits native-main startup releases and config hardening, then the sandbox's registered ACL child reaps before removing that root. Its synchronous exit fallback leaves an undrained root for ownership-checked stale recovery instead of blocking child cleanup with removal retries. `tests/ci-workflows/test-sandbox-cleanup.test.ts` pins that ordering with a delayed reap.
 `tests/helpers/test-sandbox-cleanup.ts` exposes case-scoped lifecycle ownership: cancellation starts listener stops while owned asynchronous work settles, and repeated close/stop calls share one promise. After teardown starts, only the lifecycle's own abort reason is absorbed; any other error, including a foreign AbortError, still fails its case. Callers settle that lifecycle before draining producers/reaps and restoring or removing a home. The helper does not replace fixture-specific cleanup or claim OS ACL coverage for synthetic tests.
-Shard membership follows recorded duration: `scripts/ci/test-durations.tsv` weighs each file on
-Linux and macOS and `scripts/ci/test-durations.windows.tsv` on Windows (selected by `RUNNER_OS`;
-`BUN_TEST_DURATIONS_FILE` overrides both), because Windows per-file cost is not a constant multiple
-of the other two and one table cannot balance all three (#6982). The heaviest file goes to the
-least-loaded shard, and a file without a row weighs the table's
-median, so an empty table reproduces sorted round-robin exactly. Every shard computes the whole
-assignment and refuses to run unless it covers every selected file once. A batch also closes
-before its predicted duration passes half the process timeout, which only adds process
-boundaries. `scripts/ci/test-durations.ts refresh` regenerates each table from its own platforms'
-hosted job logs (`--table` selects the Windows table).
-A test failure, a process timeout and a Bun runtime crash each fail their job on the first occurrence; the
-batch runner still sweeps a crashed or timed-out batch one file per process, but only to attribute a
-failure the shard has already taken. The aggregate `ci` gate derives, from the event and the `changes` outputs, which
-jobs this run actually requested, then requires `success` from every one of them and `skipped`
-from every job the event did not request — so a job that was requested and never started can no
-longer report as a deliberate skip. Whenever Windows is requested the gate additionally reads the
-run's own job list through the Actions API and requires nine concrete successful `windows N/9`
-results, because a matrix rollup can report `success` when one matrix leg is skipped. A
-release that requires Windows proof still dispatches it for the exact publish SHA.
+A test failure, a process timeout, and a Bun runtime crash each fail execution on the first occurrence; `scripts/ci/run-bun-test-batches.sh` sweeps a crashed or timed-out batch one file per process only to attribute the failure the shard has already taken.
 Test sandboxes keep the runner's `LOCALAPPDATA`, so Windows PowerShell 5.1 children reuse the
 image's warm module-analysis cache. Replacing it with a freshly built seed made every child
 re-analyze modules and timed out seven shards on the first run of #6670.
@@ -120,15 +69,15 @@ and the Node-only global-install smoke path:
 npm install
 npm run build:gui
 npm pack --json > pack.json
-npm install -g ./aquilaxk-easyproxy-*.tgz
+npm install -g ./easyproxy-*.tgz
 epx help
 ```
 
-The scoped docs job builds the site. CI does not run coverage or perform remote Ubuntu/RDP smoke tests.
+`deploy-docs.yml` builds the Astro documentation site separately. CI does not run coverage or perform remote Ubuntu/RDP smoke tests.
 Those stay outside the default gate until a concrete regression justifies the extra runtime.
 
-The manual Release workflow selects a source with qualifying full `dev` dispatch evidence and
-uses a separately identified trusted workflow revision. Publication remains held. History
+The manual Release workflow selects a source with qualifying green CI runs on `main` and
+uses a separately identified trusted workflow revision. Publication remains gated by tag or explicit `dry-run: false` dispatch. History
 reconciliation and the attested resume follow the [release workflow](docs-and-release.md#release-workflow).
 Review of the legacy history mapping, security review, actual dry-run evidence and cutover settings
 remain open; a CI run alone does not authorize publication.

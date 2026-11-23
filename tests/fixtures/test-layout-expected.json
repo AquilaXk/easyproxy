@@ -848,5 +848,5 @@
   "json-depth-guard.test.ts": "lib", "api-key-budget-lease-ws.test.ts": "server",
   "request-history-routing-nonblocking.test.ts": "usage",
   "management-body-bounds.test.ts": "server", "hotpath-index-parity.test.ts": "server", "adapter-bounded-response.test.ts": "responses",
-  "cli-operator-deferred-verbs.test.ts": "cli"
+  "cli-operator-deferred-verbs.test.ts": "cli", "ci-run-changed-tests-contract.test.ts": "ci-workflows"
 }

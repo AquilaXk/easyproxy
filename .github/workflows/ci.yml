@@ -75,6 +75,8 @@ jobs:
           bun run build:gui
 
       - name: Layout, contract, and changed-file tests
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           bun test tests/test-layout.test.ts tests/test-layout-tooling.test.ts tests/ci-workflows/ tests/lab/core-lab-boundary.test.ts tests/server/startup-prompt.test.ts tests/update/ tests/lib/spend-*.test.ts tests/lib/standalone-native-helpers.test.ts tests/claude-integration/messages-overflow-baseline-contract.test.ts tests/claude-integration/claude-uncoded-context-overflow.test.ts tests/clients/link-child-update-launcher.test.ts tests/server/management-client-config-route.test.ts tests/providers/aside-client.test.ts
           if git rev-parse --verify --quiet 'HEAD^1^{commit}' >/dev/null; then

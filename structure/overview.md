@@ -251,16 +251,7 @@ still cover the rule, which is a judgement only review makes.
   see [`runtime.md`](runtime.md).
   Enforced by `tests/claude-integration/claude-cli-picker.test.ts`.
 
-CI enumerates that domain layout through `scripts/ci/run-bun-test-batches.sh`. Its default general
-scope and 12-file/120-second process shape leave the dedicated Linux storage-policy and api-usage
-jobs out of the general shards. The manual Windows matrix selects all-file scope and overrides the
-process shape to six files and 480 seconds, so batching changes process size without changing the
-platform suite's file set. macOS shards select 1/4, 2/4, 3/4 and 4/4; control selects 1/1, all in twelve-file, one-worker
-batches bounded to 300 seconds, with dedicated worker-heavy families kept singleton. These
-dedicated batch steps set `EPX_TEST_NO_QUEUE=1`: their sequential
-processes are one logical runner, while each process still installs its own isolated home and test
-guards. The workflow contract and process bounds live in
-[`ops/cross-platform-ci.md`](ops/cross-platform-ci.md).
+CI runs `.github/workflows/ci.yml` on pushes to `main`, pull requests to `main`, and manual dispatches via a `gates` job (`ubuntu-latest`) and a `cross-platform` matrix (`linux-x64`, `darwin-arm64`, `windows-x64`). Inside `gates`, `scripts/ci/run-changed-tests.sh` selects graph-reachable tests against `BASE_SHA` (merging back to `HEAD^1` when `BASE_SHA` is unavailable) and runs isolated `api-storage*` / `api-usage` families in dedicated fresh processes whenever storage, usage, or management paths change. Duration-weighted batch execution lives in `scripts/ci/run-bun-test-batches.sh`, setting `EPX_TEST_NO_QUEUE=1` inside sequential runner legs while keeping per-process isolated homes and test guards active. The workflow contract and process bounds live in [`ops/cross-platform-ci.md`](ops/cross-platform-ci.md).
 
 `structure/manifest.json` declares both source-review coverage and cross-cutting contract authority.
 `scripts/structure-ssot.ts` validates that topology, and generated `structure/INDEX.md` publishes it.
