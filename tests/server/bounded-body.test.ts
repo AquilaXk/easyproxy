@@ -185,10 +185,15 @@ describe("readBoundedResponseBody", () => {
 
 	test("keeps the inter-chunk inactivity deadline after the first byte", async () => {
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		let pulled = false;
 		const response = new Response(new ReadableStream<Uint8Array>({
 			start(controller) {
 				controller.enqueue(encoder.encode("first"));
-				timer = setTimeout(() => controller.enqueue(encoder.encode("late")), 30);
+			},
+			pull(controller) {
+				if (pulled) return;
+				pulled = true;
+				timer = setTimeout(() => controller.enqueue(encoder.encode("late")), 120);
 			},
 			cancel() {
 				if (timer) clearTimeout(timer);
@@ -196,9 +201,9 @@ describe("readBoundedResponseBody", () => {
 		}));
 
 		const result = await readBoundedResponseBody(response, {
-			totalTimeoutMs: 100,
-			inactivityTimeoutMs: 15,
-			firstByteTimeoutMs: 60,
+			totalTimeoutMs: 300,
+			inactivityTimeoutMs: 20,
+			firstByteTimeoutMs: 150,
 		});
 
 		expect(result.text).toBe("first");

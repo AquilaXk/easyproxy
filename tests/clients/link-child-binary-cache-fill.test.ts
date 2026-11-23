@@ -625,7 +625,7 @@ describe("final review: uninstall, startup gates and download edges", () => {
       .toEqual({ kind: "filled", cached: ["epx-child-darwin-arm64", "epx-child-linux-x64"], fetched: ["epx-child-darwin-arm64", "epx-child-linux-x64"], failed: [] });
     writeFileSync(join(home, "cache", "later.txt"), "added after the fill");
     expect(ownedPaths().filter(path => path.startsWith("cache"))).toEqual([]);
-    expect(readdirSync(join(home, "cache")).sort()).toEqual(["later.txt", "notes.txt", "epx-child"]);
+    expect(readdirSync(join(home, "cache")).sort()).toEqual(["epx-child", "later.txt", "notes.txt"]);
     expect(removeOwnedConfigState(home).status).toBe("partial");
     expect([readFileSync(handPlaced, "utf8"), readFileSync(join(home, "cache", "notes.txt"), "utf8"), readFileSync(join(home, "cache", "later.txt"), "utf8"), existsSync(fillDir())])
       .toEqual(["linux build bytes", "mine", "added after the fill", false]);
