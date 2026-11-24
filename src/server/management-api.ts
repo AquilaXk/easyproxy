@@ -59,6 +59,7 @@ import { applySystemEnvToggle } from "./system-env";
 
 import type { ManagementApiDeps } from "./management/context";
 import { handleConfigRoutes } from "./management/config-routes";
+import { handleProfileBackupRoutes } from "./management/profile-backup-routes";
 import { handleNativeReasoningRetentionRoutes } from "./management/native-reasoning-retention-routes";
 import { handleLogsUsageRoutes } from "./management/logs-usage-routes";
 import { handleStorageLogGuardRoutes } from "./management/storage-log-guard-routes";
@@ -78,6 +79,7 @@ import { handleUsageTimelineRoutes } from "./management/usage-timeline-routes";
 import { handleCompanionRoutes } from "./management/companion-routes";
 import { handleCodexPromptRoutes } from "./management/codex-prompt-routes";
 import { handleIntegrationRoutes } from "./management/integration-routes";
+import { handleEcosystemSyncRoutes } from "./management/ecosystem-sync-routes";
 import { handleNativeIntegrationRoutes } from "./management/native-integration-routes";
 import { handleClaudeDesktopPickerRoutes } from "./management/claude-desktop-picker-routes";
 import { handleDesktopCompatibilityRoutes } from "./management/desktop-compatibility-routes";
@@ -379,6 +381,7 @@ export async function handleManagementAPI(
     ??     (await handleLinkRoutesOnDemand(ctx))
     ??     (await handleRemoteWorkspaceRoutesOnDemand(ctx))
     ??     (await handleConfigRoutes(ctx))
+    ??     (await handleProfileBackupRoutes(ctx))
     ??     (await handleNativeReasoningRetentionRoutes(ctx))
     ??     (await handleStorageLogGuardRoutes(ctx))
     ??     (await handleLogsUsageRoutes(ctx))
@@ -400,6 +403,7 @@ export async function handleManagementAPI(
     ??     (await handleProviderRoutes(ctx))
     ??     (await handleModelRoutes(ctx))
     ??     (await handleIntegrationRoutes(ctx))
+    ??     (await handleEcosystemSyncRoutes(ctx))
     ??     (await handleNativeIntegrationRoutes(ctx))
     ??     (await handleCursorIntegrationRoutes(ctx))
     ??     (await handleClaudeDesktopPickerRoutes(ctx))

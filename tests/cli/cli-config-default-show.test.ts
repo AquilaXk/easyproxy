@@ -183,7 +183,7 @@ test.each([["config", "--help"], ["help", "config"]])(
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("epx config [show|get|set|unset|validate|export|import]");
+      expect(result.stdout).toContain("epx config [show|get|set|unset|validate|export|import|backup]");
       expect(result.stdout).toContain("show is the default");
       expect(result.stdout).toContain("epx config [show] [--json] [--source]");
       expect(result.stdout).toContain("--source is only supported for show");

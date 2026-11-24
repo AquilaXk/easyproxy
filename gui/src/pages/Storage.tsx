@@ -13,6 +13,7 @@ import { useDataSurface } from "../data-surface";
 import { DataSurfaceSkeleton, DataSurfaceStatus } from "../components/data-surface";
 import { quietButton } from "../components/v2-logs/classes";
 import { ModalDialog } from "../components/ui-v2/modal-dialog";
+import StorageProfileBackupCard from "../components/StorageProfileBackupCard";
 import { cn } from "@/lib/utils";
 
 
@@ -1422,6 +1423,12 @@ export default function Storage({ apiBase }: { apiBase: string }) {
           onTrashEntriesChange={onTrashEntriesChange}
         />
       )}
+
+      <StorageProfileBackupCard
+        apiBase={apiBase}
+        t={t}
+        onRestored={() => void refreshAll()}
+      />
     </div>
   );
 }

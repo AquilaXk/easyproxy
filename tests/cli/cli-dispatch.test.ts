@@ -1401,7 +1401,7 @@ describe("CLI usage recovery contracts", () => {
       const err = spyOn(console, "error").mockImplementation(() => {});
       try {
         expect(await dispatchCommand({ kind: "command", command: "integration", args }, { ...fakeDeps, args })).toBe(2);
-        expect(err.mock.calls.flat().join(" ")).toBe("Usage: epx integration <claude|grok|client|native> <subcommand>\nSee: epx help integration");
+        expect(err.mock.calls.flat().join(" ")).toBe("Usage: epx integration <claude|grok|client|native|sync> <subcommand>\nSee: epx help integration");
       } finally { err.mockRestore(); }
     },
   );

@@ -628,11 +628,12 @@ test("a failure cause never carries message text, paths or identifiers (#1784)",
 
 test("the route inventory retains every convergence path after separating subagent routes", () => {
   const counts = Object.fromEntries([
-    ["provider-routes.ts", 8],
+    ["provider-routes.ts", 9],
     ["model-routes.ts", 16],
     ["combo-routes.ts", 2],
     ["agent-settings-routes.ts", 1],
     ["subagent-model-routes.ts", 1],
+    ["profile-backup-routes.ts", 1],
   ].map(([file, expected]) => {
     const source = readFileSync(repoPath("src", "server", "management", file as string), "utf8");
     const direct = source.match(/await convergeCodexCatalog\(\)/g)?.length ?? 0;
@@ -648,11 +649,12 @@ test("the route inventory retains every convergence path after separating subage
     return [file, count];
   }));
   expect(counts).toEqual({
-    "provider-routes.ts": 8,
+    "provider-routes.ts": 9,
     "model-routes.ts": 16,
     "combo-routes.ts": 2,
     "agent-settings-routes.ts": 1,
     "subagent-model-routes.ts": 1,
+    "profile-backup-routes.ts": 1,
   });
 });
 

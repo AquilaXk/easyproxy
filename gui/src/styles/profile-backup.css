@@ -1,0 +1,31 @@
+.profile-backup-card {
+  border: 1px solid var(--epx-line);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--epx-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.profile-backup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.profile-backup-panel {
+  border: 1px solid var(--epx-line);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

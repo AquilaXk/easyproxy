@@ -108,7 +108,7 @@ test("the masked set is the monochrome client marks plus the native exceptions",
  */
 test("every client tab has a mark", () => {
   const bare = TABS
-    .filter(tab => tab.id !== "overview" && tab.id !== "keys")
+    .filter(tab => tab.id !== "overview" && tab.id !== "keys" && tab.id !== "sync")
     .filter(tab => !(tab.id in INTEGRATION_MARKS));
   expect(bare.map(tab => tab.id)).toEqual([]);
 });

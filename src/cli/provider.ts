@@ -661,6 +661,16 @@ export async function handleProviderCommand(args: string[], deps: ProviderComman
     process.exitCode = await cmdProviderCcSwitchImport(subArgs);
     return;
   }
+  if (sub === "import-url") {
+    const { handleProviderImportUrlCommand } = await import("./provider-deep-link");
+    process.exitCode = await handleProviderImportUrlCommand(subArgs, deps);
+    return;
+  }
+  if (sub === "share-url") {
+    const { handleProviderShareUrlCommand } = await import("./provider-deep-link");
+    process.exitCode = await handleProviderShareUrlCommand(subArgs, deps);
+    return;
+  }
 
   // #6957: a link Child's local providers are inactive; changing them is refused like any other
   // provider change, which belongs to the Home.

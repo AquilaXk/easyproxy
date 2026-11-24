@@ -581,6 +581,7 @@ describe("headless GUI parity CLI", () => {
       ["/api/combos", "epx combo"],
       ["/api/client-config", "epx export"],
       ["/api/client-integrations", "epx integration client"],
+      ["/api/ecosystem/sync", "epx integration sync"],
       // Antigravity app and agy CLI: status, connect and disconnect are
       // `epx connect antigravity|agy [status]` and `epx disconnect antigravity|agy`.
       ["/api/gateway-clients", "epx connect/disconnect antigravity|agy"],
@@ -616,6 +617,7 @@ describe("headless GUI parity CLI", () => {
       ["/api/logs", "epx observe"],
       ["/api/lab", "epx lab"],
       ["/api/config", "epx config"],
+      ["/api/profile/backup", "epx config backup"],
       ["/api/advisor", "epx advisor"],
       ["/api/companion", "epx companion"],
       // The client machine plane. These are served by the connected client's own loopback

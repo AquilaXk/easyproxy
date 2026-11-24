@@ -901,8 +901,11 @@ const commandRunners: Record<string, CommandRunner> = {
     } else if (integration === "client") {
       const { handleClientIntegrationCommand } = await import("./integrations");
       return await handleClientIntegrationCommand(deps.args.slice(2), { findLiveProxy: deps.findLiveProxy });
+    } else if (integration === "sync") {
+      const { handleEcosystemSyncCommand } = await import("./ecosystem-sync");
+      return await handleEcosystemSyncCommand(deps.args.slice(2), { findLiveProxy: deps.findLiveProxy });
     } else {
-      console.error("Usage: epx integration <claude|grok|client|native> <subcommand>\nSee: epx help integration");
+      console.error("Usage: epx integration <claude|grok|client|native|sync> <subcommand>\nSee: epx help integration");
       return 2;
     }
   },
@@ -912,7 +915,7 @@ const commandRunners: Record<string, CommandRunner> = {
   },
   config: async deps => {
     const { handleConfigCommand } = await import("./config-command");
-    return await handleConfigCommand(deps.args.slice(1));
+    return await handleConfigCommand(deps.args.slice(1), { findLiveProxy: deps.findLiveProxy });
   },
   lab: async deps => {
     const { handleLabCommand } = await import("./lab");

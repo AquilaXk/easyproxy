@@ -8,7 +8,7 @@
 Use these declarations to choose a task, then check its flags and authority before execution.
 Non-mutating probes may still contact providers, consume quota or refresh caches.
 
-Declared capabilities: 95.
+Declared capabilities: 98.
 
 ### `epx companion`
 
@@ -1804,3 +1804,69 @@ State-changing: no. JSON mode: `payload`.
 | `--json` | boolean | Emit the low-quota event list as JSON. |
 
 - Reads the live server's bounded low-quota event ledger without emitting notifications. Also available as `epx observe low-quota-events`.
+
+### `epx config backup export`
+
+Usage: `epx config backup export --mode <encrypted|redacted> --out <path> [--passphrase-file <path> | --passphrase-env <var> | --passphrase-stdin] [--json]`
+
+Export a full encrypted or redacted EasyProxy profile backup bundle (epx.profile.backup/1).
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/profile/backup/export` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--mode` | string | encrypted (AES-256-GCM scrypt bundle) or redacted (secret-free template). |
+| `--out` | string | Destination output file path. |
+| `--passphrase-file` | string | Regular non-symlink file holding backup passphrase. |
+| `--passphrase-env` | string | Environment variable name holding backup passphrase. |
+| `--passphrase-stdin` | boolean | Read passphrase from non-TTY stdin. |
+| `--json` | boolean | Emit the export summary receipt as JSON. |
+
+- Encrypted backups use scrypt (N=32768, r=8, p=1) + AES-256-GCM with canonical header AAD and omit telemetry.
+
+### `epx config backup inspect`
+
+Usage: `epx config backup inspect <path> [--passphrase-file <path> | --passphrase-env <var> | --passphrase-stdin] [--json]`
+
+Validate and summarize an encrypted or redacted profile backup bundle up to 32 MiB.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/profile/backup/preview` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--passphrase-file` | string | Regular non-symlink file holding backup passphrase. |
+| `--passphrase-env` | string | Environment variable name holding backup passphrase. |
+| `--passphrase-stdin` | boolean | Read passphrase from non-TTY stdin. |
+| `--json` | boolean | Emit validated backup inspection metadata as JSON. |
+
+- Refuses symlinks, files above 32 MiB, nesting depth above 16, wrong passphrases, and tampered AAD headers.
+
+### `epx config backup restore`
+
+Usage: `epx config backup restore <path> --yes [--passphrase-file <path> | --passphrase-env <var> | --passphrase-stdin] [--json]`
+
+Restore a profile backup bundle atomically with a pre-restore snapshot and live topology preservation.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/profile/backup/restore` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--yes` | boolean | Required confirmation before replacing local profile files. |
+| `--passphrase-file` | string | Regular non-symlink file holding backup passphrase. |
+| `--passphrase-env` | string | Environment variable name holding backup passphrase. |
+| `--passphrase-stdin` | boolean | Read passphrase from non-TTY stdin. |
+| `--json` | boolean | Emit restore summary and pre-restore snapshot path as JSON. |
+
+- Keeps latest 5 owner-only snapshots under EASYPROXY_HOME/backups and preserves target telemetry and live connected client topology.

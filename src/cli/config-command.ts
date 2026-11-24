@@ -10,7 +10,7 @@ import type { EpxConfig } from "../types";
 import { normalizeVisionReasoningForModel } from "../vision/reasoning";
 import type { ServiceApiTokenState } from "../lib/service-secrets";
 import { redactUrlForLog } from "../lib/redact";
-import { CliUsageError, printData, rejectArgs, runCliAction, takeFlag } from "./runtime-api";
+import { CliUsageError, printData, rejectArgs, runCliAction, takeFlag, type RuntimeApiDeps } from "./runtime-api";
 
 const USAGE = `Usage:
   epx config [show] [--json] [--source]
@@ -20,6 +20,7 @@ const USAGE = `Usage:
   epx config validate [path|-] [--json]
   epx config export <path|-> [--json]
   epx config import <path|-> --yes [--json]
+  epx config backup <export|inspect|restore> ...
 Entering v2-plaintext requires: epx v2 mode v2-plaintext --acknowledge-plaintext-agent-messages`;
 
 /**
@@ -243,7 +244,7 @@ function requireDedicatedPlaintextTransition(current: EpxConfig, candidate: EpxC
   }
 }
 
-export async function handleConfigCommand(argv: string[]): Promise<number> {
+export async function handleConfigCommand(argv: string[], deps: RuntimeApiDeps = {}): Promise<number> {
   let outcome = 0;
   const status = await runCliAction(async () => {
     const args = [...argv];
@@ -252,6 +253,11 @@ export async function handleConfigCommand(argv: string[]): Promise<number> {
     if (args.includes("--json") || args.includes("--source")) throw new CliUsageError("config flags may only be specified once", USAGE);
     const action = (args.shift() ?? "show").toLowerCase();
     if (source && action !== "show") throw new CliUsageError("--source is only supported for config show", USAGE);
+    if (action === "backup") {
+      const { runProfileBackupSubcommand } = await import("./profile-backup");
+      await runProfileBackupSubcommand(args, wantsJson, deps);
+      return;
+    }
     if (action === "show") {
       rejectArgs(args, USAGE);
       const diagnostics = readConfigDiagnostics();

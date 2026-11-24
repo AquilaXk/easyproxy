@@ -573,28 +573,12 @@ Uses keyless `apiKey: false`; no service-token is read. The vendor credential st
 
 ## Cline paired files
 
-Cline CLI uses `providers.json` for connection settings and sibling `models.json` for its
-catalog. `src/integrations/cline-document.ts` separates native documents from raw-byte snapshot
-bundles; `src/integrations/cline-io.ts` projects both files onto the existing writer/journal.
-Only each file's `providers.easyproxy` entry is owned. Schema envelopes and the user's default
-provider remain user-owned. Cline's selected model and update timestamp can change during normal
-use; refresh preserves a selection only while its model remains routed. Connection fields and
-catalog membership remain protected.
+Cline CLI uses `providers.json` for connection settings and sibling `models.json` for its catalog; `src/integrations/cline-document.ts` and `src/integrations/cline-io.ts` project both onto the shared writer/journal while keeping only each file's `providers.easyproxy` entry owned and preserving default provider, model selection (if still routed), and native timestamps. Each replacement is atomic and lock-protected (`O_NOFOLLOW`/descriptor identity verification refuses symlinks); pending records hold pre-write state, status marks incomplete pairs unsafe, and undo restores original byte snapshots (or requires confirmation on drift).
 
-Each file replacement is atomic; the pair is recoverable, not simultaneously visible. Stop Cline
-before explicit enable/sync/disable/restore and restart afterward. Unattended refresh excludes
-Cline. A private pending record precedes replacement and survives partial failure. Read-only
-status reports an unfinished pair as unsafe; explicit mutation recovers only unchanged original
-or intended bytes and compatible ownership. A journaled pair must match both intended files and
-final ownership before pending cleanup. Foreign edits retain the pending evidence and refuse.
-Undo restores both original byte strings, including individual file absence; drift requires the
-existing explicit confirmation. The journal endpoint evaluates Undo against the same pair.
+Routed `epx claude` launches apply opt-in `claudeCode.subagentModelForce` via independent user-wins defaults for `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`, leaving plain Claude and persistent settings unchanged.
 
-Recovery reads commit history and ownership through strict store methods. Unreadable or malformed
-metadata is uncertainty, never evidence that a transaction did not commit. Pending records validate
-complete ownership, exact Cline paths and result fingerprints before either native file is replaced.
-Native pair writes replace the named directory entries without following final symlinks. A symlink
-present at validation is refused, and one exchanged into place during a mutation is refused rather
-than redirecting EasyProxy's write outside Cline's settings directory.
+## Cross-CLI MCP and skills sync
 
-Routed `epx claude` launches apply opt-in `claudeCode.subagentModelForce` via independent user-wins defaults for `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`. Native launches add neither; plain Claude and persistent settings remain unchanged. Claude Code 2.1.257+ implements force, excluding forks and inherit-model skills; main and small-fast models remain separate.
+`src/ecosystem/cli-sync.ts`, `src/ecosystem/cli-sync-mcp.ts`, `src/ecosystem/cli-sync-skills.ts`, and `src/ecosystem/cli-sync-journal.ts` synchronize normalized MCP servers and `<cliDir>/skills/<slug>/SKILL.md` skills across `claude` (`.claude.json`, `<syncHome>/.claude/skills`), `codex` (`config.toml`), `gemini` (`settings.json`), and `opencode` (`opencode.json`) with all paths resolved strictly via `EcosystemSyncPathOptions`, `EPX_CLI_SYNC_HOME`, and `setEcosystemSyncTestHooks`. armed test processes fail closed on unisolated real-home targets (`src/lib/test-home-guard.ts`).
+
+Status and preview DTOs redact all `env` and `headers` secret values (emitting `envKeys`, `headerKeys`, sanitized URLs, and SHA-256 digests) and surface unsupported target/source MCP shapes rather than dropping foreign keys. Symlinks (`lstatSync` + `O_NOFOLLOW`), invalid slugs (`..`, separators, NUL), `SKILL.md` files above `256 KiB`, config files above `4 MiB`, and sources exceeding `128` servers or `128` skills fail closed. `applyEcosystemSync` snapshots pre-existing targets to `<EASYPROXY_HOME>/ecosystem-sync/snapshots/<batchId>/` (`0o600`, max `10` journal batches) and writes atomically under `withIntegrationWriterLock` + `withConfigDirHardeningSettled`; `restoreEcosystemSync` verifies post-apply digests (`409` on drift unless `force: true`). Routes live in `src/server/management/ecosystem-sync-routes.ts` (sibling-guarded under `/api/ecosystem/sync`) and CLI verbs in `src/cli/ecosystem-sync.ts` (`epx integration sync`).

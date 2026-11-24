@@ -265,6 +265,11 @@ export const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
   { method: "POST", path: "/api/client-integrations/commandcode/restore", module: "server/management/integration-routes", mutates: true },
   { method: "POST", path: "/api/client-integrations/commandcode/restore/preview", module: "server/management/integration-routes", mutates: false },
   { method: "POST", path: "/api/client-integrations/pi/sync", module: "server/management/integration-routes", mutates: true, mechanism: "path-constant" },
+  // server/management/ecosystem-sync-routes
+  { method: "GET", path: "/api/ecosystem/sync", module: "server/management/ecosystem-sync-routes", mutates: false },
+  { method: "POST", path: "/api/ecosystem/sync/preview", module: "server/management/ecosystem-sync-routes", mutates: false },
+  { method: "POST", path: "/api/ecosystem/sync/apply", module: "server/management/ecosystem-sync-routes", mutates: true },
+  { method: "POST", path: "/api/ecosystem/sync/restore", module: "server/management/ecosystem-sync-routes", mutates: true },
   // server/management/lab-automation-routes
   { method: "GET", path: "/api/lab/automation", module: "server/management/lab-automation-routes", mutates: false, exempt: { reason: "local-transport", why: "epx lab reads the same rows from the local SQLite projection; src/cli/lab.ts imports ../lab/query directly and never fetches /api/lab." } },
   { method: "GET", path: "/api/lab/automation/runs", module: "server/management/lab-automation-routes", mutates: false, exempt: { reason: "local-transport", why: "epx lab reads the same rows from the local SQLite projection; src/cli/lab.ts imports ../lab/query directly and never fetches /api/lab." } },
@@ -394,6 +399,9 @@ export const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
   { method: "GET", path: "/api/provider-context-caps", module: "server/management/provider-routes", mutates: false },
   { method: "GET", path: "/api/provider-presets", module: "server/management/provider-routes", mutates: false },
   { method: "GET", path: "/api/provider-quotas", module: "server/management/provider-routes", mutates: false },
+  { method: "GET", path: "/api/providers/share-url", module: "server/management/provider-routes", mutates: false },
+  { method: "POST", path: "/api/providers/import-url", module: "server/management/provider-routes", mutates: true },
+  { method: "POST", path: "/api/providers/import-url/preview", module: "server/management/provider-routes", mutates: false },
   { method: "GET", path: "/api/quota-pool", module: "server/management/quota-pool-routes", mutates: false, exempt: { reason: "deferred-verb", why: "The epx.quota-pool/1 read is a machine contract GOAT consumes over management and the link relay; the CLI shows the same caches through epx provider quota and epx account.", owner: "epx-1 quota pool", ownerDoc: "structure/quota-pool.md" } },
   { method: "GET", path: "/api/fallback", module: "server/management/fallback-routes", mutates: false },
   {
@@ -507,6 +515,10 @@ export const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
   { method: "POST", path: "/api/telemetry/profile", module: "server/management/telemetry-routes", mutates: true, exempt: { reason: "session-only", why: "User-consent boundary in CLI_CONSENT.md: connecting a public profile over HTTP requires a human dashboard session; CLI callers use epx telemetry profile connect in an interactive terminal." } },
   { method: "DELETE", path: "/api/telemetry/profile", module: "server/management/telemetry-routes", mutates: true },
   { method: "GET", path: "/api/telemetry/profile/rank", module: "server/management/telemetry-routes", mutates: false },
+  // server/management/profile-backup-routes
+  { method: "POST", path: "/api/profile/backup/export", module: "server/management/profile-backup-routes", mutates: false },
+  { method: "POST", path: "/api/profile/backup/preview", module: "server/management/profile-backup-routes", mutates: false },
+  { method: "POST", path: "/api/profile/backup/restore", module: "server/management/profile-backup-routes", mutates: true },
   // --- Further routes an equality scan of their own file cannot see. ---
   // Each carries `mechanism`; the reconciliation test counts these separately.
   { method: "GET", path: "/api/storage", module: "server/management/storage-log-guard-routes", mutates: false, mechanism: "negated-guard" },

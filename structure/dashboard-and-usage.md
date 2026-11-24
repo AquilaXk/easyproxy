@@ -573,22 +573,10 @@ Rows may also carry `genStartMs` and `lastOutputMs`, an observed request-relativ
 Request-history selectors longer than 130 characters persist as a prefix plus a digest of the complete selector; exact-match filtering uses the same idempotent encoding. The derived index rebuilds when its projection version changes and encodes older raw-selector rows from canonical JSONL so exact filters still find them. CLI access-key usage is unavailable without an ISO-8601 UTC attribution timestamp, rather than a measured zero or never-used key.
 Derived usage summary rollups and preset snapshots (`usage_hourly_rollups`, `usage_summary_snapshots` in `usage-filter-index.sqlite` v6, `src/usage/summary-rollup.ts`) accelerate cold `/api/usage` preset hydration, source facets, API-key attribution, and `sum` timeline queries while failing closed to `usage.jsonl` scans (`usage-client-attribution.md`).
 
-Kimi Coding K3/K3.1 Pro (and `moonshot` `kimi-k3.1-pro*`) price rows are API-reference estimates at the 5-minute cache-write rate,
-not Code Plan billing or quota. The three Coding presets have explicit price namespaces. The
-retargeted `kimi-for-coding` alias stays unpriced until a verified K2.8 price or a user `modelCosts`
-override exists; the retired K2.7 mapping is not reused. Request, attempt and combo estimates remain
-unknown rather than zero or partial totals. User prices take precedence and existing unknown-price
-and unknown-cap policies still govern cost evidence and routing.
+Kimi Coding K3/K3.1 Pro and `moonshot` price rows use API-reference estimates (`kimi-for-coding` stays unpriced until a user `modelCosts` override exists); unknown prices keep totals unknown. Anthropic Fast multiplies by `2x` only on confirmed `usage.speed: "fast"`; Cursor Fast multiplies Opus 4.8/5/5.5 (`-fast` directly, Opus 4.7 standard); `tests/usage/usage-anthropic-fast-pricing.test.ts` pins Fast vs effort downgrade projection. Models app-server status stays scoped to API-base/restart; main-account warnings reflect effective thresholds and external-usage advisories ([main-account observations](providers/openai-accounts.md#main-account-policy-observations)).
 
-The Models app-server status read is owned by its API-base/restart effect, not the picker tab; switching
-to Combos preserves a pending read and its existing stale-state banner.
+## Ecosystem Sync, Deep Links, and Profile Backup UI
 
-Anthropic Fast pricing applies a 2x list-price multiplier only when the response confirms
-`usage.speed: "fast"`; an absent echo or standard-speed downgrade retains standard pricing.
-`tests/usage/usage-anthropic-fast-pricing.test.ts` pins that distinction. The request-metrics recovery
-label `anthropic-fast-downgrade` projects to `fast_downgrade`, separate from reasoning-effort `effort_downgrade`.
-
-Cursor Claude Fast pricing applies the published Fast tuples to Opus 4.8, Opus 5 and Opus 5.5.
-Explicit `-fast` model IDs use the Fast tuple directly; a Cursor variant tier outcome applies
-the same 2x multiplier to a base model estimate. Opus 4.7 remains standard-priced because its
-upstream Fast mode is unavailable. Configured model prices retain precedence over compiled rows. Main-account protection copy uses the effective short/long thresholds from the server projection. The main account card and setting render an amber advisory for possible usage outside easyproxy, including when the admission policy is off; warning detection and expiry belong to [main-account observations](providers/openai-accounts.md#main-account-policy-observations).
+- **Integrations Sync Tab (`#integrations/sync`)**: `gui/src/pages/integrations/EcosystemSyncPage.tsx` (registered in `gui/src/app-routing.ts` and `gui/src/pages/integrations/integration-tabs.ts`, text-only core tab outside `FILE_CLIENTS` and `INTEGRATION_MARKS`) drives `/api/ecosystem/sync*` without exposing secret `env`/`headers`.
+- **Provider Deep Links & Keyless Share**: `gui/src/components/ImportProviderLinkModal.tsx` on `gui/src/pages/Providers.tsx` handles manual paste or `#providers?import=<epx://...>` (`gui/src/protocol-deep-links.ts`), keeping `#providers?provider=...` (`gui/src/pages/providers-deep-link.ts`) intact and gating private-network targets on explicit user opt-in; `gui/src/components/provider-workspace/ProviderDetails.tsx` requests keyless `GET /api/providers/share-url`.
+- **Profile Backup & Restore Card**: `gui/src/components/StorageProfileBackupCard.tsx` on `gui/src/pages/Storage.tsx` drives `/api/profile/backup/export|preview|restore` within the `4 MiB` browser management JSON cap.

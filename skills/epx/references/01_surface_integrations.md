@@ -8,7 +8,7 @@
 Use these declarations to choose a task, then check its flags and authority before execution.
 Non-mutating probes may still contact providers, consume quota or refresh caches.
 
-Declared capabilities: 41.
+Declared capabilities: 45.
 
 ### `epx claude config`
 
@@ -801,6 +801,90 @@ State-changing: no. JSON mode: `payload`.
 | `--json` | boolean | Emit one validated task result as JSON. |
 
 - May fetch the public update manifest. available:false and nullable reason are valid observations; no installation or trust change is performed.
+
+### `epx integration sync status`
+
+Usage: `epx integration sync status [--json]`
+
+Inspect detected MCP servers, skills, and sync rollback batches across Claude, Codex, Gemini, and OpenCode.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/ecosystem/sync` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit redacted cross-CLI ecosystem sync status as JSON. |
+
+- Secret env and header values are never emitted; only key names and SHA-256 digests are returned.
+
+### `epx integration sync preview`
+
+Usage: `epx integration sync preview --source <cli> --targets <csv> [--kinds <mcp,skills>] [--overwrite] [--json]`
+
+Preview MCP server and skill changes from one CLI to target CLIs without writing.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/ecosystem/sync/preview` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--source` | string | Source CLI: claude \| codex \| gemini \| opencode. |
+| `--targets` | string | Comma-separated target CLIs excluding source. |
+| `--kinds` | string | Comma-separated kinds: mcp, skills (default both). |
+| `--overwrite` | boolean | Mark conflicting target items for overwrite instead of skipping. |
+| `--json` | boolean | Emit the dry-run sync plan as JSON. |
+
+- Refuses symlinks, path-traversal skill slugs, files over budget, and >128 items per source.
+
+### `epx integration sync apply`
+
+Usage: `epx integration sync apply --source <cli> --targets <csv> [--kinds <mcp,skills>] [--overwrite] --yes [--json]`
+
+Apply MCP servers and skills from one CLI to targets with automatic rollback snapshots.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/ecosystem/sync/apply` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--source` | string | Source CLI: claude \| codex \| gemini \| opencode. |
+| `--targets` | string | Comma-separated target CLIs excluding source. |
+| `--kinds` | string | Comma-separated kinds: mcp, skills (default both). |
+| `--overwrite` | boolean | Overwrite existing conflicting target items. |
+| `--yes` | boolean | Confirm writing target CLI config and skill files. |
+| `--json` | boolean | Emit the apply receipt and batchId as JSON. |
+
+- Snapshots pre-existing files under EASYPROXY_HOME/ecosystem-sync and writes targets atomically.
+
+### `epx integration sync restore`
+
+Usage: `epx integration sync restore [--batch <id>] [--force] --yes [--json]`
+
+Restore a previous ecosystem sync batch, verifying post-apply file digests unless --force is given.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/ecosystem/sync/restore` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--batch` | string | Batch ID to restore (defaults to latest batch). |
+| `--force` | boolean | Override external-modification digest conflict checks. |
+| `--yes` | boolean | Confirm rolling back target CLI files. |
+| `--json` | boolean | Emit the restore receipt as JSON. |
+
+- Restores snapshotted files and deletes newly created SKILL.md files and empty created directories.
 
 ### `epx codex-shim install`
 

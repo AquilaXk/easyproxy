@@ -4,5 +4,6 @@
   "reserve-capability-migration.test.ts": "config",
   "atomic-write-exclusive.test.ts": "config",
   "config-removed-opencode-free-preserve-failure.test.ts": "config",
-  "config-routed-catalog-defaults.test.ts": "config"
+  "config-routed-catalog-defaults.test.ts": "config",
+  "profile-backup.test.ts": "config"
 }

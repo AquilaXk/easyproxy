@@ -8,7 +8,7 @@
 Use these declarations to choose a task, then check its flags and authority before execution.
 Non-mutating probes may still contact providers, consume quota or refresh caches.
 
-Declared capabilities: 54.
+Declared capabilities: 56.
 
 ### `epx models price`
 
@@ -1079,3 +1079,45 @@ State-changing: yes. JSON mode: `envelope`.
 | `--json` | boolean | Emit the validated command result as JSON. |
 
 - Sends only pickerOrder:null and pickerOrderMode:null. Explicitly clears native-inclusive order as well; does not change featured models or force selection.
+
+### `epx provider import-url`
+
+Usage: `epx provider import-url <epx://...> [--preview] [--allow-private-network] [--overwrite] [--set-default] [--yes] [--json]`
+
+Preview or import a provider configuration from an epx:// deep link.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/providers/import-url/preview` |
+| POST | `/api/providers/import-url` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--preview` | boolean | Validate and show masked provider preview without saving. |
+| `--allow-private-network` | boolean | Explicitly opt in to private or loopback upstream URLs. |
+| `--overwrite` | boolean | Allow replacing an existing provider with the same name. |
+| `--set-default` | boolean | Set the imported provider as defaultProvider. |
+| `--yes` | boolean | Confirm applying the provider configuration (required unless --preview). |
+| `--json` | boolean | Emit the masked preview or import receipt as JSON. |
+
+- Masks apiKey in preview output, enforces URL/payload size and nesting caps, and refuses untrusted allowPrivateNetwork flags unless caller opts in.
+
+### `epx provider share-url`
+
+Usage: `epx provider share-url <provider> [--json]`
+
+Export a keyless epx:// provider share link with all secrets stripped.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/providers/share-url` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit {provider, url} as JSON. |
+
+- Never includes apiKey, apiKeyPool, headers, or tokens.

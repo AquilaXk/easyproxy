@@ -28,6 +28,8 @@ import { CODEX_RESTART_PATH } from "../../lib/codex-restart-contract";
 export const SIBLING_REFUSED_MANAGEMENT_PATHS: readonly { readonly path: string; readonly children: boolean }[] = [
   { path: "/api/sync", children: false },
   { path: "/api/client-integrations", children: true },
+  { path: "/api/ecosystem/sync", children: true },
+  { path: "/api/profile/backup", children: true },
   { path: "/api/native-integrations", children: true },
   { path: "/api/gateway-clients", children: true },
   { path: "/api/claude-desktop", children: true },

@@ -1794,8 +1794,8 @@ test("the tab strip marks every client tab and leaves the two non-client tabs ba
   const tabs = [...container.querySelectorAll<HTMLElement>(".page-tab")];
   expect(tabs.length).toBeGreaterThan(10);
   const marked = tabs.filter(tab => tab.querySelector(".client-mark") !== null);
-  // overview and keys carry no client, so they carry no mark.
-  expect(tabs.length - marked.length).toBe(2);
+  // overview, keys, and sync carry no client, so they carry no mark.
+  expect(tabs.length - marked.length).toBe(3);
   const gentleShellTab = tabs.find(tab => tab.id === "integrations-tab-gentle-shell")!;
   expect(gentleShellTab.querySelector(".client-mark--monogram")?.textContent).toBe("G");
 

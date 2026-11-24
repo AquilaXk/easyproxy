@@ -1073,5 +1073,105 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
   if (url.pathname === "/api/provider-presets" && req.method === "GET") {
     return jsonResponse({ providers: deriveProviderPresets() });
   }
+
+  if (url.pathname === "/api/providers/share-url" && req.method === "GET") {
+    const providerName = url.searchParams.get("provider")?.trim() ?? "";
+    if (!providerName || !isValidProviderName(providerName)) {
+      return jsonResponse({ error: "valid provider query parameter is required", code: "invalid_provider_name" }, 400);
+    }
+    if (!hasOwnProvider(config.providers, providerName)) {
+      return jsonResponse({ error: `unknown provider: ${providerName}`, code: "unknown_provider" }, 404);
+    }
+    const { buildProviderShareDeepLink, DeepLinkImportError } = await import("../../providers/deep-link-import");
+    try {
+      const shareUrl = buildProviderShareDeepLink(providerName, config.providers[providerName]!);
+      return jsonResponse({ schemaVersion: 1, provider: providerName, url: shareUrl });
+    } catch (error) {
+      if (error instanceof DeepLinkImportError) {
+        return jsonResponse({ error: error.message, code: error.code }, error.status);
+      }
+      throw error;
+    }
+  }
+
+  if (url.pathname === "/api/providers/import-url/preview" && req.method === "POST") {
+    let rawBody: unknown;
+    try {
+      rawBody = await readManagementJsonBody(req);
+    } catch (error) {
+      rethrowManagementBodyTooLarge(error);
+      return jsonResponse({ error: "invalid JSON body", code: "invalid_json" }, 400);
+    }
+    if (!isPlainRecord(rawBody) || typeof rawBody.url !== "string") {
+      return jsonResponse({ error: "url string is required", code: "invalid_request" }, 400);
+    }
+    const { previewProviderDeepLink, DeepLinkImportError } = await import("../../providers/deep-link-import");
+    try {
+      const preview = await previewProviderDeepLink(rawBody.url, {
+        allowPrivateNetwork: rawBody.allowPrivateNetwork === true,
+        overwrite: rawBody.overwrite === true,
+        existingProviders: config.providers,
+      });
+      return jsonResponse(preview);
+    } catch (error) {
+      if (error instanceof DeepLinkImportError) {
+        return jsonResponse({ error: error.message, code: error.code }, error.status);
+      }
+      throw error;
+    }
+  }
+
+  if (url.pathname === "/api/providers/import-url" && req.method === "POST") {
+    let rawBody: unknown;
+    try {
+      rawBody = await readManagementJsonBody(req);
+    } catch (error) {
+      rethrowManagementBodyTooLarge(error);
+      return jsonResponse({ error: "invalid JSON body", code: "invalid_json" }, 400);
+    }
+    if (!isPlainRecord(rawBody) || typeof rawBody.url !== "string") {
+      return jsonResponse({ error: "url string is required", code: "invalid_request" }, 400);
+    }
+    const { applyProviderDeepLink, DeepLinkImportError } = await import("../../providers/deep-link-import");
+    try {
+      let committedProvider: EpxProviderConfig | undefined;
+      let committedConfig: EpxConfig | undefined;
+      const result = await applyProviderDeepLink(rawBody.url, {
+        allowPrivateNetwork: rawBody.allowPrivateNetwork === true,
+        overwrite: rawBody.overwrite === true,
+        setDefault: rawBody.setDefault === true,
+        onCommitted: (provider, persistedConfig) => {
+          committedProvider = provider;
+          committedConfig = persistedConfig;
+        },
+      });
+      if (committedProvider && committedConfig) {
+        adoptPersistedProviderIntoLiveConfig(config, result.name, committedProvider, committedConfig);
+      }
+      if (rawBody.setDefault === true) config.defaultProvider = result.name;
+      clearPassiveKeyLimits(result.name);
+      reconcileLiveStateStores();
+      clearModelCache(result.name);
+      const catalogRefresh = await convergeCodexCatalog();
+      return jsonResponse({
+        schemaVersion: result.schemaVersion,
+        name: result.name,
+        adapter: result.adapter,
+        baseUrl: result.baseUrl,
+        defaultModel: result.defaultModel,
+        models: result.models,
+        hasApiKey: result.hasApiKey,
+        maskedApiKey: result.maskedApiKey,
+        allowPrivateNetwork: result.allowPrivateNetwork,
+        overwrote: result.overwrote,
+        catalogRefresh,
+      });
+    } catch (error) {
+      if (error instanceof DeepLinkImportError) {
+        return jsonResponse({ error: error.message, code: error.code }, error.status);
+      }
+      throw error;
+    }
+  }
   return null;
 }

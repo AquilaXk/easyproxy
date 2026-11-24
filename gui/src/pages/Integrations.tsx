@@ -21,11 +21,12 @@ const GatewayClientsPage = lazy(() => import("./integrations/GatewayClientsPage"
 const AsideProfilesPage = lazy(() => import("./integrations/AsideProfilesPage"));
 const HermesProfilesPage = lazy(() => import("./integrations/HermesProfilesPage"));
 const LazyCodexRoleModels = lazy(() => import("./integrations/LazyCodexRoleModels"));
+const EcosystemSyncPage = lazy(() => import("./integrations/EcosystemSyncPage"));
 const FileIntegrationPage = lazy(() => import("./integrations/FileIntegrationPage"));
 
 type IntegrationCategory = "all" | "core" | "cli" | "ide";
 
-const CORE_INTEGRATION_IDS = new Set<string>(["overview", "keys"]);
+const CORE_INTEGRATION_IDS = new Set<string>(["overview", "keys", "sync"]);
 const CLI_INTEGRATION_IDS = new Set<string>([
   "codex", "claude", "gemini", "opencode", "droid", "aider", "goose", "amp",
   "crush", "qwen", "kimi", "kilo", "hermes", "commandcode", "prime", "omo",
@@ -72,7 +73,7 @@ function panelDomId(tab: IntegrationTab): string {
  * than borrowing a mark that would imply a client.
  */
 function tabMark(tab: IntegrationTab): string | null {
-  if (tab === "overview" || tab === "keys") return null;
+  if (tab === "overview" || tab === "keys" || tab === "sync") return null;
   return INTEGRATION_MARKS[tab] ?? null;
 }
 
@@ -262,13 +263,13 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
                 onClick={() => selectTab(definition.id, true)}
                 onKeyDown={handleTabKeyDown}
               >
-                {definition.id !== "overview" && definition.id !== "keys" && (
+                {definition.id !== "overview" && definition.id !== "keys" && definition.id !== "sync" && (
                   <ClientMark src={tabMark(definition.id)} label={t(definition.labelKey)} size={14} />
                 )}
                 {t(definition.labelKey)}
               </button>
-              {/* The two page-level tabs come first; a hairline sets them apart from the apps. */}
-              {definition.id === "keys" && <span className="connect-tabs-divider" role="presentation" />}
+              {/* The page-level tabs come first; a hairline sets them apart from the apps. */}
+              {definition.id === "sync" && <span className="connect-tabs-divider" role="presentation" />}
               </Fragment>
             ))}
           </div>
@@ -291,6 +292,7 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
                 )}
                 <Suspense fallback={<DataSurfaceSkeleton label={t("common.loading")} rows={4} />}>
                 {definition.id === "keys" && <ApiKeys apiBase={apiBase} active={active} />}
+                {definition.id === "sync" && <EcosystemSyncPage apiBase={apiBase} active={active} />}
                 {definition.id === "codex" && (
                   <section className="integration-native-page" aria-labelledby="codex-integration-title">
                     <h3 id="codex-integration-title">{t("integrations.codex.title")}</h3>

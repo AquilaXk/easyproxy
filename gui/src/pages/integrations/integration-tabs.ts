@@ -15,6 +15,7 @@ import type { FileIntegrationClientId } from "./FileIntegrationPage";
 export type IntegrationTab =
   | "overview"
   | "keys"
+  | "sync"
   | "codex"
   | "claude"
   | "claudeDesktop"
@@ -32,6 +33,7 @@ export interface TabDefinition {
 export const TABS: readonly TabDefinition[] = [
   { id: "overview", hash: "integrations", labelKey: "integrations.tab.overview" },
   { id: "keys", hash: "integrations/keys", labelKey: "integrations.tab.keys" },
+  { id: "sync", hash: "integrations/sync", labelKey: "integrations.tab.sync" },
   { id: "codex", hash: "integrations/codex", labelKey: "integrations.tab.codex" },
   // Claude keeps its own #claude/* hashes; Integrations maps that family onto this tab.
   { id: "claude", hash: "claude", labelKey: "nav.claude" },

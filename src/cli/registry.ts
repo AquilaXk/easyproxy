@@ -338,6 +338,8 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
       "  set-default <name>    Change the default provider",
       "  add/remove/set-default support --live; live removal also requires --yes.",
       "  import-cc-switch      Preview, apply, or restore keyless CC-Switch provider entries",
+      "  import-url <url>      Preview or import an epx:// provider deep link",
+      "  share-url <name>      Generate a keyless epx:// provider share URL",
       "  selected <name>       Show or set the provider model allowlist",
       "  quota                 Show provider quota reports",
       "  resets                Show recently detected quota resets",
@@ -585,10 +587,11 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
   },
   {
     name: "integration",
-    usage: "epx integration <claude|grok|client|native> ...",
-    summary: "Manage supported client integrations, and the native client toggles.",
+    usage: "epx integration <claude|grok|client|native|sync> ...",
+    summary: "Manage supported client integrations, cross-CLI MCP/skills sync, and native client toggles.",
     details: [
-      "`native` shows or flips the native Claude/Claude Desktop/Codex/Grok toggles; the other subcommands manage the reversible file integrations.",
+      "`native` shows or flips the native Claude/Claude Desktop/Codex/Grok toggles; `client` manages reversible proxy file integrations.",
+      "`sync` previews, applies, and restores MCP servers and skills across Claude, Codex, Gemini, and OpenCode.",
       "client preview shows a proposed change; enable/disable/restore accept an optional --plan-fingerprint.",
       "client history remove requires --yes; client sync --client aside refreshes managed Aside profiles.",
       "native cursor status/local-installer are reads; installer lookup does not install anything.",
@@ -612,8 +615,8 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
   },
   {
     name: "config",
-    usage: "epx config [show|get|set|unset|validate|export|import] ...",
-    summary: "Inspect and safely modify validated EasyProxy configuration.",
+    usage: "epx config [show|get|set|unset|validate|export|import|backup] ...",
+    summary: "Inspect, backup/restore, and safely modify validated EasyProxy configuration.",
     details: [
       "show is the default: epx config [show] [--json] [--source]. Flags alone also display the local configuration without a running proxy.",
       "--json may precede an explicit action without changing which action runs.",

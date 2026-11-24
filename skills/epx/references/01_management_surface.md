@@ -26,11 +26,11 @@ These answer in the CLI head and never reach the proxy, so they work with nothin
 | Chapter | Declared capabilities |
 |---|---|
 | [lifecycle](01_surface_lifecycle.md) | 26 |
-| [providers-models](01_surface_providers-models.md) | 54 |
+| [providers-models](01_surface_providers-models.md) | 56 |
 | [accounts](01_surface_accounts.md) | 44 |
 | [agents-routing](01_surface_agents-routing.md) | 79 |
-| [integrations](01_surface_integrations.md) | 41 |
-| [observe-system](01_surface_observe-system.md) | 95 |
+| [integrations](01_surface_integrations.md) | 45 |
+| [observe-system](01_surface_observe-system.md) | 98 |
 | [access-remote](01_surface_access-remote.md) | 55 |
 | [lab](01_surface_lab.md) | 21 |
 
@@ -579,6 +579,14 @@ Original invocation order. These headings preserve links to the previous single-
 
 [State-changing task](01_surface_providers-models.md#epx-models-order-reset)
 
+### `epx provider import-url`
+
+[State-changing task](01_surface_providers-models.md#epx-provider-import-url)
+
+### `epx provider share-url`
+
+[Read-oriented task](01_surface_providers-models.md#epx-provider-share-url)
+
 ### `epx account reset-affinity`
 
 [State-changing task](01_surface_accounts.md#epx-account-reset-affinity)
@@ -1067,6 +1075,22 @@ Original invocation order. These headings preserve links to the previous single-
 
 [State-changing task](01_surface_access-remote.md#epx-disconnect-antigravity)
 
+### `epx integration sync status`
+
+[Read-oriented task](01_surface_integrations.md#epx-integration-sync-status)
+
+### `epx integration sync preview`
+
+[Read-oriented task](01_surface_integrations.md#epx-integration-sync-preview)
+
+### `epx integration sync apply`
+
+[State-changing task](01_surface_integrations.md#epx-integration-sync-apply)
+
+### `epx integration sync restore`
+
+[State-changing task](01_surface_integrations.md#epx-integration-sync-restore)
+
 ### `epx stop`
 
 [State-changing task](01_surface_lifecycle.md#epx-stop)
@@ -1479,6 +1503,18 @@ Original invocation order. These headings preserve links to the previous single-
 
 [Read-oriented task](01_surface_observe-system.md#epx-logs-low-quota-events)
 
+### `epx config backup export`
+
+[Read-oriented task](01_surface_observe-system.md#epx-config-backup-export)
+
+### `epx config backup inspect`
+
+[Read-oriented task](01_surface_observe-system.md#epx-config-backup-inspect)
+
+### `epx config backup restore`
+
+[State-changing task](01_surface_observe-system.md#epx-config-backup-restore)
+
 ### `epx disconnect`
 
 [State-changing task](01_surface_access-remote.md#epx-disconnect)
@@ -1709,6 +1745,6 @@ Original invocation order. These headings preserve links to the previous single-
 
 ## Counts
 
-- declared capabilities: 415
-- of those, state-changing: 258
+- declared capabilities: 424
+- of those, state-changing: 262
 - head-resolved invocations: 2

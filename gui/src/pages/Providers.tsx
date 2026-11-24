@@ -26,10 +26,12 @@ import { ProvidersPageModals } from "./providers-page-modals";
 import { buildAccountLoginStatus, buildAddModalAccountRows } from "./providers-page-utils";
 import type { CodexAccountMutationCompletion } from "../codex-account-mutation";
 import { useProviderModelsNotice } from "./use-provider-models-notice";
-import { navigateHash } from "../hash-routing";
+import { navigateHash, replaceHash } from "../hash-routing";
 import { jevAutoCreateHash } from "../app-routing";
 import { canCreateJevAutoFrom } from "../jev-decision-service";
 import { useProviderSettingsDeepLink } from "./providers-deep-link";
+import { PROVIDERS_HASH, readProviderImportUrl } from "../protocol-deep-links";
+import ImportProviderLinkModal from "../components/ImportProviderLinkModal";
 import { subscribeKiroDeviceFinal } from "../kiro-device-login-finalizer";
 import type { BrowserLaunch } from "../oauth-browser-launch";
 import { oauthCredentialSiblingsOf, oauthCredentialSlot } from "../../../src/oauth/credential-siblings";
@@ -262,6 +264,8 @@ export default function Providers({
   /** In-memory only; a target switch parks its drafts here for the return trip. */
   const draftStore = useMemo(() => createProviderDraftStore(), []);
   const [adding, setAdding] = useState(false);
+  const [importLinkOpen, setImportLinkOpen] = useState(() => Boolean(readProviderImportUrl()));
+  const [initialImportLinkUrl, setInitialImportLinkUrl] = useState(() => readProviderImportUrl() ?? "");
   const [status, setStatus] = useState("");
   const [statusOk, setStatusOk] = useState(false);
   const [statusTone, setStatusTone] = useState<NoticeTone>("err");
@@ -339,6 +343,22 @@ export default function Providers({
   }, [notify, t]);
 
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
+
+  useEffect(() => {
+    const onHash = () => {
+      const nextImport = readProviderImportUrl();
+      if (nextImport) {
+        setInitialImportLinkUrl(nextImport);
+        setImportLinkOpen(true);
+      }
+    };
+    window.addEventListener("hashchange", onHash);
+    window.addEventListener("popstate", onHash);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("popstate", onHash);
+    };
+  }, []);
 
   // Success toasts are transient; errors stay until the next notify or dismiss.
   useEffect(() => {
@@ -676,6 +696,9 @@ export default function Providers({
       <div className="page-head">
         <h1>{t("nav.providers")}</h1>
         <div className="row">
+          <button type="button" className="btn btn-ghost" onClick={() => { setInitialImportLinkUrl(""); setImportLinkOpen(true); }}>
+            {t("prov.importLink")}
+          </button>
           <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}><IconPlus />{t("prov.add")}</button>
         </div>
       </div>
@@ -858,6 +881,29 @@ export default function Providers({
           void loginOAuth(pending.provider, pending.addAccount, pending.accountId, true);
         }}
       />
+      {importLinkOpen && (
+        <ImportProviderLinkModal
+          key={initialImportLinkUrl}
+          apiBase={apiBase}
+          initialUrl={initialImportLinkUrl}
+          onClose={() => {
+            setImportLinkOpen(false);
+            setInitialImportLinkUrl("");
+            if (readProviderImportUrl()) replaceHash(PROVIDERS_HASH);
+          }}
+          onImported={name => {
+            setImportLinkOpen(false);
+            setInitialImportLinkUrl("");
+            if (readProviderImportUrl()) replaceHash(PROVIDERS_HASH);
+            setWorkspaceSelected(name);
+            notify(t("deepLinkImport.importedSuccess", { name }), true);
+            void fetchConfig();
+            void fetchOauth();
+            void fetchProviderQuotas(true);
+            bumpModelsRefresh();
+          }}
+        />
+      )}
     </>
   );
 }

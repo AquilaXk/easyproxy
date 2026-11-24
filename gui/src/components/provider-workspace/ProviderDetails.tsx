@@ -2,7 +2,8 @@
  * ProviderDetails — the detail header + tab shell (WP090+091). Owns tab state
  * and composes the Overview/Models/Usage/Settings panels.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { readJsonOrThrow } from "../../fetch-json";
 import { useT } from "../../i18n/shared";
 import type { WorkspaceItem } from "../../provider-workspace/catalog";
 import { formatProviderDisplayName } from "../../provider-icons";
@@ -169,6 +170,32 @@ export default function ProviderDetails({
   // pull focus back to it.
   const [accountModeFocusToken, setAccountModeFocusToken] = useState(0);
   const [mutationRevision, setMutationRevision] = useState(0);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const shareTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (shareTimerRef.current !== null) window.clearTimeout(shareTimerRef.current);
+  }, []);
+
+  const handleCopyShareLink = useCallback(async () => {
+    if (shareTimerRef.current !== null) window.clearTimeout(shareTimerRef.current);
+    try {
+      const res = await fetch(`${apiBase}/api/providers/share-url?${new URLSearchParams({ provider: item.name })}`);
+      const data = await readJsonOrThrow<{ url?: string }>(res, t("pws.shareError"));
+      const shareUrl = data?.url;
+      if (!shareUrl) throw new Error(t("pws.shareError"));
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      }
+      setShareFeedback(t("pws.shareCopied"));
+    } catch {
+      setShareFeedback(t("pws.shareError"));
+    }
+    shareTimerRef.current = window.setTimeout(() => {
+      setShareFeedback(null);
+      shareTimerRef.current = null;
+    }, 2500);
+  }, [apiBase, item.name, t]);
   const registerSettingsSave = useCallback((save: (() => Promise<boolean>) | null) => {
     settingsSaveRef.current = save;
   }, []);
@@ -345,6 +372,9 @@ export default function ProviderDetails({
           </h2>
         </div>
         <div className="pws-detail-actions">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleCopyShareLink()}>
+            {shareFeedback ?? t("pws.shareLink")}
+          </button>
           {!isDefault && !isDisabled && onSetDefault && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => onSetDefault(item.name)}>
               {t("prov.setDefault")}

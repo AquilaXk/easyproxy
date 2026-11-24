@@ -1205,6 +1205,7 @@
       "documents": [
         "src/cli/",
         "src/clients/",
+        "src/ecosystem/",
         "src/integrations/",
         "src/lib/"
       ]

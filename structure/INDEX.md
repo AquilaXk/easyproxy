@@ -380,6 +380,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/config/schema/routed-catalog-defaults.ts` | [`catalog-routed-defaults.md`](catalog-routed-defaults.md) |
 | `src/config/telemetry-carry.ts` | [`telemetry.md`](telemetry.md) |
 | `src/desktop-update/` | [`ops/desktop-supervision.md`](ops/desktop-supervision.md) |
+| `src/ecosystem/` | [`clients/integrations.md`](clients/integrations.md) |
 | `src/generated/` | [`runtime.md`](runtime.md) |
 | `src/github/` | [`runtime.md`](runtime.md) |
 | `src/grok/` | [`runtime.md`](runtime.md) |

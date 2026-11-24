@@ -137,6 +137,7 @@ export const DASHBOARD_GUARDRAILS_HASH = "dashboard/proxy-guardrails";
  */
 export const INTEGRATION_TAB_HASHES = [
   "integrations/keys",
+  "integrations/sync",
   "integrations/codex",
   "integrations/claude",
   "integrations/claude/desktop",

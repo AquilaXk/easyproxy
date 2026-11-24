@@ -100,6 +100,12 @@ export function readProviderSettingsTarget(hash: string = window.location.hash):
   return name && name.length <= PROVIDER_NAME_LIMIT ? name : null;
 }
 
+/** An `epx://` deep link carried in `#providers?import=<encoded-url>`, or `null`. */
+export function readProviderImportUrl(hash: string = window.location.hash): string | null {
+  const raw = readQuery(hash, PROVIDERS_HASH)?.get("import")?.trim() ?? "";
+  return raw && raw.length <= 8192 ? raw : null;
+}
+
 export function openCompatibilityPair(pair: Partial<ProtocolPairFilter>): void {
   navigateHash(compatibilityPairHash(pair));
 }
