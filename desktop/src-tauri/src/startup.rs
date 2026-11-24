@@ -475,7 +475,7 @@ impl Startup {
         self.live().latest.phase == Phase::Ready.id()
     }
 
-    fn mode(&self) -> Mode {
+    pub(crate) fn mode(&self) -> Mode {
         if self.recovering.load(Ordering::Acquire) {
             Mode::Recover
         } else {
@@ -561,8 +561,12 @@ impl Startup {
         self.dashboard_loaded.store(false, Ordering::SeqCst);
     }
 
-    fn request_dashboard(&self) {
+    pub(crate) fn request_dashboard(&self) {
         self.dashboard_requested.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn mark_dashboard_navigated(&self) {
+        self.dashboard_loaded.store(true, Ordering::SeqCst);
     }
 
     fn dashboard_requested(&self) -> bool {
@@ -570,7 +574,7 @@ impl Startup {
     }
 
     /// The dashboard URL once this run is Ready, otherwise nothing.
-    fn ready_dashboard(&self) -> Option<String> {
+    pub(crate) fn ready_dashboard(&self) -> Option<String> {
         let progress = self.latest();
         (progress.phase == Phase::Ready.id())
             .then_some(progress.dashboard)
@@ -1594,6 +1598,29 @@ async fn bind(app: &AppHandle, proxy: &ProxyClient, deadline: Instant) -> Option
     Some(identity)
 }
 
+fn finish_dashboard_path(
+    session_id: &str,
+    pending: Option<&crate::deep_link::PendingDeepLink>,
+) -> String {
+    match pending.and_then(crate::deep_link::PendingDeepLink::take_pending) {
+        Some(fragment) => format!(
+            "/?desktop_session={session_id}#{}",
+            fragment.strip_prefix('#').unwrap_or(&fragment)
+        ),
+        None => format!("/?desktop_session={session_id}#/usage"),
+    }
+}
+
+fn apply_pending_deep_link(
+    dashboard: String,
+    pending: Option<&crate::deep_link::PendingDeepLink>,
+) -> String {
+    match pending.and_then(crate::deep_link::PendingDeepLink::take_pending) {
+        Some(fragment) => crate::deep_link::dashboard_url_with_fragment(&dashboard, &fragment),
+        None => dashboard,
+    }
+}
+
 fn finish(app: &AppHandle, started: Instant, endpoint: ProxyEndpoint) {
     // Ownership is whatever the confirmation above established, not whatever a spawn assumed.
     crate::tray::set_owned(
@@ -1602,12 +1629,13 @@ fn finish(app: &AppHandle, started: Instant, endpoint: ProxyEndpoint) {
             .is_some_and(|state| state.owns_runtime()),
     );
     crate::tray::refresh_now(app);
-    let path = format!(
-        "/?desktop_session={}#/usage",
+    let pending = app.try_state::<crate::deep_link::PendingDeepLink>();
+    let path = finish_dashboard_path(
         app.state::<crate::updater::DesktopUpdateState>()
-            .session_id()
+            .session_id(),
+        pending.as_deref(),
     );
-    let dashboard = endpoint.url(&path);
+    let mut dashboard = endpoint.url(&path);
     let mut progress = Progress::new(Phase::Ready, elapsed(started));
     progress.dashboard = Some(dashboard.clone());
     if !emit(app, progress, None) {
@@ -1616,6 +1644,7 @@ fn finish(app: &AppHandle, started: Instant, endpoint: ProxyEndpoint) {
         return;
     }
     app.state::<crate::updater::DesktopUpdateState>().wake();
+    dashboard = apply_pending_deep_link(dashboard, pending.as_deref());
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(true);
         let startup = app.try_state::<Startup>();
@@ -1701,7 +1730,7 @@ fn loads_dashboard_on_ready(origin: LaunchOrigin, window_visible: bool, requeste
 /// A recovery nobody asked to watch lands wherever the window is. When that is the update page —
 /// a failed install brings the runtime back from there — the page is showing why the install
 /// failed, and its own button returns to the dashboard.
-fn keeps_update_page(mode: Mode, on_update_page: bool) -> bool {
+pub(crate) fn keeps_update_page(mode: Mode, on_update_page: bool) -> bool {
     mode == Mode::Recover && on_update_page
 }
 
@@ -1721,7 +1750,7 @@ fn navigate_once(startup: &Startup, dashboard: &str, navigate: impl FnOnce(&str)
     false
 }
 
-fn navigate_dashboard(window: &tauri::WebviewWindow, dashboard: &str) -> bool {
+pub(crate) fn navigate_dashboard(window: &tauri::WebviewWindow, dashboard: &str) -> bool {
     // justified: replacing the bootstrap page with the dashboard is how this window has always
     // navigated, and the string is a URL this process resolved, not anything a page supplied.
     window
@@ -2648,5 +2677,44 @@ mod tests {
             startup.expire_run(tokio::time::Instant::now(), 1, "expired".to_owned()),
             Expiry::Dead
         ));
+    }
+
+    #[test]
+    fn finish_consumes_pending_deep_link_into_dashboard_fragment() {
+        let pending = crate::deep_link::PendingDeepLink::default();
+        assert_eq!(
+            super::finish_dashboard_path("sess-1", Some(&pending)),
+            "/?desktop_session=sess-1#/usage"
+        );
+
+        let fragment = "providers?import=epx%3A%2F%2Fprovider%3Fname%3Ddemo".to_owned();
+        pending.set_pending(fragment.clone());
+        assert_eq!(
+            super::finish_dashboard_path("sess-1", Some(&pending)),
+            format!("/?desktop_session=sess-1#{fragment}")
+        );
+        // Consumed once: a later run without another deep link opens the default route.
+        assert_eq!(pending.take_pending(), None);
+        assert_eq!(
+            super::finish_dashboard_path("sess-1", Some(&pending)),
+            "/?desktop_session=sess-1#/usage"
+        );
+    }
+
+    #[test]
+    fn finish_replaces_default_fragment_when_deep_link_lands_during_emit() {
+        let pending = crate::deep_link::PendingDeepLink::default();
+        let default_url = "http://127.0.0.1:10100/?desktop_session=sess-1#/usage".to_owned();
+        assert_eq!(
+            super::apply_pending_deep_link(default_url.clone(), Some(&pending)),
+            default_url
+        );
+
+        pending.set_pending("providers?import=epx%3A%2F%2Fimport%3Fk%3Dv".to_owned());
+        assert_eq!(
+            super::apply_pending_deep_link(default_url, Some(&pending)),
+            "http://127.0.0.1:10100/?desktop_session=sess-1#providers?import=epx%3A%2F%2Fimport%3Fk%3Dv"
+        );
+        assert_eq!(pending.take_pending(), None);
     }
 }

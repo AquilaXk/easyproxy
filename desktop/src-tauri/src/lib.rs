@@ -10,6 +10,7 @@ mod cli_command_windows;
 #[cfg(target_os = "macos")]
 mod companion_query;
 mod companion_usage;
+mod deep_link;
 mod endpoint;
 mod exit;
 mod first_run;
@@ -317,9 +318,13 @@ fn return_to_dashboard(window: tauri::WebviewWindow, app: tauri::AppHandle) -> R
 
 pub fn run() {
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             popup::hide(app);
-            startup::open_dashboard(app);
+            if let Some(fragment) = deep_link::first_from_args(args.iter().skip(1)) {
+                deep_link::open_in_dashboard(app, &fragment);
+            } else {
+                startup::open_dashboard(app);
+            }
         }))
         // Links are opened by the webviews' own new-window handler (`window.rs`), not by the
         // plugin's injected click interceptor, which calls an IPC command the loopback dashboard
@@ -377,6 +382,7 @@ pub fn run() {
             app.manage(tray::TrayState::default());
             app.manage(exit::ExitCoordinator::new());
             app.manage(startup::Startup::new());
+            app.manage(deep_link::PendingDeepLink::default());
             // Registers the exit hook and an idle watchdog; it starts no runtime of its own.
             supervisor::watch_runtime(app.handle());
 
@@ -431,7 +437,12 @@ pub fn run() {
                 )));
             let window = builder.build()?;
             window::configure(&window);
-            if startup::LaunchOrigin::detect() == startup::LaunchOrigin::User {
+            if let Some(fragment) = deep_link::first_from_args(std::env::args().skip(1)) {
+                app.state::<deep_link::PendingDeepLink>()
+                    .set_pending(fragment);
+                app.state::<startup::Startup>().request_dashboard();
+                window::show(&window);
+            } else if startup::LaunchOrigin::detect() == startup::LaunchOrigin::User {
                 window::show(&window);
             } else {
                 window::set_tray_policy(app.handle(), false);
@@ -452,6 +463,14 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 show_dashboard(app.clone());
+            }
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { ref urls } = event {
+                if let Some(fragment) =
+                    deep_link::first_from_args(urls.iter().map(tauri::Url::as_str))
+                {
+                    deep_link::open_in_dashboard(app, &fragment);
+                }
             }
             // Window close and the platform quit gesture arrive here as an exit request, and until
             // this handler existed they went straight through to a SIGKILL of the runtime. D2 makes
