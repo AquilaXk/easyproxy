@@ -32,6 +32,9 @@
     "native/epx-child/Cargo.toml",
     "native/epx-child/Cargo.lock",
     "native/epx-child/src",
+    "native/epx-fs-lock/Cargo.toml",
+    "native/epx-fs-lock/Cargo.lock",
+    "native/epx-fs-lock/src",
     "LICENSE"
   ],
   "engines": {

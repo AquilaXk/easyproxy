@@ -213,6 +213,7 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: |
+            native/epx-fs-lock
             native/epx-child
             native/remote-workspace-helper
 
@@ -550,6 +551,7 @@ jobs:
         with:
           workspaces: |
             desktop/src-tauri
+            native/epx-fs-lock
             native/epx-child
             native/remote-workspace-helper
 

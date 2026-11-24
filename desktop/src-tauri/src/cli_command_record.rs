@@ -190,77 +190,37 @@ pub struct Store {
     _lock: LockGuard,
 }
 struct LockGuard {
-    file: fs::File,
+    _lock: epx_fs_lock::lock::FileLock,
 }
 impl LockGuard {
-    fn unlock(&self) -> i32 {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            // LOCK_UN releases the shared file description even if a fork retains a duplicate.
-            unsafe { flock(self.file.as_raw_fd(), 8) }
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::io::AsRawHandle;
-            let mut v = Overlapped::zero();
-            unsafe { UnlockFileEx(self.file.as_raw_handle(), 0, 1, 0, &mut v) }
-        }
+    #[cfg(test)]
+    fn file(&self) -> &fs::File {
+        self._lock.file()
     }
     #[cfg(test)]
     fn release_for_test(&self) -> i32 {
-        self.unlock()
-    }
-}
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        let _ = self.unlock();
-    }
-}
-#[cfg(windows)]
-#[repr(C)]
-struct Overlapped {
-    internal: usize,
-    high: usize,
-    offset: u32,
-    offset_high: u32,
-    event: *mut std::ffi::c_void,
-}
-#[cfg(windows)]
-impl Overlapped {
-    fn zero() -> Self {
-        Self {
-            internal: 0,
-            high: 0,
-            offset: 0,
-            offset_high: 0,
-            event: std::ptr::null_mut(),
+        let res = self._lock.unlock();
+        #[cfg(unix)]
+        {
+            if res.is_ok() {
+                0
+            } else {
+                -1
+            }
+        }
+        #[cfg(windows)]
+        {
+            if res.is_ok() {
+                1
+            } else {
+                0
+            }
         }
     }
-}
-#[cfg(windows)]
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn LockFileEx(
-        h: *mut std::ffi::c_void,
-        flags: u32,
-        reserved: u32,
-        low: u32,
-        high: u32,
-        overlapped: *mut Overlapped,
-    ) -> i32;
-    fn UnlockFileEx(
-        h: *mut std::ffi::c_void,
-        reserved: u32,
-        low: u32,
-        high: u32,
-        overlapped: *mut Overlapped,
-    ) -> i32;
 }
 #[cfg(unix)]
 unsafe extern "C" {
     fn geteuid() -> u32;
-    fn flock(fd: i32, op: i32) -> i32;
 }
 #[cfg(target_os = "macos")]
 mod acl {
@@ -420,25 +380,14 @@ fn harden_new(path: &Path, directory: bool) -> Result<()> {
 }
 pub fn check(path: &Path, directory: bool) -> Result<()> {
     let m = io(fs::symlink_metadata(path))?;
-    for parent in path.ancestors().skip(1) {
-        if fs::symlink_metadata(parent)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(true)
-        {
-            return Err("unsafe-parent".into());
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            if fs::symlink_metadata(parent)
-                .map(|m| m.file_attributes() & 0x400 != 0)
-                .unwrap_or(true)
-            {
-                return Err("unsafe-parent".into());
-            }
-        }
+    if !path.is_absolute() {
+        return Err("unsafe-parent".into());
     }
-    if m.file_type().is_symlink() || (directory && !m.is_dir()) || (!directory && !m.is_file()) {
+    epx_fs_lock::symlink::reject_ancestor_symlinks(path).map_err(|_| "unsafe-parent")?;
+    if epx_fs_lock::symlink::is_symlink_or_reparse(&m)
+        || (directory && !m.is_dir())
+        || (!directory && !m.is_file())
+    {
         return Err("unsafe-file".into());
     }
     #[cfg(unix)]
@@ -449,13 +398,6 @@ pub fn check(path: &Path, directory: bool) -> Result<()> {
         }
         if m.mode() & 0o222 == 0 {
             return Err("read-only".into());
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if m.file_attributes() & 0x400 != 0 {
-            return Err("unsafe-file".into());
         }
     }
     if m.permissions().readonly() {
@@ -608,7 +550,7 @@ pub fn atomic(path: &Path, before: Option<&[u8]>, after: &[u8], mode: u32) -> Re
 fn lock(root: &Path) -> Result<LockGuard> {
     let p = root.join("cli.lock");
     let existed = fs::symlink_metadata(&p).is_ok();
-    if fs::symlink_metadata(&p).is_ok() {
+    if existed {
         check(&p, false)?;
         #[cfg(unix)]
         {
@@ -618,36 +560,26 @@ fn lock(root: &Path) -> Result<LockGuard> {
             }
         }
     }
-    let mut o = fs::OpenOptions::new();
-    o.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.mode(0o600);
-    }
-    let f = io(o.open(&p))?;
+    let f = epx_fs_lock::lock::open_lock_file(&p).map_err(|_| "io-failed")?;
     if !existed {
         harden_new(&p, false)?;
     }
     private_check(&p, false, 0o600, false)?;
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        // LOCK_EX | LOCK_NB: immediate exclusion; the guard unlocks before closing.
-        if unsafe { flock(f.as_raw_fd(), 2 | 4) } != 0 {
-            return Err("lock-busy".into());
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        let mut v = Overlapped::zero();
-        if unsafe { LockFileEx(f.as_raw_handle(), 1 | 2, 0, 1, 0, &mut v) } == 0 {
-            return Err("lock-busy".into());
-        }
-    }
+    // LOCK_EX | LOCK_NB: immediate exclusion; the guard unlocks before closing.
     // A failed acquisition must only close its own file, never unlock another owner.
-    Ok(LockGuard { file: f })
+    let lock = epx_fs_lock::lock::FileLock::lock_file(
+        f,
+        epx_fs_lock::lock::LockMode::Exclusive,
+        false,
+    )
+    .map_err(|err| {
+        if err.is_would_block() {
+            "lock-busy"
+        } else {
+            "io-failed"
+        }
+    })?;
+    Ok(LockGuard { _lock: lock })
 }
 impl Store {
     pub fn open(root: PathBuf, rc_allowed: Vec<PathBuf>) -> Result<Self> {
@@ -1913,7 +1845,7 @@ pub(crate) mod tests {
         let t = Temp::new();
         let s = t.store();
         let root = s.root.clone();
-        let duplicate = s._lock.file.try_clone().unwrap();
+        let duplicate = s._lock.file().try_clone().unwrap();
         drop(s);
         let reopened = Store::open(root.clone(), vec![]).unwrap();
         assert_eq!(

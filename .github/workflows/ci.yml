@@ -122,6 +122,7 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: |
+            native/epx-fs-lock
             native/epx-child
             native/remote-workspace-helper
             desktop/src-tauri
@@ -146,6 +147,7 @@ jobs:
       - name: Test native Rust helpers
         shell: bash
         run: |
+          cargo test --locked --manifest-path native/epx-fs-lock/Cargo.toml
           bun run test:remote-workspace-helper
           bun run test:epx-child
 

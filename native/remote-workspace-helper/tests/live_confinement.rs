@@ -1,3 +1,4 @@
+#![deny(unsafe_op_in_unsafe_fn)]
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
 use serde_json::Value;

@@ -1,3 +1,5 @@
+#![deny(unsafe_op_in_unsafe_fn)]
+
 mod auth;
 mod claim;
 mod cli_command;
