@@ -106,6 +106,32 @@ describe("Unit 7 GUI integration, deep-link modal, and profile backup card", () 
     expect(container.textContent).toContain("ctx7");
     expect(container.textContent).toContain("/audit");
 
+    const sourceTrigger = container.querySelector('#eco-sync-source[role="combobox"]') as HTMLButtonElement | null;
+    expect(sourceTrigger).not.toBeNull();
+    await act(async () => {
+      sourceTrigger!.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+    const codexOpt = [...document.querySelectorAll('[role="option"]')].find(el => el.getAttribute("data-value") === "codex") as HTMLButtonElement | undefined;
+    expect(codexOpt).toBeDefined();
+    await act(async () => {
+      codexOpt!.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+    expect(sourceTrigger!.getAttribute("data-value")).toBe("codex");
+    const targetBoxes = [...container.querySelectorAll<HTMLInputElement>('.eco-sync-row input[type="checkbox"]')];
+    expect(targetBoxes.some(cb => cb.parentElement?.textContent === "Claude Code")).toBe(true);
+    // Switch back to claude so preview exercises the claude->codex mock plan
+    await act(async () => {
+      sourceTrigger!.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+    const claudeOpt = [...document.querySelectorAll('[role="option"]')].find(el => el.getAttribute("data-value") === "claude") as HTMLButtonElement | undefined;
+    await act(async () => {
+      claudeOpt!.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+
     const previewBtn = [...container.querySelectorAll("button")].find(b => b.textContent === DICTS.en["ecoSync.preview"]);
     expect(previewBtn).toBeDefined();
     await act(async () => {

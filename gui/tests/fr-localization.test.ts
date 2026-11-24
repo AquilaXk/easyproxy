@@ -282,6 +282,10 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   "ux.playground.endpointMessages",
   "ux.playground.statusLabel",
   "ux.playground.ttftLabel",
+  // "{count} MCP" is a numeric placeholder plus protocol acronym; French uses the same form.
+  "ecoSync.mcpCount",
+  // Literal epx:// deep-link URL syntax template with fixed query parameter names.
+  "deepLinkImport.urlPlaceholder",
 ]);
 
 function placeholders(value: string): string[] {

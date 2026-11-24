@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { readJsonOrThrow } from "../../fetch-json";
 import { useI18n } from "../../i18n/shared";
-import { Notice } from "../../ui";
+import { Notice, Select } from "../../ui";
 import "../../styles/ecosystem-sync.css";
 
 type CliId = "claude" | "codex" | "gemini" | "opencode";
@@ -260,15 +260,14 @@ export default function EcosystemSyncPage({ apiBase, active }: { apiBase: string
       <div className="eco-sync-controls">
         <div className="eco-sync-row">
           <label className="text-sm font-medium" htmlFor="eco-sync-source">{t("ecoSync.source")}</label>
-          <select
+          <Select
             id="eco-sync-source"
-            className="input"
             value={source}
             disabled={busy}
-            onChange={e => onChangeSource(e.target.value as CliId)}
-          >
-            {ALL_CLIS.map(id => <option key={id} value={id}>{CLI_LABELS[id]}</option>)}
-          </select>
+            label={t("ecoSync.source")}
+            options={ALL_CLIS.map(id => ({ value: id, label: CLI_LABELS[id] }))}
+            onChange={next => onChangeSource(next as CliId)}
+          />
         </div>
 
         <div className="eco-sync-row">

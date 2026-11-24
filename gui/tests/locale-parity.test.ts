@@ -251,6 +251,8 @@ const ZH_TW_KEEP_ENGLISH: ReadonlySet<string> = new Set([
   // GOAT is a product name, and Taiwan readers know it by that name; the badge is a chip beside the
   // translated install-kind label, so translating it would name a product nobody would recognize.
   "remoteLink.child.kind.goat",
+  // Literal epx:// deep-link URL syntax template with fixed query parameter names.
+  "deepLinkImport.urlPlaceholder",
 ]);
 
 test("zh-TW ships no untranslated English placeholders beyond the intentional allowlist", async () => {
