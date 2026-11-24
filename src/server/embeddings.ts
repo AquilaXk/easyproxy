@@ -5,7 +5,9 @@ import {
   noteComboSuccess,
   pickComboTarget,
   settleComboReprobeSuccess,
+  targetKey,
 } from "../combos";
+import type { NormalizedComboTarget } from "../combos/types";
 import { sanitizeUpstreamErrorText } from "../adapters/upstream-http-error";
 import { formatErrorResponse } from "../bridge";
 import { signalWithTimeout } from "../lib/abort";
@@ -18,7 +20,7 @@ import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "../providers/
 import { resolveCurrentProviderApiKeyTransport } from "../providers/api-key-selection";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-forward-destination";
 import type { EpxProviderTransport } from "../providers/xai-transport";
-import { NoEligiblePolicyCandidateError, routeModel, type RouteResult } from "../router";
+import { NoEligiblePolicyCandidateError, routeConcreteModel, routeModel, type RouteResult } from "../router";
 import type { EpxConfig, EpxProviderConfig, EpxUsage } from "../types";
 import { clientFacingModelLabel } from "../lib/error-destination";
 import { AdmissionModelDeniedError, assertRouteAllowedByScope, resolveAdmissionModelScope } from "./admission-model-scope";
@@ -184,33 +186,56 @@ interface ResolvedEmbeddingCandidate {
   providerName: string;
   modelId: string;
   provider: EpxProviderConfig;
+  comboTarget?: NormalizedComboTarget;
 }
 
 function resolveEmbeddingCandidates(route: RouteResult, config: EpxConfig): ResolvedEmbeddingCandidate[] {
   const candidates: ResolvedEmbeddingCandidate[] = [
-    { providerName: route.providerName, modelId: route.modelId, provider: route.provider },
+    {
+      providerName: route.providerName,
+      modelId: route.modelId,
+      provider: route.provider,
+      ...(route.combo ? { comboTarget: route.combo.target } : {}),
+    },
   ];
   if (route.combo) {
     const combo = getCombo(config, route.combo.comboId);
     if (combo?.targets?.length) {
-      const excluded = new Set<string>([`${route.providerName}/${route.modelId}`]);
+      const excluded = new Set<string>([targetKey(route.combo.target)]);
+      const reprobeEntries = route.combo.cooldownReprobeTargets
+        ? Object.entries(route.combo.cooldownReprobeTargets)
+        : undefined;
       for (let step = 0; step < combo.targets.length; step += 1) {
         const nextPick = pickComboTarget(config, route.combo.comboId, {
           exclude: excluded,
           allowCooldownReprobe: false,
+          cooldownReprobeTargets: reprobeEntries,
           preview: true,
           eligible: (target) => {
-            const p = config.providers[target.provider];
-            return Boolean(p && !p.disabled);
+            try {
+              const resolved = routeConcreteModel(config, `${target.provider}/${target.model}`);
+              return resolved.provider.disabled !== true && adapterSupportsEmbeddings(resolved.provider);
+            } catch {
+              return false;
+            }
           },
         });
         if (!nextPick) break;
-        const key = `${nextPick.target.provider}/${nextPick.target.model}`;
+        const key = targetKey(nextPick.target);
         if (excluded.has(key)) break;
         excluded.add(key);
-        const p = config.providers[nextPick.target.provider];
-        if (p && !p.disabled) {
-          candidates.push({ providerName: nextPick.target.provider, modelId: nextPick.target.model, provider: p });
+        try {
+          const resolved = routeConcreteModel(config, key);
+          if (!resolved.provider.disabled) {
+            candidates.push({
+              providerName: resolved.providerName,
+              modelId: resolved.modelId,
+              provider: resolved.provider,
+              comboTarget: nextPick.target,
+            });
+          }
+        } catch {
+          // Skip targets whose resolved route fails during candidate expansion.
         }
       }
     }
@@ -310,7 +335,7 @@ export async function handleEmbeddings(
     if (!route.combo) return;
     noteComboFailure(
       route.combo.comboId,
-      { provider: candidate.providerName, model: candidate.modelId },
+      candidate.comboTarget ?? { provider: candidate.providerName, model: candidate.modelId },
       route.combo.writerGeneration,
       {
         recordEwma: isEwmaCombo,
@@ -515,18 +540,17 @@ export async function handleEmbeddings(
         lastErrorStatus = upstreamRes.status;
         lastErrorMessage = sanitizeUpstreamErrorText(text) || `upstream returned HTTP ${upstreamRes.status}`;
         lastErrorCode = `upstream_${upstreamRes.status}`;
-        if (hasMore && isTransientUpstreamStatus(upstreamRes.status)) {
-          recordComboFailure(candidate);
-          continue;
-        }
-        if (
+        const shouldFailoverOrPenalize =
           isTransientUpstreamStatus(upstreamRes.status)
           || upstreamRes.status >= 500
           || upstreamRes.status === 429
           || upstreamRes.status === 401
           || upstreamRes.status === 403
-        ) {
+          || upstreamRes.status === 408
+          || upstreamRes.status === 402;
+        if (shouldFailoverOrPenalize) {
           recordComboFailure(candidate);
+          if (hasMore) continue;
         }
         logCtx.errorCode = lastErrorCode;
         addFinalRequestLog(options.requestId, options.start, logCtx, upstreamRes.status, { closeReason: "non_stream" });
@@ -559,24 +583,16 @@ export async function handleEmbeddings(
       }
 
       const { usage } = parseEmbeddingsUsage(json, parsed.estimatedTokens);
-      if (route.combo && comboConfig) {
-        const matchedTarget = comboConfig.targets.find(
-          (t) => t.provider === candidate.providerName && t.model === candidate.modelId,
+      if (route.combo && comboConfig && candidate.comboTarget) {
+        noteComboSuccess(
+          route.combo.comboId,
+          comboConfig,
+          candidate.comboTarget,
+          route.combo.writerGeneration,
+          { latencyMs: Math.max(1, Date.now() - attemptStartMs) },
         );
-        if (matchedTarget) {
-          noteComboSuccess(
-            route.combo.comboId,
-            comboConfig,
-            matchedTarget,
-            route.combo.writerGeneration,
-            { latencyMs: Math.max(1, Date.now() - attemptStartMs) },
-          );
-          if (
-            candidate.providerName === route.combo.target.provider
-            && candidate.modelId === route.combo.target.model
-          ) {
-            settleComboReprobeSuccess(route.combo);
-          }
+        if (targetKey(candidate.comboTarget) === targetKey(route.combo.target)) {
+          settleComboReprobeSuccess(route.combo);
         }
       }
       logCtx.usage = usage;

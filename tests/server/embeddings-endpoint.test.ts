@@ -681,4 +681,116 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
     expect(res3.status).toBe(502);
     expect(snapshotComboEwmaStats("emb-single-fail")["bad/m-bad"]?.consecutiveFailures).toBe(2);
   });
+
+  test("fails over on 429/401, skips non-embedding failover targets, and tracks EWMA stats for aliased combo targets", async () => {
+    clearComboEwmaState();
+    clearComboSelectionState();
+
+    const hits: string[] = [];
+    let failStatus = 429;
+    const badAliasProvider: EpxProviderTransport = {
+      adapter: "openai-compatible",
+      alias: "emb-alias",
+      baseUrl: "https://bad-alias.example.com/v1",
+      authMode: "key",
+      apiKey: "sk-bad",
+      models: ["m-bad"],
+      fetch: async () => {
+        hits.push(`bad:${failStatus}`);
+        return Response.json({ error: { message: `status ${failStatus}` } }, { status: failStatus });
+      },
+    };
+    const anthProvider: EpxProviderTransport = {
+      adapter: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      authMode: "key",
+      apiKey: "sk-ant",
+      models: ["claude-sonnet-4-6"],
+      fetch: async () => {
+        hits.push("anth-should-not-run");
+        return new Response("unexpected", { status: 500 });
+      },
+    };
+    const goodProvider: EpxProviderTransport = {
+      adapter: "openai-compatible",
+      baseUrl: "https://good-emb.example.com/v1",
+      authMode: "key",
+      apiKey: "sk-good",
+      models: ["m-good"],
+      fetch: async () => {
+        hits.push("good");
+        return Response.json({
+          object: "list",
+          data: [{ object: "embedding", index: 0, embedding: [0.5] }],
+          model: "m-good",
+          usage: { prompt_tokens: 5, total_tokens: 5 },
+        });
+      },
+    };
+
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      providers: {
+        "bad-real": badAliasProvider,
+        anth: anthProvider,
+        good: goodProvider,
+      },
+      combos: {
+        "emb-alias-ewma": {
+          strategy: "ewma-latency",
+          ewmaLatency: { alpha: 0.5, minSamples: 1, errorPenaltyMs: 20_000 },
+          targets: [
+            { provider: "bad-real", model: "m-bad" },
+            { provider: "anth", model: "claude-sonnet-4-6" },
+            { provider: "good", model: "m-good" },
+          ],
+        },
+      },
+    };
+
+    const makeCtx = (): RequestLogContext => ({ model: "unknown", provider: "unknown" });
+    // 1. Primary returns 429 -> skips anthropic target -> fails over to good -> succeeds 200 and records bad-real failure.
+    failStatus = 429;
+    const res429 = await handleEmbeddings(
+      new Request("http://127.0.0.1/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "combo/emb-alias-ewma", input: "rate limited primary" }),
+      }),
+      cfg,
+      makeCtx(),
+      { requestId: "emb-429-1", start: Date.now() },
+    );
+    expect(res429.status).toBe(200);
+    expect(hits).toEqual(["bad:429", "good"]);
+    const stats1 = snapshotComboEwmaStats("emb-alias-ewma");
+    expect(stats1["bad-real/m-bad"]?.consecutiveFailures).toBe(1);
+    expect(stats1["good/m-good"]?.samples).toBe(1);
+
+    // 2. Single-target 401 records EWMA failure cleanly.
+    const single401Cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      providers: { "bad-real": badAliasProvider },
+      combos: {
+        "emb-401-only": {
+          strategy: "ewma-latency",
+          ewmaLatency: { alpha: 0.5, minSamples: 1, errorPenaltyMs: 20_000 },
+          targets: [{ provider: "bad-real", model: "m-bad" }],
+        },
+      },
+    };
+    failStatus = 401;
+    const res401 = await handleEmbeddings(
+      new Request("http://127.0.0.1/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "combo/emb-401-only", input: "auth fail" }),
+      }),
+      single401Cfg,
+      makeCtx(),
+      { requestId: "emb-401-1", start: Date.now() },
+    );
+    expect(res401.status).toBe(401);
+    expect(snapshotComboEwmaStats("emb-401-only")["bad-real/m-bad"]?.consecutiveFailures).toBe(1);
+  });
 });

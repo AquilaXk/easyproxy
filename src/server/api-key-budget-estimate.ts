@@ -1,5 +1,5 @@
 import type { EpxConfig, EpxApiKeyEntry } from "../types";
-import { markProxyError } from "../lib/client-error-body";
+import { carryProxyError, markProxyError } from "../lib/client-error-body";
 import { normalizeMessagesProxyRefusal } from "../lib/messages-error-body";
 import { anthropicErrorResponse } from "../claude/outbound";
 import { resolveMatchedPrice, calculateCost } from "../usage/cost";
@@ -121,5 +121,8 @@ export async function reservePreDispatchApiKeyHold(params: {
     }, { status: 429 });
   raw.headers.set("Retry-After", String(decision.retryAfterSec));
   const refusal = markProxyError(raw);
-  return withCors(await normalizeMessagesProxyRefusal(params.req, refusal), params.req, params.config);
+  return carryProxyError(
+    refusal,
+    withCors(await normalizeMessagesProxyRefusal(params.req, refusal), params.req, params.config),
+  );
 }

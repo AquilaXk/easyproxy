@@ -1,4 +1,5 @@
 import { carryReplayRefusal, isNonReplayableResponse, markResponseNonReplayable } from "./upstream-retry";
+import { isApiKeyBudgetDenialCode } from "../server/api-key-budget";
 import { appendClientRetryIn } from "./client-retry-after";
 import {
   ANTHROPIC_ERROR_CODES, ANTHROPIC_ERROR_TYPES, CLAUDE_CONTEXT_OVERFLOW_MESSAGE,
@@ -78,7 +79,7 @@ export interface OwnedAnthropicErrorOptions {
 export function ownedAnthropicErrorPayload(options: OwnedAnthropicErrorOptions): Rec {
   const type = ANTHROPIC_ERROR_TYPES.get(options.type ?? "")
     ?? STATUS_TYPES.get(options.status) ?? (options.status >= 500 ? "api_error" : "invalid_request_error");
-  const code = options.code === "combo_unavailable" && options.localError && isProxyError(options.localError)
+  const code = (options.code === "combo_unavailable" || isApiKeyBudgetDenialCode(options.code)) && options.localError && isProxyError(options.localError)
     ? options.code : ANTHROPIC_ERROR_CODES.get(options.code === "thread_unsupported_request" ? "" : options.code ?? "");
   const message = options.overflow ? CLAUDE_CONTEXT_OVERFLOW_MESSAGE
     : options.localError && isProxyError(options.localError) ? fixedLocalMessage(options.localError, options.evidence.code ?? code, options.evidence.type) ?? options.localError.message

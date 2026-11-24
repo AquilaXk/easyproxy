@@ -3,7 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleTelemetryCommand } from "../../src/cli/telemetry";
-import { getDefaultConfig, loadConfig } from "../../src/config";
+import { getDefaultConfig, loadConfig, saveConfig } from "../../src/config";
+import { exportProfileBackup } from "../../src/config/profile-backup";
 import { configuredAdminToken } from "../../src/lib/admin-secrets";
 import {
   flushOtlpSpans,
@@ -459,5 +460,37 @@ describe("optional OTLP tracing", () => {
     expect(seenTraceparents[0]).toBe(span?.traceparent);
     expect(seenTraceparents[0]).toMatch(/^00-22222222222222222222222222222222-[0-9a-f]{16}-01$/);
     expect(seenTraceparents[0]).not.toBe("00-22222222222222222222222222222222-3333333333333333-01");
+  });
+
+  test("redacted profile backup strips otlp.headers secrets while preserving non-secret otlp settings", async () => {
+    const home = mkdtempSync(join(tmpdir(), "epx-otlp-backup-"));
+    homes.push(home);
+    process.env.EASYPROXY_HOME = home;
+    saveConfig({
+      ...getDefaultConfig(),
+      otlp: {
+        enabled: true,
+        endpoint: "https://collector.example.com/v1/traces",
+        headers: {
+          Authorization: "Bearer super-secret-otlp-token",
+          "x-api-key": "collector-secret-key",
+        },
+        serviceName: "epx-prod",
+        sampleRate: 0.5,
+      },
+    });
+    const bundle = await exportProfileBackup({ mode: "redacted" });
+    expect(bundle.mode).toBe("redacted");
+    if (bundle.mode !== "redacted") return;
+    const serialized = JSON.stringify(bundle);
+    expect(serialized).not.toContain("super-secret-otlp-token");
+    expect(serialized).not.toContain("collector-secret-key");
+    const exportedOtlp = bundle.payload.files["config.json"].otlp as Record<string, unknown> | undefined;
+    expect(exportedOtlp).toEqual({
+      enabled: true,
+      endpoint: "https://collector.example.com/v1/traces",
+      serviceName: "epx-prod",
+      sampleRate: 0.5,
+    });
   });
 });

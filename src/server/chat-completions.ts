@@ -1,4 +1,5 @@
 import { projectLocalModelRefusalLog } from "./request-log-failure-detail";
+import { isApiKeyBudgetDenialCode } from "./api-key-budget";
 import { reservePreDispatchApiKeyHold } from "./api-key-budget-estimate";
 import { carryWorkflowRefusal } from "./workflow-refusal";
 import { clientFacingModelLabel, clientFacingModelText, type ClientFacingModelLabel } from "../lib/error-destination";
@@ -748,6 +749,9 @@ async function handleChatCompletionsWithBudget(
     } else if (upstream.status === 403 && isProxyError(upstream) && (upstreamCode === AGY_ACP_INTERACTIVE_ONLY || upstreamCode === AGY_ACP_LOCAL_ONLY)) {
       classified.code = upstreamCode;
       classified.type = "permission_error";
+    } else if (upstream.status === 429 && isProxyError(upstream) && isApiKeyBudgetDenialCode(upstreamCode)) {
+      classified.code = upstreamCode;
+      classified.type = "rate_limit_error";
     } else if (upstreamCode === UNDECLARED_TOOL_CALL_ERROR_CODE) {
       // The guard's deterministic refusal keeps its wire identity — same code the
       // streamed `response.failed` frame and the Anthropic surface carry.

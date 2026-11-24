@@ -21,14 +21,23 @@ const LEDGER_FILENAME = "api-key-budgets.json";
 const MAX_LEDGER_FILE_BYTES = 4 * 1024 * 1024;
 const PERSIST_DEBOUNCE_MS = 100;
 
-export type ApiKeyBudgetDenialReason =
-  | "rpm_limit_exceeded"
-  | "tpm_limit_exceeded"
-  | "daily_limit_exceeded"
-  | "daily_token_limit_exceeded"
-  | "daily_cost_limit_exceeded"
-  | "in_flight_cost_limit_exceeded"
-  | "invalid_budget_limit";
+export const API_KEY_BUDGET_DENIAL_REASONS = [
+  "rpm_limit_exceeded",
+  "tpm_limit_exceeded",
+  "daily_limit_exceeded",
+  "daily_token_limit_exceeded",
+  "daily_cost_limit_exceeded",
+  "in_flight_cost_limit_exceeded",
+  "invalid_budget_limit",
+] as const;
+
+export type ApiKeyBudgetDenialReason = typeof API_KEY_BUDGET_DENIAL_REASONS[number];
+
+const API_KEY_BUDGET_DENIAL_REASON_SET: ReadonlySet<string> = new Set(API_KEY_BUDGET_DENIAL_REASONS);
+
+export function isApiKeyBudgetDenialCode(code: unknown): code is ApiKeyBudgetDenialReason {
+  return typeof code === "string" && API_KEY_BUDGET_DENIAL_REASON_SET.has(code);
+}
 
 export type ApiKeyBudgetDecision =
   | { allowed: true }

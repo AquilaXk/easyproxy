@@ -431,6 +431,10 @@ function stripRedactedConfigSecrets(config: Record<string, unknown>): Record<str
     }
   }
 
+  if (isPlainRecord(cloned.otlp)) {
+    delete cloned.otlp.headers;
+  }
+
   stripResidualSecretsRecursive(cloned);
   return cloned;
 }

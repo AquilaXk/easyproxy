@@ -1,4 +1,5 @@
 import { advisorPlanRootConfig } from "./advisor-plan-slot";
+import { reservePreDispatchApiKeyHold } from "../api-key-budget-estimate";
 import { admitsHostedAdvisor, scopedAnthropicServerTools } from "../messages-native-scope";
 import { selectResponseReplayOwner } from "./replay-owner";
 import { isPlaintextV2AgentMessagesEnabled } from "../../config/multi-agent-surface";
@@ -1262,6 +1263,12 @@ export async function executeComboResponses(
     } else {
       logCtx.spendOutputCeilingTokens = callerOutputCeilingTokens;
     }
+    const budgetHoldRefusal = await reservePreDispatchApiKeyHold({
+      req, config, logCtx, providerName: targetRoute.providerName, modelId: targetRoute.modelId,
+      maxOutputTokens: callerOutputCeilingTokens, anthropicSurface: options.inboundWire === "anthropic",
+      upstreamAttempted: comboTargetsDispatched > 0,
+    });
+    if (budgetHoldRefusal) return budgetHoldRefusal;
     // Derive the target's allowance before booking its initial send; the booking occupies it.
     const targetSendBudget = comboSendScope
       ? comboTargetSendBudget(comboSendScope, combo.targets.length - 1 - comboTargetsDispatched)

@@ -513,4 +513,106 @@ describe("virtual API key expiry, TPM window, and in-flight USD holds", () => {
     if (!second.allowed) expect(second.reason).toBe("daily_token_limit_exceeded");
     first.lease.releaseUnused();
   });
+
+  test("enforces pre-dispatch TPM and in-flight holds on combo routes without reaching upstream or cooling targets", async () => {
+    const serverHome = mkdtempSync(join(tmpdir(), "epx-combo-hold-srv-"));
+    homes.push(serverHome);
+    let upstreamHits = 0;
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        upstreamHits += 1;
+        return Response.json({
+          id: "resp_ok",
+          object: "response",
+          status: "completed",
+          output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] }],
+          usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+        });
+      },
+    });
+    const comboKey = {
+      id: "k-combo-tpm",
+      name: "combo-tpm",
+      key: "epx_data_combotpm0000001",
+      createdAt: "2026-01-01T00:00:00Z",
+      rpmLimit: 3,
+      tpmLimit: 100,
+    };
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      hostname: "0.0.0.0",
+      defaultProvider: "p1",
+      apiKeys: [comboKey],
+      providers: {
+        p1: {
+          adapter: "openai-responses",
+          baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-p1",
+          models: ["m1"],
+        },
+        p2: {
+          adapter: "openai-responses",
+          baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-p2",
+          models: ["m2"],
+        },
+      },
+      combos: {
+        "tpm-combo": {
+          strategy: "failover",
+          targets: [
+            { provider: "p1", model: "m1" },
+            { provider: "p2", model: "m2" },
+          ],
+        },
+      },
+    };
+    const fixture = await startManagementServerFixture(serverHome, cfg);
+    try {
+      const base = `http://127.0.0.1:${fixture.server.port}`;
+      // Exceed tpmLimit (100) via max_output_tokens reservation on combo/tpm-combo -> 429 before upstream.
+      for (const [path, body] of [
+        ["/v1/responses", { model: "combo/tpm-combo", input: "hello", max_output_tokens: 200, stream: false }],
+        ["/v1/chat/completions", { model: "combo/tpm-combo", messages: [{ role: "user", content: "hello" }], max_tokens: 200, stream: false }],
+        ["/v1/messages", { model: "combo/tpm-combo", max_tokens: 200, messages: [{ role: "user", content: "hello" }], stream: false }],
+      ] as const) {
+        const denied = await fetch(`${base}${path}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-easyproxy-api-key": comboKey.key,
+          },
+          body: JSON.stringify(body),
+        });
+        expect(denied.status).toBe(429);
+        const json = await denied.json() as { error?: { code?: string } };
+        expect(json.error?.code).toBe("tpm_limit_exceeded");
+      }
+      expect(upstreamHits).toBe(0);
+      expect(getApiKeyBudgetHoldSnapshot(comboKey.id).rpmCurrent).toBe(0);
+      expect(getApiKeyBudgetHoldSnapshot(comboKey.id).inFlightTokens).toBe(0);
+
+      // Small combo request within tpmLimit succeeds normally (RPM wasn't burned by refusals).
+      const allowed = await fetch(`${base}/v1/responses`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-easyproxy-api-key": comboKey.key,
+        },
+        body: JSON.stringify({ model: "combo/tpm-combo", input: "hi", max_output_tokens: 10, stream: false }),
+      });
+      expect(allowed.status).toBe(200);
+      expect(upstreamHits).toBe(1);
+    } finally {
+      await fixture.close();
+      upstream.stop(true);
+      await settleServerAuthFixture(serverHome);
+    }
+  });
 });
