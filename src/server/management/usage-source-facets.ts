@@ -1,9 +1,12 @@
+import { existsSync } from "node:fs";
 import { getConfigDir } from "../../config/paths";
+import { USAGE_FILTER_INDEX_SCHEMA_VERSION, usageFilterIndexPath } from "../../usage/filter-index";
 import { scanUsageLedgerCooperatively } from "../../usage/ledger-scanner";
 import { currentUsageLogRevision, usageLogIdentityKey, usageLogRevisionKey } from "../../usage/log";
 import { createSourceFacetAccumulator } from "../../usage/source-facets";
 import { snapshotConfiguredKeyIds, type UsageSourceFilter } from "../../usage/source-filter";
 import { rangeWindow } from "../../usage/summary";
+import { querySourceFacetsFromRollup } from "../../usage/summary-rollup";
 
 const MAX_FLIGHTS = 4;
 const FACET_CACHE_TTL_MS = 15_000;
@@ -17,6 +20,11 @@ type SourceFacets = ReturnType<ReturnType<typeof createSourceFacetAccumulator>["
   window: { since: number; until: number; timeZone: string };
   usageIncomplete: boolean;
 };
+
+export function resetUsageSourceFacetsForTests(): void {
+  flights.clear();
+  facetCache.clear();
+}
 
 /** Single-flight identical requests; never retain arbitrary historical key IDs. */
 export async function getUsageSourceFacets(filter: UsageSourceFilter, configuredIds: readonly string[]): Promise<SourceFacets> {
@@ -37,11 +45,31 @@ export async function getUsageSourceFacets(filter: UsageSourceFilter, configured
   const flight = (async () => {
     const until = Date.now();
     const since = rangeWindow("30d", until).since!;
-    const accumulator = createSourceFacetAccumulator(captured, ids, { since, until });
-    const scan = await scanUsageLedgerCooperatively({ onEntry: row => accumulator.add(row) });
-    if (Intl.DateTimeFormat().resolvedOptions().timeZone !== timeZone) throw new Error("time zone changed");
-    const result: SourceFacets = { ...accumulator.snapshot(), sourceFilter: captured, window: { since, until, timeZone },
-      usageIncomplete: scan.oversizedRows > 0 || scan.invalidRows > 0 };
+    const fromRollup = existsSync(usageFilterIndexPath(getConfigDir()))
+      ? await querySourceFacetsFromRollup({
+        filter: captured,
+        configuredIds: ids,
+        since,
+        until,
+        timeZone,
+        expectedSchemaVersion: USAGE_FILTER_INDEX_SCHEMA_VERSION,
+      })
+      : null;
+    let result: SourceFacets;
+    if (fromRollup) {
+      if (Intl.DateTimeFormat().resolvedOptions().timeZone !== timeZone) throw new Error("time zone changed");
+      result = fromRollup;
+    } else {
+      const accumulator = createSourceFacetAccumulator(captured, ids, { since, until });
+      const scan = await scanUsageLedgerCooperatively({ onEntry: row => accumulator.add(row) });
+      if (Intl.DateTimeFormat().resolvedOptions().timeZone !== timeZone) throw new Error("time zone changed");
+      result = {
+        ...accumulator.snapshot(),
+        sourceFilter: captured,
+        window: { since, until, timeZone },
+        usageIncomplete: scan.oversizedRows > 0 || scan.invalidRows > 0,
+      };
+    }
     const settleNow = Date.now();
     for (const [k, entry] of facetCache) {
       if (entry.expiresAt <= settleNow) facetCache.delete(k);

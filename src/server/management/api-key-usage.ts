@@ -1,9 +1,18 @@
+import { existsSync } from "node:fs";
+import { getConfigDir } from "../../config/paths";
+import { USAGE_FILTER_INDEX_SCHEMA_VERSION, usageFilterIndexPath } from "../../usage/filter-index";
 import {
   currentUsageLogRevision,
   usageLogIdentityKey,
   type PersistedUsageEntry,
 } from "../../usage/log";
 import { scanUsageLedgerCooperatively } from "../../usage/ledger-scanner";
+import { localDateKey } from "../../usage/summary";
+import {
+  computeUsageOverlaySignature,
+  queryApiKeyUsageFromRollup,
+  readUsageSummarySnapshotPassive,
+} from "../../usage/summary-rollup";
 
 /**
  * Per-key usage as the API tab renders it.
@@ -224,6 +233,49 @@ export async function readApiKeyUsageRollup(configuredIds: string[], maxReadByte
     if (existing) return await existing;
 
     const flight = (async (): Promise<ApiKeyUsageSnapshot> => {
+      if (existsSync(usageFilterIndexPath(getConfigDir()))) {
+        const fromRollup = await queryApiKeyUsageFromRollup({
+          configuredIds,
+          now,
+          expectedSchemaVersion: USAGE_FILTER_INDEX_SCHEMA_VERSION,
+        });
+        if (fromRollup) {
+          return cacheApiKeyUsageFromRollup(
+            fromRollup.snapshot,
+            configuredIds,
+            usageLogIdentityKey(fromRollup.revision),
+            fromRollup.revision.size,
+            maxReadBytes,
+            now,
+          );
+        }
+        const fromSnapshot = await readUsageSummarySnapshotPassive({
+          expectedSchemaVersion: USAGE_FILTER_INDEX_SCHEMA_VERSION,
+          overlaySignature: computeUsageOverlaySignature(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          localDate: localDateKey(now),
+          maxReadBytes: maxReadBytes ?? 64 * 1024 * 1024,
+        });
+        if (
+          fromSnapshot?.payload.apiKeySnapshot
+          && now - fromSnapshot.payload.apiKeySnapshot.snapshotAt < ROLLUP_CACHE_TTL_MS
+          && JSON.stringify(fromSnapshot.payload.apiKeySnapshot.configuredIds) === JSON.stringify(configuredIds)
+        ) {
+          const saved = fromSnapshot.payload.apiKeySnapshot;
+          return cacheApiKeyUsageFromRollup(
+            {
+              rollup: new Map(saved.entries),
+              ...(saved.attributionSince !== undefined ? { attributionSince: saved.attributionSince } : {}),
+              ...(saved.usageIncomplete ? { usageIncomplete: true as const, usageIncompleteReason: "oversized_rows" as const } : {}),
+            },
+            configuredIds,
+            usageLogIdentityKey(fromSnapshot.revision),
+            fromSnapshot.revision.size,
+            maxReadBytes,
+            now,
+          );
+        }
+      }
       const accumulator = createApiKeyUsageAccumulator(configuredIds, now);
       const scan = await scanUsageLedgerCooperatively({ onEntry: entry => accumulator.add(entry) });
       return cacheApiKeyUsageFromRollup(

@@ -39,7 +39,12 @@ import { sweepExpiredOnWrite } from "../lib/state-store-sweeper";
 import { retainedUtf8Bytes } from "../lib/admission";
 import { resolveAnthropicModelRouteForInstance, routeCandidates, type AnthropicRouteDecision } from "./anthropic-model-routes";
 import type { ProviderQuota } from "../providers/quota-types";
-import { clearAllAnthropicCooldownGenerations, anthropicCooldownRecoveryFor } from "../providers/quota/anthropic-cooldown-recovery";
+import {
+  anthropicCooldownStateFor,
+  clearAllAnthropicCooldownGenerations,
+  type AccountHealth,
+  type AnthropicQuotaWindow,
+} from "./anthropic-cooldown-state";
 import { subscribeAccountSelections, subscribeOAuthAccountPauseChanges, subscribeOAuthAccountRoutingPolicyChanges } from "../lib/account-selection-events";
 import { effectiveAnthropicAccountThresholdForInstance } from "./anthropic-account-threshold";
 
@@ -103,28 +108,7 @@ export class AnthropicAccountCooldownError extends Error {
  * which is exactly the distinction a reset-derived cooldown carries -- collapsing it into
  * `retry-after` would report a drained five-hour window as request-rate throttling.
  */
-type AnthropicCooldownSource = "retry-after" | "reset-derived" | "default";
-export type AnthropicQuotaWindow = "five-hour" | "weekly";
-
-interface AccountHealth {
-  cooldownUntil: number;
-  cooldownSource: AnthropicCooldownSource;
-  /** Windows whose rejected status established a reset-derived cooldown. */
-  rejectedQuotaWindows?: AnthropicQuotaWindow[];
-  /** Monotonic fence so an older quota probe cannot erase a newer refusal. */
-  cooldownGeneration: number;
-  /** When the refusal was recorded; a reset settled earlier must not lift it. */
-  recordedAt: number;
-  /** 429 (shared quota) or 403 (entitlement); only a quota refusal can be lifted by a reset grant. */
-  refusalStatus: 429 | 403;
-  /** Windows a 429 reported as rejected, whatever set the deadline; empty when it named none. */
-  refusedQuotaWindows: AnthropicQuotaWindow[];
-  /**
-   * When the rejected windows reopen according to upstream's reset headers, kept even when
-   * Retry-After set the deadline. A usage-limit answer reports this, never an admission deadline.
-   */
-  quotaResetAt?: number;
-}
+export type { AnthropicQuotaWindow } from "./anthropic-cooldown-state";
 
 /** See `anthropicAccountHold`: the latest hold on one account and its known window reset. */
 interface AnthropicAccountHold {
@@ -310,17 +294,6 @@ export interface AnthropicSelectionRoutingOptions {
   model?: string;
 }
 
-/** No health/affinity bucket is allocated by a read or an event for a dormant instance. */
-class RoutingMap<K, V> implements Iterable<[K, V]> {
-  private rows?: Map<K, V>;
-  get size(): number { return this.rows?.size ?? 0; }
-  get(key: K): V | undefined { return this.rows?.get(key); }
-  set(key: K, value: V): void { (this.rows ??= new Map()).set(key, value); }
-  delete(key: K): boolean { return this.rows?.delete(key) ?? false; }
-  clear(): void { this.rows = undefined; }
-  *entries(): IterableIterator<[K, V]> { if (this.rows) yield* this.rows; }
-  [Symbol.iterator](): IterableIterator<[K, V]> { return this.entries(); }
-}
 type RoutingFacadeSymbol =
   | "captureAnthropicManualSelectionGeneration"
   | "anthropicAccountPoolConfig"
@@ -368,11 +341,16 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
   const poolKey = anthropicPoolKey(instance);
   const { anthropicFamilyRejected, anthropicFamilyRetryAt, anthropicFamilyHoldState, anthropicModelExhausted, clearAnthropicFamilyQuota } = anthropicModelQuotaFor(instance);
   const { anthropicRatePauseUntil, anthropicRatePausedRecently, clearAnthropicRatePauses, pauseAnthropicRateAdmission } = anthropicRatePolicyFor(instance);
-  const { anthropicCooldownGeneration, clearAnthropicCooldownGenerations, noteAnthropicCooldownMutation } = anthropicCooldownRecoveryFor(instance);
+  const {
+    upstreamHealth,
+    anthropicCooldownGeneration,
+    clearAnthropicCooldownGenerations,
+    getAnthropicAccountHealthSnapshot,
+    noteAnthropicCooldownMutation,
+  } = anthropicCooldownStateFor(instance);
   // Request-owned config authorizes selection/commit. Namespace-only credential and roster
   // methods carry no ambient disk authority; physical consumers recheck their captured config/target.
   function admitted(config: EpxConfig): boolean { return configuredAnthropicInstance(config, instance) === instance; }
-  const upstreamHealth = new RoutingMap<string, AccountHealth>();
   const sessionAffinity = new AnthropicSessionAffinityStore(instance);
   const affinityKey = (key: string | null | undefined) => anthropicAffinityDigest(instance, normalizeAffinityComponent(key));
   // Undefined means this runtime has not admitted a selection yet; null means consumed.
@@ -468,20 +446,6 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     upstreamHealth.delete(claim.accountId);
     noteAnthropicCooldownMutation(claim.accountId);
     return "cleared";
-  }
-
-  function getAnthropicAccountHealthSnapshot(
-    accountId: string,
-    now = Date.now(),
-  ): { cooldownUntil?: number; cooldownSource?: AccountHealth["cooldownSource"] } | null {
-    const entry = upstreamHealth.get(accountId);
-    if (!entry) return null;
-    if (entry.cooldownUntil <= now) {
-      upstreamHealth.delete(accountId);
-      noteAnthropicCooldownMutation(accountId);
-      return null;
-    }
-    return { cooldownUntil: entry.cooldownUntil, cooldownSource: entry.cooldownSource };
   }
 
   function clearAnthropicAccountCooldown(accountId: string): boolean {

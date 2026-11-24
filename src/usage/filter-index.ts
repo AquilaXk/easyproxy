@@ -75,15 +75,23 @@ import {
 } from "./ledger-scanner";
 import { USAGE_CODEX_CLIENT_LABELS, type UsageSourceFilter } from "./source-filter";
 import { usageAttributions } from "./summary";
+import {
+  appendStagingRollupGeneration,
+  commitPublishRollups,
+  createHourlyRollupBatchAccumulator,
+  deleteRollupsForGeneration,
+  dropRollupTables,
+  reclaimAbandonedAppendRollups,
+  ROLLUP_SCHEMA_DDL,
+} from "./summary-rollup";
 import type { UsageTimeWindow } from "./time-range";
 
 /**
- * Bumped to 5 when the candidate indexes moved `byte_offset` ahead of every other ordered column.
- * The shape of `usage_rows` is unchanged, but a version 4 projection carries indexes that cannot
- * deliver the pager's order; the derived tables are recreated and rebuilt from the ledger rather
- * than migrated, so no stale index survives to re-introduce the per-page sort.
+ * Bumped to 6 when `usage_hourly_rollups` and `usage_summary_snapshots` were added alongside the
+ * candidate index tables so summary, source-facet, API-key, and timeline views share the same
+ * published generation lifecycle and fail closed on any older schema.
  */
-export const USAGE_FILTER_INDEX_SCHEMA_VERSION = 5;
+export const USAGE_FILTER_INDEX_SCHEMA_VERSION = 6;
 export const USAGE_FILTER_INDEX_DB_FILENAME = "usage-filter-index.sqlite";
 /** Rows per SQLite transaction during ingest; also the peak pending-row allocation. */
 export const USAGE_FILTER_INDEX_INSERT_BATCH = 500;
@@ -164,6 +172,8 @@ CREATE TABLE IF NOT EXISTS usage_filter_index_generations (
   generation TEXT PRIMARY KEY,
   created_at INTEGER NOT NULL
 );
+
+${ROLLUP_SCHEMA_DDL}
 `;
 
 const META_KEYS = {
@@ -183,6 +193,8 @@ const META_KEYS = {
   oversizedRows: "oversized_rows",
   minTimestamp: "min_timestamp",
   maxTimestamp: "max_timestamp",
+  minAdmissionTimestamp: "min_admission_timestamp",
+  rollupParityFlags: "rollup_parity_flags",
 } as const;
 
 /** The file at the index path is not this projection. It is left untouched. */
@@ -326,6 +338,8 @@ interface IndexMeta {
   oversizedRows: number;
   minTimestamp: number | null;
   maxTimestamp: number | null;
+  minAdmissionTimestamp: number | null;
+  rollupParityFlags: number;
 }
 
 let ingestFlight: { path: string; promise: Promise<UsageFilterIndexSnapshot> } | null = null;
@@ -406,6 +420,7 @@ function readMeta(db: Database): IndexMeta {
     : null;
   const minTimestamp = text(META_KEYS.minTimestamp);
   const maxTimestamp = text(META_KEYS.maxTimestamp);
+  const minAdmissionTimestamp = text(META_KEYS.minAdmissionTimestamp);
   return {
     schemaVersion: num(META_KEYS.schemaVersion),
     generation: text(META_KEYS.generation),
@@ -417,6 +432,8 @@ function readMeta(db: Database): IndexMeta {
     oversizedRows: num(META_KEYS.oversizedRows),
     minTimestamp: minTimestamp === "" ? null : Number(minTimestamp),
     maxTimestamp: maxTimestamp === "" ? null : Number(maxTimestamp),
+    minAdmissionTimestamp: minAdmissionTimestamp === "" ? null : Number(minAdmissionTimestamp),
+    rollupParityFlags: num(META_KEYS.rollupParityFlags),
   };
 }
 
@@ -441,6 +458,8 @@ function writeMetaStatements(db: Database, meta: IndexMeta): void {
     stmt.run(META_KEYS.oversizedRows, String(meta.oversizedRows));
     stmt.run(META_KEYS.minTimestamp, meta.minTimestamp === null ? "" : String(meta.minTimestamp));
     stmt.run(META_KEYS.maxTimestamp, meta.maxTimestamp === null ? "" : String(meta.maxTimestamp));
+    stmt.run(META_KEYS.minAdmissionTimestamp, meta.minAdmissionTimestamp === null ? "" : String(meta.minAdmissionTimestamp));
+    stmt.run(META_KEYS.rollupParityFlags, String(meta.rollupParityFlags));
   } finally {
     stmt.finalize();
   }
@@ -458,6 +477,8 @@ function emptyMeta(generation: string): IndexMeta {
     oversizedRows: 0,
     minTimestamp: null,
     maxTimestamp: null,
+    minAdmissionTimestamp: null,
+    rollupParityFlags: 0,
   };
 }
 
@@ -485,7 +506,10 @@ function classifyDatabase(db: Database): "fresh" | "ours" | "foreign" {
   // Require a data table as well as the meta table: a foreign database that happens to use the
   // meta table's name is not this projection and must never have its tables dropped.
   const ours = names.includes(META_TABLE)
-    && (names.includes("usage_rows") || names.includes("usage_attributions"));
+    && (names.includes("usage_rows")
+      || names.includes("usage_attributions")
+      || names.includes("usage_hourly_rollups")
+      || names.includes("usage_summary_snapshots"));
   return ours ? "ours" : "foreign";
 }
 
@@ -533,6 +557,7 @@ function recreateSchema(db: Database, options: { onlyIfStale?: boolean } = {}): 
     }
     db.exec("DROP TABLE IF EXISTS usage_rows");
     db.exec("DROP TABLE IF EXISTS usage_attributions");
+    dropRollupTables(db);
     db.exec("DROP TABLE IF EXISTS usage_filter_index_writers");
     db.exec("DROP TABLE IF EXISTS usage_filter_index_generations");
     db.exec(`DROP TABLE IF EXISTS ${META_TABLE}`);
@@ -553,6 +578,8 @@ function schemaIsCurrent(db: Database): boolean {
   return metaNumber(db, META_KEYS.schemaVersion) === USAGE_FILTER_INDEX_SCHEMA_VERSION
     && tables.has("usage_rows")
     && tables.has("usage_attributions")
+    && tables.has("usage_hourly_rollups")
+    && tables.has("usage_summary_snapshots")
     && tables.has("usage_filter_index_writers")
     && tables.has("usage_filter_index_generations");
 }
@@ -693,6 +720,8 @@ interface IngestResult {
   rows: number;
   minTimestamp: number | null;
   maxTimestamp: number | null;
+  minAdmissionTimestamp: number | null;
+  rollupParityFlags: number;
 }
 
 async function ingest(
@@ -701,6 +730,7 @@ async function ingest(
   startAtBytes: number,
   expected: { identityKey: string; digest: string } | null,
   onBatch?: () => void,
+  rollupTargetGeneration: string = generation,
 ): Promise<IngestResult> {
   const insertRow = db.prepare(
     "INSERT OR REPLACE INTO usage_rows (generation, byte_offset, timestamp, api_key_id, client, surface, admission_kind, unattributable) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -708,7 +738,9 @@ async function ingest(
   const insertAttribution = db.prepare(
     "INSERT OR REPLACE INTO usage_attributions (generation, byte_offset, provider, model) VALUES (?, ?, ?, ?)",
   );
+  const rollupBatch = createHourlyRollupBatchAccumulator();
   const writeBatch = (batch: Array<{ offset: number; entry: PersistedUsageEntry }>): void => {
+    rollupBatch.clear();
     for (const { offset, entry } of batch) {
       // Normalization preserves hand-edited rows with a missing or non-numeric timestamp and
       // a missing model. A null timestamp is selected without a window and excluded by one,
@@ -742,8 +774,18 @@ async function ingest(
           attribution.model.toLowerCase(),
         );
       }
+      const info = rollupBatch.addEntry(entry);
+      batchParityFlags |= info.parityFlags;
+      if (info.admissionTimestamp !== null) {
+        batchMinAdmissionTimestamp = earlier(batchMinAdmissionTimestamp, info.admissionTimestamp);
+      }
     }
+    rollupBatch.flush(db, rollupTargetGeneration);
   };
+  let batchParityFlags = 0;
+  let batchMinAdmissionTimestamp: number | null = null;
+  let rollupParityFlags = 0;
+  let minAdmissionTimestamp: number | null = null;
   /**
    * Commit one batch under `BEGIN IMMEDIATE`.
    *
@@ -754,10 +796,14 @@ async function ingest(
    */
   const commit = (batch: Array<{ offset: number; entry: PersistedUsageEntry }>): void => {
     for (let attempt = 0; ; attempt += 1) {
+      batchParityFlags = 0;
+      batchMinAdmissionTimestamp = null;
       db.exec("BEGIN IMMEDIATE");
       try {
         writeBatch(batch);
         db.exec("COMMIT");
+        rollupParityFlags |= batchParityFlags;
+        minAdmissionTimestamp = earlier(minAdmissionTimestamp, batchMinAdmissionTimestamp);
         onBatch?.();
         return;
       } catch (error) {
@@ -806,8 +852,9 @@ async function ingest(
       throw new UsageFilterIndexSourceError(error);
     }
     if (pending.length > 0) commit(pending);
-    return { scan, rows, minTimestamp, maxTimestamp };
+    return { scan, rows, minTimestamp, maxTimestamp, minAdmissionTimestamp, rollupParityFlags };
   } finally {
+    rollupBatch.clear();
     insertRow.finalize();
     insertAttribution.finalize();
   }
@@ -855,6 +902,7 @@ function later(left: number | null, right: number | null): number | null {
 function discardGeneration(db: Database, generation: string): void {
   db.query("DELETE FROM usage_rows WHERE generation = ?").run(generation);
   db.query("DELETE FROM usage_attributions WHERE generation = ?").run(generation);
+  deleteRollupsForGeneration(db, generation);
   db.query("DELETE FROM usage_filter_index_writers WHERE generation = ?").run(generation);
   db.query("DELETE FROM usage_filter_index_generations WHERE generation = ?").run(generation);
 }
@@ -916,6 +964,7 @@ function endLease(db: Database, generation: string): void {
  * after. The published generation never has a lease and is never a candidate.
  */
 function reclaimAbandonedStaging(db: Database, path: string, published: string): void {
+  reclaimAbandonedAppendRollups(db, published, processAlive);
   // Cheap pre-check without the write lock: most refreshes have nothing to reclaim.
   const generations = db.query(
     "SELECT g.generation AS generation, w.pid AS pid FROM usage_filter_index_generations g LEFT JOIN usage_filter_index_writers w ON w.generation = g.generation",
@@ -945,6 +994,7 @@ function reclaimAbandonedStaging(db: Database, path: string, published: string):
       if (lease && processAlive(lease.pid)) continue;
       db.query("DELETE FROM usage_rows WHERE generation = ?").run(generation);
       db.query("DELETE FROM usage_attributions WHERE generation = ?").run(generation);
+      deleteRollupsForGeneration(db, generation);
       db.query("DELETE FROM usage_filter_index_writers WHERE generation = ?").run(generation);
       db.query("DELETE FROM usage_filter_index_generations WHERE generation = ?").run(generation);
     }
@@ -979,6 +1029,7 @@ function publish(
   db: Database,
   fence: PublishFence,
   next: IndexMeta,
+  appendRollupGeneration?: string,
 ): boolean {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -987,6 +1038,7 @@ function publish(
       db.exec("ROLLBACK");
       return false;
     }
+    commitPublishRollups(db, next.generation, next.indexedOffset, appendRollupGeneration);
     writeMetaStatements(db, next);
     // A published staging generation no longer needs its writer lease.
     endLease(db, next.generation);
@@ -1004,6 +1056,7 @@ function publish(
       if (liveLease && processAlive(liveLease.pid)) continue;
       db.query("DELETE FROM usage_rows WHERE generation = ?").run(generation);
       db.query("DELETE FROM usage_attributions WHERE generation = ?").run(generation);
+      deleteRollupsForGeneration(db, generation);
       db.query("DELETE FROM usage_filter_index_generations WHERE generation = ?").run(generation);
       // Drop a dead writer's record with its generation; a live writer keeps its lease so the
       // fence can make it retry rather than look abandoned.
@@ -1032,7 +1085,7 @@ async function rebuild(
   let published = false;
   try {
     await testHooks?.afterStagingRegistered?.({ dbPath: path, generation: staging });
-    const result = await ingest(db, staging, 0, null, () => heartbeatLease(db, staging));
+    const result = await ingest(db, staging, 0, null, () => heartbeatLease(db, staging), staging);
     const next: IndexMeta = {
       schemaVersion: USAGE_FILTER_INDEX_SCHEMA_VERSION,
       generation: staging,
@@ -1044,6 +1097,8 @@ async function rebuild(
       oversizedRows: result.scan.oversizedRows,
       minTimestamp: result.minTimestamp,
       maxTimestamp: result.maxTimestamp,
+      minAdmissionTimestamp: result.minAdmissionTimestamp,
+      rollupParityFlags: result.rollupParityFlags,
     };
     await testHooks?.beforePublish?.({
       dbPath: path,
@@ -1075,33 +1130,51 @@ async function append(
   path: string,
   meta: IndexMeta,
 ): Promise<UsageFilterIndexSnapshot | null> {
-  const result = await ingest(db, meta.generation, meta.indexedOffset, {
-    identityKey: usageLogIdentityKey(meta.revision),
-    digest: meta.digest,
-  });
-  const next: IndexMeta = {
-    ...meta,
-    revision: result.scan.revision,
-    indexedOffset: result.scan.processedThroughBytes,
-    digest: result.scan.processedThroughDigest,
-    indexedRows: meta.indexedRows + result.rows,
-    invalidRows: meta.invalidRows + result.scan.invalidRows,
-    oversizedRows: meta.oversizedRows + result.scan.oversizedRows,
-    minTimestamp: earlier(meta.minTimestamp, result.minTimestamp),
-    maxTimestamp: later(meta.maxTimestamp, result.maxTimestamp),
-  };
-  await testHooks?.beforePublish?.({
-    dbPath: path,
-    stagedGeneration: meta.generation,
-    publishedGeneration: meta.generation,
-  });
-  assertHomeUnchanged(dir);
-  if (!publish(db, { generation: meta.generation, indexedOffset: meta.indexedOffset }, next)) {
-    return null;
+  const appendRollupGen = appendStagingRollupGeneration(meta.generation, randomBytes(6).toString("base64url"));
+  let published = false;
+  try {
+    const result = await ingest(
+      db,
+      meta.generation,
+      meta.indexedOffset,
+      {
+        identityKey: usageLogIdentityKey(meta.revision),
+        digest: meta.digest,
+      },
+      undefined,
+      appendRollupGen,
+    );
+    const next: IndexMeta = {
+      ...meta,
+      revision: result.scan.revision,
+      indexedOffset: result.scan.processedThroughBytes,
+      digest: result.scan.processedThroughDigest,
+      indexedRows: meta.indexedRows + result.rows,
+      invalidRows: meta.invalidRows + result.scan.invalidRows,
+      oversizedRows: meta.oversizedRows + result.scan.oversizedRows,
+      minTimestamp: earlier(meta.minTimestamp, result.minTimestamp),
+      maxTimestamp: later(meta.maxTimestamp, result.maxTimestamp),
+      minAdmissionTimestamp: earlier(meta.minAdmissionTimestamp, result.minAdmissionTimestamp),
+      rollupParityFlags: meta.rollupParityFlags | result.rollupParityFlags,
+    };
+    await testHooks?.beforePublish?.({
+      dbPath: path,
+      stagedGeneration: meta.generation,
+      publishedGeneration: meta.generation,
+    });
+    assertHomeUnchanged(dir);
+    if (!publish(db, { generation: meta.generation, indexedOffset: meta.indexedOffset }, next, appendRollupGen)) {
+      return null;
+    }
+    published = true;
+    await testHooks?.afterPublish?.({ dbPath: path, generation: meta.generation });
+    hardenSidecars(path);
+    return snapshotFrom(next, result.rows, ingestPassesFor(path));
+  } finally {
+    if (!published) {
+      deleteRollupsForGeneration(db, appendRollupGen);
+    }
   }
-  await testHooks?.afterPublish?.({ dbPath: path, generation: meta.generation });
-  hardenSidecars(path);
-  return snapshotFrom(next, result.rows, ingestPassesFor(path));
 }
 
 /**
@@ -1645,6 +1718,8 @@ export async function readUsageFilterCandidatesPassive(
     if (!tables.has(META_TABLE)
       || !tables.has("usage_rows")
       || !tables.has("usage_attributions")
+      || !tables.has("usage_hourly_rollups")
+      || !tables.has("usage_summary_snapshots")
       || !tables.has("usage_filter_index_writers")) {
       throw new UsageFilterIndexForeignError();
     }

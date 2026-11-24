@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { getConfigDir } from "../../config/paths";
 import { enforceAppOwnedMemoryBudget } from "../../lib/app-owned-memory";
 import {
   currentUsageLogRevision,
@@ -15,6 +17,8 @@ import {
   readUsageFilterCandidatesPassive,
   requestUsageFilterIndexRebuild,
   resetUsageFilterIndexForTests,
+  USAGE_FILTER_INDEX_SCHEMA_VERSION,
+  usageFilterIndexPath,
   UsageFilterIndexPageError,
   type UsageFilterCandidateRead,
   type UsageFilterIndexQuery,
@@ -24,9 +28,21 @@ import {
 import { isPassiveRead } from "../../lib/passive-read";
 import {
   createUsageSummaryAccumulator,
+  localDateKey,
+  USAGE_RANGES,
+  USAGE_SURFACES,
   type UsageSummaryAccumulator,
   type UsageSummaryFilterInput,
 } from "../../usage/summary";
+import {
+  computeUsageOverlaySignature,
+  persistUsageSummarySnapshot,
+  queryApiKeyUsageFromRollup,
+  readUsageSummarySnapshotPassive,
+  type CachedPresetSummary,
+  type PersistedApiKeyUsageSnapshot,
+  type UsagePresetSnapshotPayload,
+} from "../../usage/summary-rollup";
 import { userCostOverlayVersion } from "../../usage/user-cost-overlays";
 import type { UsageTimeWindow } from "../../usage/time-range";
 import { snapshotConfiguredKeyIds } from "../../usage/source-filter";
@@ -38,6 +54,7 @@ import {
 import {
   cacheApiKeyUsageFromRollup,
   createApiKeyUsageAccumulator,
+  type ApiKeyUsageSnapshot,
 } from "./api-key-usage";
 
 interface RetainedUsageAggregate {
@@ -128,6 +145,133 @@ function currentTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
+function buildPresetSnapshotPayload(
+  state: RetainedUsageAggregate,
+  now: number,
+  maxReadBytes: number,
+  configuredApiKeyIds?: string[],
+  apiKeySnapshot?: ApiKeyUsageSnapshot,
+): UsagePresetSnapshotPayload {
+  const baseMeta = {
+    ...(state.usageIncomplete ? { usageIncomplete: true as const, usageIncompleteReason: "oversized_rows" as const } : {}),
+    historyTruncated: false,
+    truncatedPrefixBytes: 0,
+    entriesTruncated: false,
+    entriesDropped: 0,
+    snapshotWindowStart: state.accumulator.snapshotWindow.start,
+    snapshotWindowEnd: state.accumulator.snapshotWindow.end,
+  } as const;
+  const presets: Record<string, CachedPresetSummary> = {};
+  for (const range of USAGE_RANGES) {
+    for (const surface of USAGE_SURFACES) {
+      presets[`${range}:${surface}`] = {
+        ...state.accumulator.summarize(range, now, surface),
+        ...baseMeta,
+      };
+    }
+  }
+  const serializedKeys: PersistedApiKeyUsageSnapshot | undefined = apiKeySnapshot && configuredApiKeyIds
+    ? {
+      configuredIds: [...configuredApiKeyIds],
+      snapshotAt: now,
+      ...(apiKeySnapshot.attributionSince !== undefined ? { attributionSince: apiKeySnapshot.attributionSince } : {}),
+      entries: [...apiKeySnapshot.rollup.entries()],
+      ...(apiKeySnapshot.usageIncomplete
+        ? { usageIncomplete: true as const, usageIncompleteReason: "oversized_rows" as const }
+        : {}),
+    }
+    : undefined;
+  return {
+    localDate: localDateKey(now),
+    maxReadBytes,
+    usageIncomplete: state.usageIncomplete,
+    snapshotWindowStart: state.accumulator.snapshotWindow.start,
+    snapshotWindowEnd: state.accumulator.snapshotWindow.end,
+    presets,
+    ...(serializedKeys ? { apiKeySnapshot: serializedKeys } : {}),
+  };
+}
+
+async function persistSnapshotIfIndexMatches(
+  state: RetainedUsageAggregate,
+  options: UsageAggregateOptions,
+  precomputedApiKeys?: ApiKeyUsageSnapshot,
+  onlyIfAbsent = false,
+): Promise<void> {
+  if (isPassiveRead()) return;
+  const dbPath = usageFilterIndexPath(getConfigDir());
+  if (!existsSync(dbPath)) return;
+  if (userCostOverlayVersion() !== state.overlayVersion || currentTimeZone() !== state.timeZone) return;
+  const now = options.now ?? Date.now();
+  const maxReadBytes = options.managementUsageMaxReadBytes ?? 64 * 1024 * 1024;
+  let apiKeys = precomputedApiKeys;
+  if (!apiKeys && options.configuredApiKeyIds) {
+    const rollup = await queryApiKeyUsageFromRollup({
+      configuredIds: options.configuredApiKeyIds,
+      now,
+      expectedSchemaVersion: USAGE_FILTER_INDEX_SCHEMA_VERSION,
+    });
+    if (rollup) apiKeys = rollup.snapshot;
+  }
+  const payload = buildPresetSnapshotPayload(state, now, maxReadBytes, options.configuredApiKeyIds, apiKeys);
+  persistUsageSummarySnapshot({
+    dbPath,
+    identityKey: state.identityKey,
+    processedThroughBytes: state.processedThroughBytes,
+    processedThroughDigest: state.processedThroughDigest,
+    overlaySignature: computeUsageOverlaySignature(),
+    timeZone: state.timeZone,
+    localDate: payload.localDate,
+    maxReadBytes,
+    payload,
+    updatedAt: now,
+    onlyIfAbsent,
+  });
+}
+
+export async function hydratePresetUsageSummariesFromIndex(options: {
+  now: number;
+  timeZone: string;
+  maxReadBytes: number;
+  configuredApiKeyIds: string[];
+}): Promise<{
+  revision: UsageLogRevision;
+  payload: UsagePresetSnapshotPayload;
+} | null> {
+  const dbPath = usageFilterIndexPath(getConfigDir());
+  if (!existsSync(dbPath)) return null;
+  const match = await readUsageSummarySnapshotPassive({
+    expectedSchemaVersion: USAGE_FILTER_INDEX_SCHEMA_VERSION,
+    overlaySignature: computeUsageOverlaySignature(),
+    timeZone: options.timeZone,
+    localDate: localDateKey(options.now),
+    maxReadBytes: options.maxReadBytes,
+  });
+  if (!match) return null;
+  const savedKeys = match.payload.apiKeySnapshot;
+  if (
+    savedKeys
+    && options.now - savedKeys.snapshotAt < 60_000
+    && JSON.stringify(savedKeys.configuredIds) === JSON.stringify(options.configuredApiKeyIds)
+  ) {
+    cacheApiKeyUsageFromRollup(
+      {
+        rollup: new Map(savedKeys.entries),
+        ...(savedKeys.attributionSince !== undefined ? { attributionSince: savedKeys.attributionSince } : {}),
+        ...(savedKeys.usageIncomplete
+          ? { usageIncomplete: true as const, usageIncompleteReason: "oversized_rows" as const }
+          : {}),
+      },
+      options.configuredApiKeyIds,
+      usageLogIdentityKey(match.revision),
+      match.revision.size,
+      options.maxReadBytes,
+      options.now,
+    );
+  }
+  return { revision: match.revision, payload: match.payload };
+}
+
 function resultFrom(
   state: RetainedUsageAggregate,
   update: UsageAggregateResult["update"],
@@ -196,12 +340,14 @@ async function rebuildAggregate(options: UsageAggregateOptions): Promise<UsageAg
 
       const state = makeRetainedAggregate(accumulator, scan, overlayVersion, timeZone);
       const result = publishRetainedAggregate(state);
+      let apiKeySnapshot: ApiKeyUsageSnapshot | undefined;
       if (apiKeyAccumulator && options.configuredApiKeyIds) {
+        apiKeySnapshot = {
+          ...apiKeyAccumulator.snapshot(),
+          ...(state.usageIncomplete ? { usageIncomplete: true as const, usageIncompleteReason: "oversized_rows" as const } : {}),
+        };
         cacheApiKeyUsageFromRollup(
-          {
-            ...apiKeyAccumulator.snapshot(),
-            ...(state.usageIncomplete ? { usageIncomplete: true as const, usageIncompleteReason: "oversized_rows" as const } : {}),
-          },
+          apiKeySnapshot,
           options.configuredApiKeyIds,
           state.identityKey,
           state.revision?.size ?? 0,
@@ -209,6 +355,7 @@ async function rebuildAggregate(options: UsageAggregateOptions): Promise<UsageAg
           options.now,
         );
       }
+      await persistSnapshotIfIndexMatches(state, options, apiKeySnapshot, false);
       return result;
     } catch (error) {
       lastError = error;
@@ -272,6 +419,7 @@ async function appendAggregate(
       };
       retainedAggregate = next;
       enforceAppOwnedMemoryBudget();
+      await persistSnapshotIfIndexMatches(next, options, undefined, false);
       return resultFrom(next, "append");
     }
   } catch (error) {
@@ -296,7 +444,10 @@ async function refreshAggregate(options: UsageAggregateOptions): Promise<UsageAg
     retainedAggregate = null;
     return rebuildAggregate(options);
   }
-  if (usageLogRevisionKey(observed) === state.revisionKey) return resultFrom(state, "unchanged");
+  if (usageLogRevisionKey(observed) === state.revisionKey) {
+    await persistSnapshotIfIndexMatches(state, options, undefined, true);
+    return resultFrom(state, "unchanged");
+  }
   return appendAggregate(state, options);
 }
 

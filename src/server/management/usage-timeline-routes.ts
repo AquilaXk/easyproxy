@@ -1,4 +1,13 @@
-import { readUsageSnapshotForManagement } from "../../usage/log";
+import { existsSync } from "node:fs";
+import { getConfigDir } from "../../config/paths";
+import { USAGE_FILTER_INDEX_SCHEMA_VERSION, usageFilterIndexPath } from "../../usage/filter-index";
+import {
+  currentUsageLogRevision,
+  getManagementUsageMaxEntries,
+  readUsageSnapshotForManagement,
+  usageLogRevisionKey,
+} from "../../usage/log";
+import { queryTimelineFromRollup } from "../../usage/summary-rollup";
 import { createTimelineAccumulator, parseTimelineQuery } from "../../usage/timeline";
 import { jsonResponse } from "../auth-cors";
 import type { ManagementContext } from "./context";
@@ -6,6 +15,10 @@ import type { ManagementContext } from "./context";
 const TIMELINE_CACHE_TTL_MS = 15_000;
 const MAX_TIMELINE_CACHE_ENTRIES = 64;
 const cache = new Map<string, { expiresAt: number; promise: Promise<ReturnType<ReturnType<typeof createTimelineAccumulator>["finish"]>> }>();
+
+export function resetUsageTimelineCacheForTests(): void {
+  cache.clear();
+}
 
 export async function handleUsageTimelineRoutes(ctx: ManagementContext): Promise<Response | undefined> {
   const { req, url } = ctx;
@@ -15,13 +28,30 @@ export async function handleUsageTimelineRoutes(ctx: ManagementContext): Promise
   const bucketMs = query.bucketMinutes * 60_000;
   const roundedNow = Math.floor(query.now / bucketMs) * bucketMs;
   const normalized = { ...query, now: roundedNow };
-  const key = JSON.stringify(normalized);
+  const maxReadBytes = ctx.config.managementUsageMaxReadBytes ?? 64 * 1024 * 1024;
+  const maxEntries = getManagementUsageMaxEntries();
+  const key = JSON.stringify([
+    getConfigDir(),
+    usageLogRevisionKey(currentUsageLogRevision()),
+    maxReadBytes,
+    maxEntries,
+    normalized,
+  ]);
   const current = Date.now();
   const cached = cache.get(key);
   if (cached && cached.expiresAt > current) return jsonResponse(await cached.promise, 200, req, ctx.config);
   if (cached) cache.delete(key);
   let promise: Promise<ReturnType<ReturnType<typeof createTimelineAccumulator>["finish"]>>;
   promise = (async () => {
+    if (existsSync(usageFilterIndexPath(getConfigDir()))) {
+      const fromRollup = await queryTimelineFromRollup({
+        query: normalized,
+        maxReadBytes,
+        maxEntries,
+        expectedSchemaVersion: USAGE_FILTER_INDEX_SCHEMA_VERSION,
+      });
+      if (fromRollup) return fromRollup;
+    }
     const accumulator = createTimelineAccumulator(normalized);
     const snapshot = await readUsageSnapshotForManagement(ctx.config.managementUsageMaxReadBytes);
     for (const entry of snapshot.entries) accumulator.add(entry);

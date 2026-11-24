@@ -24,15 +24,16 @@ async function quotaFetch(providerName: string, config: EpxProviderConfig, url: 
   return configuredOutboundFetch(url, { ...init, ...providerEgressFetchInit(egress) });
 }
 
-const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
-/**
- * Kimi's regional (kimi.ai) Coding API. Its `/usages` answers a Coding Plan API key the same way
- * the kimi.com origin does (#8332). Only key auth may use it: the probe then calls the origin that
- * already receives this key for inference, so it adds no credential destination. OAuth tokens
- * stay on the kimi.com origin they were issued for.
- */
-const KIMI_CODE_REGIONAL_BASE_URL = "https://api.kimi.ai/coding/v1";
-const COMMAND_CODE_BASE_URL = "https://api.commandcode.ai";
+import {
+  COMMAND_CODE_BASE_URL,
+  KIMI_CODE_BASE_URL,
+  KIMI_CODE_REGIONAL_BASE_URL,
+  isCanonicalCommandCodeBaseUrl,
+  isCanonicalKimiCodeBaseUrl,
+  normalizedBaseUrl,
+} from "./canonical-quota-urls";
+export { isCanonicalCommandCodeBaseUrl, isCanonicalKimiCodeBaseUrl, normalizedBaseUrl };
+
 const COMMAND_CODE_WHOAMI_URL = `${COMMAND_CODE_BASE_URL}/alpha/whoami`;
 const COMMAND_CODE_CREDITS_URL = `${COMMAND_CODE_BASE_URL}/alpha/billing/credits`;
 const COMMAND_CODE_SUBSCRIPTIONS_URL = `${COMMAND_CODE_BASE_URL}/alpha/billing/subscriptions`;
@@ -1177,22 +1178,8 @@ async function fetchAbliterationQuota(provider: string, config: EpxProviderConfi
 }
 
 
-export function normalizedBaseUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    if (url.username || url.password || url.search || url.hash) return null;
-    return `${url.origin.toLowerCase()}${url.pathname.replace(/\/+$/, "")}`;
-  } catch {
-    return null;
-  }
-}
-
 function quotaResetAt(row: Record<string, unknown>): number | undefined {
   return normalizeResetAt(row.resetTime ?? row.resetAt ?? row.reset_time ?? row.reset_at);
-}
-
-export function isCanonicalKimiCodeBaseUrl(baseUrl: string): boolean {
-  return normalizedBaseUrl(baseUrl) === KIMI_CODE_BASE_URL;
 }
 
 /**
@@ -1205,12 +1192,6 @@ function kimiCodeQuotaBaseUrl(config: Pick<EpxProviderConfig, "baseUrl" | "authM
   if (normalized === KIMI_CODE_BASE_URL) return normalized;
   if (normalized === KIMI_CODE_REGIONAL_BASE_URL && (config.authMode ?? "key") === "key") return normalized;
   return null;
-}
-
-export function isCanonicalCommandCodeBaseUrl(baseUrl: string): boolean {
-  const normalized = normalizedBaseUrl(baseUrl);
-  // OAuth preset points at the API root; the Provider-API preset at /provider/v1.
-  return normalized === COMMAND_CODE_BASE_URL || normalized === `${COMMAND_CODE_BASE_URL}/provider/v1`;
 }
 
 /**

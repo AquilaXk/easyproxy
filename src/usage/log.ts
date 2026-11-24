@@ -1289,6 +1289,9 @@ let MANAGEMENT_USAGE_MAX_ENTRIES = MANAGEMENT_USAGE_MAX_ENTRIES_DEFAULT;
 export function setManagementUsageMaxEntriesForTests(value: number | null): void {
   MANAGEMENT_USAGE_MAX_ENTRIES = value ?? MANAGEMENT_USAGE_MAX_ENTRIES_DEFAULT;
 }
+export function getManagementUsageMaxEntries(): number {
+  return MANAGEMENT_USAGE_MAX_ENTRIES;
+}
 const MANAGEMENT_USAGE_FLIGHT_STALE_MS = 30_000;
 export interface ManagementUsageSnapshot {
   entries: PersistedUsageEntry[];

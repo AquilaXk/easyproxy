@@ -344,7 +344,7 @@ export function rangeWindow(range: UsageRange, now: number): { since: number | n
   return { since: null, days: 0 };
 }
 
-function localDateKey(ts: number): string {
+export function localDateKey(ts: number): string {
   const d = new Date(ts);
   const y = String(d.getFullYear()).padStart(4, "0");
   const m = String(d.getMonth() + 1).padStart(2, "0");

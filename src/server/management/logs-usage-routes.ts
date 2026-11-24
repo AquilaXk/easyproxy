@@ -89,6 +89,7 @@ import {
   getFilteredUsageAggregate,
   getJevStatsAggregate,
   getUsageAggregate,
+  hydratePresetUsageSummariesFromIndex,
 } from "./usage-aggregate-cache";
 import { normalizeJevStatsComboId } from "../../usage/jev-stats";
 
@@ -370,6 +371,39 @@ export async function handleLogsUsageRoutes(ctx: ManagementContext): Promise<Res
       }
 
       const configuredApiKeyIds = (config.apiKeys ?? []).map(key => key.id);
+      const hydrated = await hydratePresetUsageSummariesFromIndex({
+        now,
+        timeZone: observedTimeZone,
+        maxReadBytes: effectiveReadLimit,
+        configuredApiKeyIds,
+      });
+      if (hydrated) {
+        const currentOverlayVersion = userCostOverlayVersion();
+        const hydratedRevisionKey = `${usageLogRevisionKey(hydrated.revision)}\0${effectiveReadLimit}`;
+        const hydratedIdentityKey = `${usageLogIdentityKey(hydrated.revision)}\0${effectiveReadLimit}`;
+        const hydratedFreshUntil = now + 60_000;
+        const hydratedSize = hydrated.revision.size;
+        for (const nextRange of USAGE_RANGES) {
+          for (const nextSurface of USAGE_SURFACES) {
+            const presetKey = `${nextRange}:${nextSurface}`;
+            const nextSummary = refreshedUsageSummary(hydrated.payload.presets[presetKey]!, nextRange, now);
+            setUsageSummaryCacheEntry(presetKey, {
+              revisionKey: hydratedRevisionKey,
+              identityKey: hydratedIdentityKey,
+              maxReadBytes: effectiveReadLimit,
+              overlayVersion: currentOverlayVersion,
+              timeZone: observedTimeZone,
+              expiresAt: usageSummaryExpiresAt(nextRange, nextSurface, now),
+              freshUntil: hydratedFreshUntil,
+              lastSeenSize: hydratedSize,
+              revisionReadAt: now,
+              summary: nextSummary,
+            });
+          }
+        }
+        return jsonResponse(refreshedUsageSummary(hydrated.payload.presets[cacheKey]!, range, now));
+      }
+
       const aggregate = await getUsageAggregate({
         now,
         configuredApiKeyIds,

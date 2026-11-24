@@ -335,3 +335,31 @@ test("a directory with its own index.html is served as a separate app with the s
     expect(await serveGuiFile(pathname, guiDist, session)!.text()).toContain("<title>main</title>");
   }
 });
+
+test("classic hashed assets receive immutable caching and fall back safely to main assets", async () => {
+  const guiDist = temporaryRoot("epx-gui-static-classic-assets-");
+  mkdirSync(join(guiDist, "assets"), { recursive: true });
+  mkdirSync(join(guiDist, "classic", "assets"), { recursive: true });
+  writeFileSync(join(guiDist, "assets", "shared-AbCdEf12.js"), "console.log('shared');");
+  writeFileSync(join(guiDist, "assets", "runtime-config.js"), "window.cfg = {};");
+  writeFileSync(join(guiDist, "classic", "assets", "index-ZyXwVu98.js"), "console.log('classic');");
+  writeFileSync(join(guiDist, "classic", "assets", "unhashed.js"), "console.log('unhashed');");
+
+  const ownHashed = serveGuiFile("/classic/assets/index-ZyXwVu98.js", guiDist);
+  expect(ownHashed).not.toBeNull();
+  expect(ownHashed!.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
+  expect(await ownHashed!.text()).toBe("console.log('classic');");
+
+  const ownUnhashed = serveGuiFile("/classic/assets/unhashed.js", guiDist);
+  expect(ownUnhashed).not.toBeNull();
+  expect(ownUnhashed!.headers.get("Cache-Control")).toBe("no-cache");
+
+  const fallbackHashed = serveGuiFile("/classic/assets/shared-AbCdEf12.js", guiDist);
+  expect(fallbackHashed).not.toBeNull();
+  expect(fallbackHashed!.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
+  expect(await fallbackHashed!.text()).toBe("console.log('shared');");
+
+  // Unhashed or nested classic misses must NOT fall back into assets/.
+  expect(serveGuiFile("/classic/assets/runtime-config.js", guiDist)).toBeNull();
+  expect(serveGuiFile("/classic/assets/sub/shared-AbCdEf12.js", guiDist)).toBeNull();
+});

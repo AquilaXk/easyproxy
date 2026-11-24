@@ -1,13 +1,3 @@
 {
-  "cyclic": [
-    "src/oauth/anthropic-model-quota.ts",
-    "src/oauth/anthropic-routing.ts",
-    "src/oauth/health.ts",
-    "src/oauth/index.ts",
-    "src/providers/kiro-account-state-disk.ts",
-    "src/providers/kiro-usage.ts",
-    "src/providers/quota/account-cache.ts",
-    "src/providers/quota/anthropic-cooldown-recovery.ts",
-    "src/providers/quota/vendor-probes-key.ts"
-  ]
+  "cyclic": []
 }

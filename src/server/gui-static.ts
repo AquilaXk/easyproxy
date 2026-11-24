@@ -203,34 +203,44 @@ export function serveGuiFile(
   const filePath = resolveGuiFilePath(guiDist, pathname);
   if (!filePath) return null;
 
-  if (!isFile(filePath)) {
-    if (!extname(pathname)) {
-      // A directory with its own index.html is a separate app (the classic dashboard at
-      // /classic/); every other extensionless path is the main dashboard's SPA fallback.
-      const nestedIndex = join(filePath, "index.html");
-      const indexPath = isFile(nestedIndex) ? nestedIndex : join(guiDist, "index.html");
-      if (isFile(indexPath)) {
-        return htmlResponse(indexPath, session, runtimeRole, managementAuthRequired);
+  const root = resolve(guiDist);
+  let servedPath = filePath;
+  if (!isFile(servedPath)) {
+    const requestedRel = relative(root, servedPath).replace(/\\/g, "/");
+    if (requestedRel.startsWith("classic/assets/")) {
+      const name = requestedRel.slice("classic/assets/".length);
+      if (!name.includes("/") && HASHED_ASSET_PATTERN.test(name)) {
+        const sharedPath = resolve(root, "assets", name);
+        if (isFile(sharedPath)) servedPath = sharedPath;
       }
     }
-    return null;
+    if (!isFile(servedPath)) {
+      if (!extname(pathname)) {
+        // A directory with its own index.html is a separate app (the classic dashboard at
+        // /classic/); every other extensionless path is the main dashboard's SPA fallback.
+        const nestedIndex = join(filePath, "index.html");
+        const indexPath = isFile(nestedIndex) ? nestedIndex : join(guiDist, "index.html");
+        if (isFile(indexPath)) {
+          return htmlResponse(indexPath, session, runtimeRole, managementAuthRequired);
+        }
+      }
+      return null;
+    }
   }
 
-  const ext = extname(filePath);
+  const ext = extname(servedPath);
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
-  if (ext === ".html") return htmlResponse(filePath, session, runtimeRole, managementAuthRequired);
+  if (ext === ".html") return htmlResponse(servedPath, session, runtimeRole, managementAuthRequired);
 
-  const root = resolve(guiDist);
-  // "assets/" matches Vite's default assetsDir (gui/vite.config.ts). If that value is
-  // ever changed, update this prefix to match. filePath is already resolve()-normalized
-  // by resolveGuiFilePath, so rel cannot contain ".." fragments.
+  // "assets/" and "classic/assets/" match Vite's assetsDir for the main and classic builds.
+  // servedPath is already resolve()-normalized, so rel cannot contain ".." fragments.
   //
-  // Immutable 1-year caching is only applied when the file is under assets/ AND its basename
-  // matches Vite's content-hash pattern (e.g. index-B5r7LNHN.js). Any unhashed asset under
-  // assets/ (e.g. runtime-config.js) or elsewhere falls back to no-cache so clients revalidate,
-  // whereas index.html uses no-store above to avoid storing any bootstrap state.
-  const rel = relative(root, filePath).replace(/\\/g, "/");
-  const isHashedAsset = rel.startsWith("assets/") && HASHED_ASSET_PATTERN.test(basename(filePath));
+  // Immutable 1-year caching is only applied when the file is under assets/ or classic/assets/
+  // AND its basename matches Vite's content-hash pattern (e.g. index-B5r7LNHN.js). Any unhashed
+  // asset (e.g. runtime-config.js) falls back to no-cache so clients revalidate.
+  const rel = relative(root, servedPath).replace(/\\/g, "/");
+  const isHashedAsset = (rel.startsWith("assets/") || rel.startsWith("classic/assets/"))
+    && HASHED_ASSET_PATTERN.test(basename(servedPath));
   const cacheControl = isHashedAsset
     ? "public, max-age=31536000, immutable"
     : "no-cache";
@@ -238,7 +248,7 @@ export function serveGuiFile(
   // Snapshot bytes before returning the response. Bun.file is lazy: if gui/dist is replaced
   // after Bun frames the response but before the stream finishes, its Content-Length can
   // describe the old file while the body comes from the new one (#2792).
-  return new Response(readFileSync(filePath), {
+  return new Response(readFileSync(servedPath), {
     headers: {
       "Content-Type": contentType,
       "Cache-Control": cacheControl,

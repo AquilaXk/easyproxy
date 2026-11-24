@@ -850,5 +850,6 @@
   "management-body-bounds.test.ts": "server", "hotpath-index-parity.test.ts": "server", "adapter-bounded-response.test.ts": "responses",
   "cli-operator-deferred-verbs.test.ts": "cli", "ci-run-changed-tests-contract.test.ts": "ci-workflows",
   "combo-least-used-preview.test.ts": "routing", "management-provider-probe-ssrf.test.ts": "server",
+  "usage-summary-rollup.test.ts": "usage",
   "sse-single-pass-fastpath.test.ts": "responses"
 }

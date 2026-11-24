@@ -2,7 +2,16 @@ import { boundDecisionWindows, publishAnthropicDecisionQuota } from "../quota-de
 import { decisionQuotaSinkActive, publishDecisionAccountQuota } from "../../lib/decision-quota-sink";
 import { mergeAnthropicFamilyWindows, hasAnthropicFamilyEnumeration } from "./anthropic-family-headers";
 import { getCachedProviderAccountQuota, captureProviderAccountQuotaEpoch, type AccountQuotaCacheEntry } from "./account-cache";
-import { anthropicModelQuotaFor } from "../../oauth/anthropic-model-quota";
+import { anthropicFamilyQuotaStateFor } from "../../oauth/anthropic-family-quota-state";
+import {
+  anthropicCooldownStateFor,
+  clearAllAnthropicCooldownGenerations,
+  reconcileAllAnthropicCooldownGenerations,
+} from "../../oauth/anthropic-cooldown-state";
+export {
+  clearAllAnthropicCooldownGenerations,
+  reconcileAllAnthropicCooldownGenerations,
+};
 import type { AnthropicInstanceId } from "../anthropic-instance-id";
 import type { GenerationContext } from "../../lib/state-store-sweeper";
 import { anthropicCredentialEvidenceKey, credentialGeneration, getAccountCredentialWithStatus, getAccountSet } from "../../oauth/store";
@@ -43,7 +52,7 @@ export type DispatchedAnthropicUsageProbe = AnthropicUsageProbe & {
 
 /** Create the cooldown-recovery probe owner for one Anthropic instance; its results are credential- and generation-bound before they may publish. */
 function createAnthropicCooldownRecovery(instance: AnthropicInstanceId) {
-  const familyGeneration = (accountId: string) => anthropicModelQuotaFor(instance).anthropicFamilyQuotaGeneration(accountId);
+  const familyGeneration = (accountId: string) => anthropicFamilyQuotaStateFor(instance).anthropicFamilyQuotaGeneration(accountId);
 
   /** Check live pause and bearer ownership at the last synchronous step before usage dispatch. */
   function assertAnthropicQuotaSendAllowed(accountId: string, token: string): void {
@@ -53,22 +62,19 @@ function createAnthropicCooldownRecovery(instance: AnthropicInstanceId) {
     }
   }
 
-  let cooldownGenerationByAccount: Map<string, number> | undefined;
-  let emptyGeneration = 0;
-  let nextCooldownGeneration = 1;
-  // Account lifetime is distinct from refusal/probe mutations; a valid refusal must not revoke itself.
-  let accountIncarnations: Map<string, number> | undefined;
-  let emptyAccountIncarnation = 0;
-  let nextAccountIncarnation = 1;
+  const {
+    anthropicCooldownGeneration,
+    reserveCooldownGeneration,
+    noteAnthropicCooldownMutation,
+    anthropicAccountIncarnation,
+    reserveAnthropicAccountIncarnation,
+    clearAnthropicCooldownGenerations,
+    reconcileAnthropicCooldownGenerations,
+  } = anthropicCooldownStateFor(instance);
   let afterSettlementForTests: (() => void) | undefined;
 
   function setAnthropicQuotaAfterSettlementForTests(hook: (() => void) | undefined): void {
     afterSettlementForTests = hook;
-  }
-
-  /** Monotonic per-account fence shared by routing mutations and quota publication. */
-  function anthropicCooldownGeneration(accountId: string): number {
-    return cooldownGenerationByAccount?.get(accountId) ?? emptyGeneration;
   }
 
   /** Keep same-state quota calls joinable while moving post-429 calls to a fresh flight. */
@@ -82,35 +88,6 @@ function createAnthropicCooldownRecovery(instance: AnthropicInstanceId) {
   function anthropicCredentialQuotaFlightKey(baseKey: string, accountId: string): string {
     const row = getAccountSet(instance)?.accounts.find(row => row.id === accountId);
     return `${anthropicCooldownFlightKey(baseKey, accountId)}\0${row ? anthropicCredentialEvidenceKey(row) : "missing"}`;
-  }
-
-  function reserveCooldownGeneration(accountId: string): number {
-    return cooldownGenerationByAccount?.get(accountId) ?? noteAnthropicCooldownMutation(accountId);
-  }
-
-  function noteAnthropicCooldownMutation(accountId: string): number {
-    const generation = nextCooldownGeneration++;
-    (cooldownGenerationByAccount ??= new Map()).set(accountId, generation);
-    return generation;
-  }
-
-  function anthropicAccountIncarnation(accountId: string): number {
-    return accountIncarnations?.get(accountId) ?? emptyAccountIncarnation;
-  }
-
-  function reserveAnthropicAccountIncarnation(accountId: string): number {
-    const existing = accountIncarnations?.get(accountId);
-    if (existing !== undefined) return existing;
-    const incarnation = nextAccountIncarnation++;
-    (accountIncarnations ??= new Map()).set(accountId, incarnation);
-    return incarnation;
-  }
-
-  function clearAnthropicCooldownGenerations(): void {
-    emptyGeneration = nextCooldownGeneration++;
-    cooldownGenerationByAccount = undefined;
-    emptyAccountIncarnation = nextAccountIncarnation++;
-    accountIncarnations = undefined;
   }
 
   /**
@@ -139,7 +116,7 @@ function createAnthropicCooldownRecovery(instance: AnthropicInstanceId) {
     const routing = anthropicRoutingFor(instance);
     if (!isCurrentCredential()) return null;
     const cooldownGeneration = reserveCooldownGeneration(accountId);
-    const capturedFamilyGeneration = anthropicModelQuotaFor(instance).captureAnthropicFamilyQuotaGeneration(accountId);
+    const capturedFamilyGeneration = anthropicFamilyQuotaStateFor(instance).captureAnthropicFamilyQuotaGeneration(accountId);
     const claim = routing.captureAnthropicCooldownRecovery(accountId);
     return {
       instance,
@@ -203,7 +180,7 @@ function createAnthropicCooldownRecovery(instance: AnthropicInstanceId) {
     const rawQuota = quota;
     const ownsFamily = probe.isCurrentFamily();
     const authoritative = ownsFamily && hasAnthropicFamilyEnumeration(quota);
-    if (ownsFamily) anthropicModelQuotaFor(instance).observeAnthropicFamilyQuota(accountId, quota.customWindows ?? [], quota.updatedAt, authoritative);
+    if (ownsFamily) anthropicFamilyQuotaStateFor(instance).observeAnthropicFamilyQuota(accountId, quota.customWindows ?? [], quota.updatedAt, authoritative);
     if (!authoritative && !monthlyFallback) {
       const cached = getCachedProviderAccountQuota(instance, accountId)?.customWindows;
       const windows = ownsFamily ? mergeAnthropicFamilyWindows(cached, quota.customWindows)
@@ -236,16 +213,6 @@ function createAnthropicCooldownRecovery(instance: AnthropicInstanceId) {
     };
   }
 
-  function reconcileAnthropicCooldownGenerations(context: GenerationContext): number {
-    // Probe reservations include accounts with no cooldown, so every claim retires here.
-    for (const id of cooldownGenerationByAccount?.keys() ?? []) {
-      if (!context.oauthAccountKeys.has(`${instance}\0${id}`)) noteAnthropicCooldownMutation(id);
-    }
-    for (const id of accountIncarnations?.keys() ?? []) {
-      if (!context.oauthAccountKeys.has(`${instance}\0${id}`)) accountIncarnations!.set(id, nextAccountIncarnation++);
-    }
-    return 0; // Tombstones are retained, never reclaimed into an older generation.
-  }
   return Object.freeze({ instance, assertAnthropicQuotaSendAllowed, setAnthropicQuotaAfterSettlementForTests,
     anthropicCooldownGeneration, anthropicCooldownFlightKey, anthropicCredentialQuotaFlightKey, noteAnthropicCooldownMutation,
     anthropicAccountIncarnation, reserveAnthropicAccountIncarnation,
@@ -258,13 +225,6 @@ export function anthropicCooldownRecoveryFor(instance: AnthropicInstanceId): Ant
   let facade = instances.get(instance);
   if (!facade) { facade = createAnthropicCooldownRecovery(instance); instances.set(instance, facade); }
   return facade;
-}
-export function reconcileAllAnthropicCooldownGenerations(context: GenerationContext): number {
-  for (const facade of instances.values()) facade.reconcileAnthropicCooldownGenerations(context);
-  return 0;
-}
-export function clearAllAnthropicCooldownGenerations(): void {
-  for (const facade of instances.values()) facade.clearAnthropicCooldownGenerations();
 }
 export function assertAnthropicQuotaSendAllowed(accountId: string, token: string): void {
   anthropicCooldownRecoveryFor("anthropic").assertAnthropicQuotaSendAllowed(accountId, token);

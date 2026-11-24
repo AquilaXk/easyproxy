@@ -15,7 +15,26 @@ import { getValidAccessSnapshotForAccount } from "../oauth";
 import { resolveKiroRequestProfile } from "../oauth/kiro";
 import { credentialGeneration, getAccountSet } from "../oauth/store";
 import type { ProviderAccount } from "../oauth/types";
-import { hydrateKiroAccountState, kiroEvidenceIdentity, type KiroPersistedVerdict } from "./kiro-account-state-disk";
+import { hydrateKiroAccountState } from "./kiro-account-state-disk";
+import { kiroEvidenceIdentity } from "./kiro-account-evidence";
+import {
+  clearKiroAccountUsageState,
+  commitKiroAccountUsageState,
+  getKiroAccountExhaustion,
+  getKiroUsageStateEntry,
+  hydrateKiroUsageVerdict,
+  kiroPersistableVerdicts,
+  reconcileKiroAccountUsageState,
+  setKiroUsageStateEntry,
+} from "./kiro-usage-state";
+export {
+  clearKiroAccountUsageState,
+  commitKiroAccountUsageState,
+  getKiroAccountExhaustion,
+  hydrateKiroUsageVerdict,
+  kiroPersistableVerdicts,
+  reconcileKiroAccountUsageState,
+};
 import { accountCacheKey, accountQuotaCache } from "./quota/account-cache";
 import type { ProviderQuota, ProviderQuotaWindow } from "./quota-types";
 import {
@@ -64,22 +83,6 @@ export interface KiroUsageSnapshot {
   /** Epoch ms when the plan window rolls over, when upstream reports it. */
   nextResetAt?: number;
 }
-
-interface KiroUsageStateEntry {
-  exhausted: boolean;
-  nextResetAt?: number;
-  observedAt: number;
-  identity: string;
-}
-
-/**
- * Exhaustion state, keyed exactly like the per-account quota cache in `quota.ts`.
- *
- * It is written only inside that cache's commit guard and cleared through the same
- * logout/reconcile paths, so a removed account cannot leave a verdict behind for whatever
- * account replaces it.
- */
-const usageState = new Map<string, KiroUsageStateEntry>();
 
 function safeRegion(value: string | undefined): string | undefined {
   return value && REGION_PATTERN.test(value) ? value : undefined;
@@ -243,59 +246,6 @@ export async function kiroUsageContextForAccount(accountId: string): Promise<Kir
   };
 }
 
-/** Record exhaustion for a probed account. Called from the quota cache's commit guard. */
-export function commitKiroAccountUsageState(key: string, snapshot: KiroUsageSnapshot | null, identity?: string): void {
-  if (!snapshot) {
-    usageState.delete(key);
-    return;
-  }
-  if (!identity) return;
-  usageState.set(key, {
-    exhausted: snapshot.exhausted,
-    ...(snapshot.nextResetAt !== undefined ? { nextResetAt: snapshot.nextResetAt } : {}),
-    observedAt: Date.now(), identity,
-  });
-}
-
-export function* kiroPersistableVerdicts(now = Date.now()): IterableIterator<[string, KiroPersistedVerdict]> {
-  const live = new Map(getAccountSet("kiro")?.accounts.map(account =>
-    [accountCacheKey("kiro", account.id), kiroEvidenceIdentity(account)]) ?? []);
-  for (const [key, entry] of usageState) {
-    if (live.get(key) !== entry.identity || entry.observedAt > now
-      || now - entry.observedAt >= ACCOUNT_QUOTA_TTL_MS
-      || (entry.nextResetAt !== undefined && entry.nextResetAt <= now)) continue;
-    yield [key, { exhausted: entry.exhausted, observedAt: entry.observedAt, identity: entry.identity,
-      ...(entry.nextResetAt !== undefined ? { resetAt: entry.nextResetAt } : {}) }];
-  }
-}
-
-export function hydrateKiroUsageVerdict(key: string, verdict: KiroPersistedVerdict, account: ProviderAccount): void {
-  if (usageState.has(key) || verdict.identity !== kiroEvidenceIdentity(account)) return;
-  usageState.set(key, { exhausted: verdict.exhausted, observedAt: verdict.observedAt,
-    identity: verdict.identity, ...(verdict.resetAt !== undefined ? { nextResetAt: verdict.resetAt } : {}) });
-}
-
-/**
- * Is this account known to be out of allowance right now?
- *
- * Returns `null` (unknown) rather than a stale `true`: an expired reading, or one whose
- * reset time has already passed, must degrade to "try it again", never to "keep it parked".
- */
-export function getKiroAccountExhaustion(
-  key: string,
-  account: ProviderAccount,
-  now = Date.now(),
-): { exhausted: boolean; nextResetAt?: number } | null {
-  const entry = usageState.get(key);
-  if (!entry || entry.identity !== kiroEvidenceIdentity(account)) return null;
-  if (entry.observedAt > now || now - entry.observedAt >= ACCOUNT_QUOTA_TTL_MS) return null;
-  if (entry.nextResetAt !== undefined && entry.nextResetAt <= now) return null;
-  return {
-    exhausted: entry.exhausted,
-    ...(entry.nextResetAt !== undefined ? { nextResetAt: entry.nextResetAt } : {}),
-  };
-}
-
 /** The only Kiro routing evidence read; each half expires on its own clock. */
 export function kiroAccountEvidence(account: ProviderAccount, now = Date.now(), opts: { hydrate?: boolean } = {}):
   { quotaPercent?: number; creditsUsed?: number; creditsLimit?: number; exhausted?: boolean; resetAt?: number } {
@@ -330,12 +280,12 @@ export function noteKiroMonthlyRefusal(accountId: string, generation: string, ob
   if (!live || credentialGeneration(live.credential) !== generation) return 0;
   const key = accountCacheKey("kiro", accountId);
   const identity = kiroEvidenceIdentity(live);
-  const old = usageState.get(key);
+  const old = getKiroUsageStateEntry(key);
   if (old?.identity === identity && old.observedAt >= observedAt)
     return Math.max(0, (old.nextResetAt ?? observedAt) - observedAt);
   const resetAt = kiroAccountEvidence(live, observedAt).resetAt;
   const until = Math.min(resetAt ?? observedAt + ACCOUNT_QUOTA_TTL_MS, observedAt + ACCOUNT_QUOTA_TTL_MS);
-  usageState.set(key, { identity, exhausted: true, observedAt,
+  setKiroUsageStateEntry(key, { identity, exhausted: true, observedAt,
     ...(resetAt !== undefined ? { nextResetAt: resetAt } : {}) });
   return Math.max(0, until - observedAt);
 }
@@ -346,31 +296,9 @@ export function noteKiroServedSuccess(accountId: string, generation: string, obs
   const live = getAccountSet("kiro")?.accounts.find(row => row.id === accountId);
   if (!live || credentialGeneration(live.credential) !== generation) return false;
   const key = accountCacheKey("kiro", accountId);
-  const old = usageState.get(key);
+  const old = getKiroUsageStateEntry(key);
   if (!old || old.identity !== kiroEvidenceIdentity(live) || old.observedAt >= observedAt || !old.exhausted)
     return false;
-  usageState.set(key, { ...old, exhausted: false, observedAt });
+  setKiroUsageStateEntry(key, { ...old, exhausted: false, observedAt });
   return true;
-}
-
-/** Drop rows for one provider prefix, or all of them. Mirrors clearAccountQuotaCache. */
-export function clearKiroAccountUsageState(prefix?: string): void {
-  if (!prefix) {
-    usageState.clear();
-    return;
-  }
-  for (const key of [...usageState.keys()]) {
-    if (key.startsWith(prefix)) usageState.delete(key);
-  }
-}
-
-/** Drop rows whose account no longer exists. Mirrors reconcileProviderAccountQuotaRows. */
-export function reconcileKiroAccountUsageState(liveKeys: ReadonlySet<string>): number {
-  let removed = 0;
-  for (const key of [...usageState.keys()]) {
-    if (liveKeys.has(key)) continue;
-    usageState.delete(key);
-    removed += 1;
-  }
-  return removed;
 }

@@ -5,6 +5,7 @@
   "usage-provider-credit-price.test.ts": "usage",
   "usage-filter-index.test.ts": "usage",
   "usage-filter-paging.test.ts": "usage",
+  "usage-summary-rollup.test.ts": "usage",
   "request-log.test.ts": "usage",
   "request-log-normalization.test.ts": "usage",
   "request-log-error-detail.test.ts": "usage",
