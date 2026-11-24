@@ -2,7 +2,7 @@ import { createCodexCliTestRoot } from "../helpers/codex-cli-fixture-root";
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, connect } from "node:net";
 import { join } from "node:path";
 import { applyCodexCliUpdate, verifyInstalledCodexVersion, type CodexCliApplyDeps } from "../../src/codex/cli-update-apply";
@@ -11,7 +11,7 @@ import { createCodexCliUpdatePlan } from "../../src/codex/cli-update-plan";
 import { acquireCodexCliApplyLease } from "../../src/codex/cli-update-lease";
 import { createCodexCliApplyFixture, resolveCodexCliFixtureNode, waitForApplyAdmission, writeFixtureNpmWrapper } from "../helpers/codex-cli-apply-fixture";
 import { fixtureArtifactSet } from "../helpers/codex-cli-apply-artifact";
-import { repoPath, repoRoot } from "../helpers/repo-root";
+import { repoPath } from "../helpers/repo-root";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { codexCliPlatformBacking } from "../../src/codex/cli-install-provenance";
 import { observeCodexCliFileSet, sameCodexCliFiles } from "../../src/codex/cli-update-files";
@@ -47,16 +47,6 @@ function cli(f: ReturnType<typeof fixture>, args: string[]) {
   });
   expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
   return JSON.parse(result.stdout);
-}
-function fixtureInWorkspaceScratch() {
-  const scratch = join(repoRoot(), ".tmp");
-  mkdirSync(scratch, { recursive: true });
-  const stat = lstatSync(scratch);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync.native(scratch) !== scratch) {
-    throw new Error("workspace .tmp is not a private local directory");
-  }
-  const root = mkdtempSync(join(scratch, "codex-cli-management-e2e-")); roots.push(root);
-  return createCodexCliApplyFixture(root, process.platform, process.arch);
 }
 
 function managementTestEnv(f: ReturnType<typeof fixture>) {
@@ -353,7 +343,7 @@ describe.skipIf(!posix)("Codex CLI private-prefix POSIX apply", () => {
   }, 120_000);
 
   test("published Node launcher -> isolated management plan, lost-response apply retry, and CLI status", async () => {
-    const f = fixtureInWorkspaceScratch();
+    const f = fixture();
     const gate = join(f.root, "release-npm-install");
     gateFixtureNpmInstall(f);
     const port = await reserveLoopbackPort();

@@ -24,7 +24,7 @@ export const LOG_ERROR_CODES: ReadonlySet<string> = new Set([
   "origin_rejected", "upstream_server_error", "invalid_api_key", "permission_denied", "location_not_supported",
   "subscription_required", "server_is_overloaded", "invalid_request_error", "upstream_error",
   // local refusals and proxy decisions
-  "server_busy", "unsupported_feature", "usage_limit_reached", "undeclared_tool_call", "outbound_body_too_large",
+  "server_busy", "unsupported_feature", "usage_limit_reached", "undeclared_tool_call", "outbound_body_too_large", "outbound_secret_guard",
   "codex_no_account", "upstream_reset_replay_refused", "memory_model_target_unavailable",
   "intercept_target_unavailable", "observation_barrier_timeout", "claude_thread_unsupported",
   "claude_compatibility_configuration", "claude_compatibility_unsupported",

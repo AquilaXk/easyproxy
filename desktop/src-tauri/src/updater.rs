@@ -708,21 +708,102 @@ fn read_bounded_pipe<R: std::io::Read>(mut reader: R, limit: usize) -> Vec<u8> {
     out
 }
 
+#[cfg(target_os = "windows")]
+static AUTHENTICODE_BUSY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(any(target_os = "windows", test))]
-fn wait_for_child_with_timeout(
-    child: &mut std::process::Child,
+struct AuthenticodeSlot {
+    flag: &'static std::sync::atomic::AtomicBool,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl AuthenticodeSlot {
+    fn try_acquire(flag: &'static std::sync::atomic::AtomicBool) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self { flag })
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl Drop for AuthenticodeSlot {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+type PipeReader = (
+    std::sync::mpsc::Receiver<Vec<u8>>,
+    std::thread::JoinHandle<()>,
+);
+
+#[cfg(any(target_os = "windows", test))]
+fn spawn_bounded_pipe_reader(
+    pipe: Option<impl std::io::Read + Send + 'static>,
+    limit: usize,
+) -> PipeReader {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let bytes = pipe
+            .map(|reader| read_bounded_pipe(reader, limit))
+            .unwrap_or_default();
+        let _ = tx.send(bytes);
+    });
+    (rx, handle)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn abandon_authenticode_child(
+    slot: AuthenticodeSlot,
+    mut child: std::process::Child,
+    readers: [PipeReader; 2],
+    temp_msi: Option<TempMsiFile>,
+) {
+    // The desktop shell never forces child termination (`tests/clients/desktop-exit-ownership.test.ts`).
+    // Reap the timed-out child and its pipe readers on a background thread while holding the
+    // single verification slot and temp MSI file until the process finishes.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        for (_, handle) in readers {
+            let _ = handle.join();
+        }
+        drop(temp_msi);
+        drop(slot);
+    });
+}
+
+#[cfg(any(target_os = "windows", test))]
+struct ChildRunOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn run_bounded_child_with_slot(
+    busy_flag: &'static std::sync::atomic::AtomicBool,
+    prepare: impl FnOnce() -> Result<(Option<TempMsiFile>, std::process::Child), String>,
     timeout: Duration,
     poll_interval: Duration,
-) -> Result<std::process::ExitStatus, String> {
+) -> Result<ChildRunOutput, String> {
+    let slot = AuthenticodeSlot::try_acquire(busy_flag).ok_or_else(|| {
+        "Windows Authenticode verification is still busy from an earlier attempt".to_string()
+    })?;
+    let (temp_msi, mut child) = prepare()?;
+    let readers = [
+        spawn_bounded_pipe_reader(child.stdout.take(), MAX_AUTHENTICODE_PIPE_BYTES),
+        spawn_bounded_pipe_reader(child.stderr.take(), MAX_AUTHENTICODE_PIPE_BYTES),
+    ];
     let deadline = std::time::Instant::now() + timeout;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 let now = std::time::Instant::now();
                 if now >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    abandon_authenticode_child(slot, child, readers, temp_msi);
                     return Err(format!(
                         "Windows Authenticode verification timed out after {}s",
                         timeout.as_secs()
@@ -732,14 +813,40 @@ fn wait_for_child_with_timeout(
                 std::thread::sleep(poll_interval.min(remaining));
             }
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                abandon_authenticode_child(slot, child, readers, temp_msi);
                 return Err(format!(
                     "Windows Authenticode verification wait failed: {error}"
                 ));
             }
         }
+    };
+    let mut outputs = Vec::with_capacity(2);
+    for (rx, _) in &readers {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(bytes) => outputs.push(bytes),
+            Err(_) => {
+                abandon_authenticode_child(slot, child, readers, temp_msi);
+                return Err(format!(
+                    "Windows Authenticode verification timed out after {}s",
+                    timeout.as_secs()
+                ));
+            }
+        }
     }
+    for (_, handle) in readers {
+        let _ = handle.join();
+    }
+    drop(temp_msi);
+    drop(slot);
+    let mut iter = outputs.into_iter();
+    let stdout = iter.next().unwrap_or_default();
+    let stderr = iter.next().unwrap_or_default();
+    Ok(ChildRunOutput {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -748,50 +855,34 @@ fn verify_windows_msi_package(bytes: &[u8]) -> Result<(), InstallFailure> {
     use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let temp_msi = TempMsiFile::create_with_bytes(bytes).map_err(|error| {
-        InstallFailure::new(format!(
-            "The update was downloaded, but Authenticode staging failed: {error}. Installation has not started."
-        ))
-    })?;
-    let powershell = windows_powershell_path();
-    let mut child = Command::new(&powershell)
-        .args(windows_authenticode_command_args())
-        .env("EPX_UPDATE_MSI_PATH", temp_msi.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|error| {
-            InstallFailure::new(format!(
-                "The update was downloaded, but Windows Authenticode verification could not run: {error}. Installation has not started."
-            ))
-        })?;
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-    let stdout_thread = std::thread::spawn(move || {
-        stdout_pipe
-            .map(|r| read_bounded_pipe(r, MAX_AUTHENTICODE_PIPE_BYTES))
-            .unwrap_or_default()
-    });
-    let stderr_thread = std::thread::spawn(move || {
-        stderr_pipe
-            .map(|r| read_bounded_pipe(r, MAX_AUTHENTICODE_PIPE_BYTES))
-            .unwrap_or_default()
-    });
-    let status = wait_for_child_with_timeout(
-        &mut child,
+    let output = run_bounded_child_with_slot(
+        &AUTHENTICODE_BUSY,
+        || {
+            let temp_msi = TempMsiFile::create_with_bytes(bytes).map_err(|error| {
+                format!("The update was downloaded, but Authenticode staging failed: {error}")
+            })?;
+            let powershell = windows_powershell_path();
+            let child = Command::new(&powershell)
+                .args(windows_authenticode_command_args())
+                .env("EPX_UPDATE_MSI_PATH", temp_msi.path())
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|error| {
+                    format!(
+                        "The update was downloaded, but Windows Authenticode verification could not run: {error}"
+                    )
+                })?;
+            Ok((Some(temp_msi), child))
+        },
         WINDOWS_AUTHENTICODE_TIMEOUT,
         Duration::from_millis(50),
     )
-    .map_err(|reason| {
-        InstallFailure::new(format!("{reason}. Installation has not started."))
-    })?;
-    let stdout = stdout_thread.join().unwrap_or_default();
-    let stderr = stderr_thread.join().unwrap_or_default();
-    classify_windows_authenticode_output(status.success(), &stdout, &stderr).map_err(|reason| {
-        InstallFailure::new(format!("{reason}. Installation has not started."))
-    })
+    .map_err(|reason| InstallFailure::new(format!("{reason}. Installation has not started.")))?;
+    classify_windows_authenticode_output(output.status.success(), &output.stdout, &output.stderr)
+        .map_err(|reason| InstallFailure::new(format!("{reason}. Installation has not started.")))
 }
 
 pub fn start_background_checks(app: AppHandle) {
@@ -858,7 +949,7 @@ pub async fn check_and_show(app: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::{
         after_install_failure, classify_windows_authenticode_output, linux_updater_target,
-        read_bounded_pipe, update_label, wait_for_child_with_timeout,
+        read_bounded_pipe, run_bounded_child_with_slot, update_label,
         windows_authenticode_command_args, windows_powershell_path_from, CheckGeneration,
         DesktopUpdateState, InstallClaim, TempMsiFile, UiProjection, MAX_AUTHENTICODE_PIPE_BYTES,
         WINDOWS_AUTHENTICODE_TIMEOUT,
@@ -1376,29 +1467,71 @@ mod tests {
 
         #[cfg(unix)]
         {
-            let mut fast = std::process::Command::new("/bin/sh")
-                .args(["-c", "exit 0"])
-                .spawn()
-                .unwrap();
-            let ok_status = wait_for_child_with_timeout(
-                &mut fast,
+            static TEST_BUSY: AtomicBool = AtomicBool::new(false);
+            let temp_fast = TempMsiFile::create_with_bytes_limit(b"msi", 64).unwrap();
+            let temp_fast_path = temp_fast.path.clone();
+            let ok_output = run_bounded_child_with_slot(
+                &TEST_BUSY,
+                || {
+                    let child = std::process::Command::new("/bin/sh")
+                        .args(["-c", "printf ok && printf warn >&2"])
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    Ok((Some(temp_fast), child))
+                },
                 Duration::from_secs(2),
                 Duration::from_millis(5),
             )
             .unwrap();
-            assert!(ok_status.success());
+            assert!(ok_output.status.success());
+            assert_eq!(ok_output.stdout, b"ok");
+            assert_eq!(ok_output.stderr, b"warn");
+            assert!(!temp_fast_path.exists());
+            assert!(!TEST_BUSY.load(Ordering::Acquire));
 
-            let mut slow = std::process::Command::new("/bin/sh")
-                .args(["-c", "sleep 5"])
-                .spawn()
-                .unwrap();
-            let err = wait_for_child_with_timeout(
-                &mut slow,
-                Duration::from_millis(50),
+            let temp_slow = TempMsiFile::create_with_bytes_limit(b"msi", 64).unwrap();
+            let temp_slow_path = temp_slow.path.clone();
+            let started = std::time::Instant::now();
+            let err = run_bounded_child_with_slot(
+                &TEST_BUSY,
+                || {
+                    let child = std::process::Command::new("/bin/sh")
+                        .args(["-c", "sleep 1"])
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    Ok((Some(temp_slow), child))
+                },
+                Duration::from_millis(40),
                 Duration::from_millis(5),
             )
-            .unwrap_err();
-            assert!(err.contains("timed out"));
+            .err()
+            .unwrap();
+            assert!(err.contains("timed out"), "{err}");
+            assert!(started.elapsed() < Duration::from_millis(500));
+            assert!(temp_slow_path.exists());
+            let busy_err = run_bounded_child_with_slot(
+                &TEST_BUSY,
+                || panic!("busy slot must reject before spawn"),
+                Duration::from_secs(1),
+                Duration::from_millis(5),
+            )
+            .err()
+            .unwrap();
+            assert!(busy_err.contains("busy"), "{busy_err}");
+
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while TEST_BUSY.load(Ordering::Acquire) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "abandoned child slot never cleared"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(!temp_slow_path.exists());
         }
     }
 }
