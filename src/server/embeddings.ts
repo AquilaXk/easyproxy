@@ -1,4 +1,11 @@
-import { getCombo, NoAvailableComboTargetsError, noteComboFailure, noteComboSuccess, settleComboReprobeSuccess } from "../combos";
+import {
+  getCombo,
+  NoAvailableComboTargetsError,
+  noteComboFailure,
+  noteComboSuccess,
+  pickComboTarget,
+  settleComboReprobeSuccess,
+} from "../combos";
 import { sanitizeUpstreamErrorText } from "../adapters/upstream-http-error";
 import { formatErrorResponse } from "../bridge";
 import { signalWithTimeout } from "../lib/abort";
@@ -186,11 +193,24 @@ function resolveEmbeddingCandidates(route: RouteResult, config: EpxConfig): Reso
   if (route.combo) {
     const combo = getCombo(config, route.combo.comboId);
     if (combo?.targets?.length) {
-      for (const target of combo.targets) {
-        if (target.provider === route.providerName && target.model === route.modelId) continue;
-        const p = config.providers[target.provider];
+      const excluded = new Set<string>([`${route.providerName}/${route.modelId}`]);
+      for (let step = 0; step < combo.targets.length; step += 1) {
+        const nextPick = pickComboTarget(config, route.combo.comboId, {
+          exclude: excluded,
+          allowCooldownReprobe: false,
+          preview: true,
+          eligible: (target) => {
+            const p = config.providers[target.provider];
+            return Boolean(p && !p.disabled);
+          },
+        });
+        if (!nextPick) break;
+        const key = `${nextPick.target.provider}/${nextPick.target.model}`;
+        if (excluded.has(key)) break;
+        excluded.add(key);
+        const p = config.providers[nextPick.target.provider];
         if (p && !p.disabled) {
-          candidates.push({ providerName: target.provider, modelId: target.model, provider: p });
+          candidates.push({ providerName: nextPick.target.provider, modelId: nextPick.target.model, provider: p });
         }
       }
     }
@@ -284,6 +304,20 @@ export async function handleEmbeddings(
 
   const candidates = resolveEmbeddingCandidates(route, config);
   const admissionScope = resolveAdmissionModelScope(config, options.admission);
+  const comboConfig = route.combo ? getCombo(config, route.combo.comboId) : undefined;
+  const isEwmaCombo = comboConfig?.strategy === "ewma-latency";
+  const recordComboFailure = (candidate: ResolvedEmbeddingCandidate): void => {
+    if (!route.combo) return;
+    noteComboFailure(
+      route.combo.comboId,
+      { provider: candidate.providerName, model: candidate.modelId },
+      route.combo.writerGeneration,
+      {
+        recordEwma: isEwmaCombo,
+        ewmaLatency: comboConfig?.ewmaLatency,
+      },
+    );
+  };
 
   let upstreamAttempted = false;
   let lastErrorStatus = 502;
@@ -343,6 +377,7 @@ export async function handleEmbeddings(
     const syncDestErr = providerDestinationConfigError(candidate.providerName, candidate.provider);
     if (syncDestErr) {
       if (hasMore) {
+        recordComboFailure(candidate);
         lastErrorStatus = 400;
         lastErrorMessage = syncDestErr;
         lastErrorCode = "destination_rejected";
@@ -359,6 +394,7 @@ export async function handleEmbeddings(
       const dnsErr = await providerDestinationResolvedError(candidate.providerName, candidate.provider);
       if (dnsErr) {
         if (hasMore) {
+          recordComboFailure(candidate);
           lastErrorStatus = 400;
           lastErrorMessage = dnsErr;
           lastErrorCode = "destination_rejected";
@@ -387,6 +423,7 @@ export async function handleEmbeddings(
         token = null;
       }
       if (!token) {
+        recordComboFailure(candidate);
         lastErrorStatus = 401;
         lastErrorMessage = `OAuth access token unavailable for provider ${candidate.providerName}`;
         lastErrorCode = "oauth_token_unavailable";
@@ -400,6 +437,7 @@ export async function handleEmbeddings(
       headers.set("authorization", `Bearer ${token}`);
     } else if (candidate.provider.authMode !== "forward") {
       if (isProviderApiKeyPaused(candidate.provider)) {
+        recordComboFailure(candidate);
         lastErrorStatus = 403;
         lastErrorMessage = new ProviderApiKeyPausedError().message;
         lastErrorCode = "provider_key_paused";
@@ -415,6 +453,7 @@ export async function handleEmbeddings(
         if (candidate.provider.keyOptional) {
           if (candidate.provider.apiKey) headers.set("authorization", `Bearer ${candidate.provider.apiKey}`);
         } else {
+          recordComboFailure(candidate);
           lastErrorStatus = 403;
           lastErrorMessage = `no active API key available for provider ${candidate.providerName}`;
           lastErrorCode = "provider_key_unavailable";
@@ -446,6 +485,7 @@ export async function handleEmbeddings(
       ? Math.max(1_000, Math.min(candidate.provider.connectTimeoutMs, EMBEDDINGS_TIMEOUT_MS))
       : EMBEDDINGS_TIMEOUT_MS;
     const deadline = signalWithTimeout(timeoutMs, req.signal);
+    const attemptStartMs = Date.now();
     let upstreamRes: Response;
     try {
       upstreamAttempted = true;
@@ -461,6 +501,7 @@ export async function handleEmbeddings(
         signal: deadline.signal,
       });
       if (bytesResult.oversized) {
+        recordComboFailure(candidate);
         lastErrorStatus = 502;
         lastErrorMessage = `upstream embeddings response exceeded ${MAX_EMBEDDINGS_RESPONSE_BYTES} bytes`;
         lastErrorCode = "upstream_response_too_large";
@@ -475,10 +516,17 @@ export async function handleEmbeddings(
         lastErrorMessage = sanitizeUpstreamErrorText(text) || `upstream returned HTTP ${upstreamRes.status}`;
         lastErrorCode = `upstream_${upstreamRes.status}`;
         if (hasMore && isTransientUpstreamStatus(upstreamRes.status)) {
-          if (route.combo) {
-            noteComboFailure(route.combo.comboId, { provider: candidate.providerName, model: candidate.modelId }, route.combo.writerGeneration);
-          }
+          recordComboFailure(candidate);
           continue;
+        }
+        if (
+          isTransientUpstreamStatus(upstreamRes.status)
+          || upstreamRes.status >= 500
+          || upstreamRes.status === 429
+          || upstreamRes.status === 401
+          || upstreamRes.status === 403
+        ) {
+          recordComboFailure(candidate);
         }
         logCtx.errorCode = lastErrorCode;
         addFinalRequestLog(options.requestId, options.start, logCtx, upstreamRes.status, { closeReason: "non_stream" });
@@ -489,6 +537,7 @@ export async function handleEmbeddings(
       try {
         json = JSON.parse(text);
       } catch {
+        recordComboFailure(candidate);
         lastErrorStatus = 502;
         lastErrorMessage = "upstream returned invalid JSON for embeddings";
         lastErrorCode = "invalid_upstream_json";
@@ -499,19 +548,29 @@ export async function handleEmbeddings(
       }
 
       if (!isRec(json)) {
-        logCtx.errorCode = "invalid_upstream_payload";
+        recordComboFailure(candidate);
+        lastErrorStatus = 502;
+        lastErrorMessage = "upstream returned a non-object embeddings payload";
+        lastErrorCode = "invalid_upstream_payload";
+        if (hasMore) continue;
+        logCtx.errorCode = lastErrorCode;
         addFinalRequestLog(options.requestId, options.start, logCtx, 502, { closeReason: "non_stream" });
-        return formatErrorResponse(502, "upstream_error", "upstream returned a non-object embeddings payload");
+        return formatErrorResponse(502, "upstream_error", lastErrorMessage);
       }
 
       const { usage } = parseEmbeddingsUsage(json, parsed.estimatedTokens);
-      if (route.combo) {
-        const combo = getCombo(config, route.combo.comboId);
-        const matchedTarget = combo?.targets.find(
+      if (route.combo && comboConfig) {
+        const matchedTarget = comboConfig.targets.find(
           (t) => t.provider === candidate.providerName && t.model === candidate.modelId,
         );
-        if (combo && matchedTarget) {
-          noteComboSuccess(route.combo.comboId, combo, matchedTarget, route.combo.writerGeneration);
+        if (matchedTarget) {
+          noteComboSuccess(
+            route.combo.comboId,
+            comboConfig,
+            matchedTarget,
+            route.combo.writerGeneration,
+            { latencyMs: Math.max(1, Date.now() - attemptStartMs) },
+          );
           if (
             candidate.providerName === route.combo.target.provider
             && candidate.modelId === route.combo.target.model
@@ -538,10 +597,8 @@ export async function handleEmbeddings(
       lastErrorStatus = 502;
       lastErrorMessage = error instanceof Error ? error.message : String(error);
       lastErrorCode = "upstream_fetch_failed";
+      recordComboFailure(candidate);
       if (hasMore) {
-        if (route.combo) {
-          noteComboFailure(route.combo.comboId, { provider: candidate.providerName, model: candidate.modelId }, route.combo.writerGeneration);
-        }
         continue;
       }
       logCtx.errorCode = lastErrorCode;

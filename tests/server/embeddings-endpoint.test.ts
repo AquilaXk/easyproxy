@@ -3,6 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDefaultConfig } from "../../src/config";
+import { clearComboEwmaState, clearComboSelectionState, snapshotComboEwmaStats } from "../../src/combos";
+import type { EpxProviderTransport } from "../../src/providers/xai-transport";
 import { resetApiKeyBudgetsForTests, getApiKeyBudgetSnapshot } from "../../src/server/api-key-budget";
 import { handleEmbeddings, resolveEmbeddingsUrl } from "../../src/server/embeddings";
 import { clearRequestLogsForTests, getRequestLogEntries, type RequestLogContext } from "../../src/server/request-log";
@@ -22,6 +24,8 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
     }
     resetOtlpTracingForTests();
     resetApiKeyBudgetsForTests();
+    clearComboEwmaState();
+    clearComboSelectionState();
     clearRequestLogsForTests();
     if (origHome === undefined) delete process.env.EASYPROXY_HOME;
     else process.env.EASYPROXY_HOME = origHome;
@@ -466,5 +470,215 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
     } finally {
       await fixture.close();
     }
+  });
+
+  test("converges ewma-latency combos over /v1/embeddings and penalizes oversized, invalid-JSON, and non-object upstream failures", async () => {
+    const home = mkdtempSync(join(tmpdir(), "epx-emb-ewma-"));
+    homes.push(home);
+    clearComboEwmaState();
+    clearComboSelectionState();
+
+    const hits: string[] = [];
+    const slowSrv = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch() {
+        hits.push("slow");
+        await Bun.sleep(65);
+        return Response.json({
+          object: "list",
+          data: [{ object: "embedding", index: 0, embedding: [0.1] }],
+          model: "emb-slow",
+          usage: { prompt_tokens: 2, total_tokens: 2 },
+        });
+      },
+    });
+    servers.push(slowSrv);
+
+    const fastSrv = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        hits.push("fast");
+        return Response.json({
+          object: "list",
+          data: [{ object: "embedding", index: 0, embedding: [0.2] }],
+          model: "emb-fast",
+          usage: { prompt_tokens: 2, total_tokens: 2 },
+        });
+      },
+    });
+    servers.push(fastSrv);
+
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      hostname: "127.0.0.1",
+      defaultProvider: "fast",
+      providers: {
+        slow: {
+          adapter: "openai-compatible",
+          baseUrl: `http://127.0.0.1:${slowSrv.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-slow",
+          models: ["emb-slow"],
+        },
+        fast: {
+          adapter: "openai-compatible",
+          baseUrl: `http://127.0.0.1:${fastSrv.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-fast",
+          models: ["emb-fast"],
+        },
+      },
+      combos: {
+        "emb-ewma": {
+          strategy: "ewma-latency",
+          ewmaLatency: { alpha: 0.5, minSamples: 1, errorPenaltyMs: 15_000 },
+          targets: [
+            { provider: "slow", model: "emb-slow" },
+            { provider: "fast", model: "emb-fast" },
+          ],
+        },
+      },
+    };
+
+    const fixture = await startManagementServerFixture(home, cfg);
+    try {
+      const base = `http://127.0.0.1:${fixture.server.port}`;
+      // Cold start explores slow then fast, then exploits fast on subsequent calls.
+      for (let i = 0; i < 5; i += 1) {
+        const res = await fetch(`${base}/v1/embeddings`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "combo/emb-ewma", input: `probe-${i}` }),
+        });
+        expect(res.status).toBe(200);
+      }
+      expect(hits.slice(0, 2)).toEqual(["slow", "fast"]);
+      expect(hits.slice(2)).toEqual(["fast", "fast", "fast"]);
+
+      const ewmaStats = snapshotComboEwmaStats("emb-ewma");
+      expect(ewmaStats["slow/emb-slow"]?.samples).toBe(1);
+      expect(ewmaStats["fast/emb-fast"]?.samples).toBe(4);
+      expect((ewmaStats["slow/emb-slow"]?.ewmaMs ?? 0)).toBeGreaterThan((ewmaStats["fast/emb-fast"]?.ewmaMs ?? 0));
+    } finally {
+      await fixture.close();
+    }
+
+    // Exercise oversized body, invalid JSON, and non-object JSON failover + EWMA failure penalties directly.
+    clearComboEwmaState();
+    clearComboSelectionState();
+    const modes: Array<"oversized" | "invalid-json" | "non-object"> = ["oversized", "invalid-json", "non-object"];
+    let badAttempt = 0;
+    const oneMbChunk = new Uint8Array(1024 * 1024);
+
+    const badProvider: EpxProviderTransport = {
+      adapter: "openai-compatible",
+      baseUrl: "https://bad.example.com/v1",
+      authMode: "key",
+      apiKey: "sk-bad",
+      models: ["m-bad"],
+      fetch: async () => {
+        const mode = modes[Math.min(badAttempt, modes.length - 1)]!;
+        badAttempt += 1;
+        if (mode === "oversized") {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let c = 0; c < 33; c += 1) {
+                controller.enqueue(oneMbChunk);
+              }
+              controller.close();
+            },
+          });
+          return new Response(stream, { status: 200, headers: { "content-type": "application/json" } });
+        }
+        if (mode === "invalid-json") {
+          return new Response("{not-json", { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return new Response("42", { status: 200, headers: { "content-type": "application/json" } });
+      },
+    };
+
+    const goodHits: number[] = [];
+    const goodProvider: EpxProviderTransport = {
+      adapter: "openai-compatible",
+      baseUrl: "https://good.example.com/v1",
+      authMode: "key",
+      apiKey: "sk-good",
+      models: ["m-good"],
+      fetch: async () => {
+        goodHits.push(1);
+        return Response.json({
+          object: "list",
+          data: [{ object: "embedding", index: 0, embedding: [0.9] }],
+          model: "m-good",
+          usage: { prompt_tokens: 4, total_tokens: 4 },
+        });
+      },
+    };
+
+    const failCfg: EpxConfig = {
+      ...getDefaultConfig(),
+      providers: {
+        bad: badProvider,
+        good: goodProvider,
+      },
+      combos: {
+        "emb-fail": {
+          strategy: "ewma-latency",
+          ewmaLatency: { alpha: 0.5, minSamples: 1, errorPenaltyMs: 25_000 },
+          targets: [
+            { provider: "bad", model: "m-bad" },
+            { provider: "good", model: "m-good" },
+          ],
+        },
+      },
+    };
+
+    // Call 1: bad returns >32 MiB oversized response -> fails over to good and records EWMA failure on bad.
+    const makeCtx = (): RequestLogContext => ({ start: Date.now(), method: "POST", path: "/v1/embeddings" });
+    const req1 = new Request("http://127.0.0.1/v1/embeddings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "combo/emb-fail", input: "hello" }),
+    });
+    const res1 = await handleEmbeddings(req1, failCfg, makeCtx(), { requestId: "emb-ov-1", start: Date.now() });
+    expect(res1.status).toBe(200);
+    expect(badAttempt).toBe(1);
+    expect(goodHits.length).toBe(1);
+    expect(snapshotComboEwmaStats("emb-fail")["bad/m-bad"]?.consecutiveFailures).toBe(1);
+
+    // Clear good's cold-start by verifying single-target fail behavior records failures for invalid JSON and non-object JSON too.
+    const singleBadCfg: EpxConfig = {
+      ...getDefaultConfig(),
+      providers: { bad: badProvider },
+      combos: {
+        "emb-single-fail": {
+          strategy: "ewma-latency",
+          ewmaLatency: { alpha: 0.5, minSamples: 1, errorPenaltyMs: 25_000 },
+          targets: [{ provider: "bad", model: "m-bad" }],
+        },
+      },
+    };
+
+    const req2 = new Request("http://127.0.0.1/v1/embeddings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "combo/emb-single-fail", input: "invalid json" }),
+    });
+    const res2 = await handleEmbeddings(req2, singleBadCfg, makeCtx(), { requestId: "emb-ij-2", start: Date.now() });
+    expect(res2.status).toBe(502);
+    expect(snapshotComboEwmaStats("emb-single-fail")["bad/m-bad"]?.consecutiveFailures).toBe(1);
+
+    const req3 = new Request("http://127.0.0.1/v1/embeddings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "combo/emb-single-fail", input: "non object json" }),
+    });
+    const res3 = await handleEmbeddings(req3, singleBadCfg, makeCtx(), { requestId: "emb-no-3", start: Date.now() });
+    expect(res3.status).toBe(502);
+    expect(snapshotComboEwmaStats("emb-single-fail")["bad/m-bad"]?.consecutiveFailures).toBe(2);
   });
 });

@@ -8,10 +8,14 @@ import type { EpxTelemetryConfig } from "./telemetry";
 import type { EpxClaudeCodeToolLoadingConfig } from "./claude-tool-loading";
 import type { EpxLinkHomeConfig, EpxLinkTransportConfig } from "./link";
 import type { EpxRoutingProfileConfig } from "./routing-profile";
+import type { EpxComboEwmaLatencyConfig, EpxScenarioKind, EpxScenarioRoutingConfig } from "./scenario-ewma";
+import type { EpxOtlpConfig } from "./otlp";
 import type { ToolOutputCompressionConfig } from "../lib/tool-output-compression";
 import type { OutboundSecretGuardConfig } from "../lib/outbound-secret-guard";
 export type { ToolOutputCompressionConfig } from "../lib/tool-output-compression";
 export type { OutboundSecretGuardConfig, OutboundSecretGuardMode } from "../lib/outbound-secret-guard";
+export type { EpxComboEwmaLatencyConfig, EpxScenarioKind, EpxScenarioRoutingConfig } from "./scenario-ewma";
+export type { EpxOtlpConfig } from "./otlp";
 export type { AnthropicAccountPoolConfig, AnthropicModelRoute, EpxAccountPoolRotationStrategy, EpxAccountPoolQuotaWindow } from "./anthropic-account-pool";
 export type { EpxFallbackConfig, EpxFallbackDeviceConfig, EpxFallbackKind, EpxFallbackSwitches } from "./fallback";
 export type { EpxClaudeCodeToolLoadingConfig } from "./claude-tool-loading";
@@ -1487,35 +1491,6 @@ export interface EpxConfig extends EpxLinkHomeConfig, CodexAccountLoginConfig {
   fallback?: EpxFallbackConfig;
 }
 
-export type EpxScenarioKind = "longContext" | "think" | "background" | "webSearch";
-
-export interface EpxScenarioRoutingConfig {
-  enabled: boolean;
-  /** Optional priority order when multiple scenarios match. Default: ["background", "longContext", "webSearch", "think"]. */
-  precedence?: EpxScenarioKind[];
-  /** Estimated token threshold triggering `longContext`. Default 60000; range 1000..10000000. */
-  longContextThresholdTokens?: number;
-  /** Minimum Anthropic `thinking.budget_tokens` triggering `think` when specified. Default 1; range 1..1000000. */
-  thinkBudgetThreshold?: number;
-  /** Model selectors (`provider/model`, combo/policy alias, or native model) per scenario. */
-  routes: Partial<Record<EpxScenarioKind, string>>;
-  /** Optional inbound selector allowlist (exact match or trailing `*` prefix). */
-  matchModels?: string[];
-  /** Allow scenario routing even when the caller requested an explicit `combo/*` or `policy/*` selector. Default false. */
-  overrideExplicitRoutes?: boolean;
-}
-
-export interface EpxComboEwmaLatencyConfig {
-  /** Smoothing factor in (0, 1]. Default 0.3. */
-  alpha?: number;
-  /** Optional time-decay half-life in ms (1000..3600000). */
-  halfLifeMs?: number;
-  /** Minimum recorded observations per target before EWMA exploits measured winners over cold-start exploration. Default 1; range 1..20. */
-  minSamples?: number;
-  /** Synthetic latency penalty in ms recorded on upstream failure. Default 30000; range 100..600000. */
-  errorPenaltyMs?: number;
-}
-
 export type EpxComboStrategy = "failover" | "round-robin" | "random" | "least-used" | "reset-window" | "jev" | "ewma-latency";
 export type EpxComboDefaultEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type EpxComboDefaultEffortMode = "fallback" | "force";
@@ -1944,27 +1919,6 @@ export interface EpxCatalogAutoRefreshConfig {
    * freshness and only risks a rate limit against every enabled provider at once.
    */
   intervalMinutes?: number;
-}
-
-export interface EpxOtlpConfig {
-  /** Master switch. Default false (disabled with O(1) zero-overhead runtime check). */
-  enabled: boolean;
-  /** Target OTLP/HTTP trace collector endpoint (e.g. https://collector/v1/traces or loopback http://). */
-  endpoint?: string;
-  /** Optional static headers (e.g. Authorization / collector API key), masked on management/CLI output. */
-  headers?: Record<string, string>;
-  /** Optional OTLP resource service.name (default "easyproxy"). */
-  serviceName?: string;
-  /** Trace sampling rate in [0, 1] (default 1). */
-  sampleRate?: number;
-  /** Per-export HTTP timeout in milliseconds (500..30000, default 5000). */
-  timeoutMs?: number;
-  /** Bounded in-memory queue capacity (16..4096, default 512). */
-  maxQueueSize?: number;
-  /** Maximum spans per OTLP batch (1..256, default 64). */
-  batchSize?: number;
-  /** Allow private-network http:// endpoints when true; metadata destinations remain blocked. */
-  allowPrivateNetwork?: boolean;
 }
 
 /**

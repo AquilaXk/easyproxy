@@ -122,7 +122,7 @@ describe("virtual API key expiry, TPM window, and in-flight USD holds", () => {
     });
     try {
       const base = `http://127.0.0.1:${fixture.server.port}`;
-      for (const path of ["/v1/responses", "/v1/chat/completions", "/v1/messages"]) {
+      for (const path of ["/v1/responses", "/v1/chat/completions", "/v1/messages", "/v1/embeddings"]) {
         const res = await fetch(`${base}${path}`, {
           method: "POST",
           headers: {
