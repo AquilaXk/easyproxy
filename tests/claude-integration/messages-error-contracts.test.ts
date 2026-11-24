@@ -188,6 +188,7 @@ const envelopeWriterRows = [
   ["src/server/index/serve-options.ts", 4, "fixed endpoint auth/origin bypasses"],
   ["src/server/messages-native-tool-guard.ts", 1, "deferred local guard terminal"],
   ["src/server/admitted-http-turn.ts", 1, "per-key admission budget refusal projection"],
+  ["src/server/api-key-budget-estimate.ts", 1, "pre-dispatch per-key token and in-flight USD hold refusal projection"],
 ] as const;
 test("W1/W3 envelope writers are covered by explicit dispositions", async () => {
   const actual: Record<string, number> = {};

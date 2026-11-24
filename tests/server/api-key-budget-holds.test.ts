@@ -440,4 +440,77 @@ describe("virtual API key expiry, TPM window, and in-flight USD holds", () => {
     expect(persisted?.maxInFlightCostUsd).toBeUndefined();
     expect(persisted?.expiresAt).toBeUndefined();
   });
+
+  test("pre-dispatch hold refusal rolls back RPM and dailyCount, and clamps lone turn against dailyTokenLimit alongside tpmLimit", async () => {
+    const now = Date.UTC(2026, 10, 24, 15, 0, 0);
+    const tpmKey = {
+      id: "k-rollback",
+      name: "rollback",
+      key: "epx_data_rollback00000001",
+      createdAt: "2026-01-01T00:00:00Z",
+      rpmLimit: 2,
+      maxDailyRequests: 2,
+      tpmLimit: 100,
+    };
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      apiKeys: [tpmKey],
+    };
+    const runAdmitted = createAdmittedHttpTurn(
+      () => MAX_DECOMPRESSED_BODY_BYTES,
+      () => Response.json({ error: "busy" }, { status: 503 }),
+    );
+
+    const logCtx: { model: string; provider: string; apiKeyId?: string; apiKeyBudgetLease?: unknown } = {
+      model: "p/m",
+      provider: "p",
+      apiKeyId: tpmKey.id,
+    };
+    const res429 = await runAdmitted(
+      new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: { "x-easyproxy-api-key": tpmKey.key, "content-type": "application/json" },
+        body: JSON.stringify({ model: "p/m", input: "x".repeat(2000) }),
+      }),
+      cfg,
+      async () => {
+        const refusal = await reservePreDispatchApiKeyHold({
+          req: new Request("http://127.0.0.1/v1/responses", { method: "POST" }),
+          config: cfg,
+          logCtx: logCtx as never,
+          providerName: "p",
+          modelId: "m",
+          estimatedInputTokens: 500,
+          maxOutputTokens: 0,
+        });
+        expect(refusal?.status).toBe(429);
+        return refusal!;
+      },
+      { requestId: "req-rb-1", start: now, logCtx: logCtx as never },
+    );
+    expect(res429.status).toBe(429);
+    const snapAfterRefusal = getApiKeyBudgetHoldSnapshot(tpmKey.id, now);
+    expect(snapAfterRefusal.rpmCurrent).toBe(0);
+    expect(snapAfterRefusal.dailyRequestsUsed).toBe(0);
+    expect(snapAfterRefusal.inFlightTokens).toBe(0);
+
+    // Lone turn clamps to remaining dailyTokenLimit even when tpmLimit is also set.
+    const comboEntry = {
+      id: "k-clamp",
+      name: "clamp",
+      key: "epx_data_clamp0000000001",
+      createdAt: "2026-01-01T00:00:00Z",
+      tpmLimit: 500,
+      dailyTokenLimit: 10,
+    };
+    const first = acquireApiKeyBudgetLease(comboEntry, { now, reserveTokens: 1 });
+    expect(first.allowed).toBe(true);
+    if (!first.allowed) return;
+    expect(first.lease.reserveHold(comboEntry, { tokens: 80, costUsd: 0, now })).toEqual({ allowed: true });
+    expect(first.lease.reservedTokens).toBe(10);
+    const second = acquireApiKeyBudgetLease(comboEntry, { now, reserveTokens: 1 });
+    expect(second.allowed).toBe(false);
+    if (!second.allowed) expect(second.reason).toBe("daily_token_limit_exceeded");
+    first.lease.releaseUnused();
+  });
 });

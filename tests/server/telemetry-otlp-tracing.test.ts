@@ -348,4 +348,116 @@ describe("optional OTLP tracing", () => {
       await fixture.close();
     }
   });
+
+  test("rejects oversized PUT /api/telemetry/otlp bodies (413), enforces un-mocked DNS SSRF protection, and isolates batch headers/privacy", async () => {
+    const home = mkdtempSync(join(tmpdir(), "epx-otlp-hardening-"));
+    homes.push(home);
+    const cfg = getDefaultConfig();
+    const fixture = await startManagementServerFixture(home, cfg);
+    try {
+      const base = `http://127.0.0.1:${fixture.server.port}`;
+      const oversized = JSON.stringify({
+        enabled: true,
+        endpoint: "http://127.0.0.1:4318/v1/traces",
+        serviceName: "x".repeat(70 * 1024),
+      });
+      const res413 = await fetch(`${base}/api/telemetry/otlp`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-easyproxy-api-key": configuredAdminToken()!,
+        },
+        body: oversized,
+      });
+      expect(res413.status).toBe(413);
+    } finally {
+      await fixture.close();
+    }
+
+    // Un-mocked exportBatch fails closed when collector hostname does not resolve cleanly.
+    setOtlpExporterFetchForTests(null);
+    const unreachableCfg: Pick<EpxConfig, "otlp"> = {
+      otlp: {
+        enabled: true,
+        endpoint: "https://nonexistent.collector.invalid/v1/traces",
+        sampleRate: 1,
+      },
+    };
+    const span = startOtlpRequestSpan(new Request("http://127.0.0.1/v1/responses", { method: "POST" }), unreachableCfg, {
+      method: "POST",
+      pathname: "/v1/responses",
+      protocol: "responses",
+    });
+    span?.finish({ status: 200 });
+    await flushOtlpSpans(1_500);
+    expect(getOtlpTracingStatsForTests().exportFailures).toBe(1);
+    expect(getOtlpTracingStatsForTests().exportedSpans).toBe(0);
+
+    // Spans with distinct headers or allowPrivateNetwork do not coalesce into the same batch.
+    resetOtlpTracingForTests();
+    const sentAuths: Array<string | undefined> = [];
+    setOtlpExporterFetchForTests((async (_url, init) => {
+      const hdrs = (init?.headers ?? {}) as Record<string, string>;
+      sentAuths.push(hdrs.authorization);
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+    const cfgA: Pick<EpxConfig, "otlp"> = {
+      otlp: { enabled: true, endpoint: "https://collector.invalid/v1/traces", headers: { authorization: "Bearer a" }, sampleRate: 1 },
+    };
+    const cfgB: Pick<EpxConfig, "otlp"> = {
+      otlp: { enabled: true, endpoint: "https://collector.invalid/v1/traces", headers: { authorization: "Bearer b" }, sampleRate: 1 },
+    };
+    startOtlpRequestSpan(new Request("http://127.0.0.1/v1/responses", { method: "POST" }), cfgA, {
+      method: "POST", pathname: "/v1/responses", protocol: "responses",
+    })?.finish({ status: 200 });
+    startOtlpRequestSpan(new Request("http://127.0.0.1/v1/responses", { method: "POST" }), cfgB, {
+      method: "POST", pathname: "/v1/responses", protocol: "responses",
+    })?.finish({ status: 200 });
+    await flushOtlpSpans(1_500);
+    expect(sentAuths).toEqual(["Bearer a", "Bearer b"]);
+  });
+
+  test("forwards OTLP traceparent on /v1/messages native passthrough", async () => {
+    const { handleClaudeMessages } = await import("../../src/server/claude-messages");
+    const seenTraceparents: Array<string | undefined> = [];
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        seenTraceparents.push(req.headers.get("traceparent") ?? undefined);
+        return Response.json({
+          id: "msg_native_otlp",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 4, output_tokens: 2 },
+        });
+      },
+    });
+    servers.push(upstream);
+
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      claudeCode: { nativePassthrough: true, anthropicBaseUrl: `http://127.0.0.1:${upstream.port}` },
+      otlp: { enabled: true, endpoint: "http://127.0.0.1:4318/v1/traces", sampleRate: 1 },
+    };
+    const req = new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": "sk-ant-native-fixture",
+        traceparent: "00-22222222222222222222222222222222-3333333333333333-01",
+      },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 16, stream: false, messages: [{ role: "user", content: "hi" }] }),
+    });
+    const span = startOtlpRequestSpan(req, cfg, { method: "POST", pathname: "/v1/messages", protocol: "messages" });
+    const res = await handleClaudeMessages(req, cfg, { model: "unknown", provider: "unknown", otlpSpan: span });
+    expect(res.status).toBe(200);
+    expect(seenTraceparents).toHaveLength(1);
+    expect(seenTraceparents[0]).toBe(span?.traceparent);
+    expect(seenTraceparents[0]).toMatch(/^00-22222222222222222222222222222222-[0-9a-f]{16}-01$/);
+    expect(seenTraceparents[0]).not.toBe("00-22222222222222222222222222222222-3333333333333333-01");
+  });
 });

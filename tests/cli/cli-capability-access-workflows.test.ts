@@ -76,7 +76,19 @@ describe("access capability workflows preserve consent and handler grammar", () 
     const io = transport({ keys: [{ id: "fixture-id", name: "Fixture" }] });
     const leaf = capability("access key set");
     expect(leaf.routes).toEqual([{ method: "GET", path: "/api/keys" }, { method: "PATCH", path: "/api/keys" }]);
-    expect(leaf.flags.map(flag => flag.name)).toEqual(["--allow-provider", "--allow-model", "--clear", "--json"]);
+    expect(leaf.flags.map(flag => flag.name)).toEqual([
+      "--allow-provider",
+      "--allow-model",
+      "--rpm-limit",
+      "--tpm-limit",
+      "--max-daily-requests",
+      "--daily-token-limit",
+      "--daily-cost-limit-usd",
+      "--max-in-flight-cost-usd",
+      "--expires-at",
+      "--clear",
+      "--json",
+    ]);
     expect(await handleAccessCommand(["key", "set", "Fixture", "--clear", "--allow-provider", "p1", "--allow-provider", "p2", "--json"], io.deps)).toBe(0);
     expect(io.requests).toEqual([
       { method: "GET", path: "/api/keys", body: null },

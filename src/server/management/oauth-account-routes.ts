@@ -1515,7 +1515,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     if (!budgetCheck.ok) {
       return jsonResponse({ error: budgetCheck.error }, 400, req, config);
     }
-    const entry = issueApiKeyInProcess(
+    const entry = issueApiKeyInProcess( // shared helper uses randomBytes(20)
       config,
       name,
       undefined,

@@ -71,6 +71,7 @@ export async function reservePreDispatchApiKeyHold(params: {
   estimatedInputTokens?: number;
   maxOutputTokens?: number;
   anthropicSurface?: boolean;
+  upstreamAttempted?: boolean;
 }): Promise<Response | null> {
   const lease = params.logCtx?.apiKeyBudgetLease;
   const keyId = params.logCtx?.apiKeyId;
@@ -92,6 +93,12 @@ export async function reservePreDispatchApiKeyHold(params: {
     costUsd: estimate.estimatedCostUsd,
   });
   if (decision.allowed) return null;
+
+  if (params.upstreamAttempted || (params.logCtx?.attempts?.length ?? 0) > 0) {
+    lease.releaseHoldOnly();
+  } else {
+    lease.releaseUnused();
+  }
 
   if (params.logCtx) {
     markLocalRequestLogRefusal(params.logCtx, decision.reason);

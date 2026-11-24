@@ -679,8 +679,9 @@ function acquireBudgetInternal(
           const nextDayStartMs = (checkUtcDay + 1) * ONE_DAY_MS;
           return { allowed: false, reason: "daily_token_limit_exceeded", retryAfterSec: Math.max(1, Math.ceil((nextDayStartMs - checkNow) / 1000)) };
         }
-        // Without a separate tpmLimit, keep a non-blocking floor hold on the lone active request when configured tiny (e.g. limit=1).
-        if (limits.tpmLimit === undefined && targetTokens > remainingTokens) {
+        // When this is the lone active token hold, clamp to remainingTokens so inFlightReservedTokens
+        // never inflates past dailyTokenLimit (mirroring dailyCostLimitMicros).
+        if (otherTokens === 0 && targetTokens > remainingTokens) {
           targetTokens = remainingTokens;
         } else if (otherTokens > 0 && targetTokens > remainingTokens) {
           const nextDayStartMs = (checkUtcDay + 1) * ONE_DAY_MS;

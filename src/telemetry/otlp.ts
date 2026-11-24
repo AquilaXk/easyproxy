@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { EpxConfig, EpxOtlpConfig } from "../types";
 import { otlpEndpointConfigError } from "../config/schema/otlp";
 import { signalWithTimeout } from "../lib/abort";
+import { assessUrlDestination, resolvePublicAddresses } from "../lib/destination-policy";
 import { registerOptionalShutdownHook } from "../lib/optional-shutdown-hooks";
 import type { RequestLogEntry } from "../server/request-log-types";
 
@@ -187,12 +188,35 @@ function buildOtlpExportBody(serviceName: string, spans: OtlpSpanPayload[]): str
   });
 }
 
+function otlpHeadersEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
 async function exportBatch(items: QueuedOtlpSpan[]): Promise<void> {
   if (items.length === 0) return;
   const head = items[0]!;
   if (!isValidEndpointCached(head.endpoint, head.allowPrivateNetwork)) {
     stats.exportFailures += 1;
     return;
+  }
+  if (!fetchOverride) {
+    try {
+      const assessment = assessUrlDestination(head.endpoint);
+      const isLoopback = assessment?.kind === "loopback" || assessment?.kind === "localhost";
+      await resolvePublicAddresses(head.endpoint, {
+        context: "OTLP endpoint",
+        allowPrivateNetwork: isLoopback || head.allowPrivateNetwork,
+      });
+    } catch {
+      stats.exportFailures += 1;
+      return;
+    }
   }
   const fetchImpl = fetchOverride ?? globalThis.fetch;
   const deadline = signalWithTimeout(head.timeoutMs);
@@ -244,7 +268,9 @@ export async function flushOtlpSpans(maxWaitMs = 5_000): Promise<void> {
         if (
           batch.length < first.batchSize
           && item.endpoint === first.endpoint
+          && item.allowPrivateNetwork === first.allowPrivateNetwork
           && item.serviceName === first.serviceName
+          && otlpHeadersEqual(item.headers, first.headers)
         ) {
           batch.push(item);
         } else {

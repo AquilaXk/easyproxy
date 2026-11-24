@@ -393,6 +393,9 @@ async function anthropicNativePassthrough(
     if (shouldForwardNativeHeader(name, value, config)) headers.set(name, value);
   });
   headers.set("content-type", "application/json");
+  if (logCtx.otlpSpan?.traceparent) {
+    headers.set("traceparent", logCtx.otlpSpan.traceparent);
+  }
 
   const reserveKey = callerSubscriptionObservationKey(config, headers);
   const result = await fetchWithHeaderDeadline(

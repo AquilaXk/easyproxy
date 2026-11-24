@@ -158,7 +158,9 @@ describe("Anthropic per-block cache_control preservation across bridges", () => 
       messages?: Array<{ role: string; content: Array<Record<string, unknown>> }>;
     };
 
-    expect(wire.cache_control).toEqual({ type: "ephemeral", ttl: "1h", scope: "turn" });
+    // Top-level automatic caching follows all explicit blocks, so 1h after an explicit 5m system
+    // breakpoint demotes to default 5m while preserving scope: "turn".
+    expect(wire.cache_control).toEqual({ type: "ephemeral", scope: "turn" });
     // Multi-block caller system preserved cleanly before uncached tool-catalog guidance.
     expect(Array.isArray(wire.system)).toBe(true);
     expect(wire.system!.length).toBeGreaterThanOrEqual(2);
@@ -210,7 +212,8 @@ describe("Anthropic per-block cache_control preservation across bridges", () => 
       cache_control?: unknown;
       messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
     };
-    expect(fpWire.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    // Top-level automatic caching follows the 5m document block, so 1h demotes to default 5m.
+    expect(fpWire.cache_control).toEqual({ type: "ephemeral" });
     expect(fpWire.messages[0]?.content[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
     expect(fpWire.messages[0]?.content[1]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
     expect(fpWire.messages[0]?.content[2]?.cache_control).toEqual({ type: "ephemeral", ttl: "5m" });
@@ -410,5 +413,37 @@ describe("Anthropic per-block cache_control preservation across bridges", () => 
     const keys = collectKeysRecursive(sanitized);
     expect(keys.has("cache_control")).toBe(false);
     expect(keys.has("_anthropicSystemBlocks")).toBe(false);
+  });
+
+  test("preserves single-block system scope/ttl and retains 1h top-level cache_control when no 5m block precedes it", async () => {
+    const budget = createTranslatorBudget();
+    const rawSingleSystem = {
+      model: "claude-sonnet-4-6",
+      max_tokens: 128,
+      system: [
+        { type: "text", text: "Single cached system prompt.", cache_control: { type: "ephemeral", ttl: "5m", scope: "global" } },
+      ],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Hello", cache_control: { type: "ephemeral", ttl: "1h" } }] },
+      ],
+    };
+    const parsed = parseRequest(anthropicToResponsesTranslation(rawSingleSystem, undefined, budget).body);
+    expect(parsed.context.systemCacheControls).toEqual([{ type: "ephemeral", ttl: "5m", scope: "global" }]);
+
+    const allLong = {
+      model: "claude-sonnet-4-6",
+      max_tokens: 128,
+      cache_control: { type: "ephemeral", ttl: "1h", scope: "turn" },
+      system: [{ type: "text", text: "Long TTL system.", cache_control: { type: "ephemeral", ttl: "1h", scope: "global" } }],
+      messages: [{ role: "user", content: "Hi" }],
+    };
+    const allLongParsed = parseRequest(anthropicToResponsesTranslation(allLong, undefined, budget).body);
+    const adapter = withTestTranslatorBudget(createAnthropicAdapter(ANTHROPIC_PROVIDER));
+    const wire = JSON.parse((await adapter.buildRequest(allLongParsed, { headers: new Headers(), translatorBudget: budget })).body!) as {
+      cache_control?: unknown;
+      system?: Array<{ cache_control?: unknown }>;
+    };
+    expect(wire.system?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h", scope: "global" });
+    expect(wire.cache_control).toEqual({ type: "ephemeral", ttl: "1h", scope: "turn" });
   });
 });

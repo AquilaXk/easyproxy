@@ -19,7 +19,7 @@ export { AnthropicRequestError, DesktopModelMappingUnavailableError } from "./in
 export { resolveInboundModel, effortForThinkingBudget, effortFromOutputConfig, extractEpxRouteDirective, extractEpxEffortDirective } from "./inbound-model-options";
 import { AnthropicRequestError, isRec, type Rec } from "./inbound-records";
 import { resolveInboundModel, effortForThinkingBudget, effortFromOutputConfig, formatFromOutputConfig } from "./inbound-model-options";
-import { anthropicNormalizedSystemBlocks, systemToInstructions, toolsToResponses, toolChoiceToResponses } from "./inbound-content-options";
+import { anthropicNormalizedSystemBlocks, systemCachePrefix, systemToInstructions, toolsToResponses, toolChoiceToResponses } from "./inbound-content-options";
 import { stabilizeClaudeInstructionsForPromptCache } from "./inbound-cache-stabilize";
 import { decodeReasoningEnvelope, encodeReasoningEnvelope, EPX_REASONING_PREFIX } from "../responses/reasoning-envelope";
 import { inlineDocumentMarker } from "../responses/inline-document";
@@ -554,7 +554,10 @@ export function preservedAnthropicSystemBlocks(
   if (cc?.stabilizePromptCache === true || layout.instructions === undefined) return undefined;
   const blocks = anthropicNormalizedSystemBlocks(system);
   const ccCount = blocks.filter(b => b.cache_control !== undefined).length;
-  if (ccCount < 2) return undefined;
+  if (ccCount === 0) return undefined;
+  // When a single breakpoint is followed by uncached tail blocks, preserve the legacy merged
+  // `_anthropicSystemCachePrefix` split unless the caller explicitly set multiple breakpoints.
+  if (ccCount === 1 && systemCachePrefix(system) !== undefined) return undefined;
   return blocks.map(b => b.text).join("\n\n") === layout.instructions ? blocks : undefined;
 }
 

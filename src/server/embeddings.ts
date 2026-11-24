@@ -1,4 +1,4 @@
-import { getCombo } from "../combos/types";
+import { getCombo, NoAvailableComboTargetsError, noteComboFailure, noteComboSuccess, settleComboReprobeSuccess } from "../combos";
 import { sanitizeUpstreamErrorText } from "../adapters/upstream-http-error";
 import { formatErrorResponse } from "../bridge";
 import { signalWithTimeout } from "../lib/abort";
@@ -7,10 +7,11 @@ import { markProxyError } from "../lib/client-error-body";
 import { providerDestinationConfigError, providerDestinationResolvedError } from "../lib/destination-policy";
 import { isTransientUpstreamStatus } from "../lib/upstream-retry";
 import { getValidAccessToken } from "../oauth/index";
+import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "../providers/api-key-pause";
 import { resolveCurrentProviderApiKeyTransport } from "../providers/api-key-selection";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-forward-destination";
 import type { EpxProviderTransport } from "../providers/xai-transport";
-import { routeModel, type RouteResult } from "../router";
+import { NoEligiblePolicyCandidateError, routeModel, type RouteResult } from "../router";
 import type { EpxConfig, EpxProviderConfig, EpxUsage } from "../types";
 import { clientFacingModelLabel } from "../lib/error-destination";
 import { AdmissionModelDeniedError, assertRouteAllowedByScope, resolveAdmissionModelScope } from "./admission-model-scope";
@@ -30,7 +31,7 @@ const SUPPORTED_EMBEDDING_ADAPTERS = new Set(["openai-responses", "openai-chat",
 
 type ValidatedEmbeddingsRequest = {
   model: string;
-  input: string | string[] | number[][];
+  input: string | string[] | number[] | number[][];
   encodingFormat?: "float" | "base64";
   dimensions?: number;
   user?: string;
@@ -72,6 +73,16 @@ function validateEmbeddingsBody(raw: unknown): { ok: true; body: ValidatedEmbedd
         }
       }
       estimatedTokens = Math.max(input.length, Math.ceil(totalChars / 4));
+    } else if (input.every((item) => typeof item === "number")) {
+      if (input.length > MAX_EMBEDDING_TOKEN_IDS_PER_ITEM) {
+        return { ok: false, message: `token array items must have 1..${MAX_EMBEDDING_TOKEN_IDS_PER_ITEM} tokens` };
+      }
+      for (const tok of input as unknown[]) {
+        if (typeof tok !== "number" || !Number.isSafeInteger(tok) || tok < 0) {
+          return { ok: false, message: "token array items must contain non-negative integers" };
+        }
+      }
+      estimatedTokens = input.length;
     } else if (input.every((item) => Array.isArray(item))) {
       for (const seq of input as unknown[][]) {
         if (seq.length === 0 || seq.length > MAX_EMBEDDING_TOKEN_IDS_PER_ITEM) {
@@ -119,7 +130,7 @@ function validateEmbeddingsBody(raw: unknown): { ok: true; body: ValidatedEmbedd
     ok: true,
     body: {
       model,
-      input: input as string | string[] | number[][],
+      input: input as ValidatedEmbeddingsRequest["input"],
       ...(encodingFormat ? { encodingFormat } : {}),
       ...(dimensions !== undefined ? { dimensions } : {}),
       ...(user !== undefined ? { user } : {}),
@@ -129,16 +140,31 @@ function validateEmbeddingsBody(raw: unknown): { ok: true; body: ValidatedEmbedd
 }
 
 export function resolveEmbeddingsUrl(provider: Pick<EpxProviderConfig, "baseUrl">): string {
-  let base = provider.baseUrl.trim();
-  while (base.endsWith("/")) base = base.slice(0, -1);
-  if (base.endsWith("/embeddings")) return base;
-  if (base.endsWith("/responses")) base = base.slice(0, -"/responses".length);
-  else if (base.endsWith("/chat/completions")) base = base.slice(0, -"/chat/completions".length);
-  while (base.endsWith("/")) base = base.slice(0, -1);
-  if (/\/v\d+(?:alpha|beta)?$/i.test(base)) {
-    return `${base}/embeddings`;
+  const trimmed = provider.baseUrl.trim();
+  try {
+    const parsed = new URL(trimmed);
+    let path = parsed.pathname;
+    while (path.endsWith("/")) path = path.slice(0, -1);
+    if (!path.endsWith("/embeddings")) {
+      if (path.endsWith("/responses")) path = path.slice(0, -"/responses".length);
+      else if (path.endsWith("/chat/completions")) path = path.slice(0, -"/chat/completions".length);
+      while (path.endsWith("/")) path = path.slice(0, -1);
+      path = /\/v\d+(?:alpha|beta)?$/i.test(path) ? `${path}/embeddings` : `${path}/v1/embeddings`;
+    }
+    parsed.pathname = path;
+    return parsed.toString();
+  } catch {
+    let base = trimmed;
+    while (base.endsWith("/")) base = base.slice(0, -1);
+    if (base.endsWith("/embeddings")) return base;
+    if (base.endsWith("/responses")) base = base.slice(0, -"/responses".length);
+    else if (base.endsWith("/chat/completions")) base = base.slice(0, -"/chat/completions".length);
+    while (base.endsWith("/")) base = base.slice(0, -1);
+    if (/\/v\d+(?:alpha|beta)?$/i.test(base)) {
+      return `${base}/embeddings`;
+    }
+    return `${base}/v1/embeddings`;
   }
-  return `${base}/v1/embeddings`;
 }
 
 function adapterSupportsEmbeddings(provider: Pick<EpxProviderConfig, "adapter" | "authMode" | "baseUrl">): boolean {
@@ -154,20 +180,27 @@ interface ResolvedEmbeddingCandidate {
 }
 
 function resolveEmbeddingCandidates(route: RouteResult, config: EpxConfig): ResolvedEmbeddingCandidate[] {
+  const candidates: ResolvedEmbeddingCandidate[] = [
+    { providerName: route.providerName, modelId: route.modelId, provider: route.provider },
+  ];
   if (route.combo) {
     const combo = getCombo(config, route.combo.comboId);
     if (combo?.targets?.length) {
-      const candidates: ResolvedEmbeddingCandidate[] = [];
       for (const target of combo.targets) {
+        if (target.provider === route.providerName && target.model === route.modelId) continue;
         const p = config.providers[target.provider];
         if (p && !p.disabled) {
           candidates.push({ providerName: target.provider, modelId: target.model, provider: p });
         }
       }
-      if (candidates.length > 0) return candidates;
     }
   }
-  return [{ providerName: route.providerName, modelId: route.modelId, provider: route.provider }];
+  return candidates;
+}
+
+function releaseEmbeddingLeaseOnRefusal(logCtx: RequestLogContext, upstreamAttempted: boolean): void {
+  if (upstreamAttempted) logCtx.apiKeyBudgetLease?.releaseHoldOnly();
+  else logCtx.apiKeyBudgetLease?.releaseUnused();
 }
 
 function parseEmbeddingsUsage(payload: unknown, fallbackTokens: number): { usage: EpxUsage; totalTokens: number } {
@@ -210,6 +243,8 @@ export async function handleEmbeddings(
   } catch (error) {
     const status = (error as { status?: number })?.status ?? 400;
     const code = (error as { code?: string })?.code ?? "invalid_json";
+    releaseEmbeddingLeaseOnRefusal(logCtx, false);
+    markLocalRequestLogRefusal(logCtx, code);
     logCtx.errorCode = code;
     addFinalRequestLog(options.requestId, options.start, logCtx, status, { closeReason: "non_stream" });
     return markProxyError(formatErrorResponse(status, status === 413 ? "request_too_large" : "invalid_request_error", error instanceof Error ? error.message : "invalid request body"));
@@ -217,6 +252,8 @@ export async function handleEmbeddings(
 
   const validated = validateEmbeddingsBody(rawBody);
   if (!validated.ok) {
+    releaseEmbeddingLeaseOnRefusal(logCtx, false);
+    markLocalRequestLogRefusal(logCtx, "invalid_embeddings_request");
     logCtx.errorCode = "invalid_embeddings_request";
     addFinalRequestLog(options.requestId, options.start, logCtx, 400, { closeReason: "non_stream" });
     return markProxyError(formatErrorResponse(400, "invalid_request_error", validated.message));
@@ -228,19 +265,27 @@ export async function handleEmbeddings(
   try {
     route = routeModel(config, parsed.model);
   } catch (error) {
+    releaseEmbeddingLeaseOnRefusal(logCtx, false);
+    if (error instanceof NoEligiblePolicyCandidateError) {
+      logCtx.routeDecision = error.trace;
+    }
     const msg = error instanceof Error ? error.message : `unknown model ${parsed.model}`;
     const isDestinationBlocked = msg.includes("baseUrl targets a blocked metadata endpoint")
       || msg.includes("baseUrl points to a ")
       || msg.includes("baseUrl must use https:");
-    logCtx.errorCode = isDestinationBlocked ? "destination_rejected" : "model_not_found";
-    const status = isDestinationBlocked ? 400 : 404;
+    const isUnavailableCombo = error instanceof NoAvailableComboTargetsError;
+    const status = isDestinationBlocked ? 400 : isUnavailableCombo ? 503 : 404;
+    const code = isDestinationBlocked ? "destination_rejected" : isUnavailableCombo ? "combo_unavailable" : "model_not_found";
+    markLocalRequestLogRefusal(logCtx, code);
+    logCtx.errorCode = code;
     addFinalRequestLog(options.requestId, options.start, logCtx, status, { closeReason: "non_stream" });
-    return markProxyError(formatErrorResponse(status, "invalid_request_error", msg));
+    return markProxyError(formatErrorResponse(status, isUnavailableCombo ? "upstream_error" : "invalid_request_error", msg));
   }
 
   const candidates = resolveEmbeddingCandidates(route, config);
   const admissionScope = resolveAdmissionModelScope(config, options.admission);
 
+  let upstreamAttempted = false;
   let lastErrorStatus = 502;
   let lastErrorMessage = "upstream embeddings request failed";
   let lastErrorCode = "upstream_error";
@@ -258,6 +303,8 @@ export async function handleEmbeddings(
       });
     } catch (error) {
       if (error instanceof AdmissionModelDeniedError) {
+        releaseEmbeddingLeaseOnRefusal(logCtx, upstreamAttempted);
+        markLocalRequestLogRefusal(logCtx, "api_key_scope_denied");
         logCtx.errorCode = "api_key_scope_denied";
         addFinalRequestLog(options.requestId, options.start, logCtx, 403, { closeReason: "non_stream" });
         return markProxyError(formatErrorResponse(403, "permission_error", error.message));
@@ -267,6 +314,7 @@ export async function handleEmbeddings(
 
     if (!adapterSupportsEmbeddings(candidate.provider)) {
       if (hasMore) continue;
+      releaseEmbeddingLeaseOnRefusal(logCtx, upstreamAttempted);
       logCtx.errorCode = "embeddings_unsupported_provider";
       markLocalRequestLogRefusal(logCtx, "embeddings_unsupported_provider");
       addFinalRequestLog(options.requestId, options.start, logCtx, 400, { closeReason: "non_stream" });
@@ -285,6 +333,7 @@ export async function handleEmbeddings(
       modelId: candidate.modelId,
       estimatedInputTokens: parsed.estimatedTokens,
       maxOutputTokens: 0,
+      upstreamAttempted,
     });
     if (holdRefusal) {
       addFinalRequestLog(options.requestId, options.start, logCtx, 429, { closeReason: "non_stream" });
@@ -293,6 +342,14 @@ export async function handleEmbeddings(
 
     const syncDestErr = providerDestinationConfigError(candidate.providerName, candidate.provider);
     if (syncDestErr) {
+      if (hasMore) {
+        lastErrorStatus = 400;
+        lastErrorMessage = syncDestErr;
+        lastErrorCode = "destination_rejected";
+        continue;
+      }
+      releaseEmbeddingLeaseOnRefusal(logCtx, upstreamAttempted);
+      markLocalRequestLogRefusal(logCtx, "destination_rejected");
       logCtx.errorCode = "destination_rejected";
       addFinalRequestLog(options.requestId, options.start, logCtx, 400, { closeReason: "non_stream" });
       return markProxyError(formatErrorResponse(400, "invalid_request_error", syncDestErr));
@@ -301,6 +358,14 @@ export async function handleEmbeddings(
     if (typeof candidateTransport.fetch !== "function") {
       const dnsErr = await providerDestinationResolvedError(candidate.providerName, candidate.provider);
       if (dnsErr) {
+        if (hasMore) {
+          lastErrorStatus = 400;
+          lastErrorMessage = dnsErr;
+          lastErrorCode = "destination_rejected";
+          continue;
+        }
+        releaseEmbeddingLeaseOnRefusal(logCtx, upstreamAttempted);
+        markLocalRequestLogRefusal(logCtx, "destination_rejected");
         logCtx.errorCode = "destination_rejected";
         addFinalRequestLog(options.requestId, options.start, logCtx, 400, { closeReason: "non_stream" });
         return markProxyError(formatErrorResponse(400, "invalid_request_error", dnsErr));
@@ -315,13 +380,56 @@ export async function handleEmbeddings(
       }
     }
     if (candidate.provider.authMode === "oauth") {
-      const token = await getValidAccessToken(candidate.providerName);
-      if (token) headers.set("authorization", `Bearer ${token}`);
-    } else {
-      const transport = resolveCurrentProviderApiKeyTransport(config, candidate.providerName, candidate.provider) ?? candidate.provider;
-      if (transport.apiKey) headers.set("authorization", `Bearer ${transport.apiKey}`);
+      let token: string | null = null;
+      try {
+        token = await getValidAccessToken(candidate.providerName);
+      } catch {
+        token = null;
+      }
+      if (!token) {
+        lastErrorStatus = 401;
+        lastErrorMessage = `OAuth access token unavailable for provider ${candidate.providerName}`;
+        lastErrorCode = "oauth_token_unavailable";
+        if (hasMore) continue;
+        releaseEmbeddingLeaseOnRefusal(logCtx, upstreamAttempted);
+        markLocalRequestLogRefusal(logCtx, lastErrorCode);
+        logCtx.errorCode = lastErrorCode;
+        addFinalRequestLog(options.requestId, options.start, logCtx, 401, { closeReason: "non_stream" });
+        return markProxyError(formatErrorResponse(401, "authentication_error", lastErrorMessage));
+      }
+      headers.set("authorization", `Bearer ${token}`);
+    } else if (candidate.provider.authMode !== "forward") {
+      if (isProviderApiKeyPaused(candidate.provider)) {
+        lastErrorStatus = 403;
+        lastErrorMessage = new ProviderApiKeyPausedError().message;
+        lastErrorCode = "provider_key_paused";
+        if (hasMore) continue;
+        releaseEmbeddingLeaseOnRefusal(logCtx, upstreamAttempted);
+        markLocalRequestLogRefusal(logCtx, lastErrorCode);
+        logCtx.errorCode = lastErrorCode;
+        addFinalRequestLog(options.requestId, options.start, logCtx, 403, { closeReason: "non_stream" });
+        return markProxyError(formatErrorResponse(403, "permission_error", lastErrorMessage));
+      }
+      const transport = resolveCurrentProviderApiKeyTransport(config, candidate.providerName, candidate.provider);
+      if (!transport) {
+        if (candidate.provider.keyOptional) {
+          if (candidate.provider.apiKey) headers.set("authorization", `Bearer ${candidate.provider.apiKey}`);
+        } else {
+          lastErrorStatus = 403;
+          lastErrorMessage = `no active API key available for provider ${candidate.providerName}`;
+          lastErrorCode = "provider_key_unavailable";
+          if (hasMore) continue;
+          releaseEmbeddingLeaseOnRefusal(logCtx, upstreamAttempted);
+          markLocalRequestLogRefusal(logCtx, lastErrorCode);
+          logCtx.errorCode = lastErrorCode;
+          addFinalRequestLog(options.requestId, options.start, logCtx, 403, { closeReason: "non_stream" });
+          return markProxyError(formatErrorResponse(403, "permission_error", lastErrorMessage));
+        }
+      } else if (transport.apiKey) {
+        headers.set("authorization", `Bearer ${transport.apiKey}`);
+      }
     }
-    if (logCtx.otlpSpan?.traceparent) {
+    if (logCtx.otlpSpan?.traceparent && !headers.has("traceparent")) {
       headers.set("traceparent", logCtx.otlpSpan.traceparent);
     }
 
@@ -340,6 +448,7 @@ export async function handleEmbeddings(
     const deadline = signalWithTimeout(timeoutMs, req.signal);
     let upstreamRes: Response;
     try {
+      upstreamAttempted = true;
       upstreamRes = await fetchImpl(url, {
         method: "POST",
         headers,
@@ -365,7 +474,12 @@ export async function handleEmbeddings(
         lastErrorStatus = upstreamRes.status;
         lastErrorMessage = sanitizeUpstreamErrorText(text) || `upstream returned HTTP ${upstreamRes.status}`;
         lastErrorCode = `upstream_${upstreamRes.status}`;
-        if (hasMore && isTransientUpstreamStatus(upstreamRes.status)) continue;
+        if (hasMore && isTransientUpstreamStatus(upstreamRes.status)) {
+          if (route.combo) {
+            noteComboFailure(route.combo.comboId, { provider: candidate.providerName, model: candidate.modelId }, route.combo.writerGeneration);
+          }
+          continue;
+        }
         logCtx.errorCode = lastErrorCode;
         addFinalRequestLog(options.requestId, options.start, logCtx, upstreamRes.status, { closeReason: "non_stream" });
         return formatErrorResponse(upstreamRes.status, upstreamRes.status === 429 ? "rate_limit_error" : "upstream_error", lastErrorMessage);
@@ -391,6 +505,21 @@ export async function handleEmbeddings(
       }
 
       const { usage } = parseEmbeddingsUsage(json, parsed.estimatedTokens);
+      if (route.combo) {
+        const combo = getCombo(config, route.combo.comboId);
+        const matchedTarget = combo?.targets.find(
+          (t) => t.provider === candidate.providerName && t.model === candidate.modelId,
+        );
+        if (combo && matchedTarget) {
+          noteComboSuccess(route.combo.comboId, combo, matchedTarget, route.combo.writerGeneration);
+          if (
+            candidate.providerName === route.combo.target.provider
+            && candidate.modelId === route.combo.target.model
+          ) {
+            settleComboReprobeSuccess(route.combo);
+          }
+        }
+      }
       logCtx.usage = usage;
       logCtx.usageWireParsed = !usage.estimated;
       addFinalRequestLog(options.requestId, options.start, logCtx, 200, {
@@ -409,7 +538,12 @@ export async function handleEmbeddings(
       lastErrorStatus = 502;
       lastErrorMessage = error instanceof Error ? error.message : String(error);
       lastErrorCode = "upstream_fetch_failed";
-      if (hasMore) continue;
+      if (hasMore) {
+        if (route.combo) {
+          noteComboFailure(route.combo.comboId, { provider: candidate.providerName, model: candidate.modelId }, route.combo.writerGeneration);
+        }
+        continue;
+      }
       logCtx.errorCode = lastErrorCode;
       addFinalRequestLog(options.requestId, options.start, logCtx, 502, { closeReason: "non_stream" });
       return formatErrorResponse(502, "upstream_error", lastErrorMessage);

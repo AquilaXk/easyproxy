@@ -3,10 +3,15 @@ import { readConfigDiagnostics } from "../config/diagnostics";
 import { adoptPersistedOtlp } from "../config/live-reconcile";
 import { getConfigDir, withConfigDirHardeningSettled } from "../config/paths";
 import { otlpConfigSchema } from "../config/schema/otlp";
+import { assessUrlDestination, DestinationDnsResolutionError, resolvePublicAddresses } from "../lib/destination-policy";
 import { jsonResponse } from "../server/auth-cors";
+import { managementBodyTooLargeResponse } from "../server/management/body";
 import type { ManagementContext } from "../server/management/context";
+import { readBoundedJsonRequestBody } from "../server/request-decompress";
 import type { EpxOtlpConfig } from "../types";
 import { flushOtlpSpans, projectMaskedOtlpConfig } from "./otlp";
+
+const MAX_OTLP_ROUTE_BODY_BYTES = 64 * 1024;
 
 export async function handleGetOtlpRoute(ctx: ManagementContext): Promise<Response> {
   const disk = readConfigDiagnostics({ passive: true }).config;
@@ -16,8 +21,10 @@ export async function handleGetOtlpRoute(ctx: ManagementContext): Promise<Respon
 export async function handlePutOtlpRoute(ctx: ManagementContext): Promise<Response> {
   let body: unknown;
   try {
-    body = await ctx.req.json();
-  } catch {
+    body = await readBoundedJsonRequestBody(ctx.req, MAX_OTLP_ROUTE_BODY_BYTES);
+  } catch (error) {
+    const tooLarge = managementBodyTooLargeResponse(error, ctx.req, ctx.config);
+    if (tooLarge) return tooLarge;
     return jsonResponse({ error: "invalid JSON body", code: "invalid_json" }, 400, ctx.req, ctx.config);
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -49,6 +56,28 @@ export async function handlePutOtlpRoute(ctx: ManagementContext): Promise<Respon
   }
 
   const nextOtlp: EpxOtlpConfig = parsed.data;
+  if (nextOtlp.endpoint) {
+    try {
+      const assessment = assessUrlDestination(nextOtlp.endpoint);
+      const isLoopback = assessment?.kind === "loopback" || assessment?.kind === "localhost";
+      await resolvePublicAddresses(nextOtlp.endpoint, {
+        context: "OTLP endpoint",
+        allowPrivateNetwork: isLoopback || nextOtlp.allowPrivateNetwork === true,
+      });
+    } catch (error) {
+      if (!(error instanceof DestinationDnsResolutionError)) {
+        return jsonResponse(
+          {
+            error: `invalid OTLP configuration (endpoint): ${error instanceof Error ? error.message : String(error)}`,
+            code: "invalid_otlp_config",
+          },
+          400,
+          ctx.req,
+          ctx.config,
+        );
+      }
+    }
+  }
   const outcome = await withConfigDirHardeningSettled(getConfigDir(), () =>
     mutatePersistedConfig((fresh) => {
       const changed = JSON.stringify(fresh.otlp) !== JSON.stringify(nextOtlp);

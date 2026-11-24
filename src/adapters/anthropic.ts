@@ -395,6 +395,9 @@ function normalizeTtlOrdering(body: Record<string, unknown>): void {
       if (Array.isArray(msg.content)) collect(msg.content as Array<Record<string, unknown>>);
     }
   }
+  if (body.cache_control && typeof body.cache_control === "object") {
+    allBlocks.push(body);
+  }
   // Walk forward: once we see a 5-min (no ttl / ttl:"5m"), any subsequent 1h must be demoted.
   let seenShort = false;
   for (const b of allBlocks) {

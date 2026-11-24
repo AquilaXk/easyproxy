@@ -326,4 +326,145 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
       await fixture.close();
     }
   });
+
+  test("supports 1D token input, preserves query params in baseUrl, respects round-robin combos, refuses paused keys, and refunds unused budget on local errors", async () => {
+    expect(resolveEmbeddingsUrl({ baseUrl: "https://azure.example.com/openai/deployments/emb?api-version=2024-02-01" }))
+      .toBe("https://azure.example.com/openai/deployments/emb/v1/embeddings?api-version=2024-02-01");
+    expect(resolveEmbeddingsUrl({ baseUrl: "https://gw.example.com/v1?tenant=a" }))
+      .toBe("https://gw.example.com/v1/embeddings?tenant=a");
+
+    const home = mkdtempSync(join(tmpdir(), "epx-emb-fixes-"));
+    homes.push(home);
+
+    const seenTargets: string[] = [];
+    const srvA = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch() {
+        seenTargets.push("a");
+        return Response.json({ object: "list", data: [{ object: "embedding", index: 0, embedding: [0.1] }], model: "m-a", usage: { prompt_tokens: 3, total_tokens: 3 } });
+      },
+    });
+    const srvB = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch() {
+        seenTargets.push("b");
+        return Response.json({ object: "list", data: [{ object: "embedding", index: 0, embedding: [0.2] }], model: "m-b", usage: { prompt_tokens: 3, total_tokens: 3 } });
+      },
+    });
+    servers.push(srvA, srvB);
+
+    const keyId = "k-emb-refund";
+    const keySecret = "epx_data_embrefund00000001";
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      hostname: "0.0.0.0",
+      defaultProvider: "pa",
+      apiKeys: [
+        {
+          id: keyId,
+          name: "emb-refund",
+          key: keySecret,
+          createdAt: "2026-01-01T00:00:00Z",
+          rpmLimit: 3,
+          maxDailyRequests: 3,
+        },
+      ],
+      providers: {
+        pa: {
+          adapter: "openai-compatible",
+          baseUrl: `http://127.0.0.1:${srvA.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-pa",
+          models: ["m-a"],
+        },
+        pb: {
+          adapter: "openai-compatible",
+          baseUrl: `http://127.0.0.1:${srvB.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-pb",
+          models: ["m-b"],
+        },
+        pausedProv: {
+          adapter: "openai-compatible",
+          baseUrl: `http://127.0.0.1:${srvA.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-paused-secret",
+          apiKeyPool: [{ id: "k1", key: "sk-paused-secret", disabled: true }],
+          models: ["m-paused"],
+        },
+        disabledProv: {
+          adapter: "openai-compatible",
+          baseUrl: `http://127.0.0.1:${srvA.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-dis",
+          disabled: true,
+          models: ["m-dis"],
+        },
+      },
+      combos: {
+        rr: {
+          strategy: "round-robin",
+          targets: [
+            { provider: "pa", model: "m-a" },
+            { provider: "pb", model: "m-b" },
+          ],
+        },
+      },
+    };
+
+    const fixture = await startManagementServerFixture(home, cfg);
+    try {
+      const base = `http://127.0.0.1:${fixture.server.port}`;
+
+      // 1. 1D integer token array input + round-robin alternates across providers.
+      const r1 = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-easyproxy-api-key": keySecret },
+        body: JSON.stringify({ model: "combo/rr", input: [101, 202, 303] }),
+      });
+      expect(r1.status).toBe(200);
+      const r2 = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-easyproxy-api-key": keySecret },
+        body: JSON.stringify({ model: "combo/rr", input: [404, 505] }),
+      });
+      expect(r2.status).toBe(200);
+      expect(seenTargets).toEqual(["a", "b"]);
+
+      // 2. Local refusals (400 invalid input, 404 disabled provider, 403 paused provider key) do NOT burn RPM/daily quota.
+      const countBeforeRefusals = seenTargets.length;
+      for (const [badReq, expectedStatus] of [
+        [{ model: "pa/m-a", input: [] }, 400],
+        [{ model: "disabledProv/m-dis", input: "x" }, 404],
+        [{ model: "pausedProv/m-paused", input: "x" }, 403],
+      ] as const) {
+        const res = await fetch(`${base}/v1/embeddings`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-easyproxy-api-key": keySecret },
+          body: JSON.stringify(badReq),
+        });
+        expect(res.status).toBe(expectedStatus);
+      }
+      expect(seenTargets.length).toBe(countBeforeRefusals);
+      const snap = getApiKeyBudgetSnapshot(keyId);
+      expect(snap.rpmCurrent).toBe(2);
+      expect(snap.dailyRequestsUsed).toBe(2);
+
+      // The 3rd real request is still admitted (limit=3 wasn't burned by the 3 local refusals).
+      const r3 = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-easyproxy-api-key": keySecret },
+        body: JSON.stringify({ model: "pa/m-a", input: "third real" }),
+      });
+      expect(r3.status).toBe(200);
+    } finally {
+      await fixture.close();
+    }
+  });
 });

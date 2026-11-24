@@ -1603,12 +1603,14 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           client: classifyUsageClient(req.headers), ...admissionFields(admission),
           ...(isOtlpTracingEnabled(config) ? { otlpSpan: startOtlpRequestSpan(req, config, { method: req.method, pathname: url.pathname, protocol: "embeddings" }) } : {}),
         };
-        const response = await runAdmittedHttpTurn(req, policy, async () => withCors(
-          await handleEmbeddings(req, config, logCtx, { requestId, start, admission, onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer) }),
-          req, policy,
-        ), { requestId, start, logCtx });
-        logCtx.otlpSpan?.finish({ status: response.status, errorCode: logCtx.errorCode });
-        return withRequestLogId(response, requestId);
+        return runAdmittedHttpTurn(req, policy, async () => {
+          const response = withCors(
+            await handleEmbeddings(req, config, logCtx, { requestId, start, admission, onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer) }),
+            req, policy,
+          );
+          logCtx.otlpSpan?.finish({ status: response.status, errorCode: logCtx.errorCode });
+          return withRequestLogId(response, requestId);
+        }, { requestId, start, logCtx });
       }
 
       if (url.pathname === "/v1/audio/transcriptions" && req.method === "POST") {
