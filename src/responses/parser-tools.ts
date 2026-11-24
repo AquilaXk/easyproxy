@@ -3,6 +3,7 @@ import { isObj } from "./parser-content";
 import { WEB_SEARCH_TOOL_NAME } from "../web-search/synthetic-tool";
 import { buildImageTool, IMAGE_GEN_TOOL_NAME } from "../images/synthetic-tool";
 import { toolSearchDescription, toolSearchParameters } from "./tool-search-compat";
+import { parseEpxCacheControl } from "../protocols/cache-control";
 
 /** Capture the function and custom selectors from the original request before wire lowering. */
 export function explicitToolChoices(value: unknown, tools: readonly EpxTool[]): Pick<EpxRequestOptions, "explicitRootFunctionChoices" | "explicitClientToolChoices"> {
@@ -128,6 +129,8 @@ export function buildTools(tools: unknown[] | undefined): EpxTool[] | undefined 
     if (Array.isArray(t.allowed_callers)) {
       tool.allowedCallers = (t.allowed_callers as unknown[]).filter((c): c is string => typeof c === "string");
     }
+    const cacheControl = parseEpxCacheControl(t.cache_control);
+    if (cacheControl) tool.cacheControl = cacheControl;
     if (namespace) tool.namespace = namespace;
     out.push(tool);
   };
@@ -155,6 +158,8 @@ export function buildTools(tools: unknown[] | undefined): EpxTool[] | undefined 
       parameters: { type: "object", properties: { input: { type: "string", description: inputDescription } }, required: ["input"] },
       freeform: true,
     };
+    const cacheControl = parseEpxCacheControl(t.cache_control);
+    if (cacheControl) tool.cacheControl = cacheControl;
     if (namespace) tool.namespace = namespace;
     out.push(tool);
   };

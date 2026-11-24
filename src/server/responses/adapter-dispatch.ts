@@ -291,6 +291,7 @@ export async function prepareAdapterExchange(
       providerName: route.providerName,
       translatorBudget,
       abortSignal: upstream.signal,
+      ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
     });
     refreshRequestToolAliases(initialRequest);
     if (!handoffReplay && !transportState.activeAdapter.fetchResponse) {
@@ -614,6 +615,7 @@ export async function prepareAdapterExchange(
             providerName: route.providerName,
             translatorBudget,
             abortSignal: upstream.signal,
+            ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
             ...(transportState.imageTierBias > 0 ? { imageTierBias: transportState.imageTierBias } : {}),
           });
           if (!replay && !transportState.activeAdapter.fetchResponse) {

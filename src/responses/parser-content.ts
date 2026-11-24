@@ -1,4 +1,5 @@
 import type { EpxContentPart, EpxTextContent } from "../types";
+import { parseEpxCacheControl } from "../protocols/cache-control";
 import { audioContentFromRaw } from "./audio";
 import { inlineDocumentFromDataUrl } from "./inline-document";
 
@@ -45,8 +46,11 @@ export function inputContentParts(blocks: unknown): string | EpxContentPart[] {
     // shape. Validate each field before use, as outputToToolResultContent already does.
     if (!isObj(raw)) continue;
     const block = raw as InputBlock;
+    const blockCc = parseEpxCacheControl(raw.cache_control);
     if (block.type === "input_text" || block.type === "text") {
-      if (typeof raw.text === "string") parts.push({ type: "text", text: raw.text });
+      if (typeof raw.text === "string") {
+        parts.push({ type: "text", text: raw.text, ...(blockCc ? { cacheControl: blockCc } : {}) });
+      }
     } else if (block.type === "input_image") {
       const b = block as { image_url?: string; file_id?: string; detail?: string };
       const imageUrl = nonEmptyString(b.image_url);
@@ -55,9 +59,14 @@ export function inputContentParts(blocks: unknown): string | EpxContentPart[] {
       if (imageUrl) {
         // Preserve the image as a structured part — adapters send it as a native image block.
         // NEVER inline the (often base64 data-URL) image_url as text: that explodes the token count.
-        parts.push({ type: "image", imageUrl, ...(detail ? { detail: normalizeImageDetail(detail) } : {}) });
+        parts.push({
+          type: "image",
+          imageUrl,
+          ...(detail ? { detail: normalizeImageDetail(detail) } : {}),
+          ...(blockCc ? { cacheControl: blockCc } : {}),
+        });
       } else if (fileId) {
-        parts.push({ type: "text", text: `[image: ${fileId}]` }); // file_id ref → no inline data
+        parts.push({ type: "text", text: `[image: ${fileId}]`, ...(blockCc ? { cacheControl: blockCc } : {}) }); // file_id ref → no inline data
       }
       // No usable reference: omit the block. A "[image: ?]" marker would claim an attachment
       // the request never carried, which is worse than dropping malformed input.
@@ -83,7 +92,7 @@ export function inputContentParts(blocks: unknown): string | EpxContentPart[] {
       const fileData = nonEmptyString(b.file_data);
       const filename = nonEmptyString(b.filename);
       if (fileId) {
-        parts.push({ type: "text", text: `[file: ${fileId}]` });
+        parts.push({ type: "text", text: `[file: ${fileId}]`, ...(blockCc ? { cacheControl: blockCc } : {}) });
       } else if (fileData) {
         // Inline bytes used to be reduced to a name here, which meant no adapter could forward
         // the attachment even to a target that has a representation for it, and a title-only
@@ -91,14 +100,15 @@ export function inputContentParts(blocks: unknown): string | EpxContentPart[] {
         // The marker survives on the part for every wire that still cannot carry one. Bytes with
         // no declared media type are not decodable into a document and keep the marker they had.
         const document = inlineDocumentFromDataUrl(fileData, filename);
-        parts.push(document ?? { type: "text", text: filename ? `[file: ${filename}]` : "[file: inline data]" });
+        const docPart = document ?? { type: "text" as const, text: filename ? `[file: ${filename}]` : "[file: inline data]" };
+        parts.push(blockCc ? { ...docPart, cacheControl: blockCc } : docPart);
       }
       // A bare filename is not a file resource in the Responses schema, so omit it rather than
       // fabricating a "[file: ...]" marker for an attachment that was never sent.
     }
   }
-  // Collapse to a plain string only for a single TEXT part; media must stay structured.
-  if (parts.length === 1 && parts[0].type === "text") return parts[0].text;
+  // Collapse to a plain string only for a single TEXT part WITHOUT cacheControl; breakpoints preserve block metadata.
+  if (parts.length === 1 && parts[0].type === "text" && !parts[0].cacheControl) return parts[0].text;
   return parts;
 }
 
@@ -112,10 +122,13 @@ export function outputTextOf(blocks: unknown): EpxTextContent[] {
     // Same catch-all caveat as inputContentParts: validate before use.
     if (!isObj(raw)) continue;
     const b = raw as OutputBlock;
+    const blockCc = parseEpxCacheControl(raw.cache_control);
     if (b.type === "output_text" || b.type === "text") {
-      if (typeof raw.text === "string") out.push({ type: "text", text: raw.text });
+      if (typeof raw.text === "string") {
+        out.push({ type: "text", text: raw.text, ...(blockCc ? { cacheControl: blockCc } : {}) });
+      }
     } else if (b.type === "refusal") {
-      if (typeof raw.refusal === "string") out.push({ type: "text", text: `[refusal: ${raw.refusal}]` });
+      if (typeof raw.refusal === "string") out.push({ type: "text", text: `[refusal: ${raw.refusal}]`, ...(blockCc ? { cacheControl: blockCc } : {}) });
     }
   }
   return out;
@@ -130,27 +143,48 @@ export function outputToToolResultContent(output: string | unknown[] | undefined
   if (typeof output === "string") return output;
   if (!Array.isArray(output)) return "";
   const parts: EpxContentPart[] = [];
-  let hasMedia = false;
+  let hasMediaOrCache = false;
   for (const raw of output) {
     if (!isObj(raw)) continue;
+    const blockCc = parseEpxCacheControl(raw.cache_control);
+    if (blockCc) hasMediaOrCache = true;
     if (raw.type === "output_text" || raw.type === "text" || raw.type === "input_text") {
-      if (typeof raw.text === "string") parts.push({ type: "text", text: raw.text });
+      if (typeof raw.text === "string") {
+        parts.push({ type: "text", text: raw.text, ...(blockCc ? { cacheControl: blockCc } : {}) });
+      }
     } else if (raw.type === "refusal" && typeof raw.refusal === "string") {
-      parts.push({ type: "text", text: `[refusal: ${raw.refusal}]` });
+      parts.push({ type: "text", text: `[refusal: ${raw.refusal}]`, ...(blockCc ? { cacheControl: blockCc } : {}) });
     } else if (raw.type === "input_image") {
       const imageUrl = nonEmptyString(raw.image_url);
       const fileId = nonEmptyString(raw.file_id);
       if (imageUrl) {
-        parts.push({ type: "image", imageUrl, ...(typeof raw.detail === "string" ? { detail: normalizeImageDetail(raw.detail) } : {}) });
-        hasMedia = true;
+        parts.push({
+          type: "image",
+          imageUrl,
+          ...(typeof raw.detail === "string" ? { detail: normalizeImageDetail(raw.detail) } : {}),
+          ...(blockCc ? { cacheControl: blockCc } : {}),
+        });
+        hasMediaOrCache = true;
       } else if (fileId) {
-        parts.push({ type: "text", text: `[image: ${fileId}]` });
+        parts.push({ type: "text", text: `[image: ${fileId}]`, ...(blockCc ? { cacheControl: blockCc } : {}) });
+      }
+    } else if (raw.type === "input_file") {
+      const fileId = nonEmptyString(raw.file_id);
+      const fileData = nonEmptyString(raw.file_data);
+      const filename = nonEmptyString(raw.filename);
+      if (fileId) {
+        parts.push({ type: "text", text: `[file: ${fileId}]`, ...(blockCc ? { cacheControl: blockCc } : {}) });
+      } else if (fileData) {
+        const document = inlineDocumentFromDataUrl(fileData, filename);
+        const docPart = document ?? { type: "text" as const, text: filename ? `[file: ${filename}]` : "[file: inline data]" };
+        parts.push(blockCc ? { ...docPart, cacheControl: blockCc } : docPart);
+        hasMediaOrCache = true;
       }
     } else if (raw.type === "input_audio") {
       const audio = audioContentFromRaw(raw.audio_url, raw.format);
       if (audio) {
         parts.push(audio);
-        hasMedia = true;
+        hasMediaOrCache = true;
       } else if (nonEmptyString(raw.audio_url)) {
         const format = safeAudioFormat(raw.format);
         parts.push({ type: "text", text: format ? `[audio: ${format}]` : "[audio]" });
@@ -160,7 +194,7 @@ export function outputToToolResultContent(output: string | unknown[] | undefined
       parts.push({ type: "text", text: "[encrypted content omitted]" });
     }
   }
-  if (!hasMedia) return parts.map(p => (p.type === "text" ? p.text : "")).join("");
+  if (!hasMediaOrCache) return parts.map(p => (p.type === "text" ? p.text : "")).join("");
   return parts;
 }
 

@@ -899,6 +899,8 @@ export const apiKeyEntrySchema = z.object({
   id: z.string().catch(""),
   name: z.string().catch(""),
   createdAt: z.string().catch(""),
+  // Fail closed: corrupted expiry timestamps drop the entry rather than granting eternal access.
+  expiresAt: z.string().datetime({ offset: true }).optional(),
   // A damaged overlap record must never discard the still-authoritative key.
   pendingRotation: pendingApiKeyRotationSchema.optional().catch(undefined),
   // Deliberately NOT `.catch`ed, unlike every field above. Degrading a damaged
@@ -911,9 +913,11 @@ export const apiKeyEntrySchema = z.object({
   // Not `.catch`ed for the same reason: a damaged value must not grant metered spend.
   allowMeteredComboTargets: z.boolean().optional(),
   rpmLimit: z.number().int().min(1).max(1_000_000).optional(),
+  tpmLimit: z.number().int().min(1).max(1_000_000_000).optional(),
   maxDailyRequests: z.number().int().min(1).max(100_000_000).optional(),
   dailyTokenLimit: z.number().int().min(1).max(10_000_000_000).optional(),
   dailyCostLimitUsd: z.number().finite().min(0.000001).max(1_000_000).optional(),
+  maxInFlightCostUsd: z.number().finite().min(0.000001).max(1_000_000).optional(),
 }).passthrough();
 
 export const toolOutputCompressionSchema = z.object({

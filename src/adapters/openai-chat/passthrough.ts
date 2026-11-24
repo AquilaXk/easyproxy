@@ -69,8 +69,9 @@ export function buildOpenAIChatPassthroughRequest(
   replayScope?: EpxReasoningReplayScopeRef,
   maxSerializedBytes = TRANSLATOR_MAX_TURN_BYTES,
   translatorBudget?: TranslatorBudget,
+  otlpTraceparent?: string,
 ): AdapterRequest {
-  const { url, headers, hasCredential } = openAIChatTransport(provider);
+  const { url, headers, hasCredential } = openAIChatTransport(provider, otlpTraceparent);
 
   const body: Record<string, unknown> = {
     model: provider.modelSuffixBracketStrip ? stripBracketedModelSuffix(modelId) : modelId,

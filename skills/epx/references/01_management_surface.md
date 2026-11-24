@@ -25,7 +25,7 @@ These answer in the CLI head and never reach the proxy, so they work with nothin
 
 | Chapter | Declared capabilities |
 |---|---|
-| [lifecycle](01_surface_lifecycle.md) | 26 |
+| [lifecycle](01_surface_lifecycle.md) | 29 |
 | [providers-models](01_surface_providers-models.md) | 56 |
 | [accounts](01_surface_accounts.md) | 44 |
 | [agents-routing](01_surface_agents-routing.md) | 83 |
@@ -1479,6 +1479,18 @@ Original invocation order. These headings preserve links to the previous single-
 
 [State-changing task](01_surface_lifecycle.md#epx-telemetry-profile-disconnect)
 
+### `epx telemetry otlp status`
+
+[Read-oriented task](01_surface_lifecycle.md#epx-telemetry-otlp-status)
+
+### `epx telemetry otlp set`
+
+[State-changing task](01_surface_lifecycle.md#epx-telemetry-otlp-set)
+
+### `epx telemetry otlp clear`
+
+[State-changing task](01_surface_lifecycle.md#epx-telemetry-otlp-clear)
+
 ### `epx workflow-budget status`
 
 [Read-oriented task](01_surface_agents-routing.md#epx-workflow-budget-status)
@@ -1761,6 +1773,6 @@ Original invocation order. These headings preserve links to the previous single-
 
 ## Counts
 
-- declared capabilities: 428
-- of those, state-changing: 264
+- declared capabilities: 431
+- of those, state-changing: 266
 - head-resolved invocations: 2

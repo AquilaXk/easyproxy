@@ -33,9 +33,11 @@ import {
   documentTitle,
   effectiveBlockedSkillNames,
   maybeElideSkillText,
+  preservedAnthropicSystemBlocks,
   skillElisionStub,
   systemMessageText,
 } from "../../claude/inbound";
+import { parseEpxCacheControl, type EpxCacheControl } from "../cache-control";
 import { toolsToResponses } from "../../claude/inbound-content-options";
 import { AnthropicRequestError, isRec, type Rec } from "../../claude/inbound-records";
 import { hasRoutedIdentity, nameRoutedIdentity } from "../../adapters/identity";
@@ -70,18 +72,18 @@ function reasoningItemId(): string {
   return `rs_${crypto.randomUUID().replace(/-/g, "")}`;
 }
 
-/** The parser collapses a lone text part to a plain string; images and documents stay structured. */
+/** The parser collapses a lone text part without cache_control to a plain string; images, documents, and cached blocks stay structured. */
 function collapsed(parts: EpxContentPart[]): string | EpxContentPart[] {
-  return parts.length === 1 && parts[0]!.type === "text" ? parts[0]!.text : parts;
+  return parts.length === 1 && parts[0]!.type === "text" && !parts[0]!.cacheControl ? parts[0]!.text : parts;
 }
 
 /** One entry of a tool result as the translator lists it, before the parser reads it. */
-type ToolResultEntry = { text: string } | { image: string };
+type ToolResultEntry = { text: string; cacheControl?: EpxCacheControl } | { image: string; cacheControl?: EpxCacheControl };
 
 /**
  * A `tool_result` block's content as the IR carries it: the translator's `toolResultOutput`
  * (error prefix, `tool_reference` markers, image references, document markers) read through the
- * parser's `outputToToolResultContent` (text joined unless an image survives).
+ * parser's `outputToToolResultContent` (text joined unless an image or block cache_control survives).
  */
 function toolResultContent(block: Rec): string | EpxContentPart[] {
   const isError = block.is_error === true;
@@ -91,31 +93,33 @@ function toolResultContent(block: Rec): string | EpxContentPart[] {
   const out: ToolResultEntry[] = [];
   for (const item of content) {
     if (!isRec(item)) continue;
+    const itemCc = parseEpxCacheControl(item.cache_control);
     if (item.type === "text" && typeof item.text === "string") {
-      out.push({ text: item.text });
+      out.push({ text: item.text, ...(itemCc ? { cacheControl: itemCc } : {}) });
     } else if (item.type === "tool_reference" && typeof item.tool_name === "string" && item.tool_name.length > 0) {
       const prev = out[out.length - 1];
       const lead = prev !== undefined && "text" in prev && !prev.text.endsWith("\n") ? "\n" : "";
-      out.push({ text: `${lead}Tool loaded: ${item.tool_name}\n` });
+      out.push({ text: `${lead}Tool loaded: ${item.tool_name}\n`, ...(itemCc ? { cacheControl: itemCc } : {}) });
     } else if (item.type === "image") {
       const url = anthropicImageBlockUrl(item);
-      if (url !== null) out.push({ image: url });
+      if (url !== null) out.push({ image: url, ...(itemCc ? { cacheControl: itemCc } : {}) });
     } else if (item.type === "document") {
-      out.push({ text: inlineDocumentMarker(documentTitle(item)) });
+      out.push({ text: inlineDocumentMarker(documentTitle(item)), ...(itemCc ? { cacheControl: itemCc } : {}) });
     }
   }
   if (isError) out.unshift({ text: "[tool error]" });
   if (out.length === 0) return isError ? "[tool error]" : "";
   const parts: EpxContentPart[] = [];
-  let hasImage = false;
+  let hasImageOrCache = false;
   for (const entry of out) {
-    if ("text" in entry) parts.push({ type: "text", text: entry.text });
+    if (entry.cacheControl) hasImageOrCache = true;
+    if ("text" in entry) parts.push({ type: "text", text: entry.text, ...(entry.cacheControl ? { cacheControl: entry.cacheControl } : {}) });
     else if (entry.image.length > 0) {
-      parts.push({ type: "image", imageUrl: entry.image });
-      hasImage = true;
+      parts.push({ type: "image", imageUrl: entry.image, ...(entry.cacheControl ? { cacheControl: entry.cacheControl } : {}) });
+      hasImageOrCache = true;
     }
   }
-  if (!hasImage) return parts.map(part => (part.type === "text" ? part.text : "")).join("");
+  if (!hasImageOrCache) return parts.map(part => (part.type === "text" ? part.text : "")).join("");
   return parts;
 }
 
@@ -141,6 +145,8 @@ function toolCatalog(raw: unknown): EpxTool[] {
     if (Array.isArray(entry.allowed_callers)) {
       tool.allowedCallers = entry.allowed_callers.filter((caller): caller is string => typeof caller === "string");
     }
+    const cacheControl = parseEpxCacheControl(entry.cache_control);
+    if (cacheControl) tool.cacheControl = cacheControl;
     declared.push(tool);
   }
   const seen = new Set<string>();
@@ -224,15 +230,16 @@ export function messagesConversationToIr(
     });
     pending.length = 0;
   };
-  const pushToolCall = (id: string, name: string, input: unknown): void => {
+  const pushToolCall = (id: string, name: string, input: unknown, cacheControl?: EpxCacheControl): void => {
     holderWithReasoning().content.push({
       type: "toolCall",
       id,
       name,
       arguments: functionCallArgumentsFromText(id, JSON.stringify(input ?? {})),
+      ...(cacheControl ? { cacheControl } : {}),
     });
   };
-  const pushToolResult = (callId: string, content: string | EpxContentPart[]): void => {
+  const pushToolResult = (callId: string, content: string | EpxContentPart[], cacheControl?: EpxCacheControl): void => {
     // Reasoning replayed after the call it belongs to joins that call's assistant turn (#950).
     if (pending.length > 0) {
       outer: for (let i = messages.length - 1; i >= 0; i--) {
@@ -261,6 +268,7 @@ export function messagesConversationToIr(
     messages.push({
       role: "toolResult", toolCallId: callId, toolName: owner.name, toolNamespace: owner.namespace,
       content, isError: false, timestamp: now,
+      ...(cacheControl ? { cacheControl } : {}),
     });
   };
   /**
@@ -268,12 +276,13 @@ export function messagesConversationToIr(
    * `encrypted_content`; the placeholder signature is the item's serialized form, spelled in the
    * schema's key order.
    */
-  const pushReasoning = (id: string, summaryText: string, encrypted: string | undefined): void => {
+  const pushReasoning = (id: string, summaryText: string, encrypted: string | undefined, cacheControl?: EpxCacheControl): void => {
     const item: Rec = {
       type: "reasoning",
       id,
       summary: summaryText.length > 0 ? [{ type: "summary_text", text: summaryText }] : [],
       ...(encrypted !== undefined ? { encrypted_content: encrypted } : {}),
+      ...(cacheControl !== undefined ? { cache_control: cacheControl } : {}),
     };
     const envelope = encrypted !== undefined ? decodeReasoningEnvelope(encrypted) : null;
     const thinkingText = envelope?.txt ?? summaryText;
@@ -289,6 +298,7 @@ export function messagesConversationToIr(
       signature: envelope?.sig ?? JSON.stringify(item),
       ...(envelope?.red ? { redacted: envelope.red } : {}),
       itemId: id,
+      ...(cacheControl ? { cacheControl } : {}),
     };
     const envelopeSigned = typeof envelope?.sig === "string";
     const previous = pending[pending.length - 1];
@@ -315,11 +325,16 @@ export function messagesConversationToIr(
     };
     for (const block of content) {
       if (!isRec(block)) continue;
+      const blockCc = parseEpxCacheControl(block.cache_control);
       switch (block.type) {
         case "text":
           if (typeof block.text === "string") {
             blocks++;
-            parts.push({ type: "text", text: maybeElideSkillText(block.text, blockedNames) });
+            parts.push({
+              type: "text",
+              text: maybeElideSkillText(block.text, blockedNames),
+              ...(blockCc ? { cacheControl: blockCc } : {}),
+            });
           }
           break;
         case "image": {
@@ -327,7 +342,7 @@ export function messagesConversationToIr(
           if (url !== null) {
             blocks++;
             // An empty reference is a block the parser drops.
-            if (url.length > 0) parts.push({ type: "image", imageUrl: url });
+            if (url.length > 0) parts.push({ type: "image", imageUrl: url, ...(blockCc ? { cacheControl: blockCc } : {}) });
           }
           break;
         }
@@ -339,16 +354,18 @@ export function messagesConversationToIr(
           pushToolResult(
             block.tool_use_id,
             blockedCalls.has(block.tool_use_id) ? skillElisionStub(block.tool_use_id) : toolResultContent(block),
+            blockCc,
           );
           break;
         }
         case "document": {
           blocks++;
           const document = anthropicDocumentData(block);
-          parts.push(document
+          const docPart = document
             ? inlineDocumentFromDataUrl(document.fileData, document.title)
-              ?? { type: "text", text: document.title ? `[file: ${document.title}]` : "[file: inline data]" }
-            : { type: "text", text: inlineDocumentMarker(documentTitle(block)) });
+              ?? { type: "text" as const, text: document.title ? `[file: ${document.title}]` : "[file: inline data]" }
+            : { type: "text" as const, text: inlineDocumentMarker(documentTitle(block)) };
+          parts.push(blockCc ? { ...docPart, cacheControl: blockCc } : docPart);
           break;
         }
         default:
@@ -371,16 +388,17 @@ export function messagesConversationToIr(
     };
     for (const block of content) {
       if (!isRec(block)) continue;
+      const blockCc = parseEpxCacheControl(block.cache_control);
       switch (block.type) {
         case "text":
-          if (typeof block.text === "string") text.push({ type: "text", text: block.text });
+          if (typeof block.text === "string") text.push({ type: "text", text: block.text, ...(blockCc ? { cacheControl: blockCc } : {}) });
           break;
         case "tool_use":
           flush();
           if (typeof block.id !== "string" || block.id.length === 0 || typeof block.name !== "string" || block.name.length === 0) {
             throw markProxyError(new AnthropicRequestError("tool_use requires id and name"));
           }
-          pushToolCall(block.id, block.name, block.input);
+          pushToolCall(block.id, block.name, block.input, blockCc);
           break;
         case "thinking": {
           flush();
@@ -401,7 +419,7 @@ export function messagesConversationToIr(
                 budget.chargeRetained(2 * nat.enc.length, { kind: "reasoning" });
               }
               if (thinking.length === 0 && !nat) break;
-              pushReasoning(nat?.id ?? reasoningItemId(), thinking, nat?.enc);
+              pushReasoning(nat?.id ?? reasoningItemId(), thinking, nat?.enc, blockCc);
               break;
             }
           }
@@ -410,7 +428,7 @@ export function messagesConversationToIr(
             : signature.startsWith(EPX_REASONING_PREFIX) ? signature : encodeReasoningEnvelope({ sig: signature }, budget);
           if (encrypted) budget.chargeRetained(2 * encrypted.length, { kind: "reasoning" });
           if (thinking.length === 0 && !encrypted) break;
-          pushReasoning(reasoningItemId(), thinking, encrypted);
+          pushReasoning(reasoningItemId(), thinking, encrypted, blockCc);
           break;
         }
         case "redacted_thinking": {
@@ -445,12 +463,21 @@ export function messagesConversationToIr(
   }
 
   const system = anthropicSystemLayout(raw.system, cc);
+  const systemBlocks = preservedAnthropicSystemBlocks(raw.system, system, cc);
+  const systemCacheControls = systemBlocks?.map(b => b.cache_control);
   if (system.dynamicNotice !== undefined) pushUser(system.dynamicNotice);
   preservePendingReplay();
 
   const tools = toolCatalog(raw.tools);
   const context: EpxContext = {
-    ...(system.instructions ? { systemPrompt: [nameDestination(system.instructions, modelId)] } : {}),
+    ...(systemBlocks
+      ? {
+          systemPrompt: systemBlocks.map(b => nameDestination(b.text, modelId)),
+          ...(systemCacheControls?.some(c => c !== undefined) ? { systemCacheControls } : {}),
+        }
+      : system.instructions
+        ? { systemPrompt: [nameDestination(system.instructions, modelId)] }
+        : {}),
     messages,
     ...(tools.length > 0 ? { tools } : {}),
   };

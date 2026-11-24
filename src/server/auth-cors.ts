@@ -419,6 +419,7 @@ export type RequestPolicyView = Pick<EpxConfig, "hostname" | "corsAllowOrigins" 
 
 export type DataPlaneAdmissionOptions = {
   linkIngress?: ReadonlySet<string>;
+  now?: number;
 };
 
 /** Derive the per-request policy view for a listener. Cheap enough to build per request. */
@@ -578,6 +579,13 @@ export type DataPlaneAdmission = (
  * discarded, which is what makes per-key attribution possible without touching
  * the admission decision itself.
  */
+export function isApiKeyExpired(entry: Pick<EpxApiKeyEntry, "expiresAt">, now = Date.now()): boolean {
+  if (entry.expiresAt === undefined) return false;
+  if (typeof entry.expiresAt !== "string") return true;
+  const expiresMs = Date.parse(entry.expiresAt);
+  return !Number.isFinite(expiresMs) || expiresMs <= now;
+}
+
 export function resolveDataPlaneAdmissionSecret(
   token: string,
   config: Pick<EpxConfig, "apiKeys">,
@@ -595,8 +603,9 @@ export function resolveDataPlaneAdmissionSecret(
   }
   const apiKeys = config.apiKeys;
   if (!apiKeys?.length) return null;
-  const now = Date.now();
+  const now = options.now ?? Date.now();
   for (const k of apiKeys) {
+    if (isApiKeyExpired(k, now)) continue;
     const keyId = typeof k.id === "string" ? k.id : "";
     if (options.linkIngress && !options.linkIngress.has(keyId)) continue;
     const mat = getApiKeyMaterial(apiKeys, k);

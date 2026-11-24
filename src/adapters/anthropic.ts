@@ -33,6 +33,8 @@ import { redactSecretString } from "../lib/redact";
 import { CLAUDE_CODE_HEADERS, claudeCodeSessionId } from "./client-fingerprint";
 import { CLAUDE_CLI_SDK_PACKAGE_VERSION, CLAUDE_CLI_USER_AGENT } from "../providers/claude-cli-identity";
 import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
+import { injectOtlpTraceparent } from "../lib/trace-context";
+import { parseEpxCacheControl, resolvePreservedAnthropicCacheControl, type EpxCacheControl } from "../protocols/cache-control";
 import { decodeServerSentEvents } from "../lib/sse-decoder";
 import { isLikelyRealAnthropicThinkingSignature } from "../responses/reasoning-envelope";
 import { isTranslatorBudgetExceededError, retainTranslatedEventBatch, type TranslatorBudget } from "../lib/translator-budget";
@@ -49,13 +51,14 @@ import { claudeFamilyVersion, rejectsCombinedSampling, rejectsForcedToolChoice, 
 
 /** Map a user content part to an Anthropic content block (text or image source). */
 function toAnthropicContentPart(p: EpxContentPart): unknown {
+  const ccField = p.cacheControl ? { cache_control: p.cacheControl } : {};
   if (p.type === "image") {
     const data = parseDataUrl(p.imageUrl);
     return data
-      ? { type: "image", source: { type: "base64", media_type: data.mediaType, data: data.base64 } }
-      : { type: "image", source: { type: "url", url: p.imageUrl } };
+      ? { type: "image", source: { type: "base64", media_type: data.mediaType, data: data.base64 }, ...ccField }
+      : { type: "image", source: { type: "url", url: p.imageUrl }, ...ccField };
   }
-  if (p.type === "video") return { type: "text", text: "[video]" };
+  if (p.type === "video") return { type: "text", text: "[video]", ...ccField };
   // The block the caller sent, rebuilt. A Messages-to-Messages route used to reduce it to its
   // title before any adapter ran, so the model was told a document existed rather than given
   // one, and the answer came back looking the same (#5212).
@@ -64,9 +67,10 @@ function toAnthropicContentPart(p: EpxContentPart): unknown {
       type: "document",
       source: { type: "base64", media_type: p.mediaType, data: p.data },
       ...(p.filename !== undefined ? { title: p.filename } : {}),
+      ...ccField,
     };
   }
-  return { type: "text", text: p.text };
+  return { type: "text", text: p.text, ...ccField };
 }
 
 /** Default `max_tokens` when Codex omits `max_output_tokens`. */
@@ -180,12 +184,10 @@ function applyPromptCaching(
 
   const messages = body.messages as Array<Record<string, unknown>> | undefined;
 
-  // Skip if external breakpoints are already present on messages.
+  // Skip if external breakpoints are already present on messages (including nested tool_result blocks).
   if (messages) {
     for (const msg of messages) {
-      if (Array.isArray(msg.content)) {
-        if ((msg.content as Array<Record<string, unknown>>).some(b => b.cache_control != null)) return;
-      }
+      if (Array.isArray(msg.content) && hasBlockCacheControl(msg.content as Array<Record<string, unknown>>)) return;
     }
   }
 
@@ -194,15 +196,23 @@ function applyPromptCaching(
   // 1. tools
   const tools = body.tools as Array<Record<string, unknown>> | undefined;
   if (tools && tools.length > 0) {
-    applyCacheControlToLast(tools, cc);
-    used++;
+    const existingToolBreakpoints = tools.filter(t => t.cache_control != null).length;
+    if (existingToolBreakpoints > 0) {
+      used += existingToolBreakpoints;
+    } else {
+      applyCacheControlToLast(tools, cc);
+      used++;
+    }
   }
   if (used >= explicitLimit) return;
 
   // 2. system, or the caller prefix relocated to the first user turn
   const system = body.system as Array<Record<string, unknown>> | undefined;
   const relocated = options.relocatedSystemPrefix === true ? messages?.[0] : undefined;
-  if (relocated !== undefined && relocated.role === "user") {
+  const existingSystemBreakpoints = system ? system.filter(b => b.cache_control != null).length : 0;
+  if (existingSystemBreakpoints > 0 && relocated === undefined) {
+    used += existingSystemBreakpoints;
+  } else if (relocated !== undefined && relocated.role === "user") {
     if (typeof relocated.content === "string") {
       relocated.content = [{ type: "text", text: relocated.content, cache_control: cc }];
     } else if (Array.isArray(relocated.content) && relocated.content.length > 0) {
@@ -274,11 +284,61 @@ function observeAnthropicSpeed(usage: unknown, tierMetadata: AdapterTierMetadata
 // Breakpoint cap enforcement — strip excess beyond the 4-breakpoint limit
 // ---------------------------------------------------------------------------
 
+function forEachMessageCacheBlock(
+  blocks: Array<Record<string, unknown>>,
+  visitor: (block: Record<string, unknown>) => void,
+): void {
+  for (const b of blocks) {
+    if (b.type === "tool_result" && Array.isArray(b.content)) {
+      for (const nested of b.content as Array<Record<string, unknown>>) {
+        if (nested && typeof nested === "object") visitor(nested);
+      }
+    }
+    visitor(b);
+  }
+}
+
+function hasBlockCacheControl(blocks: Array<Record<string, unknown>>): boolean {
+  let found = false;
+  forEachMessageCacheBlock(blocks, (b) => {
+    if (b.cache_control != null) found = true;
+  });
+  return found;
+}
+
+function normalizePreservedBodyCacheControls(
+  body: Record<string, unknown>,
+  retention: AnthropicCacheRetention,
+): void {
+  const apply = (b: Record<string, unknown>) => {
+    if (b.cache_control == null) return;
+    const parsedCc = parseEpxCacheControl(b.cache_control);
+    const resolved = resolvePreservedAnthropicCacheControl(parsedCc, retention);
+    if (resolved) b.cache_control = resolved;
+    else delete b.cache_control;
+  };
+  if (body.cache_control != null) {
+    const topCc = resolvePreservedAnthropicCacheControl(parseEpxCacheControl(body.cache_control), retention);
+    if (topCc) body.cache_control = topCc;
+    else delete body.cache_control;
+  }
+  const tools = body.tools as Array<Record<string, unknown>> | undefined;
+  if (tools) for (const t of tools) apply(t);
+  const system = body.system as Array<Record<string, unknown>> | undefined;
+  if (system) for (const b of system) apply(b);
+  const messages = body.messages as Array<Record<string, unknown>> | undefined;
+  if (messages) {
+    for (const msg of messages) {
+      if (Array.isArray(msg.content)) forEachMessageCacheBlock(msg.content as Array<Record<string, unknown>>, apply);
+    }
+  }
+}
+
 function countBreakpoints(body: Record<string, unknown>): number {
   let total = 0;
   const count = (blocks: Array<Record<string, unknown>> | undefined) => {
     if (!blocks) return;
-    for (const b of blocks) if (b.cache_control) total++;
+    forEachMessageCacheBlock(blocks, (b) => { if (b.cache_control) total++; });
   };
   count(body.tools as Array<Record<string, unknown>> | undefined);
   count(body.system as Array<Record<string, unknown>> | undefined);
@@ -301,10 +361,9 @@ function enforceCacheControlLimit(body: Record<string, unknown>, limit = MAX_CAC
     for (const msg of messages) {
       if (excess <= 0) break;
       if (!Array.isArray(msg.content)) continue;
-      for (const block of msg.content as Array<Record<string, unknown>>) {
-        if (excess <= 0) break;
-        if (block.cache_control) { delete block.cache_control; excess--; }
-      }
+      forEachMessageCacheBlock(msg.content as Array<Record<string, unknown>>, (block) => {
+        if (excess > 0 && block.cache_control) { delete block.cache_control; excess--; }
+      });
     }
   }
   const stripBlocks = (blocks: Array<Record<string, unknown>> | undefined) => {
@@ -326,7 +385,7 @@ function normalizeTtlOrdering(body: Record<string, unknown>): void {
   const allBlocks: Array<Record<string, unknown>> = [];
   const collect = (blocks: Array<Record<string, unknown>> | undefined) => {
     if (!blocks) return;
-    for (const b of blocks) if (b.cache_control) allBlocks.push(b);
+    forEachMessageCacheBlock(blocks, (b) => { if (b.cache_control) allBlocks.push(b); });
   };
   collect(body.tools as Array<Record<string, unknown>> | undefined);
   collect(body.system as Array<Record<string, unknown>> | undefined);
@@ -779,6 +838,7 @@ function toAnthropicToolResult(msg: EpxToolResultMessage, wireCallId: string): R
     tool_use_id: wireCallId,
     content,
     ...(msg.isError ? { is_error: true } : {}),
+    ...(msg.cacheControl ? { cache_control: msg.cacheControl } : {}),
   };
 }
 
@@ -819,7 +879,7 @@ function messagesToAnthropicFormat(
   toolNames: { toWire: (name: string) => string },
   serverReplay?: ReadonlyMap<string, readonly Record<string, unknown>[]>,
   relocateCallerSystem = false,
-): { system: string[]; callerSystem: string[]; messages: unknown[] } {
+): { system: string[]; systemBlockCacheControls: (EpxCacheControl | undefined)[]; callerSystem: string[]; messages: unknown[] } {
   // The client's server-tool exchanges go back ahead of the block they preceded. Their anchors are
   // unique in the caller's history (replayedAnthropicServerBlocks drops repeated ones); each is used once.
   const pendingReplay = new Map(serverReplay);
@@ -857,19 +917,43 @@ function messagesToAnthropicFormat(
     : systemPrompt;
   const toolGuidance = toolCatalogNudge ? [toolCatalogNudge] : [];
   const systemParts = relocateCallerSystem ? promptParts : [...promptParts, ...toolGuidance];
-  // End a block at the caller's cached prefix so its breakpoint skips the per-turn tail.
+  // End a block at the caller's cached prefix so its breakpoint skips the per-turn tail,
+  // or preserve multi-block system breakpoints across bridges.
   const prefix = parsed._anthropicSystemCachePrefix
     ? identifyRoutedModel(parsed._anthropicSystemCachePrefix, parsed.modelId) : undefined;
   const head = prefix && systemParts[0] ? identifyRoutedModel(systemParts[0], parsed.modelId) : systemParts[0];
-  const texts = prefix && head?.startsWith(`${prefix}\n\n`)
-    ? [prefix, [head.slice(prefix.length + 2), ...systemParts.slice(1)].join("\n\n")]
-    : [systemParts.join("\n\n")];
-  const normalized = texts.map(text => identifyRoutedModel(text, parsed.modelId)).filter(Boolean);
+  const explicitSystemControls = parsed.context.systemCacheControls;
+  let texts: string[];
+  let systemControls: (EpxCacheControl | undefined)[] | undefined;
+  if (prefix && head?.startsWith(`${prefix}\n\n`)) {
+    texts = [prefix, [head.slice(prefix.length + 2), ...systemParts.slice(1)].join("\n\n")];
+    systemControls = parsed._anthropicSystemCachePrefixControl
+      ? [parsed._anthropicSystemCachePrefixControl, undefined]
+      : undefined;
+  } else if (!relocateCallerSystem && explicitSystemControls && explicitSystemControls.length === promptParts.length && explicitSystemControls.some(Boolean)) {
+    texts = systemParts;
+    systemControls = toolGuidance.length > 0
+      ? [...explicitSystemControls, ...toolGuidance.map(() => undefined)]
+      : explicitSystemControls;
+  } else {
+    texts = [systemParts.join("\n\n")];
+    systemControls = explicitSystemControls?.length === 1 && systemParts.length === 1
+      ? explicitSystemControls
+      : undefined;
+  }
+  const normalizedPairs: Array<{ text: string; cacheControl?: EpxCacheControl }> = [];
+  for (let idx = 0; idx < texts.length; idx += 1) {
+    const identified = identifyRoutedModel(texts[idx]!, parsed.modelId);
+    if (!identified) continue;
+    normalizedPairs.push({ text: identified, cacheControl: systemControls?.[idx] });
+  }
+  const normalized = normalizedPairs.map(pair => pair.text);
   const callerSystem = relocateCallerSystem ? normalized : [];
   const system = relocateCallerSystem
     ? [...proxySystemPrompt.map(({ suffix }) => suffix.trimStart()), ...toolGuidance]
       .map(text => identifyRoutedModel(text, parsed.modelId)).filter(Boolean)
     : normalized;
+  const systemBlockCacheControls = relocateCallerSystem ? [] : normalizedPairs.map(pair => pair.cacheControl);
   const messages: unknown[] = [];
 
   for (let i = 0; i < parsed.context.messages.length; i++) {
@@ -901,9 +985,10 @@ function messagesToAnthropicFormat(
         const toolUseIds: string[] = [];
         for (const part of aMsg.content) {
           if (part.type === "text") {
-            const text = (part as EpxTextContent).text;
+            const textPart = part as EpxTextContent;
+            const text = textPart.text;
             for (const b of replayed(`text:${text}`)) appendPreface(b);
-            if (text) appendPreface({ type: "text", text });
+            if (text) appendPreface({ type: "text", text, ...(textPart.cacheControl ? { cache_control: textPart.cacheControl } : {}) });
           } else if (part.type === "thinking") {
             const t = part as EpxThinkingContent;
             // Server blocks that preceded this reasoning keep their place, even when it is dropped below.
@@ -919,7 +1004,12 @@ function messagesToAnthropicFormat(
             }
             if (isLikelyRealAnthropicThinkingSignature(t.signature)) {
               signed = true;
-              appendPreface({ type: "thinking", thinking: t.thinking, signature: t.signature });
+              appendPreface({
+                type: "thinking",
+                thinking: t.thinking,
+                signature: t.signature,
+                ...(t.cacheControl ? { cache_control: t.cacheControl } : {}),
+              });
             }
           } else if (part.type === "toolCall") {
             const tc = part as EpxToolCall;
@@ -935,7 +1025,13 @@ function messagesToAnthropicFormat(
               continue;
             }
             toolUseIds.push(wireCallId);
-            const block = { type: "tool_use", id: wireCallId, name: toolNames.toWire(flatName), input: tc.arguments };
+            const block = {
+              type: "tool_use",
+              id: wireCallId,
+              name: toolNames.toWire(flatName),
+              input: tc.arguments,
+              ...(tc.cacheControl ? { cache_control: tc.cacheControl } : {}),
+            };
             toolUses.push(block);
             originalOrder.push(block);
           }
@@ -1008,7 +1104,7 @@ function messagesToAnthropicFormat(
     messages.push({ role: "user", content: "(continue)" });
   }
 
-  return { system, callerSystem, messages };
+  return { system, systemBlockCacheControls, callerSystem, messages };
 }
 
 function toolsToAnthropicFormat(parsed: EpxParsedRequest, toolNames: { toWire: (name: string) => string }): unknown[] | undefined {
@@ -1025,6 +1121,7 @@ function toolsToAnthropicFormat(parsed: EpxParsedRequest, toolNames: { toWire: (
     // cannot be distinguished from silence and must not become an opt-out on the wire.
     ...(t.strict === true ? { strict: true } : {}),
     ...(t.allowedCallers !== undefined ? { allowed_callers: [...t.allowedCallers] } : {}),
+    ...(t.cacheControl ? { cache_control: t.cacheControl } : {}),
   }));
   return converted;
 }
@@ -1067,7 +1164,7 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
       // Advisor also reaches a gateway that opted in with forwardAdvisorTool (advisor-tool.ts).
       const serverToolPlan = planAnthropicServerTools(provider, parsed._anthropicServerTools, parsed._anthropicServerReplay,
         new Set(parsed.context.tools?.map(tool => tool.name)), usesNativeAnthropicEndpoint(provider));
-      const { system, callerSystem, messages } = messagesToAnthropicFormat(parsed, toolNames,
+      const { system, systemBlockCacheControls, callerSystem, messages } = messagesToAnthropicFormat(parsed, toolNames,
         serverToolPlan.replay, isOAuth && provider.anthropicOAuthUserInstructions === true && !parsed._proxyOwnedSystemPrompt);
       // Before image normalization, so the framing block is present for every downstream pass.
       if (isAgentRouterEndpoint(provider.baseUrl)) applyAgentRouterLanguageFraming(messages);
@@ -1108,14 +1205,22 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
         // system-role priority even when caller instructions move.
         body.system = [
           { type: "text", text: CLAUDE_CODE_SYSTEM_INSTRUCTION },
-          ...system.map(text => ({ type: "text", text })),
+          ...system.map((text, idx) => ({
+            type: "text",
+            text,
+            ...(systemBlockCacheControls[idx] ? { cache_control: systemBlockCacheControls[idx] } : {}),
+          })),
         ];
         if (callerSystem.length > 0) {
           prependTextToFirstUserMessage(messages, callerSystem);
           relocatedCallerSystem = true;
         }
       } else if (system.length > 0) {
-        body.system = system.map(text => ({ type: "text", text }));
+        body.system = system.map((text, idx) => ({
+          type: "text",
+          text,
+          ...(systemBlockCacheControls[idx] ? { cache_control: systemBlockCacheControls[idx] } : {}),
+        }));
       }
       if (tools) body.tools = tools;
       if (parsed.options.temperature !== undefined) body.temperature = parsed.options.temperature;
@@ -1331,17 +1436,23 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
           : { header: "x-api-key" as const, value: headers["x-api-key"]! }
         : undefined;
       if (provider.headers) Object.assign(headers, provider.headers);
+      injectOtlpTraceparent(headers, incoming?.otlpTraceparent);
       mergeAnthropicBetaHeader(headers, [...(fastSpeed?.betas ?? []), ...(progressUpdates ? ["thinking-display-updates-2026-08-18"] : []), ...serverToolPlan.betas]);
 
       // Prompt caching: native Anthropic supports top-level automatic caching, which
       // follows the moving final block across turns. Keep one breakpoint slot free for it.
+      const resolvedRetention = resolveAnthropicCacheRetention(cacheRetention, provider);
       const cc = resolveCacheControl(cacheRetention, provider);
+      if (parsed.options.automaticCacheControl && resolvedRetention !== "none") {
+        body.cache_control = parsed.options.automaticCacheControl;
+      }
+      normalizePreservedBodyCacheControls(body, resolvedRetention);
       const automaticPromptCaching = cc && usesNativeAnthropicEndpoint(provider);
-      if (automaticPromptCaching) body.cache_control = cc;
-      const explicitLimit = automaticPromptCaching ? MAX_CACHE_BREAKPOINTS - 1 : MAX_CACHE_BREAKPOINTS;
+      if (automaticPromptCaching && !body.cache_control) body.cache_control = cc;
+      const explicitLimit = body.cache_control ? MAX_CACHE_BREAKPOINTS - 1 : MAX_CACHE_BREAKPOINTS;
       applyPromptCaching(body, cc, {
         maxExplicitBreakpoints: explicitLimit,
-        skipLastUser: !!automaticPromptCaching,
+        skipLastUser: Boolean(body.cache_control),
         relocatedSystemPrefix: relocatedCallerSystem,
         uncachedSystemTail: system.length > 1,
       });

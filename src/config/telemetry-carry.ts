@@ -1,5 +1,6 @@
 import type { EpxConfig } from "../types";
 import { telemetryConfigSchema } from "./schema/leaf-validators";
+import { otlpConfigSchema } from "./schema/otlp";
 
 /**
  * Telemetry consent is owned by `config.json` on disk: `epx telemetry`, the start prompt and the
@@ -26,5 +27,19 @@ export function carryPersistedTelemetry(
   const value = parsed?.success ? (structuredClone(parsed.data) as EpxConfig["telemetry"]) : undefined;
   if (value === undefined) delete target.telemetry;
   else target.telemetry = value;
+  return { carried: true, value };
+}
+
+export function carryPersistedOtlp(
+  target: EpxConfig,
+  onDisk: Record<string, unknown> | undefined,
+): { carried: boolean; value: EpxConfig["otlp"] } {
+  if (onDisk === undefined) {
+    return { carried: false, value: target.otlp };
+  }
+  const parsed = onDisk.otlp === undefined ? undefined : otlpConfigSchema.safeParse(onDisk.otlp);
+  const value = parsed?.success ? (structuredClone(parsed.data) as EpxConfig["otlp"]) : undefined;
+  if (value === undefined) delete target.otlp;
+  else target.otlp = value;
   return { carried: true, value };
 }

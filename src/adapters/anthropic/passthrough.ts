@@ -33,6 +33,7 @@ import { shouldPreserveNativeClientPreamble } from "./native-client-preamble";
 import { allowlistAnthropicBetas } from "./beta-allowlist";
 import { pairAnthropicBetaBody } from "./beta-body-pairs";
 import { applyAnthropicNativeCacheTtlDefault, resolveAnthropicCacheRetention } from "./cache-retention";
+import { injectOtlpTraceparent } from "../../lib/trace-context";
 export { contextManagementForWire } from "./beta-body-pairs";
 
 /**
@@ -93,6 +94,8 @@ export interface AnthropicMessagesPassthroughOptions {
   clientIdentity?: AnthropicClientIdentity;
   /** Optional conversation/session key for deterministic per-conversation X-Claude-Code-Session-Id. */
   sessionKey?: string | null;
+  /** Optional W3C traceparent header propagated when OTLP tracing is active. */
+  otlpTraceparent?: string;
 }
 
 /** The allowlisted copy of `body` with `model` set to the wire model. Shallow: nothing is cloned. */
@@ -323,6 +326,7 @@ export function buildAnthropicMessagesPassthroughRequest(
     }
   }
   if (domain?.firstPartyAnthropic) applyAnthropicClientIdentity(headers, options.clientIdentity, provider.headers);
+  injectOtlpTraceparent(headers, options.otlpTraceparent);
   const betas = allowlistAnthropicBetas(options.callerAnthropicBeta, domain?.firstPartyAnthropic ? "first-party" : "compatible",
     { inlineTools: hasInlineToolChanges(wireBody), observedNativeClient: hasObservedAnthropicClientIdentity(options.clientIdentity) });
   mergeAnthropicBetaHeader(headers, betas.betas);

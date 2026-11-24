@@ -18,7 +18,7 @@ const USAGE = `Usage:
   epx access key create [name] [--json]
   epx access key get <id-or-name> [--json]
   epx access key rename <id-or-name> <name> [--json]
-  epx access key set <id-or-name> [--allow-provider <name>]... [--allow-model <id>]... [--clear] [--json]
+  epx access key set <id-or-name> [--allow-provider <name>]... [--allow-model <id>]... [--rpm-limit <n|none>] [--tpm-limit <n|none>] [--max-daily-requests <n|none>] [--daily-token-limit <n|none>] [--daily-cost-limit-usd <usd|none>] [--max-in-flight-cost-usd <usd|none>] [--expires-at <iso|none>] [--clear] [--json]
   epx access key rotate <id> [--json]
   epx access key rotate commit <id> <rotation-id> [--json]
   epx access key rotate abort <id> <rotation-id> [--json]
@@ -129,11 +129,19 @@ function findKeyRow(keys: Array<Record<string, unknown>>, selector: string): Rec
 function scopeLines(entry: Record<string, unknown>): string[] {
   const list = (value: unknown): string =>
     Array.isArray(value) && value.length > 0 ? (value as string[]).join(", ") : "(any)";
-  return [
+  const lines = [
     "API key " + String(entry.name ?? "") + " (" + String(entry.id ?? "") + ")",
     "  allowed providers: " + list(entry.allowedProviders),
     "  allowed models:    " + list(entry.allowedModels),
   ];
+  if (entry.expiresAt !== undefined) lines.push(`  expires at:        ${String(entry.expiresAt)}${entry.expired === true ? " (expired)" : ""}`);
+  if (entry.rpmLimit !== undefined) lines.push(`  rpm limit:         ${String(entry.rpmLimit)}`);
+  if (entry.tpmLimit !== undefined) lines.push(`  tpm limit:         ${String(entry.tpmLimit)}`);
+  if (entry.maxDailyRequests !== undefined) lines.push(`  daily requests:    ${String(entry.maxDailyRequests)}`);
+  if (entry.dailyTokenLimit !== undefined) lines.push(`  daily tokens:      ${String(entry.dailyTokenLimit)}`);
+  if (entry.dailyCostLimitUsd !== undefined) lines.push(`  daily cost usd:    ${String(entry.dailyCostLimitUsd)}`);
+  if (entry.maxInFlightCostUsd !== undefined) lines.push(`  in-flight usd cap: ${String(entry.maxInFlightCostUsd)}`);
+  return lines;
 }
 
 async function key(argv: string[], deps: RuntimeApiDeps): Promise<void> {
@@ -178,10 +186,45 @@ async function key(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     const clear = takeFlag(args, "--clear");
     const providers = takeAllOptions(args, "--allow-provider");
     const models = takeAllOptions(args, "--allow-model");
+    const rawRpm = takeOption(args, "--rpm-limit");
+    const rawTpm = takeOption(args, "--tpm-limit");
+    const rawDailyReq = takeOption(args, "--max-daily-requests");
+    const rawDailyTok = takeOption(args, "--daily-token-limit");
+    const rawDailyCost = takeOption(args, "--daily-cost-limit-usd");
+    const rawInFlightCost = takeOption(args, "--max-in-flight-cost-usd");
+    const rawExpiresAt = takeOption(args, "--expires-at");
     rejectArgs(args, USAGE);
-    if (!clear && providers.length === 0 && models.length === 0) {
-      throw new CliUsageError("set requires --allow-provider, --allow-model, or --clear", USAGE);
+    const hasBudgetFlags = [rawRpm, rawTpm, rawDailyReq, rawDailyTok, rawDailyCost, rawInFlightCost, rawExpiresAt].some(v => v !== undefined);
+    if (!clear && providers.length === 0 && models.length === 0 && !hasBudgetFlags) {
+      throw new CliUsageError("set requires at least one scope, limit, expiry, or --clear option", USAGE);
     }
+    const parseIntOrClear = (flag: string, raw: string | undefined): number | null | undefined => {
+      if (raw === undefined) return undefined;
+      const trimmed = raw.trim().toLowerCase();
+      if (trimmed === "none" || trimmed === "null" || trimmed === "clear") return null;
+      const num = Number(raw);
+      if (!Number.isSafeInteger(num) || num < 1) throw new CliUsageError(`${flag} must be a positive integer or none`, USAGE);
+      return num;
+    };
+    const parseUsdOrClear = (flag: string, raw: string | undefined): number | null | undefined => {
+      if (raw === undefined) return undefined;
+      const trimmed = raw.trim().toLowerCase();
+      if (trimmed === "none" || trimmed === "null" || trimmed === "clear") return null;
+      const num = Number(raw);
+      if (!Number.isFinite(num) || num <= 0) throw new CliUsageError(`${flag} must be a positive number or none`, USAGE);
+      return num;
+    };
+    const rpmLimit = parseIntOrClear("--rpm-limit", rawRpm);
+    const tpmLimit = parseIntOrClear("--tpm-limit", rawTpm);
+    const maxDailyRequests = parseIntOrClear("--max-daily-requests", rawDailyReq);
+    const dailyTokenLimit = parseIntOrClear("--daily-token-limit", rawDailyTok);
+    const dailyCostLimitUsd = parseUsdOrClear("--daily-cost-limit-usd", rawDailyCost);
+    const maxInFlightCostUsd = parseUsdOrClear("--max-in-flight-cost-usd", rawInFlightCost);
+    const expiresAt = rawExpiresAt === undefined
+      ? undefined
+      : ["none", "null", "clear"].includes(rawExpiresAt.trim().toLowerCase())
+        ? null
+        : rawExpiresAt.trim();
     const listed = await runtimeRequest<Record<string, unknown>>("/api/keys", {}, deps);
     const target = findKeyRow(Array.isArray(listed.keys) ? listed.keys as Array<Record<string, unknown>> : [], selector);
     // A set REPLACES the named dimension rather than appending to it, and
@@ -194,6 +237,13 @@ async function key(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     }
     if (providers.length > 0) body.allowedProviders = providers;
     if (models.length > 0) body.allowedModels = models;
+    if (rpmLimit !== undefined) body.rpmLimit = rpmLimit;
+    if (tpmLimit !== undefined) body.tpmLimit = tpmLimit;
+    if (maxDailyRequests !== undefined) body.maxDailyRequests = maxDailyRequests;
+    if (dailyTokenLimit !== undefined) body.dailyTokenLimit = dailyTokenLimit;
+    if (dailyCostLimitUsd !== undefined) body.dailyCostLimitUsd = dailyCostLimitUsd;
+    if (maxInFlightCostUsd !== undefined) body.maxInFlightCostUsd = maxInFlightCostUsd;
+    if (expiresAt !== undefined) body.expiresAt = expiresAt;
     const result = await runtimeRequest<Record<string, unknown>>("/api/keys", {
       method: "PATCH",
       body: JSON.stringify(body),

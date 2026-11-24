@@ -1,3 +1,5 @@
+import type { EpxCacheControl } from "../protocols/cache-control";
+
 export interface EpxTool {
   name: string;
   description: string;
@@ -9,6 +11,8 @@ export interface EpxTool {
    * caller had restricted and returns a normal response (#5210).
    */
   allowedCallers?: string[];
+  /** Preserved Anthropic tool-level cache_control across bridges. */
+  cacheControl?: EpxCacheControl;
   /** MCP namespace (e.g. "mcp__context7") for tools flattened out of a Responses "namespace" tool. */
   namespace?: string;
   /** Freeform/custom tool (e.g. apply_patch): the model's call must be relayed as a custom_tool_call. */

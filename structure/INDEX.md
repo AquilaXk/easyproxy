@@ -81,6 +81,7 @@ The wire surfaces a client actually talks to.
 | [`remote-link.md`](remote-link.md) | SSH machine linking, tunnel and link storage, pairing, and connected-client management relay. |
 | [`transports/upload-reduction.md`](transports/upload-reduction.md) | Opt-in lossy historical image/tool slimming and acknowledged native WS input-prefix deltas. |
 | [`scenario-ewma-routing.md`](scenario-ewma-routing.md) | Zero-overhead heuristic scenario classification (longContext, think, background, webSearch) and EWMA latency combo selection. |
+| [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) | Cross-bridge cache_control preservation, virtual API key TPM/expiry/in-flight USD holds, /v1/embeddings data plane, and optional OTLP trace export. |
 
 ### Tier 4 — Providers and adapters
 
@@ -380,6 +381,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/config/schema/account-auto-pause.ts` | [`account-auto-pause.md`](account-auto-pause.md) |
 | `src/config/schema/config-schema.ts` | [`transports/max-output-completion.md`](transports/max-output-completion.md)<br>[`clients/omo-export-dialect.md`](clients/omo-export-dialect.md) |
 | `src/config/schema/leaf-validators.ts` | [`transports/timeouts.md`](transports/timeouts.md)<br>[`providers/hosted-tool-denials.md`](providers/hosted-tool-denials.md)<br>[`pricing.md`](pricing.md)<br>[`clients/omo-export-dialect.md`](clients/omo-export-dialect.md) |
+| `src/config/schema/otlp.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/config/schema/routed-catalog-defaults.ts` | [`catalog-routed-defaults.md`](catalog-routed-defaults.md) |
 | `src/config/schema/scenario-routing.ts` | [`scenario-ewma-routing.md`](scenario-ewma-routing.md) |
 | `src/config/telemetry-carry.ts` | [`telemetry.md`](telemetry.md) |
@@ -441,6 +443,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/oauth/workbuddy.ts` | [`providers/workbuddy.md`](providers/workbuddy.md) |
 | `src/plugins/` | [`ops/plugins.md`](ops/plugins.md) |
 | `src/protocols/` | [`data-planes/protocol-paths.md`](data-planes/protocol-paths.md) |
+| `src/protocols/cache-control.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/protocols/codecs/gemini-interactions.ts` | [`data-planes/gemini-inbound.md`](data-planes/gemini-inbound.md) |
 | `src/protocols/codecs/gemini.ts` | [`data-planes/gemini-inbound.md`](data-planes/gemini-inbound.md) |
 | `src/protocols/codecs/ollama.ts` | [`data-planes/ollama-inbound.md`](data-planes/ollama-inbound.md) |
@@ -497,6 +500,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/admitted-http-turn.ts` | [`data-planes/ollama-inbound.md`](data-planes/ollama-inbound.md) |
 | `src/server/advisor-admission-scope.ts` | [`advisor.md`](advisor.md) |
 | `src/server/anthropic-rate-limit-headers.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
+| `src/server/api-key-budget-estimate.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/server/audio-dictation.ts` | [`providers/codex-installation-identity.md`](providers/codex-installation-identity.md) |
 | `src/server/audio-live.ts` | [`providers/codex-installation-identity.md`](providers/codex-installation-identity.md) |
 | `src/server/auth-cors.ts` | [`transports/response-turn-membership.md`](transports/response-turn-membership.md)<br>[`providers/lm-studio-chat.md`](providers/lm-studio-chat.md)<br>[`providers/hosted-tool-denials.md`](providers/hosted-tool-denials.md) |
@@ -505,6 +509,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/chat-native-eligibility.ts` | [`data-planes/chat-reasoning-details.md`](data-planes/chat-reasoning-details.md) |
 | `src/server/claude-messages.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md)<br>[`providers/codex-installation-identity.md`](providers/codex-installation-identity.md) |
 | `src/server/context-history.ts` | [`providers/codex-installation-identity.md`](providers/codex-installation-identity.md) |
+| `src/server/embeddings.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/server/gemini-inbound.ts` | [`data-planes/gemini-inbound.md`](data-planes/gemini-inbound.md) |
 | `src/server/gemini-interactions-inbound.ts` | [`data-planes/gemini-inbound.md`](data-planes/gemini-inbound.md) |
 | `src/server/gemini-interactions-store.ts` | [`data-planes/gemini-inbound.md`](data-planes/gemini-inbound.md) |
@@ -636,6 +641,8 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/stall-timeout.ts` | [`transports/timeouts.md`](transports/timeouts.md)<br>[`runtime.md`](runtime.md) |
 | `src/storage/` | [`runtime.md`](runtime.md) |
 | `src/telemetry/` | [`telemetry.md`](telemetry.md) |
+| `src/telemetry/otlp-routes.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
+| `src/telemetry/otlp.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/tray/` | [`runtime.md`](runtime.md) |
 | `src/types.ts` | [`runtime.md`](runtime.md)<br>[`config.md`](config.md) |
 | `src/types/` | [`providers/generic-account-pool.md`](providers/generic-account-pool.md)<br>[`transports/native-reasoning-retention.md`](transports/native-reasoning-retention.md)<br>[`providers/anthropic-progress.md`](providers/anthropic-progress.md)<br>[`providers/anthropic-per-message-effort.md`](providers/anthropic-per-message-effort.md)<br>[`providers-and-adapters.md`](providers-and-adapters.md)<br>[`providers/lm-studio-chat.md`](providers/lm-studio-chat.md)<br>[`fallback-policy.md`](fallback-policy.md) |

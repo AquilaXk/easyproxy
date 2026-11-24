@@ -23,25 +23,35 @@ const PERSIST_DEBOUNCE_MS = 100;
 
 export type ApiKeyBudgetDenialReason =
   | "rpm_limit_exceeded"
+  | "tpm_limit_exceeded"
   | "daily_limit_exceeded"
   | "daily_token_limit_exceeded"
   | "daily_cost_limit_exceeded"
+  | "in_flight_cost_limit_exceeded"
   | "invalid_budget_limit";
 
 export type ApiKeyBudgetDecision =
   | { allowed: true }
   | { allowed: false; reason: ApiKeyBudgetDenialReason; retryAfterSec: number };
 
+export type ApiKeyBudgetEntry = Pick<
+  EpxApiKeyEntry,
+  "id" | "rpmLimit" | "tpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd" | "maxInFlightCostUsd"
+>;
+
 export interface ApiKeyBudgetLease {
   readonly keyId: string;
   readonly reservedTokens: number;
-  /** Roll back RPM and daily request increments plus reserved token hold before execution. */
+  readonly reservedCostUsd: number;
+  /** Roll back RPM and daily request increments plus active in-flight holds before execution. */
   releaseUnused(): void;
-  /** Release only the in-flight reserved token hold without cancelling settled state. */
+  /** Release any active in-flight token and USD holds without cancelling settled state. */
   releaseHoldOnly(): void;
+  /** Atomically resize or set active in-flight token and USD holds before upstream dispatch. */
+  reserveHold(entry: ApiKeyBudgetEntry, options?: { tokens?: number; costUsd?: number; now?: number }): ApiKeyBudgetDecision;
   /** Release any active token reservation hold and commit actual token usage at most once. */
   settleTokens(actualTokens: number, now?: number): void;
-  /** Commit settled USD request spend (in integer microdollars) at most once. */
+  /** Release any active USD reservation hold and commit settled USD spend at most once. */
   settleCostUsd(costUsd: number, now?: number): void;
 }
 
@@ -51,6 +61,7 @@ export type ApiKeyBudgetLeaseDecision =
 
 export interface AcquireApiKeyBudgetOptions {
   reserveTokens?: number;
+  reserveCostUsd?: number;
   now?: number;
 }
 
@@ -65,11 +76,14 @@ interface KeyBudgetState {
   rpmTimestamps: Float64RingBuffer;
   rpmBucketStartMin: number;
   rpmBucketCount: number;
+  tpmBucketSec: Float64Array;
+  tpmBucketTokens: Float64Array;
   utcDay: number;
   dailyCount: number;
   dailyTokens: number;
   dailyCostMicros: number;
   inFlightReservedTokens: number;
+  inFlightHoldMicros: number;
 }
 
 interface ConfigDirBudgetStore {
@@ -85,8 +99,10 @@ interface ConfigDirBudgetStore {
 const NOOP_LEASE: ApiKeyBudgetLease = {
   keyId: "",
   reservedTokens: 0,
+  reservedCostUsd: 0,
   releaseUnused() {},
   releaseHoldOnly() {},
+  reserveHold() { return { allowed: true }; },
   settleTokens() {},
   settleCostUsd() {},
 };
@@ -299,11 +315,14 @@ function getOrCreateState(
     rpmTimestamps: new Float64RingBuffer(EXACT_RPM_RING_THRESHOLD),
     rpmBucketStartMin: minuteBucket,
     rpmBucketCount: 0,
+    tpmBucketSec: new Float64Array(60),
+    tpmBucketTokens: new Float64Array(60),
     utcDay: initialUtcDay,
     dailyCount: sameDay ? archived.dailyCount : 0,
     dailyTokens: sameDay ? archived.dailyTokens : 0,
     dailyCostMicros: sameDay ? archived.dailyCostMicros : 0,
     inFlightReservedTokens: 0,
+    inFlightHoldMicros: 0,
   };
   store.keys.set(keyId, fresh);
   return fresh;
@@ -327,14 +346,52 @@ function usdToMicrosClamped(costUsd: number): number {
   return Math.min(Number.MAX_SAFE_INTEGER, raw);
 }
 
+function recordTpmTokensOnState(state: KeyBudgetState, tokens: number, now: number): void {
+  const sec = Math.floor(now / 1000);
+  const slot = ((sec % 60) + 60) % 60;
+  if (state.tpmBucketSec[slot] === sec) {
+    state.tpmBucketTokens[slot] += tokens;
+  } else {
+    state.tpmBucketSec[slot] = sec;
+    state.tpmBucketTokens[slot] = tokens;
+  }
+}
+
+function summarizeTpmWindow(state: KeyBudgetState, now: number): { usedTokens: number; retryAfterSec: number } {
+  const sec = Math.floor(now / 1000);
+  const cutoffSec = sec - 60;
+  let usedTokens = 0;
+  let oldestSec = sec;
+  let hasEntry = false;
+  for (let i = 0; i < 60; i += 1) {
+    const slotSec = state.tpmBucketSec[i]!;
+    const tokens = state.tpmBucketTokens[i]!;
+    if (slotSec > cutoffSec && tokens > 0) {
+      usedTokens += tokens;
+      if (!hasEntry || slotSec < oldestSec) {
+        oldestSec = slotSec;
+        hasEntry = true;
+      }
+    } else if (slotSec <= cutoffSec && slotSec !== 0) {
+      state.tpmBucketSec[i] = 0;
+      state.tpmBucketTokens[i] = 0;
+    }
+  }
+  const retryAfterSec = hasEntry ? Math.max(1, oldestSec + 60 - sec) : 60;
+  return { usedTokens, retryAfterSec };
+}
+
 function recordTokensOnStore(store: ConfigDirBudgetStore, keyId: string, tokens: number, now: number): void {
   if (!keyId || !Number.isFinite(tokens) || tokens <= 0) return;
+  const wholeTokens = Math.trunc(tokens);
+  if (wholeTokens <= 0) return;
   const utcDay = Math.floor(now / ONE_DAY_MS);
   const minuteBucket = Math.floor(now / ONE_MINUTE_MS);
   const state = getOrCreateState(store, keyId, utcDay, minuteBucket);
   if (utcDay < state.utcDay) return;
   if (utcDay > state.utcDay) resetStateForUtcDay(state, utcDay);
-  state.dailyTokens += Math.trunc(tokens);
+  state.dailyTokens += wholeTokens;
+  recordTpmTokensOnState(state, wholeTokens, now);
   scheduleFlush(store);
 }
 
@@ -350,53 +407,90 @@ function recordCostMicrosOnStore(store: ConfigDirBudgetStore, keyId: string, cos
 }
 
 export function hasApiKeyBudgetLimits(
-  entry: Pick<EpxApiKeyEntry, "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd">,
+  entry: ApiKeyBudgetEntry,
 ): boolean {
   return entry.rpmLimit !== undefined
+    || entry.tpmLimit !== undefined
     || entry.maxDailyRequests !== undefined
     || entry.dailyTokenLimit !== undefined
-    || entry.dailyCostLimitUsd !== undefined;
+    || entry.dailyCostLimitUsd !== undefined
+    || entry.maxInFlightCostUsd !== undefined;
+}
+
+function parseValidatedCostMicros(
+  value: number | undefined,
+): { ok: true; micros: number | undefined } | { ok: false } {
+  if (value === undefined) return { ok: true, micros: undefined };
+  if (
+    typeof value !== "number"
+    || !Number.isFinite(value)
+    || value < MIN_DAILY_COST_LIMIT_USD
+    || value > MAX_DAILY_COST_LIMIT_USD
+  ) {
+    return { ok: false };
+  }
+  const micros = Math.round(value * MICROS_PER_USD);
+  if (!Number.isSafeInteger(micros) || micros < 1) {
+    return { ok: false };
+  }
+  return { ok: true, micros };
+}
+
+function validateBudgetLimits(entry: ApiKeyBudgetEntry): {
+  ok: true;
+  rpmLimit?: number;
+  tpmLimit?: number;
+  maxDailyRequests?: number;
+  dailyTokenLimit?: number;
+  dailyCostLimitMicros?: number;
+  maxInFlightCostMicros?: number;
+} | { ok: false } {
+  if (entry.rpmLimit !== undefined && (!Number.isSafeInteger(entry.rpmLimit) || entry.rpmLimit < 1)) return { ok: false };
+  if (entry.tpmLimit !== undefined && (!Number.isSafeInteger(entry.tpmLimit) || entry.tpmLimit < 1)) return { ok: false };
+  if (entry.maxDailyRequests !== undefined && (!Number.isSafeInteger(entry.maxDailyRequests) || entry.maxDailyRequests < 1)) return { ok: false };
+  if (entry.dailyTokenLimit !== undefined && (!Number.isSafeInteger(entry.dailyTokenLimit) || entry.dailyTokenLimit < 1)) return { ok: false };
+  const dailyCost = parseValidatedCostMicros(entry.dailyCostLimitUsd);
+  if (!dailyCost.ok) return { ok: false };
+  const maxInFlight = parseValidatedCostMicros(entry.maxInFlightCostUsd);
+  if (!maxInFlight.ok) return { ok: false };
+  return {
+    ok: true,
+    rpmLimit: entry.rpmLimit,
+    tpmLimit: entry.tpmLimit,
+    maxDailyRequests: entry.maxDailyRequests,
+    dailyTokenLimit: entry.dailyTokenLimit,
+    dailyCostLimitMicros: dailyCost.micros,
+    maxInFlightCostMicros: maxInFlight.micros,
+  };
 }
 
 function acquireBudgetInternal(
-  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd">,
+  entry: ApiKeyBudgetEntry,
   now: number,
   reserveTokens: number,
-  withTokenHold: boolean,
+  reserveCostUsd: number,
+  withHold: boolean,
 ): ApiKeyBudgetLeaseDecision {
-  if (entry.rpmLimit !== undefined && (!Number.isSafeInteger(entry.rpmLimit) || entry.rpmLimit < 1)) {
+  const validated = validateBudgetLimits(entry);
+  if (!validated.ok) {
     return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
   }
-  if (entry.maxDailyRequests !== undefined && (!Number.isSafeInteger(entry.maxDailyRequests) || entry.maxDailyRequests < 1)) {
-    return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
-  }
-  if (entry.dailyTokenLimit !== undefined && (!Number.isSafeInteger(entry.dailyTokenLimit) || entry.dailyTokenLimit < 1)) {
-    return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
-  }
-  let dailyCostLimitMicros: number | undefined;
-  if (entry.dailyCostLimitUsd !== undefined) {
-    if (
-      typeof entry.dailyCostLimitUsd !== "number"
-      || !Number.isFinite(entry.dailyCostLimitUsd)
-      || entry.dailyCostLimitUsd < MIN_DAILY_COST_LIMIT_USD
-      || entry.dailyCostLimitUsd > MAX_DAILY_COST_LIMIT_USD
-    ) {
-      return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
-    }
-    dailyCostLimitMicros = Math.round(entry.dailyCostLimitUsd * MICROS_PER_USD);
-    if (!Number.isSafeInteger(dailyCostLimitMicros) || dailyCostLimitMicros < 1) {
-      return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
-    }
-  }
-  const rpmLimit = entry.rpmLimit;
-  const maxDailyRequests = entry.maxDailyRequests;
-  const dailyTokenLimit = entry.dailyTokenLimit;
+  const {
+    rpmLimit,
+    tpmLimit,
+    maxDailyRequests,
+    dailyTokenLimit,
+    dailyCostLimitMicros,
+    maxInFlightCostMicros,
+  } = validated;
 
   if (
     rpmLimit === undefined
+    && tpmLimit === undefined
     && maxDailyRequests === undefined
     && dailyTokenLimit === undefined
     && dailyCostLimitMicros === undefined
+    && maxInFlightCostMicros === undefined
   ) {
     return { allowed: true, lease: NOOP_LEASE };
   }
@@ -418,16 +512,45 @@ function acquireBudgetInternal(
     pruneRpmTimestamps(state, now);
   }
 
-  if (dailyCostLimitMicros !== undefined && state.dailyCostMicros >= dailyCostLimitMicros) {
-    const nextDayStartMs = (utcDay + 1) * ONE_DAY_MS;
-    const retryAfterSec = Math.max(1, Math.ceil((nextDayStartMs - now) / 1000));
-    return { allowed: false, reason: "daily_cost_limit_exceeded", retryAfterSec };
+  const normalizedHoldTokens = withHold && (dailyTokenLimit !== undefined || tpmLimit !== undefined)
+    ? Math.max(1, Math.trunc(Number.isFinite(reserveTokens) ? reserveTokens : 1))
+    : 0;
+  const requestedHoldMicros = withHold && (dailyCostLimitMicros !== undefined || maxInFlightCostMicros !== undefined)
+    ? usdToMicrosClamped(reserveCostUsd)
+    : 0;
+
+  if (maxInFlightCostMicros !== undefined) {
+    if (state.inFlightHoldMicros >= maxInFlightCostMicros || state.inFlightHoldMicros + requestedHoldMicros > maxInFlightCostMicros) {
+      return { allowed: false, reason: "in_flight_cost_limit_exceeded", retryAfterSec: 1 };
+    }
   }
 
-  if (dailyTokenLimit !== undefined && state.dailyTokens + state.inFlightReservedTokens >= dailyTokenLimit) {
-    const nextDayStartMs = (utcDay + 1) * ONE_DAY_MS;
-    const retryAfterSec = Math.max(1, Math.ceil((nextDayStartMs - now) / 1000));
-    return { allowed: false, reason: "daily_token_limit_exceeded", retryAfterSec };
+  if (dailyCostLimitMicros !== undefined) {
+    if (
+      state.dailyCostMicros + state.inFlightHoldMicros >= dailyCostLimitMicros
+      || state.dailyCostMicros + state.inFlightHoldMicros + requestedHoldMicros > dailyCostLimitMicros
+    ) {
+      const nextDayStartMs = (utcDay + 1) * ONE_DAY_MS;
+      const retryAfterSec = Math.max(1, Math.ceil((nextDayStartMs - now) / 1000));
+      return { allowed: false, reason: "daily_cost_limit_exceeded", retryAfterSec };
+    }
+  }
+
+  if (tpmLimit !== undefined) {
+    const tpm = summarizeTpmWindow(state, now);
+    const projectedTpm = tpm.usedTokens + state.inFlightReservedTokens;
+    if (projectedTpm >= tpmLimit) {
+      return { allowed: false, reason: "tpm_limit_exceeded", retryAfterSec: tpm.retryAfterSec };
+    }
+  }
+
+  if (dailyTokenLimit !== undefined) {
+    const projectedDailyTokens = state.dailyTokens + state.inFlightReservedTokens;
+    if (projectedDailyTokens >= dailyTokenLimit) {
+      const nextDayStartMs = (utcDay + 1) * ONE_DAY_MS;
+      const retryAfterSec = Math.max(1, Math.ceil((nextDayStartMs - now) / 1000));
+      return { allowed: false, reason: "daily_token_limit_exceeded", retryAfterSec };
+    }
   }
 
   if (maxDailyRequests !== undefined && state.dailyCount >= maxDailyRequests) {
@@ -469,29 +592,107 @@ function acquireBudgetInternal(
     }
   }
 
-  const reservedTokens = withTokenHold && dailyTokenLimit !== undefined
-    ? Math.min(dailyTokenLimit, Math.max(1, Math.trunc(Number.isFinite(reserveTokens) ? reserveTokens : 1)))
-    : 0;
-  if (reservedTokens > 0) {
-    state.inFlightReservedTokens += reservedTokens;
+  let activeReservedTokens = 0;
+  if (normalizedHoldTokens > 0) {
+    const tokenCap = Math.min(
+      dailyTokenLimit ?? Number.MAX_SAFE_INTEGER,
+      tpmLimit ?? Number.MAX_SAFE_INTEGER,
+    );
+    activeReservedTokens = reserveTokens > 1 ? normalizedHoldTokens : Math.min(tokenCap, normalizedHoldTokens);
+    state.inFlightReservedTokens += activeReservedTokens;
+  }
+  let activeHoldMicros = requestedHoldMicros;
+  if (activeHoldMicros > 0) {
+    state.inFlightHoldMicros += activeHoldMicros;
   }
 
-  let holdReleased = reservedTokens === 0;
   let unusedReleased = false;
   let tokensSettled = false;
   let costSettled = false;
   const leaseUtcDay = state.utcDay;
 
+  const releaseTokenHold = () => {
+    if (activeReservedTokens <= 0) return;
+    state.inFlightReservedTokens = Math.max(0, state.inFlightReservedTokens - activeReservedTokens);
+    activeReservedTokens = 0;
+  };
+  const releaseCostHold = () => {
+    if (activeHoldMicros <= 0) return;
+    state.inFlightHoldMicros = Math.max(0, state.inFlightHoldMicros - activeHoldMicros);
+    activeHoldMicros = 0;
+  };
   const releaseHoldOnly = () => {
-    if (holdReleased) return;
-    holdReleased = true;
-    state.inFlightReservedTokens = Math.max(0, state.inFlightReservedTokens - reservedTokens);
+    releaseTokenHold();
+    releaseCostHold();
   };
 
   const lease: ApiKeyBudgetLease = {
     keyId: entry.id,
-    reservedTokens,
+    get reservedTokens() { return activeReservedTokens; },
+    get reservedCostUsd() { return activeHoldMicros / MICROS_PER_USD; },
     releaseHoldOnly,
+    reserveHold(nextEntry: ApiKeyBudgetEntry, holdOpts?: { tokens?: number; costUsd?: number; now?: number }): ApiKeyBudgetDecision {
+      if (unusedReleased || tokensSettled || costSettled) return { allowed: true };
+      const checkNow = holdOpts?.now ?? Date.now();
+      const limits = validateBudgetLimits(nextEntry);
+      if (!limits.ok) return { allowed: false, reason: "invalid_budget_limit", retryAfterSec: 60 };
+      const checkUtcDay = Math.floor(checkNow / ONE_DAY_MS);
+      if (checkUtcDay > state.utcDay) {
+        resetStateForUtcDay(state, checkUtcDay);
+        store.dirty = true;
+      }
+      const hasTokenQuota = limits.dailyTokenLimit !== undefined || limits.tpmLimit !== undefined;
+      const requestedTokens = hasTokenQuota && holdOpts?.tokens !== undefined && Number.isFinite(holdOpts.tokens) && holdOpts.tokens > 0
+        ? Math.trunc(holdOpts.tokens)
+        : activeReservedTokens;
+      const hasCostQuota = limits.dailyCostLimitMicros !== undefined || limits.maxInFlightCostMicros !== undefined;
+      const requestedMicros = hasCostQuota && holdOpts?.costUsd !== undefined
+        ? usdToMicrosClamped(holdOpts.costUsd)
+        : activeHoldMicros;
+      const otherTokens = Math.max(0, state.inFlightReservedTokens - activeReservedTokens);
+      const otherMicros = Math.max(0, state.inFlightHoldMicros - activeHoldMicros);
+
+      if (limits.maxInFlightCostMicros !== undefined && otherMicros + requestedMicros > limits.maxInFlightCostMicros) {
+        return { allowed: false, reason: "in_flight_cost_limit_exceeded", retryAfterSec: 1 };
+      }
+      let targetMicros = requestedMicros;
+      if (limits.dailyCostLimitMicros !== undefined) {
+        const remainingMicros = limits.dailyCostLimitMicros - state.dailyCostMicros - otherMicros;
+        if (remainingMicros <= 0 || (otherMicros > 0 && remainingMicros < requestedMicros)) {
+          const nextDayStartMs = (checkUtcDay + 1) * ONE_DAY_MS;
+          return { allowed: false, reason: "daily_cost_limit_exceeded", retryAfterSec: Math.max(1, Math.ceil((nextDayStartMs - checkNow) / 1000)) };
+        }
+        if (otherMicros === 0 && targetMicros > remainingMicros) {
+          targetMicros = remainingMicros;
+        }
+      }
+      if (limits.tpmLimit !== undefined) {
+        const tpm = summarizeTpmWindow(state, checkNow);
+        if (tpm.usedTokens + otherTokens >= limits.tpmLimit || tpm.usedTokens + otherTokens + requestedTokens > limits.tpmLimit) {
+          return { allowed: false, reason: "tpm_limit_exceeded", retryAfterSec: tpm.retryAfterSec };
+        }
+      }
+      let targetTokens = requestedTokens;
+      if (limits.dailyTokenLimit !== undefined) {
+        const remainingTokens = limits.dailyTokenLimit - state.dailyTokens - otherTokens;
+        if (remainingTokens <= 0) {
+          const nextDayStartMs = (checkUtcDay + 1) * ONE_DAY_MS;
+          return { allowed: false, reason: "daily_token_limit_exceeded", retryAfterSec: Math.max(1, Math.ceil((nextDayStartMs - checkNow) / 1000)) };
+        }
+        // Without a separate tpmLimit, keep a non-blocking floor hold on the lone active request when configured tiny (e.g. limit=1).
+        if (limits.tpmLimit === undefined && targetTokens > remainingTokens) {
+          targetTokens = remainingTokens;
+        } else if (otherTokens > 0 && targetTokens > remainingTokens) {
+          const nextDayStartMs = (checkUtcDay + 1) * ONE_DAY_MS;
+          return { allowed: false, reason: "daily_token_limit_exceeded", retryAfterSec: Math.max(1, Math.ceil((nextDayStartMs - checkNow) / 1000)) };
+        }
+      }
+      state.inFlightReservedTokens = otherTokens + targetTokens;
+      activeReservedTokens = targetTokens;
+      state.inFlightHoldMicros = otherMicros + targetMicros;
+      activeHoldMicros = targetMicros;
+      return { allowed: true };
+    },
     releaseUnused() {
       if (unusedReleased || tokensSettled || costSettled) return;
       unusedReleased = true;
@@ -517,7 +718,7 @@ function acquireBudgetInternal(
       }
     },
     settleTokens(actualTokens: number, settleNow = Date.now()) {
-      releaseHoldOnly();
+      releaseTokenHold();
       if (unusedReleased || tokensSettled) return;
       tokensSettled = true;
       if (Number.isFinite(actualTokens) && actualTokens > 0) {
@@ -525,6 +726,7 @@ function acquireBudgetInternal(
       }
     },
     settleCostUsd(costUsd: number, settleNow = Date.now()) {
+      releaseCostHold();
       if (unusedReleased || costSettled) return;
       costSettled = true;
       const micros = usdToMicrosClamped(costUsd);
@@ -538,28 +740,28 @@ function acquireBudgetInternal(
 }
 
 /**
- * Checks per-key RPM, UTC-day request, UTC-day token, and UTC-day USD cost caps, holding an
- * in-flight token reservation until `lease.settleTokens(...)` or `lease.releaseUnused()` runs.
+ * Checks per-key RPM, TPM, UTC-day request, UTC-day token, UTC-day USD cost, and max in-flight USD
+ * caps, holding active token and USD reservations until settled or released.
  */
 export function acquireApiKeyBudgetLease(
-  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd">,
+  entry: ApiKeyBudgetEntry,
   options?: AcquireApiKeyBudgetOptions,
 ): ApiKeyBudgetLeaseDecision {
   const now = options?.now ?? Date.now();
   const reserveTokens = options?.reserveTokens ?? 1;
-  return acquireBudgetInternal(entry, now, reserveTokens, true);
+  const reserveCostUsd = options?.reserveCostUsd ?? 0;
+  return acquireBudgetInternal(entry, now, reserveTokens, reserveCostUsd, true);
 }
 
 /**
- * Checks and consumes per-key `rpmLimit`, `maxDailyRequests`, `dailyTokenLimit`, and `dailyCostLimitUsd`
- * quotas before acquiring a server turn lease. Rejects fail-closed when any cap is invalid or exceeded
- * without incrementing counters on denial.
+ * Checks and consumes per-key `rpmLimit`, `tpmLimit`, `maxDailyRequests`, `dailyTokenLimit`,
+ * `dailyCostLimitUsd`, and `maxInFlightCostUsd` quotas before acquiring a server turn lease.
  */
 export function consumeApiKeyBudget(
-  entry: Pick<EpxApiKeyEntry, "id" | "rpmLimit" | "maxDailyRequests" | "dailyTokenLimit" | "dailyCostLimitUsd">,
+  entry: ApiKeyBudgetEntry,
   now = Date.now(),
 ): ApiKeyBudgetDecision {
-  const decision = acquireBudgetInternal(entry, now, 0, false);
+  const decision = acquireBudgetInternal(entry, now, 0, 0, false);
   return decision.allowed ? { allowed: true } : decision;
 }
 
@@ -647,6 +849,30 @@ export function getApiKeyBudgetSnapshot(keyId: string, now = Date.now()): {
     dailyRequestsUsed: state.utcDay === utcDay ? state.dailyCount : 0,
     dailyTokensUsed: state.utcDay === utcDay ? state.dailyTokens : 0,
     dailyCostUsdUsed: state.utcDay === utcDay ? state.dailyCostMicros / MICROS_PER_USD : 0,
+  };
+}
+
+export function getApiKeyBudgetHoldSnapshot(keyId: string, now = Date.now()): {
+  rpmCurrent: number;
+  tpmCurrent: number;
+  inFlightTokens: number;
+  inFlightCostUsdUsed: number;
+  dailyRequestsUsed: number;
+  dailyTokensUsed: number;
+  dailyCostUsdUsed: number;
+} {
+  const base = getApiKeyBudgetSnapshot(keyId, now);
+  const store = getStore();
+  const state = store.keys.get(keyId);
+  if (!state) {
+    return { ...base, tpmCurrent: 0, inFlightTokens: 0, inFlightCostUsdUsed: 0 };
+  }
+  const tpm = summarizeTpmWindow(state, now);
+  return {
+    ...base,
+    tpmCurrent: tpm.usedTokens,
+    inFlightTokens: state.inFlightReservedTokens,
+    inFlightCostUsdUsed: state.inFlightHoldMicros / MICROS_PER_USD,
   };
 }
 

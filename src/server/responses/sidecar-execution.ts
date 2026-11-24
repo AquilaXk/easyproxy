@@ -721,6 +721,7 @@ export async function executeResponsesSidecars(
       ...(imageRecovery ? { imageRecovery } : {}),
       clientToolCatalogRestriction: route.provider.authMode === "forward" ? undefined : requestState.clientToolCatalogRestriction,
       incomingMeta: { headers: requestState.selectedForwardHeaders, providerName: route.providerName, abortSignal: options.abortSignal, translatorBudget,
+        ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
         ...(options.comboInitialSend ? { providerFetch: imageProviderFetch } : {}), ...sidecarBudget.incomingMeta,
         // Policy facts ride every runTurn caller, independent of a combo send-budget receipt.
         comboAttempt: options.comboAttempt === true, ...(requestState.subagentFallbackSelected ? { subagentFallback: true } : {}),
@@ -864,6 +865,7 @@ export async function executeResponsesSidecars(
         providerName: route.providerName,
         abortSignal: options.abortSignal,
         translatorBudget,
+        ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
         providerFetch: routedProviderFetch,
         ...sidecarBudget.incomingMeta,
         ...(!options.comboInitialSend && route.providerName === "google-antigravity"

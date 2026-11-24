@@ -412,6 +412,7 @@ export async function runNativeChatAttempt(
       replayScope,
       undefined,
       translatorBudget,
+      logCtx.otlpSpan?.traceparent,
     );
     observeAdvisorNativeReasoning(req.headers, logCtx, request.body);
     return request;

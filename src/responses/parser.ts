@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { namespacedToolName } from "../types";
 import { responsesRequestSchema } from "./schema";
+import { parseEpxCacheControl, type EpxCacheControl } from "../protocols/cache-control";
 import { providerMetadataFromResponsesFunctionCall } from "./provider-opaque-metadata";
 import { lookupReplayThoughtSignature } from "./thought-signature-replay";
 import { decodeRetainedCompaction, RETAINED_COMPACTION_PREFIX } from "./retained-compaction";
@@ -247,6 +248,7 @@ export function parseRequest(
   // With search declared, replayed hosted cells become web_search call/output pairs (#7269).
   const webSearchReplay = webSearch && Array.isArray(data.input) ? rewriteReplayedWebSearchCells(data.input) : undefined;
   const systemPrompt: string[] = [];
+  const systemCacheControls: (EpxCacheControl | undefined)[] = [];
   const proxySystemPrompt: NonNullable<EpxContext["proxySystemPrompt"]> = [];
   // Responses reasoning siblings belong to the following assistant, including across call items.
   // Keep them off the message list until that assistant arrives; turn boundaries clear the array.
@@ -279,15 +281,39 @@ export function parseRequest(
   let continuationConversationMessageIndex: number | undefined;
 
   if (typeof data.instructions === "string" && data.instructions.length > 0) {
-    // #5217: this is the stored session instruction block. A sub-agent spawned on a DIFFERENT model
-    // receives the parent's copy verbatim, so the identity sentence inside it names the parent
-    // unless it is renamed here, where the destination model is known.
-    systemPrompt.push(nameDestinationText(data.instructions, data.model));
-    // The plaintext checkpoint framer can append the note to the caller's instructions.
-    // Keep that block intact for other adapters and record only the suffix the proxy added.
-    if (data.instructions !== parsed.data.instructions) {
-      const callerLength = parsed.data.instructions?.trim() ? parsed.data.instructions.length : 0;
-      proxySystemPrompt.push({ blockIndex: 0, suffix: data.instructions.slice(callerLength) });
+    const rawSystemBlocks = Array.isArray(data._anthropicSystemBlocks) && data._anthropicSystemBlocks.length > 0 && data._anthropicSystemBlocks.length <= 64
+      ? data._anthropicSystemBlocks.filter((b): b is { text: string; cache_control?: unknown } =>
+        isObj(b) && typeof b.text === "string" && b.text.length > 0)
+      : [];
+    const baseInstructions = parsed.data.instructions ?? data.instructions;
+    if (
+      rawSystemBlocks.length > 0
+      && rawSystemBlocks.length === (data._anthropicSystemBlocks as unknown[]).length
+      && rawSystemBlocks.map(b => b.text).join("\n\n") === baseInstructions
+    ) {
+      for (const block of rawSystemBlocks) {
+        systemPrompt.push(nameDestinationText(block.text, data.model));
+        systemCacheControls.push(parseEpxCacheControl(block.cache_control));
+      }
+      if (data.instructions !== parsed.data.instructions && systemPrompt.length > 0) {
+        const callerLength = parsed.data.instructions?.trim() ? parsed.data.instructions.length : 0;
+        const suffix = data.instructions.slice(callerLength);
+        const lastIdx = systemPrompt.length - 1;
+        systemPrompt[lastIdx] = nameDestinationText(`${rawSystemBlocks[lastIdx]!.text}${suffix}`, data.model);
+        proxySystemPrompt.push({ blockIndex: lastIdx, suffix });
+      }
+    } else {
+      // #5217: this is the stored session instruction block. A sub-agent spawned on a DIFFERENT model
+      // receives the parent's copy verbatim, so the identity sentence inside it names the parent
+      // unless it is renamed here, where the destination model is known.
+      systemPrompt.push(nameDestinationText(data.instructions, data.model));
+      systemCacheControls.push(undefined);
+      // The plaintext checkpoint framer can append the note to the caller's instructions.
+      // Keep that block intact for other adapters and record only the suffix the proxy added.
+      if (data.instructions !== parsed.data.instructions) {
+        const callerLength = parsed.data.instructions?.trim() ? parsed.data.instructions.length : 0;
+        proxySystemPrompt.push({ blockIndex: 0, suffix: data.instructions.slice(callerLength) });
+      }
     }
   }
 
@@ -416,7 +442,13 @@ export function parseRequest(
             // #5217: a system-role item is instruction text, exactly like `instructions` and a
             // developer item, so it needs the same request-time naming — it lands in the system
             // block verbatim, and Codex replays the parent's copy to a sub-agent on another model.
-            if (flat.length > 0) systemPrompt.push(nameDestinationText(flat, data.model));
+            if (flat.length > 0) {
+              systemPrompt.push(nameDestinationText(flat, data.model));
+              const sysCc = typeof text !== "string"
+                ? text.reduce<EpxCacheControl | undefined>((acc, p) => p.cacheControl ?? acc, undefined)
+                : undefined;
+              systemCacheControls.push(sysCc);
+            }
             break;
           }
           case "user":
@@ -453,7 +485,8 @@ export function parseRequest(
       }
 
       if (effectiveType === "reasoning") {
-        const reasoning = item as { id?: string; summary?: { text: string }[]; content?: { text: string }[]; encrypted_content?: string };
+        const reasoning = item as { id?: string; summary?: { text: string }[]; content?: { text: string }[]; encrypted_content?: string; cache_control?: unknown };
+        const reasoningCacheControl = parseEpxCacheControl(reasoning.cache_control);
         const fromSummary = (reasoning.summary ?? []).map(c => c.text).join("");
         const text = fromSummary || (reasoning.content ?? []).map(c => c.text).join("");
         const envelope = typeof reasoning.encrypted_content === "string"
@@ -503,6 +536,7 @@ export function parseRequest(
             signature: envelope?.sig ?? JSON.stringify(reasoning),
             ...(envelope?.red ? { redacted: envelope.red } : {}),
             ...(reasoning.id ? { itemId: reasoning.id } : {}),
+            ...(reasoningCacheControl ? { cacheControl: reasoningCacheControl } : {}),
           };
           const envelopeSigned = typeof envelope?.sig === "string";
           const previous = pendingReasoning[pendingReasoning.length - 1];
@@ -520,7 +554,8 @@ export function parseRequest(
       }
 
       if (effectiveType === "function_call") {
-        const call = item as { id?: string; call_id: string; name: string; arguments?: string; namespace?: string; extra_content?: unknown };
+        const call = item as { id?: string; call_id: string; name: string; arguments?: string; namespace?: string; extra_content?: unknown; cache_control?: unknown };
+        const callCacheControl = parseEpxCacheControl(call.cache_control);
         // Tolerate empty/non-JSON arguments (e.g. a no-arg tool call serialized as "") instead of
         // throwing — a single poisoned history item would otherwise 400 every subsequent turn.
         const args = functionCallArgumentsFromText(call.call_id, call.arguments);
@@ -531,6 +566,7 @@ export function parseRequest(
         const toolCall: EpxToolCall = {
           type: "toolCall", id: call.call_id, name: call.name, arguments: args,
           ...(call.namespace ? { namespace: call.namespace } : {}),
+          ...(callCacheControl ? { cacheControl: callCacheControl } : {}),
         };
         // Provider-opaque metadata (e.g. a Gemini thought signature) travels with the call so a
         // history-replayed or previous_response_id turn rebuilds the same signed part instead of
@@ -639,7 +675,8 @@ export function parseRequest(
           messages.push({ role: "user", content: externalTaskInput, timestamp: now });
           continue;
         }
-        const output = item as { call_id: string; output?: string | unknown[] };
+        const output = item as { call_id: string; output?: string | unknown[]; cache_control?: unknown };
+        const outputCacheControl = parseEpxCacheControl(output.cache_control);
         attachPendingReasoningToCallOwner(messages, output.call_id, pendingReasoning);
         pendingReasoning.length = 0;
         const toolInfo = findToolById(messages, output.call_id);
@@ -648,6 +685,7 @@ export function parseRequest(
           toolName: toolInfo.name, toolNamespace: toolInfo.namespace,
           content: outputToToolResultContent(output.output), isError: false, timestamp: now,
           ...(toolOutputContainsEncryptedContent(output.output) ? { containsEncryptedContent: true } : {}),
+          ...(outputCacheControl ? { cacheControl: outputCacheControl } : {}),
         });
         continue;
       }
@@ -705,6 +743,7 @@ export function parseRequest(
   }
   const context: EpxContext = {
     ...(systemPrompt.length > 0 ? { systemPrompt } : {}),
+    ...(systemCacheControls.some(c => c !== undefined) ? { systemCacheControls } : {}),
     ...(proxySystemPrompt.length > 0 ? { proxySystemPrompt } : {}),
     messages,
     ...(mergedTools.length > 0 ? { tools: mergedTools } : {}),
@@ -736,6 +775,8 @@ export function parseRequest(
   if (data.frequency_penalty !== undefined) options.frequencyPenalty = data.frequency_penalty;
   if (data.service_tier !== undefined) options.serviceTier = data.service_tier;
   if (data.prompt_cache_key !== undefined) options.promptCacheKey = data.prompt_cache_key;
+  const autoCacheControl = parseEpxCacheControl(data.cache_control);
+  if (autoCacheControl) options.automaticCacheControl = autoCacheControl;
 
   const imageGen = extractHostedImageGeneration([
     ...(data.tools as unknown[] ?? []),

@@ -73,6 +73,7 @@ export function createAdmittedHttpTurn(
     if (!lease) {
       budgetLease?.releaseUnused();
       const response = serverBusyResponse(req, "active turns", policy);
+      refusalLog?.logCtx.otlpSpan?.finish({ status: response.status, errorCode: "server_busy" });
       return options?.mapRefusal ? withCors(map(response), req, policy) : response;
     }
     let workflow: ReturnType<typeof admitHttpWorkflowTurn>;
@@ -80,6 +81,10 @@ export function createAdmittedHttpTurn(
     catch (error) {
       budgetLease?.releaseUnused();
       lease.release();
+      refusalLog?.logCtx.otlpSpan?.finish({
+        status: req.signal.aborted ? 499 : 500,
+        errorCode: refusalLog.logCtx.errorCode,
+      });
       throw error;
     }
     if (workflow && !workflow.admitted) {
@@ -119,6 +124,10 @@ export function createAdmittedHttpTurn(
         else budgetLease.releaseHoldOnly();
       }
       lease.release();
+      refusalLog?.logCtx.otlpSpan?.finish({
+        status: req.signal.aborted ? 499 : 500,
+        errorCode: refusalLog.logCtx.errorCode,
+      });
       throw error;
     }
   };

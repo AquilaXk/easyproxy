@@ -1076,6 +1076,7 @@ function writeFinalRequestLog(
   });
   addLog(finalEntry);
   settleApiKeyRequestBudget(logCtx, finalEntry, totalTokens, start);
+  logCtx.otlpSpan?.finish({ status: effectiveStatus, finalEntry });
   // Formatted from the finalized snapshot, so the ring shows exactly what the ledger holds.
   for (const attempt of attempts ?? []) debugAttemptDeliverySummary(requestId, attempt);
   if (isUsageDebugEnabled()) {

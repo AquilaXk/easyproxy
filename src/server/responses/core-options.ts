@@ -244,6 +244,8 @@ export interface HandleResponsesOptions {
   anthropicServerReplay?: ReadonlyMap<string, readonly Record<string, unknown>[]>;
   /** The caller's cached system prefix (`systemCachePrefix`); same scope. */
   anthropicSystemCachePrefix?: string;
+  /** The caller's `cache_control` marker on the `anthropicSystemCachePrefix` block, if present. */
+  anthropicSystemCachePrefixControl?: import("../../protocols/cache-control").EpxCacheControl;
   /** Metadata-qualified Messages discovery evidence, never caller JSON or a preselected destination. */
   anthropicToolLoadingSource?: Readonly<Record<string, unknown>>;
   /** Droid's per-request effort default; each concrete combo or policy target applies it only if its ladder allows it. */

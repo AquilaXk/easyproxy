@@ -8,7 +8,7 @@
 Use these declarations to choose a task, then check its flags and authority before execution.
 Non-mutating probes may still contact providers, consume quota or refresh caches.
 
-Declared capabilities: 26.
+Declared capabilities: 29.
 
 ### `epx codex-provider`
 
@@ -459,3 +459,65 @@ State-changing: yes. JSON mode: `envelope`.
 
 - Always permitted, including in agent-driven sessions and while anonymous telemetry is off.
 - Uses the running proxy when available and otherwise deletes directly; an unreachable telemetry service leaves the deletion pending for the proxy to retry.
+
+### `epx telemetry otlp status`
+
+Usage: `epx telemetry otlp status [--json]`
+
+Inspect optional OpenTelemetry OTLP trace export configuration (secret headers masked).
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/telemetry/otlp` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit OTLP configuration as JSON. |
+
+- OTLP tracing is off by default with zero runtime overhead; secret header values are masked.
+
+### `epx telemetry otlp set`
+
+Usage: `epx telemetry otlp set [--enabled <true|false>] [--endpoint <url>] [--service-name <name>] [--sample-rate <0-1>] [--timeout-ms <n>] [--max-queue-size <n>] [--batch-size <n>] [--allow-private-network <true|false>] [--json]`
+
+Configure optional OTLP/HTTP trace export.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| PUT | `/api/telemetry/otlp` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--enabled` | string | Enable or disable OTLP tracing (true\|false). |
+| `--endpoint` | string | OTLP/HTTP traces URL (https:// or loopback http://). |
+| `--service-name` | string | OpenTelemetry service.name resource attribute. |
+| `--sample-rate` | number | Sampling probability in [0, 1]. |
+| `--timeout-ms` | number | Collector export timeout in ms (500..30000). |
+| `--max-queue-size` | number | Max queued spans before dropping oldest (16..4096). |
+| `--batch-size` | number | Max spans per batch POST (1..256). |
+| `--allow-private-network` | string | Allow RFC1918 private network OTLP collectors (true\|false). |
+| `--json` | boolean | Emit updated OTLP config as JSON. |
+
+- Validates endpoint destination safety, sample rate, and batch/queue bounds before persisting.
+
+### `epx telemetry otlp clear`
+
+Usage: `epx telemetry otlp clear [--json]`
+
+Disable and remove OTLP tracing configuration.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| DELETE | `/api/telemetry/otlp` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit cleared OTLP status as JSON. |
+
+- Flushes pending queued spans and disables OTLP export.

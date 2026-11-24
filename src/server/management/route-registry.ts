@@ -516,6 +516,9 @@ export const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
   // server/management/telemetry-routes
   { method: "GET", path: "/api/telemetry", module: "server/management/telemetry-routes", mutates: false },
   { method: "PUT", path: "/api/telemetry", module: "server/management/telemetry-routes", mutates: true, exempt: { reason: "session-only", why: "User-consent boundary in CLI_CONSENT.md: changing telemetry consent over HTTP requires a human dashboard session; CLI callers use epx telemetry enable/disable." } },
+  { method: "GET", path: "/api/telemetry/otlp", module: "server/management/telemetry-routes", mutates: false },
+  { method: "PUT", path: "/api/telemetry/otlp", module: "server/management/telemetry-routes", mutates: true },
+  { method: "DELETE", path: "/api/telemetry/otlp", module: "server/management/telemetry-routes", mutates: true },
   { method: "GET", path: "/api/telemetry/profile", module: "server/management/telemetry-routes", mutates: false },
   { method: "POST", path: "/api/telemetry/profile", module: "server/management/telemetry-routes", mutates: true, exempt: { reason: "session-only", why: "User-consent boundary in CLI_CONSENT.md: connecting a public profile over HTTP requires a human dashboard session; CLI callers use epx telemetry profile connect in an interactive terminal." } },
   { method: "DELETE", path: "/api/telemetry/profile", module: "server/management/telemetry-routes", mutates: true },

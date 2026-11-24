@@ -1676,6 +1676,20 @@
         "src/server/management/scenario-routing-routes.ts",
         "src/cli/agent-scenario-routing.ts"
       ]
+    },
+    {
+      "path": "cache-budget-embeddings-otlp.md",
+      "tier": 3,
+      "title": "Per-Block Cache Control, Virtual-Key Holds, Embeddings & OTLP Tracing",
+      "scope": "Cross-bridge cache_control preservation, virtual API key TPM/expiry/in-flight USD holds, /v1/embeddings data plane, and optional OTLP trace export.",
+      "documents": [
+        "src/protocols/cache-control.ts",
+        "src/server/api-key-budget-estimate.ts",
+        "src/server/embeddings.ts",
+        "src/config/schema/otlp.ts",
+        "src/telemetry/otlp.ts",
+        "src/telemetry/otlp-routes.ts"
+      ]
     }
   ],
   "contracts": {

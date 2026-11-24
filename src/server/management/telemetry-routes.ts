@@ -3,11 +3,25 @@ import {
   handleGetTelemetryRoute,
   handlePutTelemetryRoute,
 } from "../../telemetry/routes";
+import {
+  handleDeleteOtlpRoute,
+  handleGetOtlpRoute,
+  handlePutOtlpRoute,
+} from "../../telemetry/otlp-routes";
 
 export async function handleTelemetryRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url } = ctx;
   if (url.pathname.startsWith("/api/telemetry/profile")) {
     return handleTelemetryProfileRoutes(ctx);
+  }
+  if (url.pathname === "/api/telemetry/otlp" && req.method === "GET") {
+    return handleGetOtlpRoute(ctx);
+  }
+  if (url.pathname === "/api/telemetry/otlp" && req.method === "PUT") {
+    return handlePutOtlpRoute(ctx);
+  }
+  if (url.pathname === "/api/telemetry/otlp" && req.method === "DELETE") {
+    return handleDeleteOtlpRoute(ctx);
   }
   if (url.pathname === "/api/telemetry" && req.method === "GET") {
     return handleGetTelemetryRoute(ctx);

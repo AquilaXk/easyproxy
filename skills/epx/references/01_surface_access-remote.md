@@ -569,9 +569,9 @@ State-changing: no. JSON mode: `payload`.
 
 ### `epx access key set`
 
-Usage: `epx access key set <id-or-name> [--allow-provider <name>]... [--allow-model <id>]... [--clear] [--json]`
+Usage: `epx access key set <id-or-name> [--allow-provider <name>]... [--allow-model <id>]... [--rpm-limit <n|none>] [--tpm-limit <n|none>] [--max-daily-requests <n|none>] [--daily-token-limit <n|none>] [--daily-cost-limit-usd <usd|none>] [--max-in-flight-cost-usd <usd|none>] [--expires-at <iso|none>] [--clear] [--json]`
 
-Replace selected provider/model scope dimensions.
+Replace selected provider/model scope dimensions, budgets, or expiry.
 
 State-changing: yes. JSON mode: `payload`.
 
@@ -584,10 +584,17 @@ State-changing: yes. JSON mode: `payload`.
 |---|---|---|
 | `--allow-provider` | string | Provider scope; repeatable, replaces that dimension. |
 | `--allow-model` | string | Model scope; repeatable, replaces that dimension. |
-| `--clear` | boolean | Clear both dimensions; submitted allow options then override their dimension. |
+| `--rpm-limit` | string | Per-minute request limit integer or none to clear. |
+| `--tpm-limit` | string | Per-minute token limit integer or none to clear. |
+| `--max-daily-requests` | string | UTC-day request cap integer or none to clear. |
+| `--daily-token-limit` | string | UTC-day token cap integer or none to clear. |
+| `--daily-cost-limit-usd` | string | UTC-day USD cost limit or none to clear. |
+| `--max-in-flight-cost-usd` | string | Concurrent in-flight USD hold ceiling or none to clear. |
+| `--expires-at` | string | ISO-8601 expiry timestamp with offset or none to clear. |
+| `--clear` | boolean | Clear provider/model scopes; submitted allow options then override their dimension. |
 | `--json` | boolean | Emit the result as JSON. |
 
-- At least one scope option is required. Unspecified dimensions are preserved; this command does not rename keys.
+- At least one scope, budget, expiry, or --clear option is required. Unspecified dimensions are preserved; this command does not rename keys.
 
 ### `epx access key rotate commit`
 

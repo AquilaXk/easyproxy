@@ -191,7 +191,12 @@ function validateKeyName(
 export type IssuedApiKey = Pick<EpxApiKeyEntry, "id" | "name" | "key" | "createdAt">;
 
 /** Shared one-time data-key issuance used by the dashboard and link transactions. */
-export function issueApiKeyInProcess(config: EpxConfig, name: string, reservedId?: string): IssuedApiKey {
+export function issueApiKeyInProcess(
+  config: EpxConfig,
+  name: string,
+  reservedId?: string,
+  configureEntry?: (entry: IssuedApiKey) => void,
+): IssuedApiKey {
   const checked = validateKeyName(name, { required: true });
   if ("error" in checked) throw new Error(checked.error);
   // An operation journal reserves the id before it issues the key, so a crash can be matched to it later.
@@ -204,6 +209,7 @@ export function issueApiKeyInProcess(config: EpxConfig, name: string, reservedId
     key: `epx_data_${randomBytes(20).toString("hex")}`,
     createdAt: new Date().toISOString(),
   };
+  configureEntry?.(entry);
   const previous = config.apiKeys;
   config.apiKeys = [...(previous ?? []), entry];
   try {
@@ -213,7 +219,7 @@ export function issueApiKeyInProcess(config: EpxConfig, name: string, reservedId
     config.apiKeys = previous;
     throw error;
   }
-  return entry;
+  return (config.apiKeys ?? []).find(k => k.id === entry.id) ?? entry;
 }
 
 /** Revoke and persist one data key; callers can retain their own record on false. */
@@ -1504,8 +1510,24 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const nameField = validateKeyName(body.name, { required: false });
     if ("error" in nameField) return jsonResponse({ error: nameField.error }, 400, req, config);
     const name = nameField.value || "default";
-    const entry = issueApiKeyInProcess(config, name); // shared helper uses randomBytes(20)
-    return jsonResponse({ id: entry.id, name: entry.name, key: entry.key, createdAt: entry.createdAt }, 201, req, config);
+    const probe = { id: "probe", name, key: "", createdAt: "" } as EpxApiKeyEntry;
+    const budgetCheck = applyApiKeyBudgetPatch(probe, body);
+    if (!budgetCheck.ok) {
+      return jsonResponse({ error: budgetCheck.error }, 400, req, config);
+    }
+    const entry = issueApiKeyInProcess(
+      config,
+      name,
+      undefined,
+      budgetCheck.touched ? (created) => { applyApiKeyBudgetPatch(created, body); } : undefined,
+    );
+    return jsonResponse({
+      id: entry.id,
+      name: entry.name,
+      key: entry.key,
+      createdAt: entry.createdAt,
+      ...(budgetCheck.touched ? projectApiKeyBudgetDto(entry) : {}),
+    }, 201, req, config);
   }
 
   if (url.pathname === "/api/keys" && req.method === "PATCH") {

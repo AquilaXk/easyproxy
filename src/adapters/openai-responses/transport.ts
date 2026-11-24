@@ -10,6 +10,7 @@ import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider } from "../../
 import { normalizeForwardedClientHeaderName } from "../../lib/provider-client-headers";
 import { AGENT_ASSERTION_HEADER } from "../../lib/authorization-scheme";
 import { openaiResponsesUrl } from "../openai-responses-url";
+import { injectOtlpTraceparent } from "../../lib/trace-context";
 
 export { FORWARD_HEADERS } from "../../codex/forward-transport-headers";
 
@@ -36,7 +37,7 @@ function stripTrailingSlashes(value: string): string {
 }
 
 /** Shared Responses URL/auth/header construction; capabilities never grant auth authority. */
-export function buildResponsesTransport(provider: EpxProviderConfig, incoming: Pick<IncomingMeta, "headers">): {
+export function buildResponsesTransport(provider: EpxProviderConfig, incoming: Pick<IncomingMeta, "headers" | "otlpTraceparent">): {
   url: string; headers: Record<string, string>;
 } {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -91,6 +92,7 @@ export function buildResponsesTransport(provider: EpxProviderConfig, incoming: P
       : `${provider.baseUrl.replace(/\/$/, "")}${provider.responsesPath}`;
     if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
     if (provider.headers) Object.assign(headers, provider.headers);
+    injectOtlpTraceparent(headers, incoming.otlpTraceparent);
   }
   if (Array.isArray(provider.forwardClientHeaders)) {
     for (const rawName of provider.forwardClientHeaders.slice(0, 64)) {

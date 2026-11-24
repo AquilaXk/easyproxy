@@ -391,6 +391,7 @@ export async function preparePassthroughExchange(
         headers: requestState.selectedForwardHeaders,
         providerName: route.providerName,
         translatorBudget,
+        ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
       });
     } catch (error) {
       releaseCodexAuthContextProbeLease(admissionState.authCtx);
@@ -1138,6 +1139,7 @@ export async function preparePassthroughExchange(
             headers: requestState.selectedForwardHeaders,
           providerName: route.providerName,
             translatorBudget,
+            ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
           });
         }
         refreshRequestToolAliases(request);
@@ -1309,6 +1311,7 @@ export async function preparePassthroughExchange(
           headers: requestState.selectedForwardHeaders,
           providerName: route.providerName,
           translatorBudget,
+          ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
         });
         refreshRequestToolAliases(request);
         refreshUndeclaredToolGuard(request);
@@ -1410,6 +1413,7 @@ export async function preparePassthroughExchange(
           headers: requestState.selectedForwardHeaders,
           providerName: route.providerName,
           translatorBudget,
+          ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
         });
         refreshRequestToolAliases(request);
       } catch (err) {

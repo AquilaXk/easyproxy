@@ -342,6 +342,8 @@ export interface EpxApiKeyEntry {
   name: string;
   key: string;
   createdAt: string;
+  /** Optional UTC/ISO-8601 expiry timestamp; expired keys are refused at admission (fail closed). */
+  expiresAt?: string;
   pendingRotation?: EpxPendingApiKeyRotation;
   /**
    * Resolved provider names this key may reach. Absent or empty means every
@@ -366,12 +368,16 @@ export interface EpxApiKeyEntry {
   allowMeteredComboTargets?: boolean;
   /** Optional per-minute request cap for this key. */
   rpmLimit?: number;
+  /** Optional per-minute token cap (actual sliding 60s + in-flight reserved tokens) for this key. */
+  tpmLimit?: number;
   /** Optional UTC-day request cap for this key. */
   maxDailyRequests?: number;
   /** Optional UTC-day token budget cap for this key. */
   dailyTokenLimit?: number;
-  /** Optional UTC-day USD spend cap for this key (tracked in integer microdollars). */
+  /** Optional UTC-day USD spend cap for this key (tracked in integer microdollars, including active holds). */
   dailyCostLimitUsd?: number;
+  /** Optional ceiling on concurrent in-flight USD holds reserved for this key. */
+  maxInFlightCostUsd?: number;
 }
 
 export interface EpxPendingApiKeyRotation {
@@ -1418,6 +1424,7 @@ export interface EpxConfig extends EpxLinkHomeConfig, CodexAccountLoginConfig {
   maxConcurrentInboundBodyBytes?: number;
   toolOutputCompression?: ToolOutputCompressionConfig;
   outboundSecretGuard?: OutboundSecretGuardConfig;
+  otlp?: EpxOtlpConfig;
   /**
    * Opt-in Anthropic OAuth PROACTIVE routing (#294). Default OFF.
    * Sticky session affinity; new sessions may pick lowest known 5h usage.
@@ -1937,6 +1944,27 @@ export interface EpxCatalogAutoRefreshConfig {
    * freshness and only risks a rate limit against every enabled provider at once.
    */
   intervalMinutes?: number;
+}
+
+export interface EpxOtlpConfig {
+  /** Master switch. Default false (disabled with O(1) zero-overhead runtime check). */
+  enabled: boolean;
+  /** Target OTLP/HTTP trace collector endpoint (e.g. https://collector/v1/traces or loopback http://). */
+  endpoint?: string;
+  /** Optional static headers (e.g. Authorization / collector API key), masked on management/CLI output. */
+  headers?: Record<string, string>;
+  /** Optional OTLP resource service.name (default "easyproxy"). */
+  serviceName?: string;
+  /** Trace sampling rate in [0, 1] (default 1). */
+  sampleRate?: number;
+  /** Per-export HTTP timeout in milliseconds (500..30000, default 5000). */
+  timeoutMs?: number;
+  /** Bounded in-memory queue capacity (16..4096, default 512). */
+  maxQueueSize?: number;
+  /** Maximum spans per OTLP batch (1..256, default 64). */
+  batchSize?: number;
+  /** Allow private-network http:// endpoints when true; metadata destinations remain blocked. */
+  allowPrivateNetwork?: boolean;
 }
 
 /**

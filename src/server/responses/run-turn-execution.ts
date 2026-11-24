@@ -385,6 +385,7 @@ export async function executeResponsesRunTurn(
             ...(requestState.subagentFallbackSelected ? { subagentFallback: true } : {}),
             ...(options.internalDecisionCall ? { internalDecisionCall: true } : {}),
             translatorBudget,
+            ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
             providerFetch: runTurnProviderFetch,
             pacingSlot,
             onGuardedDispatch: publishReplacement,

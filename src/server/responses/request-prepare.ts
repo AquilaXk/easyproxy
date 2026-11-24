@@ -1,4 +1,5 @@
 import { selectResponseReplayOwner } from "./replay-owner";
+import { reservePreDispatchApiKeyHold } from "../api-key-budget-estimate";
 import { isPlaintextV2AgentMessagesEnabled } from "../../config/multi-agent-surface";
 import { projectLocalModelRefusalLog } from "../request-log-failure-detail";
 import { attributePhysicalAttempt } from "../request-log-failure-attribution";
@@ -593,6 +594,7 @@ export async function prepareResponsesRequest(
       }
       parsed._anthropicServerReplay = options.anthropicServerReplay;
       parsed._anthropicSystemCachePrefix = options.anthropicSystemCachePrefix;
+      parsed._anthropicSystemCachePrefixControl = options.anthropicSystemCachePrefixControl;
       parsed._anthropicInbound = true;
       if (parsed.options.textFormat?.type === "json_schema") parsed._structuredOutputConformance = true;
     }
@@ -969,6 +971,17 @@ export async function prepareResponsesRequest(
     }
     return formatErrorResponse(404, "invalid_request_error", err instanceof Error ? err.message : String(err));
   }
+
+  const budgetHoldRefusal = await reservePreDispatchApiKeyHold({
+    req,
+    config,
+    logCtx,
+    providerName: route.providerName,
+    modelId: route.modelId,
+    maxOutputTokens: parsed.options.maxOutputTokens,
+    anthropicSurface: options.inboundWire === "anthropic",
+  });
+  if (budgetHoldRefusal) return budgetHoldRefusal;
 
   const hasUnexpandedPreviousResponse = !!parsed.previousResponseId
     && parsed._previousResponseInputExpanded !== true;

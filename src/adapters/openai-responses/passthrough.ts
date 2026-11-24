@@ -44,6 +44,7 @@ import { dropResponsesReasoningInputItems, mapRoutedResponsesReasoningEffort, no
 import { repairUrlCitationAnnotations, scrubEpxCompactionItems, stripUnsupportedOutputInclude, stripArkKimiOrphanCipher, stripCanonicalOnlyInputItems, stripCanonicalOnlyToolFields, stripCanonicalOnlyTopLevelFields, stripInternalChatMessageMetadataPassthrough, stripInvalidItemIds, stripItemIdsWhenUnstored, stripProviderInputItemMetadata, stripRejectedSamplingParams } from "./request-strips";
 import { notePlaintextReasoningDropped } from "./plaintext-reasoning-notice";
 import { stripCanonicalForwardPromptCacheOptions, stripDeprecatedPromptCacheRetention } from "./prompt-cache";
+import { stripBridgeCacheControlsForResponsesWire } from "../../protocols/cache-control";
 import { isPlainObject } from "./internal";
 import { rememberTransientOutboundWireBody } from "../../lib/transient-outbound-body";
 import { usageFromResponsesPayload } from "./usage";
@@ -468,14 +469,15 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         parsed.modelId,
       );
       // Normalize the wire model before deriving model-dependent transport metadata.
-      let finalBody =
+      let finalBody = stripBridgeCacheControlsForResponsesWire(
         provider.modelSuffixBracketStrip
           && unnormalizedBody !== null
           && typeof unnormalizedBody === "object"
           && !Array.isArray(unnormalizedBody)
           && typeof (unnormalizedBody as { model?: unknown }).model === "string"
           ? { ...(unnormalizedBody as Record<string, unknown>), model: stripBracketedModelSuffix((unnormalizedBody as { model: string }).model) }
-          : unnormalizedBody;
+          : unnormalizedBody,
+      );
       if (isMetaAiResponsesDestination(url)) {
         const originalChoice = isPlainObject(parsed._rawBody) ? parsed._rawBody.tool_choice : undefined;
         finalBody = normalizeMuseToolChoice(finalBody, originalChoice);

@@ -50,12 +50,12 @@ export const ACCESS_REMOTE_CAPABILITIES: readonly Capability[] = [
     details: ["Case-insensitive ID takes precedence over name; ambiguous names are refused."],
   },
   {
-    command: ["access", "key", "set"], summary: "Replace selected provider/model scope dimensions.",
-    usage: "epx access key set <id-or-name> [--allow-provider <name>]... [--allow-model <id>]... [--clear] [--json]",
+    command: ["access", "key", "set"], summary: "Replace selected provider/model scope dimensions, budgets, or expiry.",
+    usage: "epx access key set <id-or-name> [--allow-provider <name>]... [--allow-model <id>]... [--rpm-limit <n|none>] [--tpm-limit <n|none>] [--max-daily-requests <n|none>] [--daily-token-limit <n|none>] [--daily-cost-limit-usd <usd|none>] [--max-in-flight-cost-usd <usd|none>] [--expires-at <iso|none>] [--clear] [--json]",
     routes: [{"method": "GET", "path": "/api/keys"}, {"method": "PATCH", "path": "/api/keys"}],
-    flags: [{"name": "--allow-provider", "value": "string", "summary": "Provider scope; repeatable, replaces that dimension."}, {"name": "--allow-model", "value": "string", "summary": "Model scope; repeatable, replaces that dimension."}, {"name": "--clear", "value": "boolean", "summary": "Clear both dimensions; submitted allow options then override their dimension."}, {"name": "--json", "value": "boolean", "summary": "Emit the result as JSON."}],
+    flags: [{"name": "--allow-provider", "value": "string", "summary": "Provider scope; repeatable, replaces that dimension."}, {"name": "--allow-model", "value": "string", "summary": "Model scope; repeatable, replaces that dimension."}, {"name": "--rpm-limit", "value": "string", "summary": "Per-minute request limit integer or none to clear."}, {"name": "--tpm-limit", "value": "string", "summary": "Per-minute token limit integer or none to clear."}, {"name": "--max-daily-requests", "value": "string", "summary": "UTC-day request cap integer or none to clear."}, {"name": "--daily-token-limit", "value": "string", "summary": "UTC-day token cap integer or none to clear."}, {"name": "--daily-cost-limit-usd", "value": "string", "summary": "UTC-day USD cost limit or none to clear."}, {"name": "--max-in-flight-cost-usd", "value": "string", "summary": "Concurrent in-flight USD hold ceiling or none to clear."}, {"name": "--expires-at", "value": "string", "summary": "ISO-8601 expiry timestamp with offset or none to clear."}, {"name": "--clear", "value": "boolean", "summary": "Clear provider/model scopes; submitted allow options then override their dimension."}, {"name": "--json", "value": "boolean", "summary": "Emit the result as JSON."}],
     mutates: true, json: "payload",
-    details: ["At least one scope option is required. Unspecified dimensions are preserved; this command does not rename keys."],
+    details: ["At least one scope, budget, expiry, or --clear option is required. Unspecified dimensions are preserved; this command does not rename keys."],
   },
   {
     command: ["access", "key", "rotate", "commit"], summary: "Commit a pending key rotation.",

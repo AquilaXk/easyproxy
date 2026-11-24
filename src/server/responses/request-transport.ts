@@ -1335,6 +1335,7 @@ export async function prepareResponsesTransport(
             headers: requestState.selectedForwardHeaders, providerName: route.providerName, translatorBudget,
             abortSignal: dispatchInit.signal ?? options.abortSignal ?? req.signal,
             dispatchPacingHeld: true,
+            ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
             ...(imageTierBias > 0 ? { imageTierBias } : {}),
           });
         }

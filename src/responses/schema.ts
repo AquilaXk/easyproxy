@@ -1,14 +1,17 @@
 import * as z from "zod/v4";
 import { isCompactionItemType } from "./compaction";
 
-const inputTextSchema = z.object({ type: z.literal("input_text"), text: z.string() });
-const plainTextSchema = z.object({ type: z.literal("text"), text: z.string() });
+const cacheControlFieldSchema = z.unknown().optional();
+
+const inputTextSchema = z.object({ type: z.literal("input_text"), text: z.string(), cache_control: cacheControlFieldSchema });
+const plainTextSchema = z.object({ type: z.literal("text"), text: z.string(), cache_control: cacheControlFieldSchema });
 const inputImageBlockSchema = z.object({
   type: z.literal("input_image"),
   // codex-rs ImageDetail: auto|low|high|original (view_image --detail original).
   detail: z.enum(["auto", "low", "high", "original"]).optional(),
   image_url: z.string().optional(),
   file_id: z.string().optional(),
+  cache_control: cacheControlFieldSchema,
 }).refine(v => typeof v.image_url === "string" || typeof v.file_id === "string", {
   message: "input_image requires at least one of image_url or file_id",
 });
@@ -19,12 +22,14 @@ const inputVideoBlockSchema = z.object({
   // so without declaring it here the mode is dropped before any adapter sees it
   // and the request silently degrades to frame-by-frame decoding.
   processing: z.string().min(1).optional(),
+  cache_control: cacheControlFieldSchema,
 });
 const inputFileBlockSchema = z.object({
   type: z.literal("input_file"),
   file_id: z.string().optional(),
   filename: z.string().optional(),
   file_data: z.string().optional(),
+  cache_control: cacheControlFieldSchema,
 });
 // codex-rs protocol/src/models.rs sends audio as input_audio with an audio_url, in
 // both user content and tool output. The translated IR preserves supported inline
@@ -35,7 +40,7 @@ const inputAudioBlockSchema = z.object({
   audio_url: z.string().min(1),
   format: z.string().optional(),
 });
-const outputTextSchema = z.object({ type: z.literal("output_text"), text: z.string() });
+const outputTextSchema = z.object({ type: z.literal("output_text"), text: z.string(), cache_control: cacheControlFieldSchema });
 const outputRefusalSchema = z.object({ type: z.literal("refusal"), refusal: z.string() });
 const summaryTextSchema = z.object({ type: z.literal("summary_text"), text: z.string() });
 const reasoningTextSchema = z.object({ type: z.literal("reasoning_text"), text: z.string() });
@@ -47,7 +52,7 @@ const outputContentBlockSchema = z.union([outputTextSchema, plainTextSchema, out
 // Tool outputs on the wire mix codex-rs FunctionCallOutputContentItem with legacy output blocks.
 const toolOutputContentBlockSchema = z.union([
   outputTextSchema, plainTextSchema, outputRefusalSchema,
-  inputTextSchema, inputImageBlockSchema, inputAudioBlockSchema, encryptedContentBlockSchema,
+  inputTextSchema, inputImageBlockSchema, inputFileBlockSchema, inputAudioBlockSchema, encryptedContentBlockSchema,
 ]);
 const toolOutputSchema = z.union([z.string(), z.array(toolOutputContentBlockSchema)]);
 
@@ -75,6 +80,7 @@ const reasoningItemSchema = z.object({
   content: z.array(reasoningTextSchema).optional(),
   // Round-tripped opaque payload (native OpenAI encryption OR the proxy's epxr1 envelope).
   encrypted_content: z.string().optional(),
+  cache_control: cacheControlFieldSchema,
 });
 
 /** A native v1 replacement history may establish replay provenance only after body success. */
@@ -111,11 +117,13 @@ const functionCallItemSchema = z.object({
   extra_content: z.object({
     google: z.object({ thought_signature: z.string().optional() }).optional(),
   }).optional(),
+  cache_control: cacheControlFieldSchema,
 });
 const functionCallOutputItemSchema = z.object({
   type: z.literal("function_call_output"),
   call_id: z.string().min(1),
   output: toolOutputSchema.optional(),
+  cache_control: cacheControlFieldSchema,
 });
 const customToolCallItemSchema = z.object({
   type: z.literal("custom_tool_call"),
@@ -152,6 +160,7 @@ export const toolSchema = z.object({
   // Unknown keys are stripped here, so a field the parser is expected to read has to be
   // declared: an undeclared allowed_callers never reached buildTools at all (#5210).
   allowed_callers: z.array(z.string()).optional(),
+  cache_control: cacheControlFieldSchema,
 });
 
 const builtinToolSchema = z.object({ type: z.string() }).loose();
@@ -216,4 +225,6 @@ export const responsesRequestSchema = z.object({
   prompt: z.unknown().optional(),
   text: z.unknown().optional(),
   truncation: z.unknown().optional(),
+  cache_control: cacheControlFieldSchema,
+  _anthropicSystemBlocks: z.unknown().optional(),
 });

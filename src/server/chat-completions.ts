@@ -1,4 +1,5 @@
 import { projectLocalModelRefusalLog } from "./request-log-failure-detail";
+import { reservePreDispatchApiKeyHold } from "./api-key-budget-estimate";
 import { carryWorkflowRefusal } from "./workflow-refusal";
 import { clientFacingModelLabel, clientFacingModelText, type ClientFacingModelLabel } from "../lib/error-destination";
 import { wasAccountAutoPaused } from "../lib/account-auto-pause-response";
@@ -409,6 +410,19 @@ async function handleChatCompletionsWithBudget(
   });
   recordProtocolShadowPlan(logCtx, config, { inbound: "chat", model: requestedModel });
   if (chatNativeRoute) {
+    const budgetHoldRefusal = await reservePreDispatchApiKeyHold({
+      req,
+      config,
+      logCtx,
+      providerName: chatNativeRoute.providerName,
+      modelId: chatNativeRoute.modelId,
+      estimatedInputTokens: logCtx.spendInputEstimateTokens ?? logCtx.usageLogInputTokens,
+      maxOutputTokens: logCtx.spendOutputCeilingTokens,
+    });
+    if (budgetHoldRefusal) {
+      if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 429, { closeReason: "non_stream" });
+      return budgetHoldRefusal;
+    }
     return handleNativeChatCompletions({
       req,
       config,

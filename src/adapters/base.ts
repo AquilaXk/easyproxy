@@ -18,6 +18,8 @@ export interface IncomingMeta {
   completedToolBlocks?: boolean;
   translatorBudget: TranslatorBudget;
   abortSignal?: AbortSignal;
+  /** W3C traceparent header propagated outbound only when OTLP tracing is enabled. */
+  otlpTraceparent?: string;
   /** Lease acquired before the response is committed; the physical send transfers it to its body. */
   pacingSlot?: ProviderRequestSlot;
   /** Internal queued rebuild already owns the outer provider fetch admission. */
@@ -214,6 +216,8 @@ export interface AdapterFetchContext {
   kiroPreferAccountFailover?: boolean;
   /** Remains attached to the returned response body after the response headers arrive. */
   abortSignal?: AbortSignal;
+  /** W3C traceparent header propagated outbound only when OTLP tracing is enabled. */
+  otlpTraceparent?: string;
   /** Response-header deadline per attempt; non-positive disables it. Body cancellation stays linked. */
   timeoutMs?: number;
   /** Return final non-2xx responses untouched so the caller can own the error-body read. */

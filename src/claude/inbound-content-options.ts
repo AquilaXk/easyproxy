@@ -2,6 +2,7 @@ import { markProxyError } from "../lib/client-error-body";
 import { ADVISOR_SERVER_TOOL_NAME, advisorReplayBlock, isAdvisorCallInput, isAdvisorResultContent, isAdvisorServerToolType } from "../adapters/anthropic/advisor-tool";
 import { isClaudeWebSearchToolName } from "./outbound";
 import { AnthropicRequestError, isRec, type Rec } from "./inbound-records";
+import { cacheControlWireField, parseEpxCacheControl, type EpxCacheControl } from "../protocols/cache-control";
 
 /**
  * Claude Code opens its system prompt with a per-request billing line
@@ -54,6 +55,34 @@ export function systemCachePrefix(system: unknown): string | undefined {
   return last >= 0 && last < system.length - 1 ? systemToInstructions(system.slice(0, last + 1)) : undefined;
 }
 
+export function systemCachePrefixControl(system: unknown): EpxCacheControl | undefined {
+  if (!Array.isArray(system)) return undefined;
+  const last = system.findLastIndex(block => isRec(block) && block.cache_control != null);
+  if (last < 0 || last >= system.length - 1) return undefined;
+  return parseEpxCacheControl((system[last] as Rec).cache_control);
+}
+
+/** Normalize top-level Anthropic `system` text blocks, stripping only the leading billing line. */
+export function anthropicNormalizedSystemBlocks(
+  system: unknown,
+): Array<{ text: string; cache_control?: EpxCacheControl }> {
+  if (!Array.isArray(system)) return [];
+  const blocks: Array<{ text: string; cache_control?: EpxCacheControl }> = [];
+  let first = true;
+  for (const block of system) {
+    if (!isRec(block) || block.type !== "text" || typeof block.text !== "string") continue;
+    let text = block.text;
+    if (first) {
+      first = false;
+      text = stripClaudeBillingHeader(block.text);
+      if (text.length === 0) continue;
+    }
+    const cc = parseEpxCacheControl(block.cache_control);
+    blocks.push({ text, ...(cc ? { cache_control: cc } : {}) });
+  }
+  return blocks;
+}
+
 function isRestrictedSearch(raw: unknown): boolean {
   return isRec(raw) && typeof raw.type === "string" && raw.type.startsWith("web_search")
     && ["allowed_domains", "blocked_domains", "user_location"].some(key => Object.hasOwn(raw, key));
@@ -91,6 +120,7 @@ export function toolsToResponses(tools: unknown): Rec[] | undefined {
         ...(Array.isArray(raw.allowed_callers)
           ? { allowed_callers: raw.allowed_callers.filter((c): c is string => typeof c === "string") }
           : {}),
+        ...cacheControlWireField(raw.cache_control),
       });
       continue;
     }

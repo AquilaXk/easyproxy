@@ -671,6 +671,10 @@
     "management-provider-probe-ssrf.test.ts": "server",
     "sse-single-pass-fastpath.test.ts": "responses",
     "scenario-routing.test.ts": "routing",
-    "ewma-latency-combo.test.ts": "routing"
+    "ewma-latency-combo.test.ts": "routing",
+    "responses-anthropic-cache-control-bridge.test.ts": "responses",
+    "api-key-budget-holds.test.ts": "server",
+    "embeddings-endpoint.test.ts": "server",
+    "telemetry-otlp-tracing.test.ts": "server"
   }
 }

@@ -96,6 +96,7 @@ import {
   outboundSecretGuardSchema,
 } from "./schema/leaf-validators";
 import { scenarioRoutingConfigError } from "./schema/scenario-routing";
+import { otlpConfigSchema } from "./schema/otlp";
 
 export type ConfigDiagnostics = {
   config: EpxConfig;
@@ -786,14 +787,29 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Epx
     && !toolOutputCompressionSchema.safeParse(rawTop.toolOutputCompression).success) {
     return { ok: false, error: "schema_invalid: toolOutputCompression: invalid tool output compression settings" };
   }
+  if (rawTop && Object.hasOwn(rawTop, "otlp") && rawTop.otlp !== undefined) {
+    const otlpParsed = otlpConfigSchema.safeParse(rawTop.otlp);
+    if (!otlpParsed.success) {
+      const issue = otlpParsed.error.issues[0];
+      const field = issue?.path.join(".");
+      return { ok: false, error: `schema_invalid: otlp${field ? `.${field}` : ""}: ${issue?.message ?? "invalid OTLP settings"}` };
+    }
+  }
   if (rawTop && Array.isArray(rawTop.apiKeys)) {
     const budgetIntSchema = (max: number) => z.number().int().min(1).max(max);
     const budgetCostSchema = z.number().finite().min(0.000001).max(1_000_000);
+    const expirySchema = z.string().datetime({ offset: true });
     for (const row of rawTop.apiKeys) {
       if (!row || typeof row !== "object" || Array.isArray(row)) continue;
       const entry = row as Record<string, unknown>;
+      if (Object.hasOwn(entry, "expiresAt") && entry.expiresAt !== undefined && !expirySchema.safeParse(entry.expiresAt).success) {
+        return { ok: false, error: "schema_invalid: apiKeys: expiresAt must be an ISO-8601 timestamp with timezone offset" };
+      }
       if (Object.hasOwn(entry, "rpmLimit") && entry.rpmLimit !== undefined && !budgetIntSchema(1_000_000).safeParse(entry.rpmLimit).success) {
         return { ok: false, error: "schema_invalid: apiKeys: rpmLimit and maxDailyRequests must be positive integers within bounds" };
+      }
+      if (Object.hasOwn(entry, "tpmLimit") && entry.tpmLimit !== undefined && !budgetIntSchema(1_000_000_000).safeParse(entry.tpmLimit).success) {
+        return { ok: false, error: "schema_invalid: apiKeys: tpmLimit must be a positive integer within bounds" };
       }
       if (Object.hasOwn(entry, "maxDailyRequests") && entry.maxDailyRequests !== undefined && !budgetIntSchema(100_000_000).safeParse(entry.maxDailyRequests).success) {
         return { ok: false, error: "schema_invalid: apiKeys: rpmLimit and maxDailyRequests must be positive integers within bounds" };
@@ -803,6 +819,9 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Epx
       }
       if (Object.hasOwn(entry, "dailyCostLimitUsd") && entry.dailyCostLimitUsd !== undefined && !budgetCostSchema.safeParse(entry.dailyCostLimitUsd).success) {
         return { ok: false, error: "schema_invalid: apiKeys: dailyCostLimitUsd must be a finite number between 0.000001 and 1000000" };
+      }
+      if (Object.hasOwn(entry, "maxInFlightCostUsd") && entry.maxInFlightCostUsd !== undefined && !budgetCostSchema.safeParse(entry.maxInFlightCostUsd).success) {
+        return { ok: false, error: "schema_invalid: apiKeys: maxInFlightCostUsd must be a finite number between 0.000001 and 1000000" };
       }
     }
   }

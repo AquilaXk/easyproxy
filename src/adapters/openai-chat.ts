@@ -98,7 +98,7 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
     buildRequest(parsed: EpxParsedRequest, incoming?: IncomingMeta) {
       lastRequestedModelId = parsed.modelId;
       const completedToolBlocks = incoming?.completedToolBlocks === true;
-      const { url, headers, hasCredential } = openAIChatTransport(provider);
+      const { url, headers, hasCredential } = openAIChatTransport(provider, incoming?.otlpTraceparent);
       if (!completedToolBlocks) {
         for (const key of Object.keys(headers)) if (key.toLowerCase() === "x-easyproxy-tool-completion") delete headers[key];
       }

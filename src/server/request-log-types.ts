@@ -21,6 +21,7 @@ import type {
   UsageStatus,
 } from "../usage/log";
 import type { ApiKeyBudgetLease } from "./api-key-budget";
+import type { OtlpRequestSpanHandle } from "../telemetry/otlp";
 import type { RequestBodyEntryField, RequestBodyLogContext } from "./request-body-facts";
 import type { CommittedComboLogFields } from "./request-log-committed-terminal";
 import type { FailureDetail } from "./request-log-failure-detail";
@@ -36,6 +37,8 @@ export interface RequestLogContext extends UpstreamErrorDiagnostics, LinkRequest
   requestMetricsRecorder?: RequestMetricsRecorder;
   /** Optional per-key budget reservation lease settled or rolled back once at final log time. */
   apiKeyBudgetLease?: ApiKeyBudgetLease;
+  /** Optional process-local OTLP tracing span finished once at final log time; never persisted. */
+  otlpSpan?: OtlpRequestSpanHandle;
   /** Bounded terminal enum observed while inspecting a buffered response body. */
   observedTerminalStatus?: ResponsesTerminalStatus;
   /**

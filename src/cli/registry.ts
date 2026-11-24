@@ -875,8 +875,8 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
   },
   {
     name: "telemetry",
-    usage: "epx telemetry <status|enable|disable|profile> [--json]",
-    summary: "Inspect or change anonymous daily usage telemetry consent and preview the payload.",
+    usage: "epx telemetry <status|enable|disable|profile|otlp> [--json]",
+    summary: "Inspect or change anonymous daily usage telemetry consent, preview, or optional OTLP tracing.",
     details: [
       "status [--json]   Show effective state, reason, install channel, last sent day, and exact preview payload.",
       "enable [--json]   Confirm and opt in to anonymous telemetry in an interactive terminal (refused with agent_consent_required or tty_required otherwise).",
@@ -884,6 +884,7 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
       "profile [status] [--json]  Show the opt-in public leaderboard profile, the next day it would send, and its ranks.",
       "profile connect --handle <h> [--name <n>] [--avatar <colour>] [--json]  Create a public profile in an interactive terminal (refused with agent_consent_required or tty_required otherwise).",
       "profile disconnect [--json]  Delete the public profile and all its data on the server; always permitted.",
+      "otlp <status|set|clear> [--json]  Inspect, configure, or clear optional OTLP trace export.",
     ],
   },
 ];

@@ -19,12 +19,13 @@ export { AnthropicRequestError, DesktopModelMappingUnavailableError } from "./in
 export { resolveInboundModel, effortForThinkingBudget, effortFromOutputConfig, extractEpxRouteDirective, extractEpxEffortDirective } from "./inbound-model-options";
 import { AnthropicRequestError, isRec, type Rec } from "./inbound-records";
 import { resolveInboundModel, effortForThinkingBudget, effortFromOutputConfig, formatFromOutputConfig } from "./inbound-model-options";
-import { systemToInstructions, toolsToResponses, toolChoiceToResponses } from "./inbound-content-options";
+import { anthropicNormalizedSystemBlocks, systemToInstructions, toolsToResponses, toolChoiceToResponses } from "./inbound-content-options";
 import { stabilizeClaudeInstructionsForPromptCache } from "./inbound-cache-stabilize";
 import { decodeReasoningEnvelope, encodeReasoningEnvelope, EPX_REASONING_PREFIX } from "../responses/reasoning-envelope";
 import { inlineDocumentMarker } from "../responses/inline-document";
 import { createTranslatorBudget, type TranslatorBudget } from "../lib/translator-budget";
 import { collectAnthropicCacheTtls } from "../adapters/anthropic/cache-retention";
+import { cacheControlWireField, parseEpxCacheControl, type EpxCacheControl } from "../protocols/cache-control";
 
 
 
@@ -53,7 +54,7 @@ export function anthropicImageBlockUrl(block: Rec): string | null {
 
 function imageBlockToInputImage(block: Rec): Rec | null {
   const url = anthropicImageBlockUrl(block);
-  return url === null ? null : { type: "input_image", image_url: url };
+  return url === null ? null : { type: "input_image", image_url: url, ...cacheControlWireField(block.cache_control) };
 }
 
 export function documentTitle(block: Rec): string | undefined {
@@ -80,6 +81,7 @@ function documentBlockToInputFile(block: Rec): Rec | null {
     type: "input_file",
     file_data: document.fileData,
     ...(document.title !== undefined ? { filename: document.title } : {}),
+    ...cacheControlWireField(block.cache_control),
   };
 }
 
@@ -92,7 +94,7 @@ function toolResultOutput(block: Rec): string | Rec[] {
     for (const item of content) {
       if (!isRec(item)) continue;
       if (item.type === "text" && typeof item.text === "string") {
-        out.push({ type: "input_text", text: item.text });
+        out.push({ type: "input_text", text: item.text, ...cacheControlWireField(item.cache_control) });
       } else if (item.type === "tool_reference" && typeof item.tool_name === "string" && item.tool_name.length > 0) {
         // Responses has no tool_reference result carrier. Preserve ToolSearch's loaded-name
         // evidence as result text so a reference-only reply does not become empty (#6647).
@@ -101,7 +103,7 @@ function toolResultOutput(block: Rec): string | Rec[] {
         // own line breaks to keep each loaded name distinct from its neighbours.
         const prev = out[out.length - 1];
         const lead = prev?.type === "input_text" && typeof prev.text === "string" && !prev.text.endsWith("\n") ? "\n" : "";
-        out.push({ type: "input_text", text: `${lead}Tool loaded: ${item.tool_name}\n` });
+        out.push({ type: "input_text", text: `${lead}Tool loaded: ${item.tool_name}\n`, ...cacheControlWireField(item.cache_control) });
       } else if (item.type === "image") {
         const img = imageBlockToInputImage(item);
         if (img) out.push(img);
@@ -110,7 +112,7 @@ function toolResultOutput(block: Rec): string | Rec[] {
         // output vocabulary has no input_file block, and every adapter's tool-result path
         // flattens to text — so this keeps the #939 marker. The user-message branch below is
         // where bytes survive. Recorded as the remaining half of #5212.
-        out.push({ type: "input_text", text: inlineDocumentMarker(documentTitle(item)) });
+        out.push({ type: "input_text", text: inlineDocumentMarker(documentTitle(item)), ...cacheControlWireField(item.cache_control) });
       }
     }
     if (isError) out.unshift({ type: "input_text", text: "[tool error]" });
@@ -266,7 +268,13 @@ function userMessageToItems(content: unknown, input: Rec[], elide: SkillElisionC
     if (!isRec(raw)) continue;
     switch (raw.type) {
       case "text":
-        if (typeof raw.text === "string") pending.push({ type: "input_text", text: maybeElideSkillText(raw.text, elide.names) });
+        if (typeof raw.text === "string") {
+          pending.push({
+            type: "input_text",
+            text: maybeElideSkillText(raw.text, elide.names),
+            ...cacheControlWireField(raw.cache_control),
+          });
+        }
         break;
       case "image": {
         const img = imageBlockToInputImage(raw);
@@ -284,17 +292,16 @@ function userMessageToItems(content: unknown, input: Rec[], elide: SkillElisionC
           call_id: raw.tool_use_id,
           // Blocked-skill bundles are stubbed out for routed models (devlog 060).
           output: elide.callIds.has(raw.tool_use_id) ? skillElisionStub(raw.tool_use_id) : toolResultOutput(raw),
+          ...cacheControlWireField(raw.cache_control),
         });
         break;
       }
-      case "document":
-        // A base64 document now rides the Responses input_file block, so a target with a
-        // counterpart receives the bytes instead of a sentence about them (#5212). Every other
-        // source is a reference this route cannot dereference, and keeps the marker #939
-        // introduced — which is also what a target with no document representation still sees.
-        pending.push(documentBlockToInputFile(raw)
-          ?? { type: "input_text", text: inlineDocumentMarker(documentTitle(raw)) });
+      case "document": {
+        const fileItem = documentBlockToInputFile(raw);
+        pending.push(fileItem
+          ?? { type: "input_text", text: inlineDocumentMarker(documentTitle(raw)), ...cacheControlWireField(raw.cache_control) });
         break;
+      }
       default:
         break; // thinking/redacted_thinking never appear in user messages; ignore unknowns
     }
@@ -317,14 +324,22 @@ function assistantMessageToItems(content: unknown, input: Rec[], budget: Transla
     if (!isRec(raw)) continue;
     switch (raw.type) {
       case "text":
-        if (typeof raw.text === "string") pendingText.push({ type: "output_text", text: raw.text });
+        if (typeof raw.text === "string") {
+          pendingText.push({ type: "output_text", text: raw.text, ...cacheControlWireField(raw.cache_control) });
+        }
         break;
       case "tool_use": {
         flush();
         if (typeof raw.id !== "string" || raw.id.length === 0 || typeof raw.name !== "string" || raw.name.length === 0) {
           throw markProxyError(new AnthropicRequestError("tool_use requires id and name"));
         }
-        input.push({ type: "function_call", call_id: raw.id, name: raw.name, arguments: JSON.stringify(raw.input ?? {}) });
+        input.push({
+          type: "function_call",
+          call_id: raw.id,
+          name: raw.name,
+          arguments: JSON.stringify(raw.input ?? {}),
+          ...cacheControlWireField(raw.cache_control),
+        });
         break;
       }
       case "thinking": {
@@ -350,6 +365,7 @@ function assistantMessageToItems(content: unknown, input: Rec[], budget: Transla
               id: nat?.id ?? `rs_${crypto.randomUUID().replace(/-/g, "")}`,
               summary: thinking.length > 0 ? [{ type: "summary_text", text: thinking }] : [],
               ...(nat ? { encrypted_content: nat.enc } : {}),
+              ...cacheControlWireField(raw.cache_control),
             });
             break;
           }
@@ -357,7 +373,13 @@ function assistantMessageToItems(content: unknown, input: Rec[], budget: Transla
         const encrypted = signature.length === 0 ? undefined : signature.startsWith(EPX_REASONING_PREFIX) ? signature : encodeReasoningEnvelope({ sig: signature }, budget);
         if (encrypted) budget.chargeRetained(2 * encrypted.length, { kind: "reasoning" });
         if (thinking.length === 0 && !encrypted) break;
-        input.push({ type: "reasoning", id: `rs_${crypto.randomUUID().replace(/-/g, "")}`, summary: thinking.length > 0 ? [{ type: "summary_text", text: thinking }] : [], ...(encrypted ? { encrypted_content: encrypted } : {}) });
+        input.push({
+          type: "reasoning",
+          id: `rs_${crypto.randomUUID().replace(/-/g, "")}`,
+          summary: thinking.length > 0 ? [{ type: "summary_text", text: thinking }] : [],
+          ...(encrypted ? { encrypted_content: encrypted } : {}),
+          ...cacheControlWireField(raw.cache_control),
+        });
         break;
       }
       case "redacted_thinking": {
@@ -487,6 +509,10 @@ function translateAnthropicRequest(
 
   const system = anthropicSystemLayout(raw.system, cc);
   if (system.instructions !== undefined) body.instructions = system.instructions;
+  const multiSystemBlocks = preservedAnthropicSystemBlocks(raw.system, system, cc);
+  if (multiSystemBlocks) body._anthropicSystemBlocks = multiSystemBlocks;
+  const autoCc = parseEpxCacheControl(raw.cache_control);
+  if (autoCc) body.cache_control = autoCc;
   if (system.dynamicNotice !== undefined) {
     input.push({
       type: "message",
@@ -518,6 +544,18 @@ export interface AnthropicSystemLayout {
   /** A dynamic notice `stabilizePromptCache` moved out of the system text into a trailing user turn. */
   dynamicNotice?: string;
   cacheSystem: string | string[];
+}
+
+export function preservedAnthropicSystemBlocks(
+  system: unknown,
+  layout: AnthropicSystemLayout,
+  cc: EpxClaudeCodeConfig | undefined,
+): Array<{ text: string; cache_control?: EpxCacheControl }> | undefined {
+  if (cc?.stabilizePromptCache === true || layout.instructions === undefined) return undefined;
+  const blocks = anthropicNormalizedSystemBlocks(system);
+  const ccCount = blocks.filter(b => b.cache_control !== undefined).length;
+  if (ccCount < 2) return undefined;
+  return blocks.map(b => b.text).join("\n\n") === layout.instructions ? blocks : undefined;
 }
 
 /** The system text placement `claudeCode.stabilizePromptCache` decides; shared with the direct decoder. */

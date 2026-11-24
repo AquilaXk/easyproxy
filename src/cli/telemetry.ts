@@ -25,6 +25,7 @@ import {
   runCliAction,
   runtimeRequest,
   takeFlag,
+  takeOption,
   type RuntimeApiDeps,
 } from "./runtime-api";
 
@@ -32,7 +33,8 @@ const USAGE = `Usage:
   epx telemetry [status] [--json]
   epx telemetry enable [--json]
   epx telemetry disable [--json]
-  epx telemetry profile [status|connect|disconnect] [--json]`;
+  epx telemetry profile [status|connect|disconnect] [--json]
+  epx telemetry otlp [status|set|clear] [--enabled <true|false>] [--endpoint <url>] [--service-name <name>] [--sample-rate <0-1>] [--timeout-ms <n>] [--max-queue-size <n>] [--batch-size <n>] [--allow-private-network <true|false>] [--json]`;
 
 export const TELEMETRY_DEFERRAL_FILE = ".telemetry-deferred";
 const DEFERRAL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -193,6 +195,80 @@ export async function handleTelemetryCommand(argv: string[], deps: RuntimeApiDep
     }
     const { handleTelemetryProfileCommand } = await import("./telemetry-profile");
     return handleTelemetryProfileCommand(args, wantsJson, deps);
+  }
+  if (sub === "otlp") {
+    return runCliAction(async () => {
+      if (args.includes("--json")) {
+        throw new CliUsageError("telemetry flags may only be specified once", USAGE);
+      }
+      const action = (!args[0] || args[0].startsWith("-")) ? "status" : args.shift()!.toLowerCase();
+      if (action === "status") {
+        rejectArgs(args, USAGE);
+        const result = await runtimeRequest<Record<string, unknown>>("/api/telemetry/otlp", {}, deps);
+        printData(result, wantsJson, [
+          `OTLP tracing: ${result.enabled === true ? "enabled" : "disabled"}`,
+          ...(result.endpoint ? [`Endpoint: ${String(result.endpoint)}`] : []),
+          ...(result.serviceName ? [`Service name: ${String(result.serviceName)}`] : []),
+          ...(result.sampleRate !== undefined ? [`Sample rate: ${String(result.sampleRate)}`] : []),
+        ]);
+        return;
+      }
+      if (action === "clear") {
+        rejectArgs(args, USAGE);
+        const result = await runtimeRequest<Record<string, unknown>>("/api/telemetry/otlp", {
+          method: "DELETE",
+        }, deps);
+        printData(result, wantsJson, ["Cleared OTLP tracing configuration."]);
+        return;
+      }
+      if (action === "set") {
+        const parseBool = (flag: string, raw: string | undefined): boolean | undefined => {
+          if (raw === undefined) return undefined;
+          const v = raw.trim().toLowerCase();
+          if (v === "true" || v === "1" || v === "on") return true;
+          if (v === "false" || v === "0" || v === "off") return false;
+          throw new CliUsageError(`${flag} must be true or false`, USAGE);
+        };
+        const parseNum = (flag: string, raw: string | undefined): number | undefined => {
+          if (raw === undefined) return undefined;
+          const n = Number(raw);
+          if (!Number.isFinite(n)) throw new CliUsageError(`${flag} must be a valid number`, USAGE);
+          return n;
+        };
+        const enabled = parseBool("--enabled", takeOption(args, "--enabled"));
+        const endpoint = takeOption(args, "--endpoint");
+        const serviceName = takeOption(args, "--service-name");
+        const sampleRate = parseNum("--sample-rate", takeOption(args, "--sample-rate"));
+        const timeoutMs = parseNum("--timeout-ms", takeOption(args, "--timeout-ms"));
+        const maxQueueSize = parseNum("--max-queue-size", takeOption(args, "--max-queue-size"));
+        const batchSize = parseNum("--batch-size", takeOption(args, "--batch-size"));
+        const allowPrivateNetwork = parseBool("--allow-private-network", takeOption(args, "--allow-private-network"));
+        rejectArgs(args, USAGE);
+        const body: Record<string, unknown> = {
+          ...(enabled !== undefined ? { enabled } : {}),
+          ...(endpoint !== undefined ? { endpoint: endpoint.trim() } : {}),
+          ...(serviceName !== undefined ? { serviceName: serviceName.trim() } : {}),
+          ...(sampleRate !== undefined ? { sampleRate } : {}),
+          ...(timeoutMs !== undefined ? { timeoutMs: Math.trunc(timeoutMs) } : {}),
+          ...(maxQueueSize !== undefined ? { maxQueueSize: Math.trunc(maxQueueSize) } : {}),
+          ...(batchSize !== undefined ? { batchSize: Math.trunc(batchSize) } : {}),
+          ...(allowPrivateNetwork !== undefined ? { allowPrivateNetwork } : {}),
+        };
+        if (Object.keys(body).length === 0) {
+          throw new CliUsageError("otlp set requires at least one configuration option", USAGE);
+        }
+        const result = await runtimeRequest<Record<string, unknown>>("/api/telemetry/otlp", {
+          method: "PUT",
+          body: JSON.stringify(body),
+        }, deps);
+        printData(result, wantsJson, [
+          `OTLP tracing: ${result.enabled === true ? "enabled" : "disabled"}`,
+          ...(result.endpoint ? [`Endpoint: ${String(result.endpoint)}`] : []),
+        ]);
+        return;
+      }
+      throw new CliUsageError(`unknown telemetry otlp command ${action}`, USAGE);
+    });
   }
   if (sub === "enable") {
     if (isAgentDriven()) {

@@ -1,7 +1,7 @@
 import { observeAccountAutoPauseRevisions, snapshotAutoPauseFingerprints } from "./account-auto-pause-revisions";
 import type { EpxConfig, EpxProviderConfig, ProviderCostOverlay } from "../types";
 import { configReasoningPinsConfigError } from "./provider-validation";
-import { carryPersistedTelemetry } from "./telemetry-carry";
+import { carryPersistedOtlp, carryPersistedTelemetry } from "./telemetry-carry";
 import { adoptPersistedConfigMigrations, projectPersistedConfigMigrations } from "./persisted-projections";
 import { RESERVE_CAPABILITY_KEYS } from "./reserve-capability";
 import { refreshPreservedProviderOwner } from "../usage/user-cost-overlays";
@@ -141,6 +141,19 @@ export function adoptPersistedTelemetry(config: EpxConfig, persisted: EpxConfig[
   }
   clearConfigTopLevelDeletionIntent(config, ["telemetry"]);
   if (baseline) clearConfigTopLevelDeletionIntent(baseline, ["telemetry"]);
+}
+
+/** Adopt the committed OTLP tracing config subtree without overwriting unrelated live config edits. */
+export function adoptPersistedOtlp(config: EpxConfig, persisted: EpxConfig["otlp"]): void {
+  if (persisted === undefined) delete config.otlp;
+  else config.otlp = structuredClone(persisted);
+  const baseline = liveConfigBaseline.get(config);
+  if (baseline) {
+    if (persisted === undefined) delete baseline.otlp;
+    else baseline.otlp = structuredClone(persisted);
+  }
+  clearConfigTopLevelDeletionIntent(config, ["otlp"]);
+  if (baseline) clearConfigTopLevelDeletionIntent(baseline, ["otlp"]);
 }
 /**
  * The live config retains the address of the socket Bun actually opened, while
@@ -652,6 +665,8 @@ export function saveConfigPreservingClaudeCode(config: EpxConfig): void {
     // Telemetry consent is owned by the file (see carryPersistedTelemetry).
     const telemetry = carryPersistedTelemetry(projectedConfig, onDisk as Record<string, unknown> | undefined);
     if (telemetry.carried) adoptPersistedTelemetry(config, telemetry.value);
+    const otlp = carryPersistedOtlp(projectedConfig, onDisk as Record<string, unknown> | undefined);
+    if (otlp.carried) adoptPersistedOtlp(config, otlp.value);
     const persistedBinding = (bindingBaseline || diskDeletedKeys.has("hostname")) && onDisk
       ? readPersistedServerBinding(onDisk, bindingBaseline ?? { port: config.port, hostname: config.hostname })
       : bindingBaseline;

@@ -56,6 +56,7 @@ import {
   outboundSecretGuardSchema,
 } from "./leaf-validators";
 import { scenarioRoutingSchema } from "./scenario-routing";
+import { otlpConfigSchema } from "./otlp";
 import { MAX_CREDIT_PRICE_USD } from "../../usage/credit-billing";
 import { isValidProviderName, hasOwnProvider } from "../provider-name";
 import {
@@ -217,6 +218,7 @@ export const configSchema = z.object({
   // Degrade damaged configs fail-closed to `"block"` without wiping providers/apiKeys to defaults;
   // write boundaries validate strictly via validateConfigCandidate.
   outboundSecretGuard: outboundSecretGuardSchema.optional().catch({ mode: "block" as const }),
+  otlp: otlpConfigSchema.optional().catch(undefined),
   appOwnedMemoryBudgetMb: z.number().int()
     .min(MIN_APP_OWNED_MEMORY_BUDGET_MB)
     .max(MAX_APP_OWNED_MEMORY_BUDGET_MB)

@@ -235,6 +235,7 @@ export function createAdapterContinuations(
             providerName: route.providerName,
             translatorBudget,
             abortSignal: upstream.signal,
+            ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
             ...(transportState.imageTierBias > 0 ? { imageTierBias: transportState.imageTierBias } : {}),
           });
         } catch (err) {

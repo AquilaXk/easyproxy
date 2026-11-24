@@ -128,6 +128,8 @@ import {
   handleClaudeMessages,
 } from "../claude-messages";
 import { handleChatCompletions } from "../chat-completions";
+import { handleEmbeddings } from "../embeddings";
+import { isOtlpTracingEnabled, startOtlpRequestSpan } from "../../telemetry/otlp";
 import { anthropicErrorResponse } from "../../claude/outbound";
 import { desktopSnapshotBusyResponse, renderAnthropicModelListing } from "./anthropic-model-listing";
 import { buildDesktopDiscoveryInputs } from "../../claude/desktop-discovery-inputs";
@@ -1275,6 +1277,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           ...requestMetricsLogContext, client: classifyUsageClient(req.headers),
           ...admissionFields(admission),
           inboundProtocol: "responses",
+          ...(isOtlpTracingEnabled(config) ? { otlpSpan: startOtlpRequestSpan(req, config, { method: req.method, pathname: url.pathname, protocol: "responses" }) } : {}),
         };
         const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
         return runAdmittedHttpTurn(req, policy, async turnAdmissionLease => {
@@ -1425,6 +1428,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           ...requestMetricsLogContext, client: classifyUsageClient(req.headers),
           ...admissionFields(admission),
           inboundProtocol: "responses",
+          ...(isOtlpTracingEnabled(config) ? { otlpSpan: startOtlpRequestSpan(req, config, { method: req.method, pathname: url.pathname, protocol: "responses" }) } : {}),
         };
         if (req.headers.get("x-easyproxy-grok") === "1") logCtx.surface = "grok";
         let logged = false;
@@ -1520,6 +1524,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           ...requestMetricsLogContext, client: classifyUsageClient(req.headers),
           ...admissionFields(admission),
           inboundProtocol: "messages",
+          ...(isOtlpTracingEnabled(config) ? { otlpSpan: startOtlpRequestSpan(req, config, { method: req.method, pathname: url.pathname, protocol: "messages" }) } : {}),
         };
         // Logging is finalized inside handleClaudeMessages (Responses-vocab tap on the
         // pre-translation stream + native passthrough callbacks) — do not re-wrap the
@@ -1536,6 +1541,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           req,
           policy,
         )), { requestId, start, logCtx, onLogged: () => { ownsRequestLog = true; } });
+        if (!ownsRequestLog) {
+          logCtx.otlpSpan?.finish({ status: response.status, errorCode: logCtx.errorCode });
+        }
         return ownsRequestLog ? withMessagesRequestLogId(response, requestId) : response;
       }
 
@@ -1557,6 +1565,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           ...requestMetricsLogContext, client: classifyUsageClient(req.headers),
           ...admissionFields(admission),
           inboundProtocol: "chat",
+          ...(isOtlpTracingEnabled(config) ? { otlpSpan: startOtlpRequestSpan(req, config, { method: req.method, pathname: url.pathname, protocol: "chat" }) } : {}),
         };
         // `policy`, not `config`: this route is now served on the unauthenticated loopback
         // listener too (#4236), and only the receiving listener's view produces CORS headers
@@ -1576,7 +1585,30 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             policy,
           );
         }, { requestId, start, logCtx, onLogged: () => { ownsRequestLog = true; } });
+        if (!ownsRequestLog) {
+          logCtx.otlpSpan?.finish({ status: response.status, errorCode: logCtx.errorCode });
+        }
         return ownsRequestLog ? withRequestLogId(response, requestId) : response;
+      }
+
+      if (url.pathname === "/v1/embeddings" && req.method === "POST") {
+        if (isDraining()) return drainingResponse(req, policy);
+        const admission = resolveResponsesApiAuth(req, policy);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "easyproxy API key required"), req, policy);
+        if (!isAllowedRequestOrigin(req, policy)) return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, policy);
+        const start = Date.now();
+        const requestId = nextRequestLogId(start);
+        const logCtx: RequestLogContext = {
+          model: "unknown", provider: "unknown", ...requestMetricsLogContext,
+          client: classifyUsageClient(req.headers), ...admissionFields(admission),
+          ...(isOtlpTracingEnabled(config) ? { otlpSpan: startOtlpRequestSpan(req, config, { method: req.method, pathname: url.pathname, protocol: "embeddings" }) } : {}),
+        };
+        const response = await runAdmittedHttpTurn(req, policy, async () => withCors(
+          await handleEmbeddings(req, config, logCtx, { requestId, start, admission, onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer) }),
+          req, policy,
+        ), { requestId, start, logCtx });
+        logCtx.otlpSpan?.finish({ status: response.status, errorCode: logCtx.errorCode });
+        return withRequestLogId(response, requestId);
       }
 
       if (url.pathname === "/v1/audio/transcriptions" && req.method === "POST") {

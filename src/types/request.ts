@@ -1,4 +1,5 @@
 import type { KiroOAuthMetadata } from "../oauth/types";
+import type { EpxCacheControl } from "../protocols/cache-control";
 import type { NativeReasoningOwner } from "../responses/reasoning-replay-cache";
 import type { EpxTool, EpxToolChoice } from "./tools";
 import type { TierDecision, TierObservationContext } from "./provider";
@@ -96,6 +97,8 @@ export interface EpxParsedRequest {
    * adapter ends a system block there so the breakpoint stays off the per-turn tail.
    */
   _anthropicSystemCachePrefix?: string;
+  /** Preserved cache_control settings for the system cache prefix block. */
+  _anthropicSystemCachePrefixControl?: EpxCacheControl;
   /** The request arrived on the Anthropic Messages surface (Claude Code, Claude Desktop). */
   _anthropicInbound?: boolean;
   /**
@@ -254,6 +257,8 @@ export interface EpxParsedRequest {
 
 export interface EpxContext {
   systemPrompt?: string[];
+  /** Per-block Anthropic cache_control aligned with systemPrompt across bridges. */
+  systemCacheControls?: (EpxCacheControl | undefined)[];
   /** Proxy-authored suffixes in systemPrompt (including any joining separator). Keeping their
    * provenance lets adapters relocate caller text while preserving the original system layout. */
   proxySystemPrompt?: { blockIndex: number; suffix: string }[];
@@ -308,11 +313,13 @@ export interface EpxToolResultMessage {
   containsEncryptedContent?: boolean;
   isError: boolean;
   timestamp: number;
+  cacheControl?: EpxCacheControl;
 }
 
 export interface EpxTextContent {
   type: "text";
   text: string;
+  cacheControl?: EpxCacheControl;
 }
 
 export interface EpxImageContent {
@@ -321,6 +328,7 @@ export interface EpxImageContent {
   imageUrl: string;
   /** Fidelity hint from Codex: "low" | "high" | "auto". */
   detail?: string;
+  cacheControl?: EpxCacheControl;
 }
 
 export interface EpxVideoContent {
@@ -336,6 +344,7 @@ export interface EpxVideoContent {
    * for it, so no existing traffic gains a field.
    */
   processing?: string;
+  cacheControl?: EpxCacheControl;
 }
 
 /**
@@ -362,6 +371,7 @@ export interface EpxDocumentContent {
   data: string;
   /** The document's own name: an Anthropic document title or a Chat file part's filename. */
   filename?: string;
+  cacheControl?: EpxCacheControl;
 }
 
 /**
@@ -377,6 +387,7 @@ export interface EpxAudioContent {
   format: "mp3" | "wav";
   /** Text marker for wires that cannot carry the bytes. */
   text: string;
+  cacheControl?: EpxCacheControl;
 }
 
 /** A user/developer message content part: text, native media, or an attached document. */
@@ -389,6 +400,7 @@ export interface EpxThinkingContent {
   itemId?: string;
   /** Raw Anthropic redacted_thinking block payloads to replay verbatim (order preserved). */
   redacted?: string[];
+  cacheControl?: EpxCacheControl;
 }
 
 export interface EpxToolCall {
@@ -407,6 +419,8 @@ export interface EpxToolCall {
   providerMetadata?: EpxProviderOpaqueToolCallMetadata;
   /** MCP namespace (e.g. "mcp__context7") when this call targets a namespaced tool. */
   namespace?: string;
+  /** Preserved Anthropic block prompt-cache breakpoint across bridges. */
+  cacheControl?: EpxCacheControl;
 }
 
 /**
@@ -451,6 +465,8 @@ export interface EpxRequestOptions {
   frequencyPenalty?: number;
   /** Responses prompt-cache affinity key. Passthrough preserves it via _rawBody; routed adapters do not consume it unless their upstream wire supports it. */
   promptCacheKey?: string;
+  /** Top-level automatic prompt caching control preserved across Anthropic bridges. */
+  automaticCacheControl?: EpxCacheControl;
   /**
    * Responses `text.format` (json_schema / json_object), preserved for adapters whose
    * upstream wire has an equivalent. The openai-chat adapter re-nests it as chat

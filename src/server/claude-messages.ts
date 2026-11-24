@@ -1,4 +1,5 @@
 import { MessagesSseFrameContext } from "../lib/messages-sse-error-presentation";
+import { reservePreDispatchApiKeyHold } from "./api-key-budget-estimate";
 import { createMessagesSseErrorFilter } from "./messages-sse-error-filter";
 import { normalizeMessagesProxyRefusal, ownedAnthropicErrorPayload, ownedAnthropicErrorResponse, boundedMessagesDisplayCount, messagesOverflowPresentation, messagesRelayedOverflowPresentation } from "../lib/messages-error-body";
 import { CLAUDE_CONTEXT_OVERFLOW_MESSAGE, isProxyError, markProxyError, carryProxyError, attachComboFailureEvidence, comboFailureEvidence } from "../lib/client-error-body";
@@ -47,7 +48,7 @@ import { stripOneMillionMarker } from "../claude/context-windows";
 import { captureAdmissionPolicy } from "./capture-admission-policy";
 import type { CapturedAdmissionPolicy } from "../types/admission-policy";
 import { captureClaudeInbound } from "../claude/inbound-debug";
-import { declaredAnthropicServerTools, hostedAdvisorSelection, replayedAnthropicServerBlocks, systemCachePrefix, type HostedAdvisorSelection } from "../claude/inbound-content-options";
+import { declaredAnthropicServerTools, hostedAdvisorSelection, replayedAnthropicServerBlocks, systemCachePrefix, systemCachePrefixControl, type HostedAdvisorSelection } from "../claude/inbound-content-options";
 import { linkAdvisorPlanConfig } from "./responses/advisor-plan-slot";
 import { claudeCodeForIngress } from "../claude/intercept/model-bindings";
 import { classifyInterceptClient } from "../claude/intercept/client-class";
@@ -1239,6 +1240,20 @@ async function handleClaudeMessagesWithBudget(
     return anthropicErrorResponse(400, "The selected route cannot carry thinking signatures or redacted_thinking blocks", "invalid_request_error");
   }
   if (nativeMessagesRoute) {
+    const budgetHoldRefusal = await reservePreDispatchApiKeyHold({
+      req,
+      config,
+      logCtx,
+      providerName: nativeMessagesRoute.providerName,
+      modelId: nativeMessagesRoute.modelId,
+      estimatedInputTokens: claudeRequestTokenFloor(),
+      maxOutputTokens: isRec(anthropicBody) && typeof anthropicBody.max_tokens === "number" ? anthropicBody.max_tokens : undefined,
+      anthropicSurface: true,
+    });
+    if (budgetHoldRefusal) {
+      if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 429, { closeReason: "non_stream" });
+      return budgetHoldRefusal;
+    }
     markProtocolEntry(logCtx, { inbound: "messages", lane: "native", features: messagesFeatures });
     let nativeBody: Rec;
     try {
@@ -1375,6 +1390,7 @@ async function handleClaudeMessagesWithBudget(
     anthropicHostedAdvisorSelection,
     anthropicServerReplay: replayedAnthropicServerBlocks(anthropicBody),
     anthropicSystemCachePrefix: isRec(anthropicBody) ? systemCachePrefix(anthropicBody.system) : undefined,
+    anthropicSystemCachePrefixControl: isRec(anthropicBody) ? systemCachePrefixControl(anthropicBody.system) : undefined,
     // Preserve the original catalog through late fallback; only the physical adapter projects it.
     anthropicToolLoadingSource: cacheKeySource === "metadata" && isRec(anthropicBody)
       && ((Array.isArray(cc?.appendOnlyToolLoadingModels) && cc.appendOnlyToolLoadingModels.length > 0)

@@ -1,0 +1,329 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getDefaultConfig } from "../../src/config";
+import { resetApiKeyBudgetsForTests, getApiKeyBudgetSnapshot } from "../../src/server/api-key-budget";
+import { handleEmbeddings, resolveEmbeddingsUrl } from "../../src/server/embeddings";
+import { clearRequestLogsForTests, getRequestLogEntries, type RequestLogContext } from "../../src/server/request-log";
+import { resetOtlpTracingForTests } from "../../src/telemetry/otlp";
+import type { EpxConfig } from "../../src/types";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { settleServerAuthFixture, startManagementServerFixture } from "../helpers/server-auth-fixture";
+
+describe("POST /v1/embeddings data-plane endpoint", () => {
+  const homes: string[] = [];
+  const servers: Array<{ stop(closeActiveConnections?: boolean): void }> = [];
+  const origHome = process.env.EASYPROXY_HOME;
+
+  afterEach(async () => {
+    while (servers.length > 0) {
+      servers.pop()!.stop(true);
+    }
+    resetOtlpTracingForTests();
+    resetApiKeyBudgetsForTests();
+    clearRequestLogsForTests();
+    if (origHome === undefined) delete process.env.EASYPROXY_HOME;
+    else process.env.EASYPROXY_HOME = origHome;
+    while (homes.length > 0) {
+      const dir = homes.pop()!;
+      await settleServerAuthFixture(dir);
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("resolves /v1/embeddings URLs cleanly across provider baseUrl shapes", () => {
+    expect(resolveEmbeddingsUrl({ baseUrl: "https://api.openai.com/v1" })).toBe("https://api.openai.com/v1/embeddings");
+    expect(resolveEmbeddingsUrl({ baseUrl: "https://api.openai.com" })).toBe("https://api.openai.com/v1/embeddings");
+    expect(resolveEmbeddingsUrl({ baseUrl: "https://gw.example.com/v1/responses" })).toBe("https://gw.example.com/v1/embeddings");
+    expect(resolveEmbeddingsUrl({ baseUrl: "https://gw.example.com/openai/v1/chat/completions" })).toBe("https://gw.example.com/openai/v1/embeddings");
+    expect(resolveEmbeddingsUrl({ baseUrl: "https://gw.example.com/v1/embeddings" })).toBe("https://gw.example.com/v1/embeddings");
+  });
+
+  test("enforces auth 401, scope 403, request validation 400, unsupported adapter 400, and SSRF destination block 400", async () => {
+    const home = mkdtempSync(join(tmpdir(), "epx-emb-guards-"));
+    homes.push(home);
+
+    let outboundCalls = 0;
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      hostname: "0.0.0.0",
+      defaultProvider: "openai-custom",
+      apiKeys: [
+        {
+          id: "k-scoped",
+          name: "scoped",
+          key: "epx_data_embscopedkey0001",
+          createdAt: "2026-01-01T00:00:00Z",
+          allowedProviders: ["openai-custom"],
+          allowedModels: ["text-embedding-3-small"],
+        },
+      ],
+      providers: {
+        "openai-custom": {
+          adapter: "openai-compatible",
+          baseUrl: "https://api.example.com/v1",
+          authMode: "key",
+          apiKey: "sk-up-1",
+          models: ["text-embedding-3-small", "text-embedding-3-large"],
+        },
+      },
+    };
+
+    const fixture = await startManagementServerFixture(home, cfg);
+    try {
+      const base = `http://127.0.0.1:${fixture.server.port}`;
+
+      // 1. Unauthenticated -> 401
+      const unauth = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "openai-custom/text-embedding-3-small", input: "hi" }),
+      });
+      expect(unauth.status).toBe(401);
+
+      const authHeader = {
+        "content-type": "application/json",
+        "x-easyproxy-api-key": "epx_data_embscopedkey0001",
+      };
+
+      // 2. Bad inputs -> 400
+      for (const badBody of [
+        "{not-json",
+        JSON.stringify({ model: "openai-custom/text-embedding-3-small", input: "" }),
+        JSON.stringify({ model: "openai-custom/text-embedding-3-small", input: [] }),
+        JSON.stringify({ model: "openai-custom/text-embedding-3-small", input: Array.from({ length: 2049 }, () => "x") }),
+        JSON.stringify({ model: "openai-custom/text-embedding-3-small", input: "ok", encoding_format: "hex" }),
+        JSON.stringify({ model: "openai-custom/text-embedding-3-small", input: "ok", dimensions: -5 }),
+        JSON.stringify({ model: "openai-custom/text-embedding-3-small", input: "ok", dimensions: 1.5 }),
+      ]) {
+        const res = await fetch(`${base}/v1/embeddings`, { method: "POST", headers: authHeader, body: badBody });
+        expect(res.status).toBe(400);
+      }
+
+      // 3. Scoped key asking for forbidden model -> 403
+      const forbidden = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: authHeader,
+        body: JSON.stringify({ model: "openai-custom/text-embedding-3-large", input: "hi" }),
+      });
+      expect(forbidden.status).toBe(403);
+    } finally {
+      await fixture.close();
+    }
+
+    // 4. Direct handler verification for unsupported adapter & SSRF block without outbound network calls.
+    const spyFetch = (async () => {
+      outboundCalls += 1;
+      return new Response("should not be reached", { status: 200 });
+    }) as typeof globalThis.fetch;
+
+    const unitCfg: EpxConfig = {
+      ...cfg,
+      providers: {
+        ...cfg.providers,
+        anth: {
+          adapter: "anthropic",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "key",
+          apiKey: "sk-ant-1",
+          models: ["claude-sonnet-4-6"],
+          fetch: spyFetch,
+        } as EpxConfig["providers"][string],
+        "meta-ssrf": {
+          adapter: "openai-compatible",
+          baseUrl: "http://169.254.169.254/latest",
+          authMode: "key",
+          apiKey: "sk-up-2",
+          models: ["ssrf-embed"],
+          fetch: spyFetch,
+        } as EpxConfig["providers"][string],
+        "priv-ssrf": {
+          adapter: "openai-compatible",
+          baseUrl: "http://10.0.0.8/v1",
+          authMode: "key",
+          apiKey: "sk-up-3",
+          models: ["priv-embed"],
+          fetch: spyFetch,
+        } as EpxConfig["providers"][string],
+      },
+    };
+
+    for (const [model, expectedStatus] of [
+      ["anth/claude-sonnet-4-6", 400],
+      ["meta-ssrf/ssrf-embed", 400],
+      ["priv-ssrf/priv-embed", 400],
+    ] as const) {
+      const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
+      const res = await handleEmbeddings(
+        new Request("http://127.0.0.1/v1/embeddings", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model, input: "embed test" }),
+        }),
+        unitCfg,
+        logCtx,
+        { requestId: `emb-${model}`, start: Date.now() },
+      );
+      expect(res.status).toBe(expectedStatus);
+    }
+    expect(outboundCalls).toBe(0);
+  });
+
+  test("forwards embeddings over live HTTP, supports combo failover, settles budget tokens, and propagates traceparent only when OTLP enabled", async () => {
+    const home = mkdtempSync(join(tmpdir(), "epx-emb-live-"));
+    homes.push(home);
+
+    const primaryHeaders: Array<Record<string, string>> = [];
+    const secondaryBodies: Array<Record<string, unknown>> = [];
+    const secondaryHeaders: Array<Record<string, string>> = [];
+
+    const failUpstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const hdrs: Record<string, string> = {};
+        req.headers.forEach((v, k) => { hdrs[k] = v; });
+        primaryHeaders.push(hdrs);
+        return Response.json({ error: { message: "transient 502" } }, { status: 502 });
+      },
+    });
+    servers.push(failUpstream);
+
+    const okUpstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const hdrs: Record<string, string> = {};
+        req.headers.forEach((v, k) => { hdrs[k] = v; });
+        secondaryHeaders.push(hdrs);
+        secondaryBodies.push((await req.json()) as Record<string, unknown>);
+        return Response.json({
+          object: "list",
+          data: [{ object: "embedding", index: 0, embedding: [0.1, 0.2, 0.3] }],
+          model: "text-embedding-3-small",
+          usage: { prompt_tokens: 42, total_tokens: 42 },
+        });
+      },
+    });
+    servers.push(okUpstream);
+
+    const collector = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("{}", { status: 200 });
+      },
+    });
+    servers.push(collector);
+
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      hostname: "0.0.0.0",
+      defaultProvider: "p2",
+      apiKeys: [
+        {
+          id: "k-emb-ok",
+          name: "emb-ok",
+          key: "epx_data_embokkey00000001",
+          createdAt: "2026-01-01T00:00:00Z",
+          tpmLimit: 1000,
+          dailyTokenLimit: 5000,
+        },
+      ],
+      providers: {
+        p1: {
+          adapter: "openai-compatible",
+          baseUrl: `http://127.0.0.1:${failUpstream.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-p1",
+          models: ["text-embedding-3-small"],
+        },
+        p2: {
+          adapter: "openai-compatible",
+          baseUrl: `http://127.0.0.1:${okUpstream.port}/v1`,
+          allowPrivateNetwork: true,
+          authMode: "key",
+          apiKey: "sk-p2",
+          models: ["text-embedding-3-small"],
+        },
+      },
+      combos: {
+        "embed-combo": {
+          strategy: "failover",
+          targets: [
+            { provider: "p1", model: "text-embedding-3-small" },
+            { provider: "p2", model: "text-embedding-3-small" },
+          ],
+        },
+      },
+    };
+
+    const fixture = await startManagementServerFixture(home, cfg);
+    try {
+      const base = `http://127.0.0.1:${fixture.server.port}`;
+
+      // First call with OTLP disabled: succeeds via p2 failover, records 42 tokens, sends NO traceparent.
+      const res1 = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-easyproxy-api-key": "epx_data_embokkey00000001",
+        },
+        body: JSON.stringify({
+          model: "combo/embed-combo",
+          input: ["alpha", "beta"],
+          encoding_format: "float",
+          dimensions: 3,
+        }),
+      });
+      expect(res1.status).toBe(200);
+      const body1 = await res1.json() as { data?: Array<{ embedding: number[] }>; usage?: { total_tokens: number } };
+      expect(body1.data?.[0]?.embedding).toEqual([0.1, 0.2, 0.3]);
+      expect(body1.usage?.total_tokens).toBe(42);
+      expect(primaryHeaders).toHaveLength(1);
+      expect(secondaryHeaders).toHaveLength(1);
+      expect(secondaryHeaders[0]?.traceparent).toBeUndefined();
+      expect(secondaryHeaders[0]?.authorization).toBe("Bearer sk-p2");
+      expect(secondaryBodies[0]).toMatchObject({
+        model: "text-embedding-3-small",
+        input: ["alpha", "beta"],
+        encoding_format: "float",
+        dimensions: 3,
+      });
+
+      expect(getApiKeyBudgetSnapshot("k-emb-ok").dailyTokensUsed).toBe(42);
+      expect(getRequestLogEntries().some(e => e.provider === "p2" && e.status === 200 && e.usage?.inputTokens === 42)).toBe(true);
+
+      // Enable OTLP via management API and verify outbound traceparent is attached to embeddings request.
+      const { configuredAdminToken } = await import("../../src/lib/admin-secrets");
+      const putOtlp = await fetch(`${base}/api/telemetry/otlp`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-easyproxy-api-key": configuredAdminToken()!,
+        },
+        body: JSON.stringify({
+          enabled: true,
+          endpoint: `http://127.0.0.1:${collector.port}/v1/traces`,
+        }),
+      });
+      expect(putOtlp.status).toBe(200);
+
+      const res2 = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-easyproxy-api-key": "epx_data_embokkey00000001",
+          traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
+        },
+        body: JSON.stringify({ model: "p2/text-embedding-3-small", input: "traced text" }),
+      });
+      expect(res2.status).toBe(200);
+      expect(secondaryHeaders.at(-1)?.traceparent).toMatch(/^00-11111111111111111111111111111111-[0-9a-f]{16}-01$/);
+    } finally {
+      await fixture.close();
+    }
+  });
+});

@@ -686,6 +686,7 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
       providerAccountUuid: oauthBinding?.providerAccountUuid,
       clientIdentity: options.clientIdentity,
       sessionKey: oauthBinding?.sessionKey ?? options.sessionKey,
+      ...(logCtx.otlpSpan?.traceparent ? { otlpTraceparent: logCtx.otlpSpan.traceparent } : {}),
     });
     if (built.strippedOpaqueState && rejectUnrepresentable) throw new NativeOpaqueStateRefusal();
     if (built.droppedBetas) {

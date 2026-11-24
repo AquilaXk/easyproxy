@@ -28,6 +28,7 @@ export const CONFIGURABLE_JSON_BODY_ROUTES: ReadonlySet<string> = new Set([
   "/v1/images/generations",
   "/v1/images/edits",
   "/v1/alpha/search",
+  "/v1/embeddings",
 ]);
 
 /**

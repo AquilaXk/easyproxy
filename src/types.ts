@@ -1,6 +1,7 @@
 // AUTO-SPLIT barrel: src/types.ts re-exports every historical name; bodies live in src/types/*.
 // Values (runtime): tools + wire. Types (erased): request + config + provider + accounts.
 
+export type { EpxCacheControl } from "./protocols/cache-control";
 export type { EpxTool, EpxToolChoice } from "./types/tools";
 export {
   CODE_MODE_EXEC_TOOL_NAME,
@@ -162,4 +163,8 @@ export type {
   CodexAuthMethod,
 } from "./types/accounts";
 
-export type { EpxTelemetryConfig, EpxTelemetryDecision } from "./types/telemetry";
+export type {
+  EpxTelemetryConfig,
+  EpxTelemetryDecision,
+} from "./types/telemetry";
+export type { EpxOtlpConfig } from "./types/config";

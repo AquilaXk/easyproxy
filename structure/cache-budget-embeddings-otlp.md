@@ -1,0 +1,28 @@
+# Per-Block Cache Control, Virtual-Key Holds, Embeddings & OTLP Tracing
+
+This document defines the contracts for cross-bridge Anthropic `cache_control` preservation, virtual API key sliding TPM limits, key expiration and concurrent USD holds, the OpenAI-compatible embeddings endpoint, and optional OTLP/HTTP trace export.
+
+## Per-block Anthropic `cache_control` preservation
+
+- `src/protocols/cache-control.ts` parses inbound `cache_control` markers fail-closed (`type: "ephemeral"`, optional `ttl: "5m" | "1h"`, optional `scope: "turn" | "global"`). Malformed or unknown marker types return `undefined`.
+- `src/claude/inbound.ts`, `src/protocols/codecs/messages-ir.ts`, `src/responses/schema.ts`, `src/responses/parser-content.ts`, `src/responses/parser-tools.ts`, and `src/responses/parser.ts` carry `cacheControl` across IR items (`systemCacheControls`, `tools[].cacheControl`, user/assistant `content` blocks, nested `tool_result` inner content blocks, `tool_use`/`toolCall` blocks, and top-level `options.automaticCacheControl`).
+- `src/adapters/anthropic.ts` normalizes preserved markers against the target destination's resolved cache retention (`none`, `short`, `long`), enforces the 4-breakpoint ceiling (counting nested `tool_result.content` blocks), and normalizes TTL ordering so `1h` markers precede `5m` markers.
+- `src/adapters/openai-responses/passthrough.ts` strips every bridge `cache_control` marker and `_anthropicSystemBlocks` via `stripBridgeCacheControlsForResponsesWire()` before emitting OpenAI Responses JSON.
+
+## Virtual API key expiry, sliding TPM window & in-flight USD holds
+
+- `src/server/auth-cors.ts` (`isApiKeyExpired`) rejects expired or unparseable `expiresAt` timestamps fail-closed during data-plane admission.
+- `src/server/api-key-budget.ts` adds a 60-second 1-second bucket ring for `tpmLimit`, `inFlightHoldMicros` tracking for concurrent `dailyCostLimitUsd` and `maxInFlightCostUsd`, and per-turn budget leases (`reserveHold`, `releaseHoldOnly`, `releaseUnused`, `settleTokens`, `settleCostUsd`). `getApiKeyBudgetSnapshot()` retains its existing return shape while `getApiKeyBudgetHoldSnapshot()` exposes live `tpmCurrent` and `inFlightCostUsdUsed`.
+- `src/server/api-key-budget-estimate.ts` (`reservePreDispatchApiKeyHold`) estimates request tokens and USD cost before upstream dispatch across `/v1/responses`, `/v1/chat/completions`, `/v1/messages`, and `/v1/embeddings`, returning HTTP `429` with `Retry-After` on hold exhaustion.
+- `src/server/management/api-key-budget-dto.ts`, `src/server/management/oauth-account-routes.ts`, and `src/cli/access.ts` expose validation, projection, and CLI flags (`--tpm-limit`, `--max-in-flight-cost-usd`, `--expires-at`) for key management.
+
+## `POST /v1/embeddings` data-plane endpoint
+
+- `src/server/embeddings.ts` validates request payloads (bounded item count, char length, token-array lengths, `encoding_format`, and `dimensions`), enforces route admission/model scope and provider SSRF/DNS safety (`providerDestinationConfigError`, `providerDestinationResolvedError`), refuses unsupported non-OpenAI-compatible adapters (`400 embeddings_unsupported_provider`) and canonical forward destinations, supports combo failover across eligible targets, settles API key token budgets via request logging, and forwards W3C `traceparent` when OTLP tracing is enabled.
+- `src/server/index/serve-options.ts`, `src/server/index.ts`, and `src/server/inbound-body-admission.ts` wire `/v1/embeddings` into auth, CORS, raised inbound body accounting, and loopback routing parity.
+
+## Optional OTLP/HTTP trace export
+
+- `src/config/schema/otlp.ts` strictly validates `config.otlp` (blocking metadata targets unconditionally, restricting `http://` to loopback by default or private ranges only when `allowPrivateNetwork: true`, capping header counts/lengths, and preventing embedded URL credentials).
+- `src/telemetry/otlp.ts` checks `isOtlpTracingEnabled()` in O(1) time with zero allocations or background timers when disabled, parses incoming W3C `traceparent` headers fail-closed, captures server spans across `/v1/responses`, `/v1/responses/compact`, `/v1/messages`, `/v1/chat/completions`, and `/v1/embeddings` with redacted metadata attributes (never prompts, headers, credentials, or URL query strings), propagates outbound `traceparent` to non-forward adapters/transports (`src/adapters/openai-responses/transport.ts`, `src/adapters/openai-chat/wire.ts`, `src/adapters/anthropic.ts`, `src/adapters/anthropic/passthrough.ts`), exports bounded batches (`ExportTraceServiceRequest` v1 JSON) over `http`/`https`, and flushes on graceful shutdown.
+- `src/telemetry/otlp-routes.ts`, `src/server/management/telemetry-routes.ts`, `src/config/telemetry-carry.ts`, `src/config/live-reconcile.ts`, and `src/cli/telemetry.ts` provide `/api/telemetry/otlp` (`GET`/`PUT`/`DELETE` with masked header keys) and `epx telemetry otlp <status|set|clear>`.
