@@ -23,7 +23,9 @@ const USAGE = `Usage:
   epx combo [list] [--json]
   epx combo show <id> [--json]
   epx combo set <id> [--targets <provider/model[:weight],...> | --targets-file <FILE|->]
-      [--strategy <failover|round-robin|random|least-used|reset-window|jev>] [--sticky <1-100|->]
+      [--strategy <failover|round-robin|random|least-used|reset-window|jev|ewma-latency>] [--sticky <1-100|->]
+      [--ewma-alpha <0.01-1|->] [--ewma-half-life-ms <1000-3600000|->]
+      [--ewma-min-samples <1-20|->] [--ewma-error-penalty-ms <100-600000|->]
       [--cooldown-reprobe <on|off>] [--cooldown-reprobe-interval <ms>]
       [--effort <low|medium|high|xhigh|max|ultra|->] [--effort-mode <fallback|force|->]
       (force overrides valid client effort and can increase cost/latency) [--alias <name|->]
@@ -45,7 +47,7 @@ const USAGE = `Usage:
   epx combo discover [--query <text>] [--json]`;
 
 type ComboRow = Record<string, unknown> & { id?: string; model?: string; strategy?: string };
-const STRATEGIES = ["failover", "round-robin", "random", "least-used", "reset-window", "jev"] as const;
+const STRATEGIES = ["failover", "round-robin", "random", "least-used", "reset-window", "jev", "ewma-latency"] as const;
 const isComboStrategy = (value: string): value is typeof STRATEGIES[number] => (STRATEGIES as readonly string[]).includes(value);
 // Combo writes print fixed messages instead of server text. When --targets kept a stored JEV
 // strategy the user did not name, a refusal of the targets or a JEV setting says so (#7579).
@@ -110,7 +112,28 @@ async function set(argv: string[], deps: RuntimeApiDeps): Promise<number> {
   const renameFrom = takeOption(args, "--rename-from");
   const replacingTargets = parsedTargets !== undefined || additional.targets !== undefined;
   const strategyRaw = takeOption(args, "--strategy");
-  if (strategyRaw !== undefined && !isComboStrategy(strategyRaw)) throw new CliUsageError("--strategy must be failover, round-robin, random, least-used, reset-window, or jev", USAGE);
+  if (strategyRaw !== undefined && !isComboStrategy(strategyRaw)) throw new CliUsageError("--strategy must be failover, round-robin, random, least-used, reset-window, jev, or ewma-latency", USAGE);
+  const ewmaAlphaRaw = takeOption(args, "--ewma-alpha");
+  const ewmaHalfLifeRaw = takeOption(args, "--ewma-half-life-ms");
+  const ewmaMinSamplesRaw = takeOption(args, "--ewma-min-samples");
+  const ewmaPenaltyRaw = takeOption(args, "--ewma-error-penalty-ms");
+  const ewmaAlpha = ewmaAlphaRaw === undefined || ewmaAlphaRaw === "-" ? undefined : Number(ewmaAlphaRaw);
+  if (ewmaAlpha !== undefined && (!Number.isFinite(ewmaAlpha) || ewmaAlpha < 0.01 || ewmaAlpha > 1)) {
+    throw new CliUsageError("--ewma-alpha must be a number from 0.01 to 1, or -", USAGE);
+  }
+  const ewmaHalfLifeMs = ewmaHalfLifeRaw === undefined || ewmaHalfLifeRaw === "-" ? undefined : Number(ewmaHalfLifeRaw);
+  if (ewmaHalfLifeMs !== undefined && (!Number.isSafeInteger(ewmaHalfLifeMs) || ewmaHalfLifeMs < 1_000 || ewmaHalfLifeMs > 3_600_000)) {
+    throw new CliUsageError("--ewma-half-life-ms must be an integer from 1000 to 3600000, or -", USAGE);
+  }
+  const ewmaMinSamples = ewmaMinSamplesRaw === undefined || ewmaMinSamplesRaw === "-" ? undefined : Number(ewmaMinSamplesRaw);
+  if (ewmaMinSamples !== undefined && (!Number.isSafeInteger(ewmaMinSamples) || ewmaMinSamples < 1 || ewmaMinSamples > 20)) {
+    throw new CliUsageError("--ewma-min-samples must be an integer from 1 to 20, or -", USAGE);
+  }
+  const ewmaErrorPenaltyMs = ewmaPenaltyRaw === undefined || ewmaPenaltyRaw === "-" ? undefined : Number(ewmaPenaltyRaw);
+  if (ewmaErrorPenaltyMs !== undefined && (!Number.isSafeInteger(ewmaErrorPenaltyMs) || ewmaErrorPenaltyMs < 100 || ewmaErrorPenaltyMs > 600_000)) {
+    throw new CliUsageError("--ewma-error-penalty-ms must be an integer from 100 to 600000, or -", USAGE);
+  }
+  const hasEwmaSetFlags = ewmaAlpha !== undefined || ewmaHalfLifeMs !== undefined || ewmaMinSamples !== undefined || ewmaErrorPenaltyMs !== undefined;
   const stickyRaw = takeOption(args, "--sticky");
   const stickyLimit = stickyRaw === undefined ? undefined : stickyRaw === "-" ? 1 : Number(stickyRaw);
   if (stickyLimit !== undefined && (!Number.isInteger(stickyLimit) || stickyLimit < 1)) {
@@ -175,6 +198,7 @@ async function set(argv: string[], deps: RuntimeApiDeps): Promise<number> {
   // omitted one is the stored strategy, so it is checked once the row has been read.
   const requireStrategyFlags = (strategy: string): void => {
     if (stickyLimit !== undefined && strategy !== "round-robin") throw new CliUsageError("--sticky applies only to round-robin", USAGE);
+    if (hasEwmaSetFlags && strategy !== "ewma-latency") throw new CliUsageError("--ewma-* options apply only to ewma-latency", USAGE);
     if (strategy === "jev") return;
     if (decisionModel !== undefined && decisionModel !== "-") throw new CliUsageError("--decision-model applies only to the jev strategy", USAGE);
     if (decisionProvider !== undefined && decisionProvider !== "-") throw new CliUsageError("--decision-provider applies only to the jev strategy", USAGE);
@@ -248,6 +272,25 @@ async function set(argv: string[], deps: RuntimeApiDeps): Promise<number> {
     delete combo.decisionQuotaTiers;
     delete combo.sessionPin;
     delete combo.jevEffortMode;
+  }
+  if (strategy === "ewma-latency") {
+    if (ewmaAlphaRaw !== undefined || ewmaHalfLifeRaw !== undefined || ewmaMinSamplesRaw !== undefined || ewmaPenaltyRaw !== undefined) {
+      const nextEwma: Record<string, number> = {
+        ...((combo.ewmaLatency as Record<string, number> | undefined) ?? {}),
+      };
+      if (ewmaAlphaRaw === "-") delete nextEwma.alpha;
+      else if (ewmaAlpha !== undefined) nextEwma.alpha = ewmaAlpha;
+      if (ewmaHalfLifeRaw === "-") delete nextEwma.halfLifeMs;
+      else if (ewmaHalfLifeMs !== undefined) nextEwma.halfLifeMs = ewmaHalfLifeMs;
+      if (ewmaMinSamplesRaw === "-") delete nextEwma.minSamples;
+      else if (ewmaMinSamples !== undefined) nextEwma.minSamples = ewmaMinSamples;
+      if (ewmaPenaltyRaw === "-") delete nextEwma.errorPenaltyMs;
+      else if (ewmaErrorPenaltyMs !== undefined) nextEwma.errorPenaltyMs = ewmaErrorPenaltyMs;
+      if (Object.keys(nextEwma).length > 0) combo.ewmaLatency = nextEwma;
+      else delete combo.ewmaLatency;
+    }
+  } else {
+    delete combo.ewmaLatency;
   }
   if (effortMode === undefined && existing?.defaultEffortMode === "force") {
     combo.defaultEffortMode = effort === "-" ? "fallback" : "force";

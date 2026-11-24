@@ -1424,7 +1424,8 @@ export async function executeComboResponses(
     const settleServingSuccess = (): void => {
       if (comboSuccessSettled) return;
       comboSuccessSettled = true;
-      noteComboSuccess(comboId, combo, servingPick.target, writerGeneration);
+      const observedLatencyMs = Math.max(1, childLog.firstOutputMs ?? (Date.now() - segmentStartedAt()));
+      noteComboSuccess(comboId, combo, servingPick.target, writerGeneration, { latencyMs: observedLatencyMs });
       settleComboReprobeSuccess(servingPick);
     };
     let hostedWebSearchStream = false;

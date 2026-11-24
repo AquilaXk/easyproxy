@@ -854,5 +854,7 @@
   "sse-single-pass-fastpath.test.ts": "responses",
   "ecosystem-sync.test.ts": "clients",
   "deep-link-import.test.ts": "providers",
-  "profile-backup.test.ts": "config"
+  "profile-backup.test.ts": "config",
+  "scenario-routing.test.ts": "routing",
+  "ewma-latency-combo.test.ts": "routing"
 }

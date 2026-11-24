@@ -7,7 +7,8 @@ import {
 } from "./jev-session-pin-config";
 import { isCodexReasoningEffort, isDeclaredReasoningEffort } from "../reasoning-effort";
 import { SUPPORTED_NATIVE_OPENAI_SLUGS } from "../codex/catalog/native-models";
-import type { EpxComboCapabilityPolicy, EpxComboConfig, EpxComboCooldownWaitPolicy, EpxComboDefaultEffort, EpxComboDefaultEffortMode, EpxComboJevEffortMode, EpxComboOnUnservable, EpxComboReasoningEffortMode, EpxComboStrategy, EpxComboTarget, EpxProviderConfig } from "../types";
+import { ewmaLatencyConfigIssues, normalizeEwmaLatencyConfig } from "./ewma";
+import type { EpxComboCapabilityPolicy, EpxComboConfig, EpxComboCooldownWaitPolicy, EpxComboDefaultEffort, EpxComboDefaultEffortMode, EpxComboEwmaLatencyConfig, EpxComboJevEffortMode, EpxComboOnUnservable, EpxComboReasoningEffortMode, EpxComboStrategy, EpxComboTarget, EpxProviderConfig } from "../types";
 import { COMBO_NAMESPACE, isValidComboId, resolveComboId, targetKey } from "./identifiers";
 import {
   CANONICAL_JEV_DECISION_PROVIDER,
@@ -58,6 +59,7 @@ export interface NormalizedComboConfig {
   /** Operator consent, effective only on a loopback-only proxy. */
   allowMeteredTargets?: boolean;
   strategy: EpxComboStrategy;
+  ewmaLatency?: EpxComboEwmaLatencyConfig;
   stickyLimit: number;
   cooldownMs?: number;
   waitForCooldownMs: number;
@@ -216,8 +218,15 @@ export function comboConfigIssues(
     && body.strategy !== "random"
     && body.strategy !== "least-used"
     && body.strategy !== "reset-window"
-    && body.strategy !== "jev") {
-    issues.push({ path: ["strategy"], message: 'strategy must be "failover", "round-robin", "random", "least-used", "reset-window", or "jev"' });
+    && body.strategy !== "jev"
+    && body.strategy !== "ewma-latency") {
+    issues.push({ path: ["strategy"], message: 'strategy must be "failover", "round-robin", "random", "least-used", "reset-window", "jev", or "ewma-latency"' });
+  }
+  if (body.ewmaLatency !== undefined) {
+    if (body.strategy !== undefined && body.strategy !== "ewma-latency") {
+      issues.push({ path: ["ewmaLatency"], message: 'ewmaLatency applies only to strategy "ewma-latency"' });
+    }
+    issues.push(...ewmaLatencyConfigIssues(body.ewmaLatency));
   }
   if (body.stickyLimit !== undefined
     && (typeof body.stickyLimit !== "number" || !Number.isInteger(body.stickyLimit)
@@ -581,6 +590,7 @@ export function normalizeComboConfig(raw: EpxComboConfig): NormalizedComboConfig
     : null;
   return {
     strategy: raw.strategy ?? "failover",
+    ...(raw.strategy === "ewma-latency" && raw.ewmaLatency ? { ewmaLatency: normalizeEwmaLatencyConfig(raw.ewmaLatency) } : {}),
     ...(raw.allowMeteredTargets === true ? { allowMeteredTargets: true } : {}),
     stickyLimit: raw.stickyLimit ?? 1,
     cooldownMs: raw.cooldownMs,

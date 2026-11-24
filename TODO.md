@@ -8,5 +8,4 @@ One maintainer, one list. Add a line when work is found, delete it when it lands
 - [ ] Verify desktop shell and WidgetKit snapshot integration on clean macOS, Windows, and Linux hosts for `v0.1.0`.
 
 ## Ecosystem & Protocol Parity
-- [ ] Add zero-overhead heuristic scenario routing (longContext, think, background, webSearch) and EWMA latency load balancing.
 - [ ] Preserve per-block Anthropic cache_control across bridges, add virtual-key TPM/expiry/in-flight USD holds, /v1/embeddings, and optional OTLP tracing.

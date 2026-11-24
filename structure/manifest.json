@@ -1663,6 +1663,19 @@
         "src/server/background-lifecycle.ts",
         "services/telemetry-collector/"
       ]
+    },
+    {
+      "path": "scenario-ewma-routing.md",
+      "tier": 3,
+      "title": "Scenario Routing and EWMA Latency Combos",
+      "scope": "Zero-overhead heuristic scenario classification (longContext, think, background, webSearch) and EWMA latency combo selection.",
+      "documents": [
+        "src/routing/scenario.ts",
+        "src/combos/ewma.ts",
+        "src/config/schema/scenario-routing.ts",
+        "src/server/management/scenario-routing-routes.ts",
+        "src/cli/agent-scenario-routing.ts"
+      ]
     }
   ],
   "contracts": {

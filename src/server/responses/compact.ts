@@ -262,7 +262,11 @@ export async function handleResponsesCompact(
     // Codex selects a bare native model for compaction even when the operator
     // routes ordinary turns elsewhere (#2901); the compaction-scoped router
     // may land that on the configured default provider instead of 404.
-    route = routeCompactionModel(config, compactModel, evidenceFromBody(raw));
+    route = routeCompactionModel(config, compactModel, evidenceFromBody(raw), {
+      body: raw,
+      headers: req.headers,
+      isCompaction: true,
+    });
     // A compaction override picks the model, not the caller, so the key's scope
     // is applied to what the override resolved to rather than to the selector
     // the client sent.

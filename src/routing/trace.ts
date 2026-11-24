@@ -157,6 +157,11 @@ export interface RouteDecisionTraceV1 {
   requestedModel: string;
   routeKind: RouteDecisionKind;
   profile?: { id: string; revision: string };
+  scenario?: {
+    matched: "longContext" | "think" | "background" | "webSearch";
+    target: string;
+    estimatedTokens?: number;
+  };
   requirements: RouteRequirementEvidence[];
   candidates: RouteCandidateTrace[];
   selected: {
@@ -242,6 +247,11 @@ export interface TraceBuildInput {
     candidateIndex?: number;
   };
   profile?: { id: string; revision: string };
+  scenario?: {
+    matched: "longContext" | "think" | "background" | "webSearch";
+    target: string;
+    estimatedTokens?: number;
+  };
   requirements?: RouteRequirementEvidence[];
   candidates?: TraceCandidateInput[];
   now?: number;
@@ -355,6 +365,17 @@ export function buildRouteDecisionTrace(input: TraceBuildInput): RouteDecisionTr
         profile: {
           id: capString(input.profile.id, budget),
           revision: capString(input.profile.revision, budget),
+        },
+      }
+      : {}),
+    ...(input.scenario
+      ? {
+        scenario: {
+          matched: input.scenario.matched,
+          target: capString(input.scenario.target, budget),
+          ...(typeof input.scenario.estimatedTokens === "number" && Number.isFinite(input.scenario.estimatedTokens)
+            ? { estimatedTokens: Math.max(0, Math.trunc(input.scenario.estimatedTokens)) }
+            : {}),
         },
       }
       : {}),
@@ -742,6 +763,22 @@ export function normalizeRouteDecisionTrace(raw: unknown): RouteDecisionTraceV1 
     })()
     : undefined;
 
+  const scenario = isPlainRecord(raw.scenario)
+    && (raw.scenario.matched === "longContext" || raw.scenario.matched === "think"
+      || raw.scenario.matched === "background" || raw.scenario.matched === "webSearch")
+    && typeof raw.scenario.target === "string" && raw.scenario.target.length > 0
+    ? (() => {
+      if (raw.scenario.target.length > MAX_TRACE_STRING) caps.strings = true;
+      return {
+        matched: raw.scenario.matched as "longContext" | "think" | "background" | "webSearch",
+        target: raw.scenario.target.slice(0, MAX_TRACE_STRING),
+        ...(finiteNumber(raw.scenario.estimatedTokens)
+          ? { estimatedTokens: Math.max(0, Math.trunc(raw.scenario.estimatedTokens)) }
+          : {}),
+      };
+    })()
+    : undefined;
+
   const incoming = isPlainRecord(raw.truncated) ? raw.truncated : {};
   const truncated: RouteDecisionTraceV1["truncated"] = {};
   if (incoming.candidates === true || caps.candidates) truncated.candidates = true;
@@ -757,6 +794,7 @@ export function normalizeRouteDecisionTrace(raw: unknown): RouteDecisionTraceV1 
     requestedModel: requestedModel.slice(0, MAX_TRACE_STRING),
     routeKind: routeKind as RouteDecisionKind,
     ...(profile ? { profile } : {}),
+    ...(scenario ? { scenario } : {}),
     requirements,
     candidates,
     selected: {

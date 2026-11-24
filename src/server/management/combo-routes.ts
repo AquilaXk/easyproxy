@@ -336,6 +336,11 @@ export async function handleComboRoutes(ctx: ManagementContext): Promise<Respons
         && requestedCombo.strategy === "jev"
         ? { decisionTimeoutMs: previous.decisionTimeoutMs }
         : {}),
+      ...(!Object.hasOwn(requestedCombo, "ewmaLatency")
+        && previous?.ewmaLatency !== undefined
+        && (requestedCombo.strategy === "ewma-latency" || (!Object.hasOwn(requestedCombo, "strategy") && previous?.strategy === "ewma-latency"))
+        ? { ewmaLatency: previous.ewmaLatency }
+        : {}),
     };
     const nextCombos = { ...(config.combos ?? {}) };
     if (renameFrom) delete nextCombos[renameFrom];

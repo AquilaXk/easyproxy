@@ -995,7 +995,12 @@ async function handleClaudeMessagesWithBudget(
   };
   let directLeaveError: unknown;
   try {
-    const route = routeModel(config, internalBody.model as string, directPlan ? directPlan.evidence : evidenceFromBody(internalBody));
+    const route = routeModel(
+      config,
+      internalBody.model as string,
+      directPlan ? directPlan.evidence : evidenceFromBody(internalBody),
+      { body: anthropicBody, headers: req.headers },
+    );
     // Settle the wire once so the sampling decision below reads the effective
     // adapter rather than the provider-wide default (#404).
     route.staticPolicy = captureRouteStaticPolicy(
@@ -1356,6 +1361,7 @@ async function handleClaudeMessagesWithBudget(
     // Without this the replay would look native and a Responses-scoped wire default
     // would fire, disagreeing with the pre-flight decision above.
     inboundWire: "anthropic",
+    ...(settledRoute?.scenarioMatch ? { scenarioMatchOverride: settledRoute.scenarioMatch } : {}),
     // An explicit empty `tools` array is a deny-all declaration the translation drops with
     // the rest of the catalog; carried separately so the undeclared-tool guard can still
     // enforce it while partial and absent catalogs stay deferred.

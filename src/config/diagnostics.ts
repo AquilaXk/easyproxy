@@ -95,6 +95,7 @@ import {
   toolOutputCompressionSchema,
   outboundSecretGuardSchema,
 } from "./schema/leaf-validators";
+import { scenarioRoutingConfigError } from "./schema/scenario-routing";
 
 export type ConfigDiagnostics = {
   config: EpxConfig;
@@ -836,7 +837,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Epx
     ?? workflowBudgetConfigError(value)
     ?? routedCatalogDefaultsConfigError(value)
     ?? mainAccountHardLockFallbackError(value)
-    ?? compactionRecoveryConfigError(value) ?? desktopCompatibilityConfigError(value) ?? configReasoningPinsConfigError(value)
+    ?? compactionRecoveryConfigError(value) ?? scenarioRoutingConfigError(rawConfigRecord(value)?.scenarioRouting) ?? desktopCompatibilityConfigError(value) ?? configReasoningPinsConfigError(value)
     ?? blankHostnameError(value)
     ?? (rawSubagentModelForce(value) !== undefined && !isSubagentModelEntry(rawSubagentModelForce(value)) ? "schema_invalid: claudeCode.subagentModelForce: expected a safe roster-style model id" : null)
     ?? claudeSubagentEffortError(value)

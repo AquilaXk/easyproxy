@@ -28,7 +28,7 @@ These answer in the CLI head and never reach the proxy, so they work with nothin
 | [lifecycle](01_surface_lifecycle.md) | 26 |
 | [providers-models](01_surface_providers-models.md) | 56 |
 | [accounts](01_surface_accounts.md) | 44 |
-| [agents-routing](01_surface_agents-routing.md) | 79 |
+| [agents-routing](01_surface_agents-routing.md) | 83 |
 | [integrations](01_surface_integrations.md) | 45 |
 | [observe-system](01_surface_observe-system.md) | 98 |
 | [access-remote](01_surface_access-remote.md) | 55 |
@@ -951,6 +951,22 @@ Original invocation order. These headings preserve links to the previous single-
 
 [State-changing task](01_surface_agents-routing.md#epx-agent-compaction-routing-clear)
 
+### `epx agent scenario-routing show`
+
+[Read-oriented task](01_surface_agents-routing.md#epx-agent-scenario-routing-show)
+
+### `epx agent scenario-routing set`
+
+[State-changing task](01_surface_agents-routing.md#epx-agent-scenario-routing-set)
+
+### `epx agent scenario-routing clear`
+
+[State-changing task](01_surface_agents-routing.md#epx-agent-scenario-routing-clear)
+
+### `epx agent scenario-routing classify`
+
+[Read-oriented task](01_surface_agents-routing.md#epx-agent-scenario-routing-classify)
+
 ### `epx grok status`
 
 [Read-oriented task](01_surface_integrations.md#epx-grok-status)
@@ -1745,6 +1761,6 @@ Original invocation order. These headings preserve links to the previous single-
 
 ## Counts
 
-- declared capabilities: 424
-- of those, state-changing: 262
+- declared capabilities: 428
+- of those, state-changing: 264
 - head-resolved invocations: 2

@@ -80,6 +80,7 @@ The wire surfaces a client actually talks to.
 | [`remote-workspace.md`](remote-workspace.md) | Opt-in workspace identity, executor grants, runtime adapters, management and dashboard integration. |
 | [`remote-link.md`](remote-link.md) | SSH machine linking, tunnel and link storage, pairing, and connected-client management relay. |
 | [`transports/upload-reduction.md`](transports/upload-reduction.md) | Opt-in lossy historical image/tool slimming and acknowledged native WS input-prefix deltas. |
+| [`scenario-ewma-routing.md`](scenario-ewma-routing.md) | Zero-overhead heuristic scenario classification (longContext, think, background, webSearch) and EWMA latency combo selection. |
 
 ### Tier 4 — Providers and adapters
 
@@ -272,6 +273,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/cli.ts` | [`runtime.md`](runtime.md)<br>[`ops/docs-and-release.md`](ops/docs-and-release.md) |
 | `src/cli/` | [`runtime.md`](runtime.md)<br>[`config.md`](config.md)<br>[`remote-messaging.md`](remote-messaging.md)<br>[`local-messaging.md`](local-messaging.md)<br>[`cli-management.md`](cli-management.md)<br>[`provider-completion-diagnostic.md`](provider-completion-diagnostic.md)<br>[`fallback-policy.md`](fallback-policy.md)<br>[`clients/export-model-names.md`](clients/export-model-names.md)<br>[`clients/integrations.md`](clients/integrations.md)<br>[`clients/codex-desktop.md`](clients/codex-desktop.md)<br>[`clients/chatgpt-desktop.md`](clients/chatgpt-desktop.md)<br>[`clients/claude-desktop.md`](clients/claude-desktop.md)<br>[`clients/hermes.md`](clients/hermes.md)<br>[`ops/docs-and-release.md`](ops/docs-and-release.md) |
 | `src/cli/account-preservation.ts` | [`providers/openai-signed-in-preservation.md`](providers/openai-signed-in-preservation.md) |
+| `src/cli/agent-scenario-routing.ts` | [`scenario-ewma-routing.md`](scenario-ewma-routing.md) |
 | `src/cli/codex-cli-update.ts` | [`codex-cli-update.md`](codex-cli-update.md) |
 | `src/cli/codex-provider.ts` | [`codex-provider-routing.md`](codex-provider-routing.md) |
 | `src/cli/desktop-runtime-guidance.ts` | [`ops/desktop-supervision.md`](ops/desktop-supervision.md) |
@@ -362,6 +364,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/codex/windows-installation-files.ts` | [`codex-cli-update.md`](codex-cli-update.md) |
 | `src/codex/windows-npm-execution.ts` | [`codex-cli-update.md`](codex-cli-update.md) |
 | `src/combos/` | [`runtime.md`](runtime.md)<br>[`providers-and-adapters.md`](providers-and-adapters.md)<br>[`providers/jev-decision.md`](providers/jev-decision.md)<br>[`fallback-policy.md`](fallback-policy.md) |
+| `src/combos/ewma.ts` | [`scenario-ewma-routing.md`](scenario-ewma-routing.md) |
 | `src/combos/request-capability.ts` | [`ops/service-logging.md`](ops/service-logging.md) |
 | `src/combos/request.ts` | [`ops/service-logging.md`](ops/service-logging.md) |
 | `src/combos/resolve.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md)<br>[`ops/service-logging.md`](ops/service-logging.md) |
@@ -378,6 +381,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/config/schema/config-schema.ts` | [`transports/max-output-completion.md`](transports/max-output-completion.md)<br>[`clients/omo-export-dialect.md`](clients/omo-export-dialect.md) |
 | `src/config/schema/leaf-validators.ts` | [`transports/timeouts.md`](transports/timeouts.md)<br>[`providers/hosted-tool-denials.md`](providers/hosted-tool-denials.md)<br>[`pricing.md`](pricing.md)<br>[`clients/omo-export-dialect.md`](clients/omo-export-dialect.md) |
 | `src/config/schema/routed-catalog-defaults.ts` | [`catalog-routed-defaults.md`](catalog-routed-defaults.md) |
+| `src/config/schema/scenario-routing.ts` | [`scenario-ewma-routing.md`](scenario-ewma-routing.md) |
 | `src/config/telemetry-carry.ts` | [`telemetry.md`](telemetry.md) |
 | `src/desktop-update/` | [`ops/desktop-supervision.md`](ops/desktop-supervision.md) |
 | `src/ecosystem/` | [`clients/integrations.md`](clients/integrations.md) |
@@ -487,6 +491,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/routing/` | [`catalog.md`](catalog.md)<br>[`fallback-policy.md`](fallback-policy.md) |
 | `src/routing/history/` | [`dashboard-and-usage.md`](dashboard-and-usage.md) |
 | `src/routing/machine-weighted-routing.ts` | [`providers/reset-near-weighted.md`](providers/reset-near-weighted.md) |
+| `src/routing/scenario.ts` | [`scenario-ewma-routing.md`](scenario-ewma-routing.md) |
 | `src/server/` | [`transports/timeouts.md`](transports/timeouts.md)<br>[`providers/generic-account-pool.md`](providers/generic-account-pool.md)<br>[`runtime.md`](runtime.md)<br>[`codex-prompts.md`](codex-prompts.md)<br>[`catalog.md`](catalog.md)<br>[`subagents.md`](subagents.md)<br>[`transports/byte-accounting.md`](transports/byte-accounting.md)<br>[`transports/responses.md`](transports/responses.md)<br>[`transports/native-reasoning-retention.md`](transports/native-reasoning-retention.md)<br>[`transports/responses-wire-shapes.md`](transports/responses-wire-shapes.md)<br>[`transports/responses-failover.md`](transports/responses-failover.md)<br>[`transports/responses-combo-boundaries.md`](transports/responses-combo-boundaries.md)<br>[`transports/policy-fallback.md`](transports/policy-fallback.md)<br>[`transports/streaming-health.md`](transports/streaming-health.md)<br>[`transports/inventory.md`](transports/inventory.md)<br>[`data-planes/images.md`](data-planes/images.md)<br>[`data-planes/inbound-compat.md`](data-planes/inbound-compat.md)<br>[`providers/anthropic-progress.md`](providers/anthropic-progress.md)<br>[`providers/anthropic-per-message-effort.md`](providers/anthropic-per-message-effort.md)<br>[`providers-and-adapters.md`](providers-and-adapters.md)<br>[`providers/jev-decision.md`](providers/jev-decision.md)<br>[`providers/xai-grok.md`](providers/xai-grok.md)<br>[`adapters/registry.md`](adapters/registry.md)<br>[`gui-and-management-api.md`](gui-and-management-api.md)<br>[`provider-completion-diagnostic.md`](provider-completion-diagnostic.md)<br>[`dashboard-and-usage.md`](dashboard-and-usage.md)<br>[`fallback-policy.md`](fallback-policy.md)<br>[`clients/claude-desktop.md`](clients/claude-desktop.md)<br>[`clients/claude-desktop-model-visibility.md`](clients/claude-desktop-model-visibility.md)<br>[`clients/hermes.md`](clients/hermes.md)<br>[`ops/service-and-sidecars.md`](ops/service-and-sidecars.md) |
 | `src/server/admission-model-scope.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/server/admitted-http-turn.ts` | [`data-planes/ollama-inbound.md`](data-planes/ollama-inbound.md) |
@@ -544,6 +549,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/management/provider-credential-release.ts` | [`providers/oauth-credential-siblings.md`](providers/oauth-credential-siblings.md) |
 | `src/server/management/provider-overwrite-carry.ts` | [`providers/hosted-tool-denials.md`](providers/hosted-tool-denials.md) |
 | `src/server/management/quota-pool-routes.ts` | [`quota-pool.md`](quota-pool.md) |
+| `src/server/management/scenario-routing-routes.ts` | [`scenario-ewma-routing.md`](scenario-ewma-routing.md) |
 | `src/server/management/system-routes.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/server/management/telemetry-routes.ts` | [`telemetry.md`](telemetry.md) |
 | `src/server/management/usage-aggregate-cache.ts` | [`usage-client-attribution.md`](usage-client-attribution.md) |

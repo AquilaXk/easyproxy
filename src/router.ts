@@ -7,6 +7,7 @@ import {
   getCombo,
   isComboTargetInCooldown,
   preservesPhysicalComboProvider,
+  resolveComboId,
   targetKey,
   tryPickComboModel,
   type ComboPick,
@@ -58,6 +59,8 @@ import {
   type RouteDecisionTraceV1,
   type TraceCandidateInput,
 } from "./routing/trace";
+import { classifyRequestScenario } from "./routing/scenario";
+import type { EpxScenarioKind } from "./types";
 import { getRoutingProfile, resolvePolicyProfileId, POLICY_NAMESPACE } from "./routing/profile";
 import { evaluatePolicyProfile, type PolicyRequestEvidence } from "./routing/evaluator";
 import { assemblePolicyCandidateEvidence } from "./routing/compatibility/assemble";
@@ -114,11 +117,25 @@ export interface RouteResult {
    */
   policyEligibility?: ReadonlySet<string>;
   /**
-   * Set when a blocked-model redirect moved the request to a different
+   * Set when a blocked-model redirect or scenario route moved the request to a different
    * provider. Caller credentials addressed to the source route must not follow
    * it, exactly as for combo and policy routes.
    */
   credentialDomainRewrite?: true;
+  /** Matched zero-overhead heuristic scenario rule, when configured. */
+  scenarioMatch?: {
+    scenario: EpxScenarioKind;
+    target: string;
+    matchedScenarios: EpxScenarioKind[];
+    estimatedTokens: number;
+  };
+}
+
+export interface ScenarioRouteContext {
+  body: unknown | (() => unknown);
+  headers?: Headers | Readonly<Record<string, string | undefined>>;
+  isCompaction?: boolean;
+  override?: RouteResult["scenarioMatch"];
 }
 
 export function captureRouteStaticPolicy(
@@ -445,8 +462,73 @@ function routeModelInternal(
   allowCompactionNativeFallback = false,
   preview = false,
   redirectState: BlockedModelRedirectState = { visited: new Set<string>(), edges: 0 },
+  scenarioContext?: ScenarioRouteContext,
+  bypassScenarioRouting = false,
 ): RouteResult {
   const slash = modelId.indexOf("/");
+  if (!bypassCombos && !bypassScenarioRouting && config.scenarioRouting?.enabled && scenarioContext) {
+    const scenarioCfg = config.scenarioRouting;
+    const isExplicitReserved = scenarioCfg.overrideExplicitRoutes !== true && (
+      resolvePolicyProfileId(config, modelId) !== null
+      || modelId.startsWith(`${POLICY_NAMESPACE}/`)
+      || (!preservesPhysicalComboProvider(config) && resolveComboId(config, modelId) !== null)
+      || (slash > 0 && codexAccountNamespaceEntries(config).some(([candidate]) => candidate === modelId.slice(0, slash)))
+    );
+    if (!isExplicitReserved) {
+      if (scenarioContext.override) {
+        const routed = routeModelInternal(
+          config,
+          scenarioContext.override.target,
+          false,
+          policyEvidence,
+          allowCompactionNativeFallback,
+          preview,
+          redirectState,
+          undefined,
+          true,
+        );
+        return {
+          ...routed,
+          routeReason: routed.routeReason === "blocked-model-redirect" ? "blocked-model-redirect" : `scenario:${scenarioContext.override.scenario}`,
+          ...(scenarioContext.override.target !== modelId ? { credentialDomainRewrite: true as const } : {}),
+          scenarioMatch: scenarioContext.override,
+        };
+      }
+      const bodyValue = typeof scenarioContext.body === "function" ? scenarioContext.body() : scenarioContext.body;
+      const classification = classifyRequestScenario({
+        body: bodyValue,
+        headers: scenarioContext.headers,
+        isCompaction: scenarioContext.isCompaction,
+        selector: modelId,
+        config: scenarioCfg,
+      });
+      const targetSelector = classification.matched ? scenarioCfg.routes[classification.matched]?.trim() : undefined;
+      if (classification.matched && targetSelector) {
+        const routed = routeModelInternal(
+          config,
+          targetSelector,
+          false,
+          policyEvidence,
+          allowCompactionNativeFallback,
+          preview,
+          redirectState,
+          undefined,
+          true,
+        );
+        return {
+          ...routed,
+          routeReason: routed.routeReason === "blocked-model-redirect" ? "blocked-model-redirect" : `scenario:${classification.matched}`,
+          ...(targetSelector !== modelId ? { credentialDomainRewrite: true as const } : {}),
+          scenarioMatch: {
+            scenario: classification.matched,
+            target: targetSelector,
+            matchedScenarios: classification.matchedScenarios,
+            estimatedTokens: classification.estimatedTokens,
+          },
+        };
+      }
+    }
+  }
   // Policy namespace is system-reserved: an explicit `policy/<id>` or a
   // configured profile alias executes the policy evaluator and routes the
   // selected candidate. Only explicit requests reach this branch; concrete
@@ -716,13 +798,33 @@ function routeModelInternal(
 }
 
 function routeWithDecisionTrace(config: EpxConfig, modelId: string, route: RouteResult): RouteResult {
-  // Policy routes carry a full evaluation trace already; never rebuild it.
-  if (route.routeDecision) return route;
+  if (route.routeDecision) {
+    if (route.scenarioMatch && !route.routeDecision.scenario) {
+      route.routeDecision = {
+        ...route.routeDecision,
+        scenario: {
+          matched: route.scenarioMatch.scenario,
+          target: route.scenarioMatch.target,
+          estimatedTokens: route.scenarioMatch.estimatedTokens,
+        },
+      };
+    }
+    return route;
+  }
   const accountRef = route.codexAccountNamespace;
   const combo = route.combo ? getCombo(config, route.combo.comboId) : undefined;
   route.routeDecision = buildRouteDecisionTrace({
     requestedModel: modelId,
     routeKind: route.routeKind,
+    ...(route.scenarioMatch
+      ? {
+        scenario: {
+          matched: route.scenarioMatch.scenario,
+          target: route.scenarioMatch.target,
+          estimatedTokens: route.scenarioMatch.estimatedTokens,
+        },
+      }
+      : {}),
     selected: {
       provider: route.providerName,
       model: route.modelId,
@@ -744,8 +846,9 @@ export function routeModel(
   config: EpxConfig,
   modelId: string,
   policyEvidence?: PolicyRequestEvidence,
+  scenarioContext?: ScenarioRouteContext,
 ): RouteResult {
-  const route = routeModelInternal(config, modelId, false, policyEvidence);
+  const route = routeModelInternal(config, modelId, false, policyEvidence, false, false, undefined, scenarioContext);
   return routeWithDecisionTrace(config, modelId, route);
 }
 
@@ -765,8 +868,9 @@ export function routeCompactionModel(
   config: EpxConfig,
   modelId: string,
   policyEvidence?: PolicyRequestEvidence,
+  scenarioContext?: ScenarioRouteContext,
 ): RouteResult {
-  const route = routeModelInternal(config, modelId, false, policyEvidence, true);
+  const route = routeModelInternal(config, modelId, false, policyEvidence, true, false, undefined, scenarioContext);
   return routeWithDecisionTrace(config, modelId, route);
 }
 

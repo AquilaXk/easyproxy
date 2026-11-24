@@ -1,4 +1,17 @@
 export {
+  clearComboEwmaState,
+  ewmaLatencyConfigIssues,
+  normalizeEwmaLatencyConfig,
+  pickEwmaLatencyIndex,
+  reconcileComboEwmaState,
+  recordComboEwmaFailure,
+  recordComboEwmaSuccess,
+  snapshotComboEwmaStats,
+  type EwmaLatencyIssue,
+  type EwmaTargetStats,
+  type NormalizedEwmaLatencyConfig,
+} from "./ewma";
+export {
   COMBO_DEFAULT_WAIT_FOR_COOLDOWN_MS,
   COMBO_NAMESPACE,
   comboAliasIssues,

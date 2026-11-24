@@ -8,7 +8,7 @@
 Use these declarations to choose a task, then check its flags and authority before execution.
 Non-mutating probes may still contact providers, consume quota or refresh caches.
 
-Declared capabilities: 79.
+Declared capabilities: 83.
 
 ### `epx agent subagents force`
 
@@ -983,7 +983,7 @@ State-changing: no. JSON mode: `payload`.
 
 ### `epx combo set`
 
-Usage: `epx combo set <id> [--targets <provider/model[:weight],...> | --targets-file <FILE|->] [--strategy <failover|round-robin|random|least-used|reset-window|jev>] [--sticky <1-100|->] [--cooldown-reprobe <on|off>] [--cooldown-reprobe-interval <ms>] [--effort <low|medium|high|xhigh|max|ultra|->] [--effort-mode <fallback|force|->] [--alias <name|->] [--native-alias [on|off]] [--allow-metered-targets <on|off>] [--display-name <label|->] [--description <text|->] [--decision-provider <provider|-> | --decision-model <route|->] [--decision-timeout <ms|->] [--decision-quota-signals <on|off|->] [--decision-quota-tiers <JSON|->] [--session-pin <duration|->] [--session-pin-effort <pinned|per-turn>] [--rename-from <id>] [--image-input <auto|disabled>] [--reasoning-effort-mode <strict|adaptive>] [--jev-effort-mode <decide|client>] [--json]`
+Usage: `epx combo set <id> [--targets <provider/model[:weight],...> | --targets-file <FILE|->] [--strategy <failover|round-robin|random|least-used|reset-window|jev|ewma-latency>] [--sticky <1-100|->] [--ewma-alpha <0.01-1|->] [--ewma-half-life-ms <1000-3600000|->] [--ewma-min-samples <1-20|->] [--ewma-error-penalty-ms <100-600000|->] [--cooldown-reprobe <on|off>] [--cooldown-reprobe-interval <ms>] [--effort <low|medium|high|xhigh|max|ultra|->] [--effort-mode <fallback|force|->] [--alias <name|->] [--native-alias [on|off]] [--allow-metered-targets <on|off>] [--display-name <label|->] [--description <text|->] [--decision-provider <provider|-> | --decision-model <route|->] [--decision-timeout <ms|->] [--decision-quota-signals <on|off|->] [--decision-quota-tiers <JSON|->] [--session-pin <duration|->] [--session-pin-effort <pinned|per-turn>] [--rename-from <id>] [--image-input <auto|disabled>] [--reasoning-effort-mode <strict|adaptive>] [--jev-effort-mode <decide|client>] [--json]`
 
 Create, update or rename a combo.
 
@@ -1000,6 +1000,10 @@ State-changing: yes. JSON mode: `payload`.
 | `--targets` | string | Ordered provider/model[:weight] list; required for creation. |
 | `--strategy` | string | Routing strategy. |
 | `--sticky` | string | Round-robin limit 1-100; - resets. |
+| `--ewma-alpha` | number | EWMA smoothing factor in 0.01..1; - resets. |
+| `--ewma-half-life-ms` | number | EWMA time-decay half-life 1000..3600000 ms; - clears. |
+| `--ewma-min-samples` | number | Cold-start probe samples per target 1..20; - resets. |
+| `--ewma-error-penalty-ms` | number | Latency penalty on target failure 100..600000 ms; - resets. |
 | `--cooldown-reprobe` | string | Opt into one recovery pass when all eligible targets cool; off by default. |
 | `--cooldown-reprobe-interval` | string | Minimum interval between recovery passes in ms (1000..86400000); default 300000. |
 | `--effort` | string | Default effort; - clears. |
@@ -1328,6 +1332,94 @@ State-changing: yes. JSON mode: `envelope`.
 
 - Clear restores ordinary compaction routing; it does not disable compaction. Omitted triggers/sources retain server defaults.
 - Set replaces the full block, preserving canonical schema normalization only. No synthetic inference verifies the save. Writes report the actual normalized block and catalogRefreshPending, which is not a full catalog receipt.
+
+### `epx agent scenario-routing show`
+
+Usage: `epx agent scenario-routing show [--json]`
+
+Read the heuristic scenario routing configuration.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/routing/scenario` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit scenario routing settings as JSON. |
+
+- Reads config.scenarioRouting without mutating configuration.
+
+### `epx agent scenario-routing set`
+
+Usage: `epx agent scenario-routing set (--file <FILE|-> | [--enabled <on|off>] [--long-context <route|->] [--think <route|->] [--background <route|->] [--web-search <route|->] [--long-context-threshold <tokens>] [--think-budget-threshold <tokens>] [--precedence <kind,kind...>] [--match-models <pattern,...|->] [--override-explicit <on|off>]) [--json]`
+
+Configure heuristic scenario routing targets and thresholds.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/routing/scenario` |
+| PUT | `/api/routing/scenario` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--file` | string | Bounded scenarioRouting JSON file or - for stdin; exclusive with scalar flags. |
+| `--enabled` | string | Enable or disable scenario routing (on\|off). |
+| `--long-context` | string | Target selector for longContext; - clears. |
+| `--think` | string | Target selector for think; - clears. |
+| `--background` | string | Target selector for background; - clears. |
+| `--web-search` | string | Target selector for webSearch; - clears. |
+| `--long-context-threshold` | number | Estimated token threshold 1000..10000000. |
+| `--think-budget-threshold` | number | Anthropic thinking budget threshold 1..1000000. |
+| `--precedence` | string | Comma-separated priority order across background, longContext, webSearch, think. |
+| `--match-models` | string | Optional comma-separated selector allowlist; - clears. |
+| `--override-explicit` | string | on/off: allow scenario rules on explicit combo/* or policy/* selectors. |
+| `--json` | boolean | Emit structured JSON. |
+
+- Validates all configured scenario route selectors against enabled providers before saving.
+
+### `epx agent scenario-routing clear`
+
+Usage: `epx agent scenario-routing clear [--json]`
+
+Clear heuristic scenario routing configuration.
+
+State-changing: yes. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| DELETE | `/api/routing/scenario` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit structured JSON. |
+
+- Removes config.scenarioRouting and restores normal model resolution.
+
+### `epx agent scenario-routing classify`
+
+Usage: `epx agent scenario-routing classify (--file <body.json|-> | [--selector <model>] [--header <k=v>]... [--compaction]) [--json]`
+
+Dry-run heuristic scenario classification against a request body.
+
+State-changing: no. JSON mode: `payload`.
+
+| Method | Route |
+|---|---|
+| POST | `/api/routing/scenario/classify` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--file` | string | Request body JSON file or - for stdin. |
+| `--selector` | string | Inbound model selector to test against matchModels and reserved route rules. |
+| `--header` | string | Header pair key=value (repeatable, e.g. x-epx-priority=background). |
+| `--compaction` | boolean | Simulate a compaction turn. |
+| `--json` | boolean | Emit structured classification JSON. |
+
+- Runs bounded heuristic inspection locally without sending upstream requests.
 
 ### `epx memory`
 

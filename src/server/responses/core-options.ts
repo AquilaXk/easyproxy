@@ -135,6 +135,8 @@ export interface HandleResponsesOptions {
   policyRequestScope?: PolicyRequestScope;
   /** Internal concrete selector chosen from the original policy evaluation. */
   policyFallbackCandidate?: { provider: string; model: string };
+  /** Resolved heuristic scenario match preserved across protocol bridge replay. */
+  scenarioMatchOverride?: RouteResult["scenarioMatch"];
   /** Internal routed-compaction recovery: one logical request, one emergency target. */
   compactionRecoveryAttempted?: boolean;
   compactionRecoveryPermit?: SingleUseDispatchPermit;

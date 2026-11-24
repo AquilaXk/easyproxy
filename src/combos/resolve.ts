@@ -14,6 +14,13 @@ import {
   type ComboFailureCooldownScope,
 } from "./failover";
 import { quotaResetRemainingMs } from "./reset-window";
+import {
+  clearComboEwmaState,
+  pickEwmaLatencyIndex,
+  reconcileComboEwmaState,
+  recordComboEwmaFailure,
+  recordComboEwmaSuccess,
+} from "./ewma";
 import { getCombo, resolveComboId, targetKey } from "./types";
 import type { NormalizedComboConfig, NormalizedComboTarget } from "./types";
 import {
@@ -540,6 +547,16 @@ export function pickComboTarget(
     }
   } else if (combo.strategy === "reset-window") {
     targetIndex = resetWindowIndex(config, combo.targets, eligible, now);
+  } else if (combo.strategy === "ewma-latency") {
+    targetIndex = pickEwmaLatencyIndex(
+      comboId,
+      combo.targets,
+      eligible,
+      targetKey,
+      combo.ewmaLatency,
+      now,
+      { preview: options.preview },
+    );
   } else {
     targetIndex = combo.targets.findIndex(eligible);
   }
@@ -561,9 +578,16 @@ export function noteComboSuccess(
   combo: NormalizedComboConfig,
   target: NormalizedComboTarget,
   writerGeneration = captureConfigGeneration(),
+  options: { latencyMs?: number; now?: number } = {},
 ): void {
   const key = targetKey(target);
   if (!mayCommitComboState(comboId, key, writerGeneration)) return;
+  if (combo.strategy === "ewma-latency") {
+    if (options.latencyMs !== undefined) {
+      recordComboEwmaSuccess(comboId, key, combo.ewmaLatency, options.latencyMs, options.now);
+    }
+    return;
+  }
   if (combo.strategy === "least-used") {
     let state = selectionState.get(comboId);
     if (!state) {
@@ -598,8 +622,12 @@ export function noteComboFailure(
   comboId: string,
   target: EpxComboTarget,
   writerGeneration = captureConfigGeneration(),
+  options: { ewmaLatency?: NormalizedComboConfig["ewmaLatency"]; recordEwma?: boolean; now?: number } = {},
 ): void {
   if (!mayCommitComboState(comboId, targetKey(target), writerGeneration)) return;
+  if (options.recordEwma) {
+    recordComboEwmaFailure(comboId, targetKey(target), options.ewmaLatency, options.now);
+  }
   const state = selectionState.get(comboId);
   if (state?.activeKey === targetKey(target)) {
     delete state.activeKey;
@@ -627,8 +655,14 @@ export function advanceComboAfterFailure(
     failedAccount?: string;
   } = {},
 ): ComboPick | null {
-  if (options.recordFailure !== false) noteComboFailure(pick.comboId, pick.target, pick.writerGeneration);
   const combo = getCombo(config, pick.comboId);
+  if (options.recordFailure !== false) {
+    noteComboFailure(pick.comboId, pick.target, pick.writerGeneration, {
+      recordEwma: combo?.strategy === "ewma-latency",
+      ewmaLatency: combo?.ewmaLatency,
+      now: options.now,
+    });
+  }
   // A 429 from a pooled provider names the ACCOUNT that is spent, not the target. The pool
   // records that account's own cooldown and rotates past it, so cooling the target here blacks
   // out the accounts that still answer: on 2026-09-28 one Anthropic account replied
@@ -841,10 +875,12 @@ export function reconcileComboRotationState(context: GenerationContext): number 
   }
   liveComboTargets = new Set(context.comboTargets);
   lastReconciledGeneration = context.generation;
+  removed += reconcileComboEwmaState(context.comboIds, context.comboTargets);
   return removed;
 }
 
 export function clearComboSelectionState(comboId?: string): void {
+  clearComboEwmaState(comboId);
   if (comboId === undefined) {
     selectionState.clear();
     liveComboTargets.clear();

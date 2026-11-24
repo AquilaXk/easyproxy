@@ -669,6 +669,8 @@
     "ci-run-changed-tests-contract.test.ts": "ci-workflows",
     "combo-least-used-preview.test.ts": "routing",
     "management-provider-probe-ssrf.test.ts": "server",
-    "sse-single-pass-fastpath.test.ts": "responses"
+    "sse-single-pass-fastpath.test.ts": "responses",
+    "scenario-routing.test.ts": "routing",
+    "ewma-latency-combo.test.ts": "routing"
   }
 }

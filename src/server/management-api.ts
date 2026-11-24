@@ -257,6 +257,12 @@ async function handleTelemetryRoutesOnDemand(ctx: ManagementContext): Promise<Re
   return handleTelemetryRoutes(ctx);
 }
 
+async function handleScenarioRoutingRoutesOnDemand(ctx: ManagementContext): Promise<Response | null> {
+  if (!pathInManagementNamespace(ctx.url.pathname, "/api/routing/scenario")) return null;
+  const { handleScenarioRoutingRoutes } = await import("./management/scenario-routing-routes");
+  return handleScenarioRoutingRoutes(ctx);
+}
+
 export async function handleManagementAPI(
   req: Request,
   url: URL,
@@ -400,6 +406,7 @@ export async function handleManagementAPI(
     ??     handleMetricsRoutes(ctx)
     ??     (await handleRoutingAnalyticsRoutes(ctx))
     ??     (await handleRoutingProfileRoutesOnDemand(ctx))
+    ??     (await handleScenarioRoutingRoutesOnDemand(ctx))
     ??     (await handleProviderRoutes(ctx))
     ??     (await handleModelRoutes(ctx))
     ??     (await handleIntegrationRoutes(ctx))

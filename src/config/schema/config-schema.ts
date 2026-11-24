@@ -55,6 +55,7 @@ import {
   toolOutputCompressionSchema,
   outboundSecretGuardSchema,
 } from "./leaf-validators";
+import { scenarioRoutingSchema } from "./scenario-routing";
 import { MAX_CREDIT_PRICE_USD } from "../../usage/credit-billing";
 import { isValidProviderName, hasOwnProvider } from "../provider-name";
 import {
@@ -245,6 +246,7 @@ export const configSchema = z.object({
   autoReviewOverride: autoReviewOverrideSchema.optional(),
   modelPinnedEfforts: modelPinnedEffortsSchema.optional(),
   compactionRouting: compactionRoutingSchema.optional().catch(undefined),
+  scenarioRouting: scenarioRoutingSchema.optional().catch(undefined),
   compactionRecovery: compactionRecoverySchema.optional().catch(undefined),
   // A bad hand edit disables only this block; writes validate the catch-free leaf first.
   reasoningRetention: reasoningRetentionSchema.optional().catch(undefined),

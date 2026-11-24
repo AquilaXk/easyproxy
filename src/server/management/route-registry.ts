@@ -452,6 +452,11 @@ export const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
   { method: "GET", path: "/api/routing-profiles", module: "server/management/routing-profile-routes", mutates: false },
   { method: "POST", path: "/api/routing-profiles/dry-run", module: "server/management/routing-profile-routes", mutates: true },
   { method: "PUT", path: "/api/routing-profiles", module: "server/management/routing-profile-routes", mutates: true },
+  // server/management/scenario-routing-routes
+  { method: "GET", path: "/api/routing/scenario", module: "server/management/scenario-routing-routes", mutates: false },
+  { method: "PUT", path: "/api/routing/scenario", module: "server/management/scenario-routing-routes", mutates: true },
+  { method: "DELETE", path: "/api/routing/scenario", module: "server/management/scenario-routing-routes", mutates: true },
+  { method: "POST", path: "/api/routing/scenario/classify", module: "server/management/scenario-routing-routes", mutates: false },
   // server/management/session-routes
   { method: "POST", path: "/api/session/remember", module: "server/management/session-routes", mutates: true, exempt: { reason: "session-only", why: "Explicit admin-token exchange for a revocable HttpOnly device cookie, restricted to a same-origin HTTPS dashboard or loopback. The CLI does not own a browser cookie jar." } },
   { method: "POST", path: "/api/session/logout", module: "server/management/session-routes", mutates: true, exempt: { reason: "session-only", why: "Logs out the CURRENT gui-session and requires its own Origin and CSRF. There is nothing for a CLI verb to log out of: the CLI holds an admin token, and the admin token is refused here precisely so it cannot end a consent session it never established." } },

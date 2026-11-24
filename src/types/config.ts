@@ -1454,6 +1454,8 @@ export interface EpxConfig extends EpxLinkHomeConfig, CodexAccountLoginConfig {
    * scoring. Existing model ids are never routed through profiles implicitly.
    */
   routingProfiles?: Record<string, EpxRoutingProfileConfig>;
+  /** Zero-overhead heuristic scenario routing (`longContext`, `think`, `background`, `webSearch`). */
+  scenarioRouting?: EpxScenarioRoutingConfig;
   /** Background proactive token refresh ("Token Guardian"). Off by default; see EpxTokenGuardianConfig. */
   tokenGuardian?: EpxTokenGuardianConfig;
   /** Additional exact origins allowed for CORS (e.g. HTTPS or chrome-extension://<id>). Loopback origins are always allowed. */
@@ -1478,7 +1480,36 @@ export interface EpxConfig extends EpxLinkHomeConfig, CodexAccountLoginConfig {
   fallback?: EpxFallbackConfig;
 }
 
-export type EpxComboStrategy = "failover" | "round-robin" | "random" | "least-used" | "reset-window" | "jev";
+export type EpxScenarioKind = "longContext" | "think" | "background" | "webSearch";
+
+export interface EpxScenarioRoutingConfig {
+  enabled: boolean;
+  /** Optional priority order when multiple scenarios match. Default: ["background", "longContext", "webSearch", "think"]. */
+  precedence?: EpxScenarioKind[];
+  /** Estimated token threshold triggering `longContext`. Default 60000; range 1000..10000000. */
+  longContextThresholdTokens?: number;
+  /** Minimum Anthropic `thinking.budget_tokens` triggering `think` when specified. Default 1; range 1..1000000. */
+  thinkBudgetThreshold?: number;
+  /** Model selectors (`provider/model`, combo/policy alias, or native model) per scenario. */
+  routes: Partial<Record<EpxScenarioKind, string>>;
+  /** Optional inbound selector allowlist (exact match or trailing `*` prefix). */
+  matchModels?: string[];
+  /** Allow scenario routing even when the caller requested an explicit `combo/*` or `policy/*` selector. Default false. */
+  overrideExplicitRoutes?: boolean;
+}
+
+export interface EpxComboEwmaLatencyConfig {
+  /** Smoothing factor in (0, 1]. Default 0.3. */
+  alpha?: number;
+  /** Optional time-decay half-life in ms (1000..3600000). */
+  halfLifeMs?: number;
+  /** Minimum recorded observations per target before EWMA exploits measured winners over cold-start exploration. Default 1; range 1..20. */
+  minSamples?: number;
+  /** Synthetic latency penalty in ms recorded on upstream failure. Default 30000; range 100..600000. */
+  errorPenaltyMs?: number;
+}
+
+export type EpxComboStrategy = "failover" | "round-robin" | "random" | "least-used" | "reset-window" | "jev" | "ewma-latency";
 export type EpxComboDefaultEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type EpxComboDefaultEffortMode = "fallback" | "force";
 
@@ -1531,8 +1562,10 @@ export interface EpxComboConfig {
   targets: EpxComboTarget[];
   /** Operator consent for metered targets on a loopback-only proxy. Default false; public listeners still require key consent. */
   allowMeteredTargets?: boolean;
-  /** Ordered failover (default), round-robin, weighted random, least-used, or quota reset-window selection. */
+  /** Ordered failover (default), round-robin, weighted random, least-used, quota reset-window, JEV decision, or EWMA latency load balancing. */
   strategy?: EpxComboStrategy;
+  /** Optional tuning for `strategy: "ewma-latency"`. */
+  ewmaLatency?: EpxComboEwmaLatencyConfig;
   /** Successful requests retained on one RR selection batch. Default 1; range 1..100. */
   stickyLimit?: number;
   /**

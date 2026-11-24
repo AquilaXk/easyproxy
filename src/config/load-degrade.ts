@@ -2,6 +2,7 @@ import { isSubagentModelEntry, rawSubagentModelForce } from "./subagent-models";
 import { chmodSync, existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { compactionRecoveryConfigError } from "./schema/compaction-recovery";
+import { scenarioRoutingConfigError } from "./schema/scenario-routing";
 import { nativeReasoningRetentionConfigError } from "./schema/native-reasoning-retention";
 import { workflowBudgetConfigError } from "./schema/workflow-budget";
 import { routedCatalogDefaultsConfigError } from "./schema/routed-catalog-defaults";
@@ -157,6 +158,9 @@ export function warnDegradedTopLevelOptIns(rawParsed: unknown, validated: EpxCon
   const retentionWarning = degradedReasoningRetentionWarning(rawParsed, validated);
   if (retentionWarning) console.warn(retentionWarning);
   if (compactionRecoveryConfigError(rawParsed)) console.warn("⚠️  invalid compactionRecovery disabled; the original compaction failure is preserved");
+  if (rawParsed && typeof rawParsed === "object" && scenarioRoutingConfigError((rawParsed as Record<string, unknown>).scenarioRouting)) {
+    console.warn("⚠️  config.json scenarioRouting is invalid — scenario routing remains off");
+  }
   if (desktopCompatibilityConfigError(rawParsed)) console.warn("Invalid desktopCompatibility startup preference ignored; no desktop compatibility service will start automatically.");
   if (blockedModelRedirectsError(rawParsed)) console.warn("⚠️  invalid blockedModelRedirects ignored; provider routing remains available");
   if (mainAccountHardLockFallbackError(rawParsed)) console.warn("⚠️  invalid codexMainAccountHardLockFallback ignored; the main-account hard lock still refuses while blocked");

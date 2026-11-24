@@ -270,7 +270,10 @@ async function handleChatCompletionsWithBudget(
   // Why the native Chat lane was not taken; stays `unknown-model` when routing threw.
   let nativeDecline: ProtocolReasonCode | undefined = "unknown-model";
   try {
-    const route = routeModel(config, chatBody.model as string, evidenceFromBody(chatBody));
+    const route = routeModel(config, chatBody.model as string, evidenceFromBody(chatBody), {
+      body: chatBody,
+      headers: req.headers,
+    });
     // Preserve the routed destination for Go recognition, then settle the wire before
     // deriving protocol-scoped affinity. Recognition must not inspect the flipped adapter.
     const routedProvider = route.provider;
@@ -586,6 +589,7 @@ async function handleChatCompletionsWithBudget(
   const finalizeNativeLog = createFinalRequestLog(logIds, logCtx).finish;
   const upstream = await handleResponses(internalReq, config, logCtx, {
     clientModelLabel: clientFacingModelLabel(requestedModel),
+    ...(settledRoute?.scenarioMatch ? { scenarioMatchOverride: settledRoute.scenarioMatch } : {}),
     agyAcpUnattendedHttpTurn,
     openAiSidecarAuth,
     allowStoredOpenAiSidecarAuth: !!(callerAuthorizationRoute && settledRoute

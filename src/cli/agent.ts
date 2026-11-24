@@ -38,6 +38,7 @@ const USAGE = `Usage:
       [--stream-routed-output <on|off> (web)] [--timeout-ms <1-2147483647> (vision)] [--json]
   epx agent memory-models <show|set|clear> [options] [--json]
   epx agent compaction-routing <show|set|clear> [options] [--json]
+  epx agent scenario-routing <show|set|clear|classify> [options] [--json]
   epx agent request-user-input [on|off] [--json]`;
 
 function clearable(value: string | undefined): string | null | undefined {
@@ -467,6 +468,10 @@ export async function handleAgentCommand(argv: string[], deps: RuntimeApiDeps = 
   if (argv[0] === "memory-models" || argv[0] === "compaction-routing") {
     const { handleAgentSettingsCommand } = await import("./agent-settings");
     return handleAgentSettingsCommand(argv[0], argv.slice(1), deps);
+  }
+  if (argv[0] === "scenario-routing") {
+    const { handleAgentScenarioRoutingCommand } = await import("./agent-scenario-routing");
+    return handleAgentScenarioRoutingCommand(argv.slice(1), deps);
   }
   return runCliAction(async () => {
     const [sub = "status", ...rest] = argv;

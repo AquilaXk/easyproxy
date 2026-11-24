@@ -820,11 +820,18 @@ export async function prepareResponsesRequest(
     // may fall back to the configured default provider; combo attempts and the
     // later fallback/recovery re-routes keep the ordinary reservation.
     const routeInbound = (modelId: string) => {
+      const scenarioContext = options.scenarioMatchOverride
+        ? { body: undefined, override: options.scenarioMatchOverride }
+        : {
+          body: options.directRequest ? () => options.directRequest!.bridgeConversation() : parsed._rawBody,
+          headers: req.headers,
+          isCompaction: parsed._compactionRequest === true,
+        };
       const resolved = concreteSelection
         ? routeConcreteModel(config, modelId)
         : parsed._compactionRequest === true
-          ? routeCompactionModel(config, modelId, routeEvidence(options, parsed))
-          : routeModel(config, modelId, routeEvidence(options, parsed));
+          ? routeCompactionModel(config, modelId, routeEvidence(options, parsed), scenarioContext)
+          : routeModel(config, modelId, routeEvidence(options, parsed), scenarioContext);
       // A Pool 2 selector may leave Pool 2 only through an operator-configured cross-provider
       // blocked-model redirect, which the router marks as a credential-domain rewrite. Any other
       // destination means the selector fell through to default resolution, which stays refused.
@@ -895,6 +902,7 @@ export async function prepareResponsesRequest(
     if (parsed._compactionRequest === true || options.compactionRoutingOverride) parsed._cursorIsolateConversation = true;
     route = memoryRoute ?? shadowRoute ?? resolveRoute(options.policyFallbackCandidate
       ? `${options.policyFallbackCandidate.provider}/${options.policyFallbackCandidate.model}` : parsed.modelId);
+    if (route.credentialDomainRewrite) credentialDomainWasRewritten = true;
     // Selection-free hard-lock preflight grants no hop. Enforce the actual ranked destination
     // against the locked source before admitting this first selection.
     const hardLockProfileTrace = options.mainHardLockFallbackOverride ? route.routeDecision?.profile : undefined;
@@ -1610,7 +1618,8 @@ export async function prepareResponsesRequest(
   // Synthetic turns keep the original client envelope label across provider normalization.
   if (options.compactionRoutingOverride || options.mainHardLockFallbackOverride || options.clientResponseModelLabel
     || options.internalDecisionCall || options.memoryModelPhase || options.visionDescribeTerminal
-    || options.policyFallbackCandidate || parsed._memoryModelPhase || logCtx.shadowCallRewrittenFrom) {
+    || options.policyFallbackCandidate || parsed._memoryModelPhase || logCtx.shadowCallRewrittenFrom
+    || route.scenarioMatch !== undefined) {
     parsed._responseModelId = clientFacingModelText(options.clientResponseModelLabel ?? inboundSelector);
   }
   if (!routeAllowedByScope(admissionScope, scopedDestination)) {

@@ -1,10 +1,11 @@
+import { ewmaLatencyConfigIssues } from "../combos/ewma";
 import { normalizeJevQuotaTiers } from "../combos/jev-quota-config";
 import { normalizeJevSessionPin } from "../combos/jev-session-pin-config";
 import { parseComboTargets } from "./combo-input";
 import { printCatalogResult } from "./catalog-command-result";
 
 const ENUMS: Readonly<Record<string, readonly (string | null)[]>> = {
-  strategy: ["failover", "round-robin", "random", "least-used", "reset-window", "jev"],
+  strategy: ["failover", "round-robin", "random", "least-used", "reset-window", "jev", "ewma-latency"],
   defaultEffort: [null, "low", "medium", "high", "xhigh", "max", "ultra"],
   defaultEffortMode: ["fallback", "force"], reasoningEffortMode: ["strict", "adaptive"], jevEffortMode: ["decide", "client"],
   imageInput: ["auto", "disabled"], cooldownWaitPolicy: ["before-last-resort"],
@@ -52,6 +53,10 @@ function publicCombo(value: unknown): Record<string, unknown> {
       const pin = normalizeJevSessionPin(child);
       if (!pin) invalid();
       result[key] = pin;
+      continue;
+    } else if (key === "ewmaLatency") {
+      if (ewmaLatencyConfigIssues(child).length > 0 || !record(child)) invalid();
+      result[key] = { ...child };
       continue;
     } else if (key === "nativeAlias" || key === "allowMeteredTargets" || key === "decisionQuotaSignals") {
       if (typeof child !== "boolean") invalid();
