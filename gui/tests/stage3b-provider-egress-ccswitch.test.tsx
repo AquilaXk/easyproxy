@@ -266,6 +266,20 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
 
     expect(host.textContent).toContain("imported-claude");
     expect(host.textContent).toContain("Key detected");
+    const modalDialog = host.querySelector<HTMLDialogElement>("dialog.modal-overlay");
+    expect(modalDialog).not.toBeNull();
+    expect(modalDialog!.hasAttribute("open")).toBe(true);
+    expect(modalDialog!.getAttribute("aria-labelledby")).toBe("cc-switch-modal-title");
+    expect(modalDialog!.querySelector(".modal-backdrop-dismiss")).not.toBeNull();
+    const modalCard = modalDialog!.querySelector<HTMLElement>(".modal-card");
+    expect(modalCard).not.toBeNull();
+    expect(modalCard!.style.maxWidth).toBe("680px");
+    expect(modalCard!.querySelector(".modal-head")).not.toBeNull();
+    expect(modalCard!.querySelector(".modal-actions")).not.toBeNull();
+    expect(modalCard!.querySelector("table.tbl")).not.toBeNull();
+    expect(host.querySelector(".modal-backdrop")).toBeNull();
+    expect(host.querySelector(".modal-body")).toBeNull();
+    expect(host.querySelector(".modal-foot")).toBeNull();
     const applyBtn = [...host.querySelectorAll("button")].find(b => b.textContent?.includes("Import Selected (1)"))!;
     expect(applyBtn.disabled).toBe(true);
 
@@ -305,6 +319,94 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     await act(async () => { previewBtn.click(); });
     await flushTicks();
     expect(calls.some(c => c.url.endsWith("/api/providers/cc-switch/preview") && c.body?.sourcePath === "/tmp/custom.db")).toBe(true);
+  });
+
+  test("CcSwitchImportModal closes on backdrop click and Escape when idle, and blocks dismiss while applying", async () => {
+    let resolveApply!: (value: Response) => void;
+    const applyPending = new Promise<Response>(resolve => { resolveApply = resolve; });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/providers/cc-switch/preview")) {
+        return new Response(JSON.stringify({
+          available: true,
+          keychainAvailable: false,
+          defaultSources: [{ path: "/tmp/.cc-switch/providers.json", kind: "json" }],
+          journalActive: false,
+          discovered: 1,
+          eligible: 1,
+          conflicts: 0,
+          conflictNames: [],
+          invalid: 0,
+          invalidReasons: {},
+          providers: [{
+            name: "imported-claude",
+            sourceId: "c1",
+            appType: "claude",
+            adapter: "anthropic",
+            baseUrl: "https://relay.example.com/v1",
+            hasApiKey: false,
+          }],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/api/providers/cc-switch/apply")) {
+        return applyPending;
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    let closeCount = 0;
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <CcSwitchImportModal apiBase="http://127.0.0.1:10100" onClose={() => { closeCount += 1; }} onChanged={() => undefined} />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    const dialog = host.querySelector<HTMLDialogElement>("dialog.modal-overlay")!;
+    const backdropBtn = dialog.querySelector<HTMLButtonElement>(".modal-backdrop-dismiss")!;
+    expect(dialog).not.toBeNull();
+    expect(backdropBtn).not.toBeNull();
+
+    // Idle state: backdrop click & Escape dismiss the modal.
+    await act(async () => { backdropBtn.click(); });
+    expect(closeCount).toBe(1);
+    await act(async () => {
+      dialog.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(closeCount).toBe(2);
+
+    // Start apply (in flight): backdrop, Escape, and Close buttons must stay blocked.
+    const checkboxes = [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    const consentBox = checkboxes[checkboxes.length - 1]!;
+    await act(async () => { consentBox.click(); });
+    await flushTicks();
+    const applyBtn = [...host.querySelectorAll("button")].find(b => b.textContent?.includes("Import Selected (1)"))!;
+    await act(async () => { applyBtn.click(); });
+
+    expect(backdropBtn.disabled).toBe(true);
+    await act(async () => { backdropBtn.click(); });
+    await act(async () => {
+      dialog.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(closeCount).toBe(2);
+
+    resolveApply(new Response(JSON.stringify({
+      imported: 1,
+      importedWithApiKeys: 0,
+      journalActive: true,
+      providers: [{ name: "imported-claude", hasApiKey: false }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await flushTicks();
+
+    expect(backdropBtn.disabled).toBe(false);
+    await act(async () => { backdropBtn.click(); });
+    expect(closeCount).toBe(3);
   });
 
   test("Stage 3C default fallback port is 10100 across Home quickstart, log-export curl, and playground-client", async () => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
+import { ModalDialog } from "./ui-v2/modal-dialog";
 
 export interface CcSwitchCandidate {
   name: string;
@@ -206,17 +207,29 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
   };
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="cc-switch-modal-title">
-      <div className="modal-card" style={{ maxWidth: 680 }}>
-        <div className="modal-head">
-          <div>
-            <h2 id="cc-switch-modal-title">{uxT(locale, "ccSwitch.title")}</h2>
-            <p className="muted" style={{ margin: "4px 0 0" }}>{uxT(locale, "ccSwitch.subtitle")}</p>
-          </div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>{t("common.close")}</button>
+    <ModalDialog
+      aria-labelledby="cc-switch-modal-title"
+      dismissDisabled={applying}
+      cardClassName="overscroll-contain"
+      cardStyle={{ maxWidth: 680 }}
+      onClose={onClose}
+    >
+      <div className="modal-head items-start gap-3">
+        <div className="min-w-0">
+          <h3 id="cc-switch-modal-title">{uxT(locale, "ccSwitch.title")}</h3>
+          <p className="muted mt-1 mb-0 text-xs">{uxT(locale, "ccSwitch.subtitle")}</p>
         </div>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm shrink-0"
+          disabled={applying}
+          onClick={onClose}
+        >
+          {t("common.close")}
+        </button>
+      </div>
 
-        <div className="modal-body flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
           <div className="rounded-card border border-solid border-line bg-inset p-3 text-xs text-fg-muted">
             {uxT(locale, "ccSwitch.consentNotice")}
           </div>
@@ -234,7 +247,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
             </label>
             <button
               type="button"
-              className="btn btn-outline btn-sm"
+              className="btn"
               disabled={loading || applying}
               onClick={() => { void runPreview(); }}
             >
@@ -278,7 +291,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
 
           {preview && preview.providers.length > 0 && (
             <div className="max-h-[240px] overflow-auto rounded-card border border-solid border-line">
-              <table className="table" style={{ width: "100%", fontSize: 12 }}>
+              <table className="tbl w-full text-xs">
                 <thead>
                   <tr>
                     <th style={{ width: 28 }} />
@@ -348,6 +361,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
               <label className="flex items-start gap-2 rounded-card border border-solid border-line bg-inset p-2.5 text-xs">
                 <input
                   type="checkbox"
+                  className="mt-0.5 shrink-0"
                   checked={consentChecked}
                   disabled={applying}
                   onChange={e => {
@@ -359,34 +373,33 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
               </label>
             </div>
           )}
-        </div>
+      </div>
 
-        <div className="modal-foot flex items-center justify-between gap-2">
-          <div>
-            {preview?.journalActive && (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                disabled={applying || loading}
-                onClick={() => { void handleRestore(); }}
-              >
-                {uxT(locale, "ccSwitch.restoreBtn")}
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={applying}>{t("common.close")}</button>
+      <div className="modal-actions flex-wrap items-center justify-between">
+        <div>
+          {preview?.journalActive && (
             <button
               type="button"
-              className="btn btn-primary"
-              disabled={applying || loading || selectedNames.size === 0 || !consentChecked}
-              onClick={() => { void handleApply(); }}
+              className="btn btn-ghost"
+              disabled={applying || loading}
+              onClick={() => { void handleRestore(); }}
             >
-              {uxT(locale, "ccSwitch.applyBtn", { count: selectedNames.size })}
+              {uxT(locale, "ccSwitch.restoreBtn")}
             </button>
-          </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={applying}>{t("common.close")}</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={applying || loading || selectedNames.size === 0 || !consentChecked}
+            onClick={() => { void handleApply(); }}
+          >
+            {uxT(locale, "ccSwitch.applyBtn", { count: selectedNames.size })}
+          </button>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   );
 }

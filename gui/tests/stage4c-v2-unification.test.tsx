@@ -411,6 +411,12 @@ describe("Stage 4C /classic/ retirement and bridge/.ui-v2 layer boundary", () =>
       );
     });
     await flushTicks();
+    const ccModal = container.querySelector<HTMLDialogElement>("dialog.modal-overlay");
+    expect(ccModal).not.toBeNull();
+    expect(ccModal!.classList.contains("ui-v2")).toBe(false);
+    expect(ccModal!.querySelector(".modal-backdrop-dismiss")).not.toBeNull();
+    expect(ccModal!.querySelector(".modal-card")).not.toBeNull();
+    expect(container.querySelector(".modal-backdrop")).toBeNull();
     const comboInput = container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
     expect(comboInput).not.toBeNull();
     await act(async () => { comboInput.focus(); });
