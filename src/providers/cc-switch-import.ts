@@ -18,12 +18,14 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  lstatSync,
   openSync,
   readFileSync,
   readSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   getConfigDir,
@@ -40,9 +42,19 @@ import { readConfigFileSnapshot } from "../config/diagnostics";
 import { withConfigDirHardeningSettled } from "../config/paths";
 import { readAlivePid, readRuntimePort } from "../config/process-state";
 import { providerBaseUrlConfigError } from "../config/provider-validation";
+import { assertPlainLocalPath } from "../codex/orca-auth-source";
 import { codexAccountNamespaceProviderCollisionError } from "../codex/account-namespace-match";
 import { providerDestinationConfigError } from "../lib/destination-policy";
 import { getAuthStorePath } from "../oauth/store";
+import {
+  KEYCHAIN_REFERENCE_PREFIX,
+  invalidateResolvedProviderKeyCache,
+  isKeychainReference,
+  keychainAccount,
+  keychainReferenceBelongsToProvider,
+  probeProviderKeychain,
+  providerKeychainEntry,
+} from "./api-key-resolve";
 import { rewriteProviderReferences } from "./provider-id-rewrite";
 import { acquireOwnershipMutationLease } from "../service/ownership-mutation-lease.mjs";
 import { serviceStatePaths } from "../service/state";
@@ -56,6 +68,7 @@ import {
   isAllowedMetadataBytes,
   isDisallowedMetadataValue,
   parseCodexTomlBytes,
+  readLiveCcSwitchRows,
   readSourceRows,
   readSqliteRows,
   resolveCodexProjection,
@@ -65,7 +78,9 @@ import {
   validateJsonPrimitiveBytes,
   validateUtf8AndJsonStringBounds,
   type CcSwitchInvalidReason,
+  type CcSwitchSecretPlacement,
   type CodexTomlProjection,
+  type LiveCcSwitchExtractedRow,
   type MetadataFieldKind,
   type RawExtractedRow,
 } from "./cc-switch-import-source";
@@ -92,6 +107,8 @@ export interface CcSwitchCandidateProvider {
   baseUrl: string;
   defaultModel?: string;
   allowPrivateNetwork?: boolean;
+  hasApiKey?: boolean;
+  storedInKeychain?: boolean;
 }
 
 export interface CcSwitchImportPreviewOrApplyResult {
@@ -99,6 +116,8 @@ export interface CcSwitchImportPreviewOrApplyResult {
   discovered: number;
   eligible: number;
   imported: number;
+  importedWithApiKeys?: number;
+  storedInKeychain?: number;
   conflicts: number;
   conflictNames: string[];
   invalid: number;
@@ -376,12 +395,28 @@ function evaluateExtractedRow(
   };
 }
 
-function buildImportedProviderConfig(candidate: CcSwitchCandidateProvider, importId: string): EpxProviderConfig {
+interface ExtractedImportSecret {
+  apiKey: string;
+  placement: CcSwitchSecretPlacement;
+}
+
+function buildImportedProviderConfig(
+  candidate: CcSwitchCandidateProvider,
+  importId: string,
+  secret?: ExtractedImportSecret,
+  keychainRef?: string,
+): EpxProviderConfig {
+  const apiKeyValue = keychainRef ?? secret?.apiKey;
+  const useBearer = Boolean(
+    apiKeyValue && candidate.adapter === "anthropic" && secret?.placement === "anthropic-bearer",
+  );
   return {
     adapter: candidate.adapter,
     baseUrl: candidate.baseUrl,
     ...(candidate.defaultModel ? { defaultModel: candidate.defaultModel } : {}),
     ...(candidate.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
+    ...(apiKeyValue ? { authMode: "key" as const, apiKey: apiKeyValue } : {}),
+    ...(useBearer ? { apiKeyTransport: "bearer" as const } : {}),
     note: `imported:cc-switch:${importId}:${candidate.sourceId}:${candidate.appType}`,
   };
 }
@@ -669,13 +704,15 @@ function assignTargetNames(rows: RawExtractedRow[]): string[] {
   });
 }
 
-function prepareCandidates(options: {
-  sourcePath: string;
-  selectedProviders?: readonly string[];
-  allowPrivateNetwork?: boolean;
-  config: EpxConfig;
-}): CcSwitchImportPreviewOrApplyResult {
-  const rows = readSourceRows(options.sourcePath);
+function evaluateCandidateRows<T extends RawExtractedRow>(
+  rows: T[],
+  options: {
+    selectedProviders?: readonly string[];
+    allowPrivateNetwork?: boolean;
+    config: EpxConfig;
+  },
+  onEligibleCandidate?: (candidate: CcSwitchCandidateProvider, row: T) => void,
+): CcSwitchImportPreviewOrApplyResult {
   const targetNames = assignTargetNames(rows);
   const filterSet = options.selectedProviders && options.selectedProviders.length > 0
     ? new Set(options.selectedProviders.map(s => s.trim()).filter(Boolean))
@@ -721,11 +758,48 @@ function prepareCandidates(options: {
       result.conflictNames.push(candidate.name);
       return;
     }
+    onEligibleCandidate?.(candidate, row);
     result.eligible++;
     result.providers.push(candidate);
   });
 
   return result;
+}
+
+function prepareCandidates(options: {
+  sourcePath: string;
+  selectedProviders?: readonly string[];
+  allowPrivateNetwork?: boolean;
+  config: EpxConfig;
+}): CcSwitchImportPreviewOrApplyResult {
+  const rows = readSourceRows(options.sourcePath);
+  return evaluateCandidateRows(rows, options);
+}
+
+function prepareLiveCandidates(options: {
+  sourcePath: string;
+  selectedProviders?: readonly string[];
+  allowPrivateNetwork?: boolean;
+  config: EpxConfig;
+  extractApiKeys: boolean;
+}): {
+  result: CcSwitchImportPreviewOrApplyResult;
+  extractedKeys: Map<string, ExtractedImportSecret>;
+} {
+  const rows: LiveCcSwitchExtractedRow[] = readLiveCcSwitchRows(options.sourcePath, {
+    extractApiKeys: options.extractApiKeys,
+  });
+  const extractedKeys = new Map<string, ExtractedImportSecret>();
+  const result = evaluateCandidateRows(rows, options, (candidate, row) => {
+    candidate.hasApiKey = row.hasApiKey;
+    if (options.extractApiKeys && row.extractedApiKey) {
+      extractedKeys.set(candidate.name, {
+        apiKey: row.extractedApiKey,
+        placement: row.secretPlacement ?? "key",
+      });
+    }
+  });
+  return { result, extractedKeys };
 }
 
 function reconcileJournalForApply(config: EpxConfig, journalPath: string): void {
@@ -863,6 +937,7 @@ export async function runCcSwitchProviderImport(options: {
           const outcome = mutatePersistedConfig(config => {
             assertStopped();
             const restoredNames: string[] = [];
+            const keychainAccountsToDelete: string[] = [];
             let alreadyAbsent = 0;
             const retainedEntries: JournalEntry[] = [];
 
@@ -886,6 +961,12 @@ export async function runCcSwitchProviderImport(options: {
                 retainedEntries.push(entry);
                 continue;
               }
+              if (
+                isKeychainReference(current.apiKey)
+                && keychainReferenceBelongsToProvider(current.apiKey, entry.name)
+              ) {
+                keychainAccountsToDelete.push(keychainAccount(current.apiKey));
+              }
               delete config.providers[entry.name];
               restoredNames.push(entry.name);
             }
@@ -898,14 +979,24 @@ export async function runCcSwitchProviderImport(options: {
             }
             return {
               changed: restoredNames.length > 0,
-              value: { restoredNames, alreadyAbsent, retainedEntries },
+              value: { restoredNames, keychainAccountsToDelete, alreadyAbsent, retainedEntries },
             };
           });
 
           if (outcome.status === "unavailable") {
             throw new CcSwitchImportError("Target configuration could not be committed during restore.");
           }
-          const { restoredNames, alreadyAbsent, retainedEntries } = outcome.value;
+          const { restoredNames, keychainAccountsToDelete, alreadyAbsent, retainedEntries } = outcome.value;
+          for (const account of keychainAccountsToDelete) {
+            try {
+              providerKeychainEntry(account).deletePassword();
+            } catch {
+              // Best-effort cleanup of keychain entries whose config provider was already removed.
+            }
+          }
+          if (keychainAccountsToDelete.length > 0) {
+            invalidateResolvedProviderKeyCache({ preservePassiveKeychainProofs: true });
+          }
           if (retainedEntries.length === 0) {
             unlinkJournalDurably(journalPath);
           } else {
@@ -939,4 +1030,295 @@ export async function runCcSwitchProviderImport(options: {
       lease.release();
     }
   });
+}
+
+export interface DiscoveredCcSwitchSource {
+  path: string;
+  kind: "sqlite" | "json";
+}
+
+export function discoverDefaultCcSwitchSources(home = homedir()): DiscoveredCcSwitchSource[] {
+  const candidates: DiscoveredCcSwitchSource[] = [
+    { path: join(home, ".cc-switch", "cc-switch.db"), kind: "sqlite" },
+    { path: join(home, ".cc-switch", "config.json"), kind: "json" },
+  ];
+  const found: DiscoveredCcSwitchSource[] = [];
+  for (const item of candidates) {
+    try {
+      assertPlainLocalPath(item.path);
+      const stat = lstatSync(item.path);
+      if (!stat.isSymbolicLink() && stat.isFile()) found.push(item);
+    } catch {
+      // Absent, symlinked, or inaccessible default source.
+    }
+  }
+  return found;
+}
+
+export function hasActiveCcSwitchImportJournal(): boolean {
+  const journalPath = join(getConfigDir(), CC_SWITCH_IMPORT_JOURNAL_FILENAME);
+  try {
+    const stat = lstatSync(journalPath);
+    return !stat.isSymbolicLink() && stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+export function runCcSwitchLiveProviderImport(options: {
+  mode: "preview" | "apply" | "restore";
+  config: EpxConfig;
+  saveConfig: (next: EpxConfig) => void;
+  sourcePath?: string;
+  selectedProviders?: readonly string[];
+  allowPrivateNetwork?: boolean;
+  consent?: boolean;
+  includeApiKeys?: boolean;
+  storeInKeychain?: boolean;
+}): CcSwitchImportResult {
+  try {
+    if (options.mode === "preview") {
+      if (!options.sourcePath) {
+        throw new CcSwitchImportError("CC-Switch source path is required for preview.");
+      }
+      return prepareLiveCandidates({
+        sourcePath: options.sourcePath,
+        selectedProviders: options.selectedProviders,
+        allowPrivateNetwork: options.allowPrivateNetwork,
+        config: options.config,
+        extractApiKeys: false,
+      }).result;
+    }
+
+    return withConfigMutationLockSync(() => {
+      const journalPath = join(getConfigDir(), CC_SWITCH_IMPORT_JOURNAL_FILENAME);
+
+      if (options.mode === "apply") {
+        if (options.consent !== true) {
+          throw new CcSwitchImportError("Explicit confirmation (consent: true) is required before importing CC-Switch providers.");
+        }
+        if (!options.sourcePath) {
+          throw new CcSwitchImportError("CC-Switch source path is required for import.");
+        }
+        const includeApiKeys = options.includeApiKeys !== false;
+        const storeInKeychain = includeApiKeys && options.storeInKeychain === true;
+        if (storeInKeychain && !probeProviderKeychain().available) {
+          throw new CcSwitchImportError(
+            "OS Keychain storage is unavailable on this host; uncheck OS Keychain storage or configure keyring access.",
+          );
+        }
+
+        reconcileJournalForApply(options.config, journalPath);
+        const { result: prepared, extractedKeys } = prepareLiveCandidates({
+          sourcePath: options.sourcePath,
+          selectedProviders: options.selectedProviders,
+          allowPrivateNetwork: options.allowPrivateNetwork,
+          config: options.config,
+          extractApiKeys: includeApiKeys,
+        });
+        prepared.mode = "apply";
+        prepared.importedWithApiKeys = 0;
+        prepared.storedInKeychain = 0;
+        if (prepared.providers.length === 0) return prepared;
+
+        const importId = randomUUID();
+        const builtEntries = prepared.providers.map(candidate => {
+          const secret = includeApiKeys ? extractedKeys.get(candidate.name) : undefined;
+          const keychainAccountName = storeInKeychain && secret ? candidate.name : undefined;
+          const keychainRef = keychainAccountName ? `${KEYCHAIN_REFERENCE_PREFIX}${keychainAccountName}` : undefined;
+          const providerConfig = buildImportedProviderConfig(candidate, importId, secret, keychainRef);
+          if (secret) {
+            candidate.hasApiKey = true;
+            prepared.importedWithApiKeys = (prepared.importedWithApiKeys ?? 0) + 1;
+            if (keychainRef) {
+              candidate.storedInKeychain = true;
+              prepared.storedInKeychain = (prepared.storedInKeychain ?? 0) + 1;
+            }
+          }
+          return {
+            candidate,
+            secret,
+            keychainAccountName,
+            providerConfig,
+            journalEntry: {
+              name: candidate.name,
+              sourceId: candidate.sourceId,
+              appType: candidate.appType,
+              note: providerConfig.note!,
+              fingerprint: canonicalProviderFingerprint(providerConfig),
+            },
+          };
+        });
+
+        for (const { candidate } of builtEntries) {
+          if (
+            hasOwnProvider(options.config.providers, candidate.name)
+            || Boolean(codexAccountNamespaceProviderCollisionError(options.config.codexAccountNamespaces, candidate.name))
+          ) {
+            throw new CcSwitchImportError("Target configuration changed and now conflicts with imported provider names; retry.");
+          }
+        }
+        const nextProviders = {
+          ...options.config.providers,
+          ...Object.fromEntries(builtEntries.map(entry => [entry.candidate.name, structuredClone(entry.providerConfig)])),
+        };
+        const validation = validateConfigCandidate({ ...options.config, providers: nextProviders });
+        if (!validation.ok) {
+          throw new CcSwitchImportError("CC-Switch imported provider configuration failed schema validation.");
+        }
+
+        const writtenKeychainEntries: Array<{ name: string; account: string; note: string }> = [];
+        try {
+          if (storeInKeychain) {
+            for (const entry of builtEntries) {
+              if (!entry.keychainAccountName || !entry.secret) continue;
+              const kcEntry = providerKeychainEntry(entry.keychainAccountName);
+              writtenKeychainEntries.push({
+                name: entry.candidate.name,
+                account: entry.keychainAccountName,
+                note: entry.journalEntry.note,
+              });
+              kcEntry.setPassword(entry.secret.apiKey);
+              if (kcEntry.getPassword() !== entry.secret.apiKey) {
+                throw new CcSwitchImportError(
+                  `OS Keychain verification failed for '${entry.candidate.name}'; no providers were imported.`,
+                );
+              }
+            }
+            if (writtenKeychainEntries.length > 0) {
+              invalidateResolvedProviderKeyCache({ preservePassiveKeychainProofs: true });
+            }
+          }
+
+          const journal: ImportJournal = {
+            schemaVersion: 1,
+            state: "prepared",
+            importId,
+            createdAt: Date.now(),
+            entries: builtEntries.map(b => b.journalEntry),
+          };
+          writeJournalDurably(journalPath, journal);
+          const previousProviders = options.config.providers;
+          try {
+            options.config.providers = nextProviders;
+            options.saveConfig(options.config);
+            writeJournalDurably(journalPath, { ...journal, state: "committed" });
+            prepared.imported = builtEntries.length;
+            return prepared;
+          } catch (error) {
+            options.config.providers = previousProviders;
+            const snap = readConfigFileSnapshot();
+            if (snap.diagnostics.source === "file" && snap.diagnostics.error === null) {
+              const landed = journal.entries.filter(e => snap.diagnostics.config.providers?.[e.name]?.note === e.note);
+              if (landed.length === 0) unlinkJournalDurably(journalPath);
+              else writeJournalDurably(journalPath, { ...journal, state: "committed", entries: landed });
+            } else {
+              unlinkJournalDurably(journalPath);
+            }
+            throw error;
+          }
+        } catch (error) {
+          const snap = readConfigFileSnapshot();
+          const persistedProviders = snap.diagnostics.source === "file" && snap.diagnostics.error === null
+            ? snap.diagnostics.config.providers
+            : options.config.providers;
+          for (const written of writtenKeychainEntries) {
+            if (persistedProviders?.[written.name]?.note !== written.note) {
+              try {
+                providerKeychainEntry(written.account).deletePassword();
+              } catch {
+                // Best-effort rollback of un-committed OS keychain entry.
+              }
+            }
+          }
+          if (writtenKeychainEntries.length > 0) {
+            invalidateResolvedProviderKeyCache({ preservePassiveKeychainProofs: true });
+          }
+          if (error instanceof CcSwitchImportError) throw error;
+          throw new CcSwitchImportError("CC-Switch provider import could not be committed.");
+        }
+      }
+
+      const journal = readJournal(journalPath);
+      if (!journal) {
+        throw new CcSwitchImportError("No CC-Switch provider import journal found to restore.");
+      }
+
+      const nextProviders = { ...options.config.providers };
+      const restoredNames: string[] = [];
+      const keychainAccountsToDelete: string[] = [];
+      let alreadyAbsent = 0;
+      const retainedEntries: JournalEntry[] = [];
+
+      for (const entry of journal.entries) {
+        if (!hasOwnProvider(nextProviders, entry.name)) {
+          alreadyAbsent++;
+          continue;
+        }
+        const current = nextProviders[entry.name]!;
+        if (
+          current.note !== entry.note
+          || canonicalProviderFingerprint(current) !== entry.fingerprint
+          || isProviderReferencedInConfig(options.config, entry.name)
+        ) {
+          retainedEntries.push(entry);
+          continue;
+        }
+        const probe = { ...options.config, providers: { ...nextProviders } };
+        delete probe.providers[entry.name];
+        if (!validateConfigCandidate(probe).ok) {
+          retainedEntries.push(entry);
+          continue;
+        }
+        if (
+          isKeychainReference(current.apiKey)
+          && keychainReferenceBelongsToProvider(current.apiKey, entry.name)
+        ) {
+          keychainAccountsToDelete.push(keychainAccount(current.apiKey));
+        }
+        delete nextProviders[entry.name];
+        restoredNames.push(entry.name);
+      }
+
+      const previousProviders = options.config.providers;
+      if (restoredNames.length > 0) {
+        const validation = validateConfigCandidate({ ...options.config, providers: nextProviders });
+        if (!validation.ok) {
+          throw new CcSwitchImportError("Configuration after restoring CC-Switch providers failed validation.");
+        }
+        try {
+          options.config.providers = nextProviders;
+          options.saveConfig(options.config);
+        } catch (error) {
+          options.config.providers = previousProviders;
+          if (error instanceof CcSwitchImportError) throw error;
+          throw new CcSwitchImportError("CC-Switch provider restore could not complete.");
+        }
+        for (const account of keychainAccountsToDelete) {
+          try {
+            providerKeychainEntry(account).deletePassword();
+          } catch {
+            // Best-effort cleanup after restored provider config is persisted.
+          }
+        }
+        if (keychainAccountsToDelete.length > 0) {
+          invalidateResolvedProviderKeyCache({ preservePassiveKeychainProofs: true });
+        }
+      }
+      if (retainedEntries.length === 0) unlinkJournalDurably(journalPath);
+      else writeJournalDurably(journalPath, { ...journal, state: "committed", entries: retainedEntries });
+
+      return {
+        mode: "restore",
+        restored: restoredNames.length,
+        restoredNames,
+        alreadyAbsent,
+        retainedEdited: retainedEntries.length,
+        retainedNames: retainedEntries.map(e => e.name),
+      };
+    });
+  } catch (error) {
+    if (error instanceof CcSwitchImportError) throw error;
+    throw new CcSwitchImportError("CC-Switch import could not complete; verify source and target local account files.");
+  }
 }

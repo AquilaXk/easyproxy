@@ -102,11 +102,11 @@ Zaten kullandığınız aracı bağlayın:
 
 | Araç | Bağlantı yöntemi |
 |---|---|
-| Codex | Panelin **Connect** sayfasındaki Codex anahtarını açın, ardından `codex` komutunu her zamanki gibi çalıştırın. Yerel dinleyicide bu, Codex’in yerleşik sağlayıcısını proxy’ye yönlendirir. Terminalden, panelde sağlayıcı eklemeden önce `epx init` çalıştırın ve Codex istemini kabul edin. |
+| Codex | Panelin **Route** sayfasındaki Codex anahtarını açın, ardından `codex` komutunu her zamanki gibi çalıştırın. Yerel dinleyicide bu, Codex’in yerleşik sağlayıcısını proxy’ye yönlendirir. Terminalden, panelde sağlayıcı eklemeden önce `epx init` çalıştırın ve Codex istemini kabul edin. |
 | Claude Code | `claude` CLI kuruluysa `epx claude` çalıştırın. Gerekirse proxy’yi başlatır ve Claude Code’u onun üzerinden açar. |
 | Claude Desktop | `epx claude desktop` çalıştırın. Yeni kurulumda tüm uygulama için ağ geçidi profilini ayarlar; mevcut first-party yapılandırması korunur ve `epx claude desktop apply --gateway` açıkça geçiş yapar. [Claude Code kılavuzuna](https://easyproxy.me/tr/guides/claude-code/) bakın. Geçişten sonra Claude Desktop’tan tamamen çıkıp yeniden açın. |
 | Grok Build | Yerel bir dinleyicide Grok entegrasyonu etkinse ve `~/.grok` mevcutsa, `epx start` modelleri kaydeder; Grok Build içinde bir `epx-*` modeli seçin. Uzak kurulumlar için [Grok Build kılavuzuna](https://easyproxy.me/tr/guides/grok-build/) bakın. Sağlayıcı ekledikten sonra listeyi yenilemek için proxy’yi yeniden başlatın (veya Codex otomatik başlatma etkinse `epx ensure` çalıştırın). |
-| Yönetilen entegrasyonu olan araçlar | Panelin **Connect** sayfasını veya `epx integration client enable --client <id>` komutunu kullanın. |
+| Yönetilen entegrasyonu olan araçlar | Panelin **Route** sayfasını veya `epx integration client enable --client <id>` komutunu kullanın. |
 | Diğer tüm araçlar | Özel OpenAI uyumlu temel URL’yi `http://localhost:10100/v1` veya Anthropic temel URL’sini `http://localhost:10100` olarak ayarlayın. |
 
 [İstemci desteği sayfası](https://easyproxy.me/tr/reference/client-support/), her aracın bağlantı yolunu ve kullandığı protokolü listeler.
@@ -122,7 +122,7 @@ başlatır; kontrol paneli proxy bağlantı noktasında kalır (başka bir tane 
 
 | Platform | Dosya | Notlar |
 |---|---|---|
-| macOS 13+ (Apple Silicon ve Intel) | `EasyProxy-<version>-macos.dmg` | Evrensel derleme, Developer ID ile imzalı ve noter onaylı |
+| macOS 14+ (Apple Silicon ve Intel) | `EasyProxy-<version>-macos.dmg` | Evrensel derleme; Apple Developer ID imzalama ve noter onayı yapılandırılana kadar imzasız (macOS Gatekeeper için **Sağ tık → Aç** gerekebilir) |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation ile kod imzalama kullanıma alınıyor ([kod imzalama politikası](https://easyproxy.me/tr/reference/code-signing/)); bir sürüm imzalanana kadar SmartScreen bir kez sorar, **Diğer bilgiler → Yine de çalıştır** seçin |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` veya `-linux-amd64.deb` | Menü çubuğu simgesi AppIndicator destekli bir masaüstü gerektirir |
 

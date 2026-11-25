@@ -67,6 +67,7 @@ import { handleRequestHistoryRoutes } from "./management/request-history-routes"
 import { handleRoutingAnalyticsRoutes } from "./management/routing-analytics-routes";
 import { handleMetricsRoutes } from "./management/metrics-routes";
 import { handleProviderRoutes } from "./management/provider-routes";
+import { handleCcSwitchRoutes } from "./management/cc-switch-routes";
 import { handleModelRoutes } from "./management/model-routes";
 import { handleClaudeInterceptRoutes } from "./management/claude-intercept-routes";
 import { handleAgentSettingsRoutes } from "./management/agent-settings-routes";
@@ -408,6 +409,7 @@ export async function handleManagementAPI(
     ??     (await handleRoutingProfileRoutesOnDemand(ctx))
     ??     (await handleScenarioRoutingRoutesOnDemand(ctx))
     ??     (await handleProviderRoutes(ctx))
+    ??     (await handleCcSwitchRoutes(ctx))
     ??     (await handleModelRoutes(ctx))
     ??     (await handleIntegrationRoutes(ctx))
     ??     (await handleEcosystemSyncRoutes(ctx))

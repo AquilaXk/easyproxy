@@ -37,7 +37,7 @@ const scopes: Record<string, string[]> = {
   "src/integrations/droid-settings.ts": ["assertDroidSettingsUnambiguous"],
   "src/integrations/aside-profile-context.ts": ["storeGuard"],
   "src/integrations/hermes-profiles.ts": ["lstatOrNull"],
-  "src/providers/cc-switch-import-source.ts": ["readSourceRows"],
+  "src/providers/cc-switch-import-source.ts": ["readSourceRows", "readLiveCcSwitchRows"],
   "src/adapters/command-code-project-context.ts": ["openedFileIsConfined"],
   "src/codex/catalog/write-audit.ts": ["appendCatalogWriteAudit"],
 };

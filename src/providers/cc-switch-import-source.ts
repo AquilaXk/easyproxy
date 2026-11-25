@@ -41,6 +41,12 @@ import {
   type MetadataFieldKind,
 } from "./cc-switch-import-bytes";
 
+import {
+  inspectSettingsSecretFromJsonBytes,
+  type CcSwitchSecretInspection,
+  type CcSwitchSecretPlacement,
+} from "./cc-switch-import-keys";
+
 export {
   CcSwitchImportError,
   METADATA_REFUSED_SENTINEL,
@@ -54,6 +60,7 @@ export {
   validateJsonPrimitiveBytes,
   validateUtf8AndJsonStringBounds,
   type CcSwitchInvalidReason,
+  type CcSwitchSecretPlacement,
   type CodexTomlProjection,
   type MetadataFieldKind,
 };
@@ -124,6 +131,16 @@ export interface RawExtractedRow {
   genericWireApi: string | null;
   codexTomlLines: string | null;
   codexProjection?: { ok: true; value: CodexTomlProjection } | { ok: false; reason: CcSwitchInvalidReason };
+}
+
+export interface LiveCcSwitchExtractedRow extends RawExtractedRow {
+  hasApiKey: boolean;
+  extractedApiKey?: string;
+  secretPlacement?: CcSwitchSecretPlacement;
+}
+
+interface LiveRowExtractOptions {
+  extractApiKeys: boolean;
 }
 
 function sqlLineExpr(col: string): string {
@@ -397,7 +414,15 @@ function decodeSafeBlob(blob: Uint8Array | null, kind: MetadataFieldKind, decode
   }
 }
 
-function readSqliteRowsFromBytes(sqliteBytes: Uint8Array): RawExtractedRow[] {
+function readSqliteRowsFromBytes(sqliteBytes: Uint8Array): RawExtractedRow[];
+function readSqliteRowsFromBytes(
+  sqliteBytes: Uint8Array,
+  liveOptions?: LiveRowExtractOptions,
+): RawExtractedRow[] | LiveCcSwitchExtractedRow[];
+function readSqliteRowsFromBytes(
+  sqliteBytes: Uint8Array,
+  liveOptions?: LiveRowExtractOptions,
+): RawExtractedRow[] | LiveCcSwitchExtractedRow[] {
   let db: Database | undefined;
   const blobsToZero: Uint8Array[] = [];
   try {
@@ -500,8 +525,30 @@ function readSqliteRowsFromBytes(sqliteBytes: Uint8Array): RawExtractedRow[] {
         group.lines.push({ idx: item.lineIdx, bytes: copy });
       }
     }
-    const result: RawExtractedRow[] = [];
-    for (const group of byRid.values()) {
+    const secretByRid = new Map<number, CcSwitchSecretInspection>();
+    if (liveOptions) {
+      const secretRows = db.query(
+        "SELECT rowid AS rid, CAST(settings_config AS BLOB) AS settingsBlob FROM providers",
+      ).all() as Array<{
+        rid: number;
+        settingsBlob: Uint8Array | null;
+      }>;
+      for (const sRow of secretRows) {
+        if (sRow.settingsBlob) blobsToZero.push(sRow.settingsBlob);
+        const group = byRid.get(sRow.rid);
+        if (!group || !sRow.settingsBlob || sRow.settingsBlob.length > MAX_JSON_BYTES) continue;
+        secretByRid.set(
+          sRow.rid,
+          inspectSettingsSecretFromJsonBytes(
+            sRow.settingsBlob,
+            group.row.appType,
+            liveOptions.extractApiKeys,
+          ),
+        );
+      }
+    }
+    const result: Array<RawExtractedRow | LiveCcSwitchExtractedRow> = [];
+    for (const [rid, group] of byRid.entries()) {
       if (group.lines.length > 0) {
         group.lines.sort((a, b) => a.idx - b.idx);
         let totalLen = 0;
@@ -522,7 +569,20 @@ function readSqliteRowsFromBytes(sqliteBytes: Uint8Array): RawExtractedRow[] {
           joined.fill(0);
         }
       }
-      result.push(group.row);
+      if (!liveOptions) {
+        result.push(group.row);
+      } else {
+        const secret = secretByRid.get(rid);
+        const liveRow: LiveCcSwitchExtractedRow = {
+          ...group.row,
+          hasApiKey: secret?.hasApiKey ?? false,
+        };
+        if (secret?.placement) liveRow.secretPlacement = secret.placement;
+        if (liveOptions.extractApiKeys && secret?.apiKey !== undefined) {
+          liveRow.extractedApiKey = secret.apiKey;
+        }
+        result.push(liveRow);
+      }
     }
     return result;
   } catch {
@@ -544,13 +604,27 @@ export function readSqliteRows(sourcePath: string): RawExtractedRow[] {
  */
 export function scanCcSwitchJsonBytes(bytes: Uint8Array): RawExtractedRow[] {
   try {
-    return scanCcSwitchJsonBytesInternal(bytes);
+    return scanCcSwitchJsonBytesInternal(bytes) as RawExtractedRow[];
   } finally {
     bytes.fill(0);
   }
 }
 
-function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
+export function scanLiveCcSwitchJsonBytes(
+  bytes: Uint8Array,
+  liveOptions: LiveRowExtractOptions,
+): LiveCcSwitchExtractedRow[] {
+  try {
+    return scanCcSwitchJsonBytesInternal(bytes, liveOptions) as LiveCcSwitchExtractedRow[];
+  } finally {
+    bytes.fill(0);
+  }
+}
+
+function scanCcSwitchJsonBytesInternal(
+  bytes: Uint8Array,
+  liveOptions?: LiveRowExtractOptions,
+): RawExtractedRow[] | LiveCcSwitchExtractedRow[] {
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let pos = 0;
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
@@ -717,17 +791,21 @@ function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
     return null;
   }
 
-  function parseSettingsObject(row: RawExtractedRow): void {
+  function parseSettingsObject(row: RawExtractedRow): { start: number; end: number } | null {
     skipWs();
     if (bytes[pos] !== 0x7b) {
       row.settingsType = null;
       skipValue();
-      return;
+      return null;
     }
+    const objStart = pos;
     row.settingsType = "object";
     pos++;
     skipWs();
-    if (bytes[pos] === 0x7d) { pos++; return; }
+    if (bytes[pos] === 0x7d) {
+      pos++;
+      return { start: objStart, end: pos };
+    }
     for (;;) {
       skipWs();
       const key = matchKnownJsonKeyBytes(bytes, scanStringBounds(), [
@@ -800,12 +878,15 @@ function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
       }
       skipWs();
       if (bytes[pos] === 0x2c) { pos++; continue; }
-      if (bytes[pos] === 0x7d) { pos++; break; }
+      if (bytes[pos] === 0x7d) {
+        pos++;
+        return { start: objStart, end: pos };
+      }
       throw new CcSwitchImportError("Malformed CC-Switch JSON source.");
     }
   }
 
-  function parseProviderEntryObject(fallbackId = "", fallbackApp = ""): RawExtractedRow {
+  function parseProviderEntryObject(fallbackId = "", fallbackApp = ""): RawExtractedRow | LiveCcSwitchExtractedRow {
     skipWs();
     if (bytes[pos] !== 0x7b) throw new CcSwitchImportError("Malformed CC-Switch JSON provider entry.");
     pos++;
@@ -820,8 +901,12 @@ function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
       genericWireApi: null,
       codexTomlLines: null,
     };
+    let settingsBounds: { start: number; end: number } | null = null;
     skipWs();
-    if (bytes[pos] === 0x7d) { pos++; return row; }
+    if (bytes[pos] === 0x7d) {
+      pos++;
+      return liveOptions ? { ...row, hasApiKey: false } : row;
+    }
     for (;;) {
       skipWs();
       const key = matchKnownJsonKeyBytes(bytes, scanStringBounds(), [
@@ -837,7 +922,7 @@ function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
         const v = readOptionalScalarString("app");
         if (v !== null) row.appType = v;
       } else if (key === "settings_config" || key === "settingsConfig") {
-        parseSettingsObject(row);
+        settingsBounds = parseSettingsObject(row);
       } else {
         // Never decode free-text "name", "notes", "websiteUrl", "meta", or unknown fields!
         skipValue();
@@ -847,11 +932,25 @@ function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
       if (bytes[pos] === 0x7d) { pos++; break; }
       throw new CcSwitchImportError("Malformed CC-Switch JSON source.");
     }
-    return row;
+    if (!liveOptions) return row;
+    const liveRow: LiveCcSwitchExtractedRow = { ...row, hasApiKey: false };
+    if (settingsBounds) {
+      const secret = inspectSettingsSecretFromJsonBytes(
+        bytes.subarray(settingsBounds.start, settingsBounds.end),
+        liveRow.appType,
+        liveOptions.extractApiKeys,
+      );
+      liveRow.hasApiKey = secret.hasApiKey;
+      if (secret.placement) liveRow.secretPlacement = secret.placement;
+      if (liveOptions.extractApiKeys && secret.apiKey !== undefined) {
+        liveRow.extractedApiKey = secret.apiKey;
+      }
+    }
+    return liveRow;
   }
 
-  function parseProvidersCollection(appHint = ""): RawExtractedRow[] {
-    const out: RawExtractedRow[] = [];
+  function parseProvidersCollection(appHint = ""): Array<RawExtractedRow | LiveCcSwitchExtractedRow> {
+    const out: Array<RawExtractedRow | LiveCcSwitchExtractedRow> = [];
     skipWs();
     if (bytes[pos] === 0x5b) {
       pos++;
@@ -886,8 +985,8 @@ function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
     return out;
   }
 
-  function parseAppSection(appName: string): RawExtractedRow[] {
-    const out: RawExtractedRow[] = [];
+  function parseAppSection(appName: string): Array<RawExtractedRow | LiveCcSwitchExtractedRow> {
+    const out: Array<RawExtractedRow | LiveCcSwitchExtractedRow> = [];
     skipWs();
     if (bytes[pos] !== 0x7b) { skipValue(); return out; }
     pos++;
@@ -909,7 +1008,7 @@ function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
     return out;
   }
 
-  const rows: RawExtractedRow[] = [];
+  const rows: Array<RawExtractedRow | LiveCcSwitchExtractedRow> = [];
   let sawStructure = false;
   skipWs();
   if (bytes[pos] !== 0x7b) throw new CcSwitchImportError("CC-Switch JSON source must be a JSON object.");
@@ -969,6 +1068,101 @@ function scanCcSwitchJsonBytesInternal(bytes: Uint8Array): RawExtractedRow[] {
   return rows;
 }
 
+function readVerifiedBytesFromOpenFd(
+  fd: number,
+  resolved: string,
+  beforeStat: import("node:fs").BigIntStats,
+  opened: import("node:fs").BigIntStats,
+  requireSqlite: boolean,
+): { isSqlite: boolean; size: number; rawBuf: Buffer } {
+  if (!opened.isFile()) {
+    throw new CcSwitchImportError("CC-Switch source path must be a regular file.");
+  }
+  if (
+    opened.dev !== beforeStat.dev
+    || opened.ino !== beforeStat.ino
+    || opened.uid !== beforeStat.uid
+    || opened.gid !== beforeStat.gid
+    || opened.mode !== beforeStat.mode
+  ) {
+    throw new CcSwitchImportError("CC-Switch source file changed while opening.");
+  }
+  const size = Number(opened.size);
+  const header = Buffer.alloc(16);
+  let rawBuf: Buffer | undefined;
+  try {
+    let isSqlite = false;
+    const n = readSync(fd, header, 0, 16, 0);
+    if (hasSqliteMagicBytes(header, n)) {
+      isSqlite = true;
+      if (opened.nlink > 1n) {
+        throw new CcSwitchImportError("CC-Switch SQLite source has multiple hard links; import the original CC-Switch database path directly.");
+      }
+      if (size === 0 || size > MAX_SQLITE_BYTES) {
+        throw new CcSwitchImportError("CC-Switch SQLite source exceeds the maximum supported size.");
+      }
+      assertNoUncheckpointedSqliteWal(resolved);
+    } else if (requireSqlite || /\.(?:db|sqlite|sqlite3)$/i.test(resolved)) {
+      throw new CcSwitchImportError("CC-Switch SQLite source is not a valid SQLite 3 file.");
+    } else {
+      if (size === 0 || size > MAX_JSON_BYTES) {
+        throw new CcSwitchImportError("CC-Switch JSON source is empty or exceeds the maximum supported size.");
+      }
+    }
+    rawBuf = Buffer.alloc(size + 1);
+    let offset = 0;
+    while (offset < rawBuf.length) {
+      const got = readSync(fd, rawBuf, offset, rawBuf.length - offset, offset);
+      if (got <= 0) break;
+      offset += got;
+    }
+    if (offset !== size) {
+      throw new CcSwitchImportError("CC-Switch source file changed while reading.");
+    }
+    if (isSqlite) {
+      assertNoUncheckpointedSqliteWal(resolved);
+    }
+    assertPlainLocalPath(resolved);
+    return { isSqlite, size, rawBuf };
+  } catch (error) {
+    rawBuf?.fill(0);
+    throw error;
+  } finally {
+    header.fill(0);
+  }
+}
+
+function assertFinalCcSwitchSnapshot(
+  isSqlite: boolean,
+  opened: import("node:fs").BigIntStats,
+  afterStat: import("node:fs").BigIntStats,
+  afterFd: import("node:fs").BigIntStats,
+): void {
+  if (isSqlite && afterFd.nlink > 1n) {
+    throw new CcSwitchImportError("CC-Switch SQLite source has multiple hard links; import the original CC-Switch database path directly.");
+  }
+  if (
+    afterStat.dev !== opened.dev
+    || afterStat.ino !== opened.ino
+    || afterStat.nlink !== opened.nlink
+    || afterStat.uid !== opened.uid
+    || afterStat.gid !== opened.gid
+    || afterStat.mode !== opened.mode
+    || afterStat.size !== opened.size
+    || afterStat.mtimeNs !== opened.mtimeNs
+    || afterFd.dev !== opened.dev
+    || afterFd.ino !== opened.ino
+    || afterFd.nlink !== opened.nlink
+    || afterFd.uid !== opened.uid
+    || afterFd.gid !== opened.gid
+    || afterFd.mode !== opened.mode
+    || afterFd.size !== opened.size
+    || afterFd.mtimeNs !== opened.mtimeNs
+  ) {
+    throw new CcSwitchImportError("CC-Switch source file changed while reading.");
+  }
+}
+
 export function readSourceRows(sourcePath: string, requireSqlite = false): RawExtractedRow[] {
   const resolved = resolve(sourcePath);
   let beforeStat: import("node:fs").BigIntStats;
@@ -985,7 +1179,6 @@ export function readSourceRows(sourcePath: string, requireSqlite = false): RawEx
   let fd: number | undefined;
   let isSqlite = false;
   let size = 0;
-  const header = Buffer.alloc(16);
   let rawBuf: Buffer | undefined;
   try {
     try {
@@ -994,75 +1187,13 @@ export function readSourceRows(sourcePath: string, requireSqlite = false): RawEx
         constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
       );
       const opened = fstatSync(fd, { bigint: true });
-      if (!opened.isFile()) {
-        throw new CcSwitchImportError("CC-Switch source path must be a regular file.");
-      }
-      if (
-        opened.dev !== beforeStat.dev
-        || opened.ino !== beforeStat.ino
-        || opened.uid !== beforeStat.uid
-        || opened.gid !== beforeStat.gid
-        || opened.mode !== beforeStat.mode
-      ) {
-        throw new CcSwitchImportError("CC-Switch source file changed while opening.");
-      }
-      size = Number(opened.size);
-      const n = readSync(fd, header, 0, 16, 0);
-      if (hasSqliteMagicBytes(header, n)) {
-        isSqlite = true;
-        if (opened.nlink > 1) {
-          throw new CcSwitchImportError("CC-Switch SQLite source has multiple hard links; import the original CC-Switch database path directly.");
-        }
-        if (size === 0 || size > MAX_SQLITE_BYTES) {
-          throw new CcSwitchImportError("CC-Switch SQLite source exceeds the maximum supported size.");
-        }
-        assertNoUncheckpointedSqliteWal(resolved);
-      } else if (requireSqlite || /\.(?:db|sqlite|sqlite3)$/i.test(resolved)) {
-        throw new CcSwitchImportError("CC-Switch SQLite source is not a valid SQLite 3 file.");
-      } else {
-        if (size === 0 || size > MAX_JSON_BYTES) {
-          throw new CcSwitchImportError("CC-Switch JSON source is empty or exceeds the maximum supported size.");
-        }
-      }
-      rawBuf = Buffer.alloc(size + 1);
-      let offset = 0;
-      while (offset < rawBuf.length) {
-        const got = readSync(fd, rawBuf, offset, rawBuf.length - offset, offset);
-        if (got <= 0) break;
-        offset += got;
-      }
-      if (offset !== size) {
-        throw new CcSwitchImportError("CC-Switch source file changed while reading.");
-      }
-      if (isSqlite) {
-        assertNoUncheckpointedSqliteWal(resolved);
-      }
-      assertPlainLocalPath(resolved);
+      const verified = readVerifiedBytesFromOpenFd(fd, resolved, beforeStat, opened, requireSqlite);
+      isSqlite = verified.isSqlite;
+      size = verified.size;
+      rawBuf = verified.rawBuf;
       const afterStat = lstatSync(resolved, { bigint: true });
       const afterFd = fstatSync(fd, { bigint: true });
-      if (isSqlite && afterFd.nlink > 1) {
-        throw new CcSwitchImportError("CC-Switch SQLite source has multiple hard links; import the original CC-Switch database path directly.");
-      }
-      if (
-        afterStat.dev !== opened.dev
-        || afterStat.ino !== opened.ino
-        || afterStat.nlink !== opened.nlink
-        || afterStat.uid !== opened.uid
-        || afterStat.gid !== opened.gid
-        || afterStat.mode !== opened.mode
-        || afterStat.size !== opened.size
-        || afterStat.mtimeNs !== opened.mtimeNs
-        || afterFd.dev !== opened.dev
-        || afterFd.ino !== opened.ino
-        || afterFd.nlink !== opened.nlink
-        || afterFd.uid !== opened.uid
-        || afterFd.gid !== opened.gid
-        || afterFd.mode !== opened.mode
-        || afterFd.size !== opened.size
-        || afterFd.mtimeNs !== opened.mtimeNs
-      ) {
-        throw new CcSwitchImportError("CC-Switch source file changed while reading.");
-      }
+      assertFinalCcSwitchSnapshot(isSqlite, opened, afterStat, afterFd);
     } catch (error) {
       if (error instanceof CcSwitchImportError) throw error;
       throw new CcSwitchImportError("CC-Switch source file could not be opened.");
@@ -1073,11 +1204,63 @@ export function readSourceRows(sourcePath: string, requireSqlite = false): RawEx
     }
 
     if (isSqlite) {
-      return readSqliteRowsFromBytes(rawBuf!.subarray(0, size));
+      return readSqliteRowsFromBytes(rawBuf!.subarray(0, size)) as RawExtractedRow[];
     }
     return scanCcSwitchJsonBytes(rawBuf!.subarray(0, size));
   } finally {
-    header.fill(0);
+    rawBuf?.fill(0);
+  }
+}
+
+export function readLiveCcSwitchRows(
+  sourcePath: string,
+  options: { extractApiKeys?: boolean } = {},
+): LiveCcSwitchExtractedRow[] {
+  const resolved = resolve(sourcePath);
+  let beforeStat: import("node:fs").BigIntStats;
+  try {
+    assertPlainLocalPath(resolved);
+    beforeStat = lstatSync(resolved, { bigint: true });
+  } catch {
+    throw new CcSwitchImportError("CC-Switch source path must be a plain regular local file without symlink traversal.");
+  }
+  if (!beforeStat.isFile()) {
+    throw new CcSwitchImportError("CC-Switch source path must be a regular file.");
+  }
+  sourceOpenHookForTests?.(resolved);
+  let fd: number | undefined;
+  let isSqlite = false;
+  let size = 0;
+  let rawBuf: Buffer | undefined;
+  try {
+    try {
+      fd = openSync(
+        resolved,
+        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+      );
+      const opened = fstatSync(fd, { bigint: true });
+      const verified = readVerifiedBytesFromOpenFd(fd, resolved, beforeStat, opened, false);
+      isSqlite = verified.isSqlite;
+      size = verified.size;
+      rawBuf = verified.rawBuf;
+      const afterStat = lstatSync(resolved, { bigint: true });
+      const afterFd = fstatSync(fd, { bigint: true });
+      assertFinalCcSwitchSnapshot(isSqlite, opened, afterStat, afterFd);
+    } catch (error) {
+      if (error instanceof CcSwitchImportError) throw error;
+      throw new CcSwitchImportError("CC-Switch source file could not be opened.");
+    } finally {
+      if (fd !== undefined) {
+        try { closeSync(fd); } catch { /* ignore */ }
+      }
+    }
+
+    const liveOptions: LiveRowExtractOptions = { extractApiKeys: options.extractApiKeys === true };
+    if (isSqlite) {
+      return readSqliteRowsFromBytes(rawBuf!.subarray(0, size), liveOptions) as LiveCcSwitchExtractedRow[];
+    }
+    return scanLiveCcSwitchJsonBytes(rawBuf!.subarray(0, size), liveOptions);
+  } finally {
     rawBuf?.fill(0);
   }
 }

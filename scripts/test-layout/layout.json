@@ -80,7 +80,7 @@
     "service-desktop-startup-health.test.ts": "service", "service-desktop-startup-linux.test.ts": "service", "service-desktop-startup.test.ts": "service", "service-desktop-supervision-windows.test.ts": "service",
     "startup-health-packaged-probe.test.ts": "server", "discovered-native-models.test.ts": "codex-integration", "responses-hosted-image-delivery.test.ts": "responses", "responses-hosted-image-display.test.ts": "responses",
     "responses-hosted-image-limits.test.ts": "responses", "dsh-login.test.ts": "oauth", "dsh-account.test.ts": "providers", "dsh-account-adapter.test.ts": "adapters",
-    "cursor-local-installer.test.ts": "providers/cursor", "codex-quota-query-backoff.test.ts": "codex-integration", "pnpm-command-isolation.test.ts": "update", "provider-antigravity-quota-retry.test.ts": "providers",
+    "cursor-local-installer.test.ts": "providers/cursor", "codex-quota-query-backoff.test.ts": "codex-integration", "pnpm-command-isolation.test.ts": "update", "anti-ban-egress-unification.test.ts": "providers", "provider-antigravity-quota-retry.test.ts": "providers",
     "project-config-warning-snapshot.test.ts": "codex-integration", "codex-quota-auto-refresh-generation.test.ts": "codex-integration", "codex-account-clear-paused.test.ts": "codex-integration", "low-quota-desktop-notifier.test.ts": "codex-integration",
     "low-quota-protection.test.ts": "codex-integration", "bun-runtime-preflight.test.ts": "lib", "definite-overflow-verdict.test.ts": "lib", "responses-compaction-recovery.test.ts": "responses",
     "responses-canonical-nonstream.test.ts": "responses", "compaction-recovery-settings.test.ts": "config", "responses-compaction-recovery-policy.test.ts": "responses", "plugin-loader.test.ts": "lib",
@@ -395,7 +395,7 @@
     "local-management-attestation.test.ts": "server", "local-management-capability.test.ts": "server", "local-management-direct-transport.test.ts": "server", "local-provider-reload-client.test.ts": "server",
     "local-token-detect.test.ts": "oauth", "local-upstream.test.ts": "lib", "logs-model-tier-confirmation.test.ts": "gui", "logs-timezone.test.ts": "server",
     "loop-reasoning-replay.test.ts": "images", "loop.test.ts": "images", "loopback-companion-client-targets.test.ts": "server", "loopback-listener-admission.test.ts": "server",
-    "loopback-listener-integration.test.ts": "server", "main-account-hard-lock-auth.test.ts": "codex-integration", "main-account-hard-lock-fallback-routing.test.ts": "codex-integration", "main-account-hard-lock-usage-limit.test.ts": "codex-integration",
+    "loopback-listener-integration.test.ts": "server", "loopback-security-csp.test.ts": "server", "main-account-hard-lock-auth.test.ts": "codex-integration", "main-account-hard-lock-fallback-routing.test.ts": "codex-integration", "main-account-hard-lock-usage-limit.test.ts": "codex-integration",
     "main-account-hard-lock-default.test.ts": "codex-integration", "main-account-hard-lock-policy.test.ts": "codex-integration", "main-account-hard-lock-refusal-read.test.ts": "codex-integration", "main-account-hard-lock-recovery.test.ts": "codex-integration",
     "main-account-credit-renewal.test.ts": "codex-integration", "main-account-policy-binding-wait.test.ts": "codex-integration", "main-device-reauth-api.test.ts": "codex-integration", "main-device-reauth-ui.test.ts": "gui",
     "main-device-reauth.test.ts": "codex-integration", "main-quota-evidence-validation.test.ts": "codex-integration", "main-account-hard-lock-retirement.test.ts": "codex-integration", "main-quota-provenance.test.ts": "codex-integration",
@@ -424,7 +424,7 @@
     "native-main-claim.test.ts": "codex-integration", "native-main-owner-lifetime.test.ts": "codex-integration", "native-model-toggle.test.ts": "codex-integration", "new-model-policy.test.ts": "providers",
     "new-model-policy-runtime.test.ts": "providers", "nous-oauth-live.test.ts": "providers", "nous-oauth.test.ts": "providers", "novita-provider.test.ts": "providers",
     "nscale-vultr-provider.test.ts": "providers", "nvidia-nim-hardening.test.ts": "providers", "oauth-account-attribution.test.ts": "oauth", "oauth-account-id-collision.test.ts": "oauth",
-    "oauth-account-quota-rank.test.ts": "oauth", "oauth-accounts-api.test.ts": "oauth", "oauth-anthropic-identity.test.ts": "oauth", "oauth-callback-binds.test.ts": "oauth",
+    "oauth-account-quota-rank.test.ts": "oauth", "oauth-accounts-api.test.ts": "oauth", "credential-vault-stores.test.ts": "lib", "oauth-anthropic-identity.test.ts": "oauth", "oauth-callback-binds.test.ts": "oauth",
     "oauth-callback-server.test.ts": "oauth", "oauth-device-code-contract.test.ts": "oauth", "oauth-first-add-hint.test.ts": "gui", "oauth-health.test.ts": "oauth",
     "oauth-log.test.ts": "oauth", "oauth-login-cli-browser-launch.test.ts": "oauth", "oauth-login-cli-errors.test.ts": "oauth", "oauth-antigravity-risk.test.ts": "oauth",
     "oauth-login-cli-live-update.test.ts": "oauth", "oauth-login-open-browser.test.ts": "oauth", "oauth-login-summary.test.ts": "oauth", "oauth-code-login.test.ts": "oauth",
@@ -675,6 +675,7 @@
     "responses-anthropic-cache-control-bridge.test.ts": "responses",
     "api-key-budget-holds.test.ts": "server",
     "embeddings-endpoint.test.ts": "server",
-    "telemetry-otlp-tracing.test.ts": "server"
+    "telemetry-otlp-tracing.test.ts": "server",
+    "provider-egress-and-cc-switch-routes.test.ts": "server"
   }
 }

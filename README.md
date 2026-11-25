@@ -108,11 +108,11 @@ Connect the tool you already use:
 
 | Tool | How to connect |
 |---|---|
-| Codex | Turn on the Codex switch on the dashboard's **Connect** page, then run `codex` as usual. On a local listener this points Codex's built-in provider at the proxy. From the terminal, run `epx init` before adding providers in the dashboard and accept its Codex prompt. |
+| Codex | Turn on the Codex switch on the dashboard's **Route** page, then run `codex` as usual. On a local listener this points Codex's built-in provider at the proxy. From the terminal, run `epx init` before adding providers in the dashboard and accept its Codex prompt. |
 | Claude Code | With the `claude` CLI installed, run `epx claude`. It starts the proxy if needed and launches Claude Code through it. |
 | Claude Desktop | Run `epx claude desktop`. On a new install it sets up the gateway profile for the whole app; an existing first-party setup is kept, and `epx claude desktop apply --gateway` switches explicitly. See the [Claude Code guide](https://easyproxy.me/guides/claude-code/). Fully quit and reopen Claude Desktop after a switch. |
 | Grok Build | On a local listener with Grok integration enabled, `epx start` registers the models when `~/.grok` exists; pick an `epx-*` model in Grok Build. Remote setups: see the [Grok Build guide](https://easyproxy.me/guides/grok-build/). After adding providers, restart the proxy (or run `epx ensure` when Codex autostart is enabled) to refresh the list. |
-| Tools with a managed integration | Use the dashboard **Connect** page, or `epx integration client enable --client <id>`. |
+| Tools with a managed integration | Use the dashboard **Route** page, or `epx integration client enable --client <id>`. |
 | Any other tool | Set a custom OpenAI-compatible base URL of `http://localhost:10100/v1`, or an Anthropic base URL of `http://localhost:10100`. |
 
 The [client support page](https://easyproxy.me/reference/client-support/) lists which path each tool has
@@ -128,7 +128,7 @@ platform from the [latest release](https://github.com/AquilaXk/easyproxy/release
 
 | Platform | File | Notes |
 |---|---|---|
-| macOS 13+ (Apple Silicon and Intel) | `EasyProxy-<version>-macos.dmg` | Universal build, signed with a Developer ID and notarized |
+| macOS 14+ (Apple Silicon and Intel) | `EasyProxy-<version>-macos.dmg` | Universal build; unsigned until Apple Developer ID signing and notarization are configured (macOS Gatekeeper may require right-click → **Open**) |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Code signing via SignPath Foundation is rolling out ([code signing policy](https://easyproxy.me/reference/code-signing/)); until a release is signed, SmartScreen asks once: choose **More info → Run anyway** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb` | The tray needs an AppIndicator-capable desktop |
 

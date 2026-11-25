@@ -102,11 +102,11 @@ epx start                         # プロキシとダッシュボードが loca
 
 | ツール | 接続方法 |
 |---|---|
-| Codex | ダッシュボードの **Connect** ページで Codex スイッチをオンにし、通常どおり `codex` を実行します。ローカルリスナーでは Codex の組み込みプロバイダーがプロキシを指すようになります。ターミナルからは、ダッシュボードでプロバイダーを追加する前に `epx init` を実行し、Codex の確認に同意します。 |
+| Codex | ダッシュボードの **Route** ページで Codex スイッチをオンにし、通常どおり `codex` を実行します。ローカルリスナーでは Codex の組み込みプロバイダーがプロキシを指すようになります。ターミナルからは、ダッシュボードでプロバイダーを追加する前に `epx init` を実行し、Codex の確認に同意します。 |
 | Claude Code | `claude` CLI をインストールした状態で `epx claude` を実行します。必要に応じてプロキシを起動し、そこを経由して Claude Code を起動します。 |
 | Claude Desktop | `epx claude desktop` を実行します。新規インストールではアプリ全体にゲートウェイプロファイルを設定します。既存の first-party 設定は維持され、`epx claude desktop apply --gateway` で明示的に切り替えられます。[Claude Code ガイド](https://easyproxy.me/ja/guides/claude-code/)を参照してください。 切り替えた後は Claude Desktop を完全に終了してから開き直してください。 |
 | Grok Build | ローカルリスナーで Grok 連携が有効かつ `~/.grok` が存在する場合、`epx start` がモデルを登録します。Grok Build で `epx-*` モデルを選択してください。リモート設定は [Grok Build ガイド](https://easyproxy.me/ja/guides/grok-build/)を参照してください。プロバイダーを追加した後は、プロキシを再起動する（または Codex 自動起動が有効なら `epx ensure` を実行する）と一覧を更新できます。 |
-| 管理対象の統合があるツール | ダッシュボードの **Connect** ページか `epx integration client enable --client <id>` を使います。 |
+| 管理対象の統合があるツール | ダッシュボードの **Route** ページか `epx integration client enable --client <id>` を使います。 |
 | その他のツール | カスタムの OpenAI 互換ベース URL に `http://localhost:10100/v1` を、または Anthropic ベース URL に `http://localhost:10100` を設定します。 |
 
 各ツールの接続方法と対応プロトコルは[クライアント対応ページ](https://easyproxy.me/ja/reference/client-support/)に記載しています。
@@ -121,7 +121,7 @@ epx start                         # プロキシとダッシュボードが loca
 
 | プラットフォーム | ファイル | 備考 |
 |---|---|---|
-| macOS 13 以降（Apple Silicon と Intel） | `EasyProxy-<version>-macos.dmg` | ユニバーサルビルド。Developer ID で署名・公証済み |
+| macOS 14 以降（Apple Silicon と Intel） | `EasyProxy-<version>-macos.dmg` | ユニバーサルビルド。Apple Developer ID 署名と公証が設定されるまで未署名配布（macOS Gatekeeper では **右クリック → 開く** が必要な場合があります） |
 | Windows（x64） | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation によるコード署名を導入中（[コード署名ポリシー](https://easyproxy.me/ja/reference/code-signing/)）。署名前のリリースでは SmartScreen が一度だけ確認するので、**詳細情報 → 実行**を選択 |
 | Linux（x86_64） | `EasyProxy-<version>-linux-x86_64.AppImage` または `-linux-amd64.deb` | トレイには AppIndicator 対応のデスクトップが必要 |
 

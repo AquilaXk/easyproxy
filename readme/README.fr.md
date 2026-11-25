@@ -103,11 +103,11 @@ Connectez l’outil que vous utilisez déjà :
 
 | Outil | Connexion |
 |---|---|
-| Codex | Activez le commutateur Codex sur la page **Connect** du tableau de bord, puis exécutez `codex` comme d’habitude. Sur une écoute locale, cela dirige le fournisseur intégré de Codex vers le proxy. Depuis le terminal, exécutez `epx init` avant d’ajouter des fournisseurs dans le tableau de bord et acceptez son invite Codex. |
+| Codex | Activez le commutateur Codex sur la page **Route** du tableau de bord, puis exécutez `codex` comme d’habitude. Sur une écoute locale, cela dirige le fournisseur intégré de Codex vers le proxy. Depuis le terminal, exécutez `epx init` avant d’ajouter des fournisseurs dans le tableau de bord et acceptez son invite Codex. |
 | Claude Code | Avec le CLI `claude` installé, exécutez `epx claude`. Il démarre le proxy si nécessaire et lance Claude Code à travers celui-ci. |
 | Claude Desktop | Exécutez `epx claude desktop`. Lors d’une nouvelle installation, cette commande configure le profil de passerelle pour toute l’application ; une configuration first-party existante est conservée et `epx claude desktop apply --gateway` permet de changer explicitement. Consultez le [guide Claude Code](https://easyproxy.me/fr/guides/claude-code/). Quittez complètement puis rouvrez Claude Desktop après un changement. |
 | Grok Build | Sur une écoute locale avec l’intégration Grok activée, `epx start` enregistre les modèles lorsque `~/.grok` existe ; choisissez un modèle `epx-*` dans Grok Build. Pour une configuration distante, consultez le [guide Grok Build](https://easyproxy.me/fr/guides/grok-build/). Après avoir ajouté des fournisseurs, redémarrez le proxy (ou lancez `epx ensure` lorsque le démarrage automatique de Codex est activé) pour actualiser la liste. |
-| Outils avec intégration gérée | Utilisez la page **Connect** du tableau de bord ou `epx integration client enable --client <id>`. |
+| Outils avec intégration gérée | Utilisez la page **Route** du tableau de bord ou `epx integration client enable --client <id>`. |
 | Tout autre outil | Définissez l’URL de base compatible OpenAI `http://localhost:10100/v1` ou l’URL de base Anthropic `http://localhost:10100`. |
 
 La [page des clients pris en charge](https://easyproxy.me/fr/reference/client-support/) indique la méthode de connexion et le protocole de chaque outil.
@@ -122,7 +122,7 @@ correspondant à votre plateforme sur la page de la [dernière version publiée]
 
 | Plateforme | Fichier | Remarques |
 |---|---|---|
-| macOS 13+ (Apple Silicon et Intel) | `EasyProxy-<version>-macos.dmg` | Compilation universelle, signée avec un identifiant Developer ID et notariée |
+| macOS 14+ (Apple Silicon et Intel) | `EasyProxy-<version>-macos.dmg` | Compilation universelle ; non signée tant que la signature Apple Developer ID et la notarisation ne sont pas configurées (Gatekeeper peut exiger **Clic droit → Ouvrir**) |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Signature du code via SignPath Foundation en cours de déploiement ([politique de signature du code](https://easyproxy.me/fr/reference/code-signing/)) ; tant qu’une version n’est pas signée, SmartScreen demande une confirmation : choisissez **Informations complémentaires → Exécuter quand même** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` ou `-linux-amd64.deb` | La barre d'état nécessite un environnement de bureau compatible AppIndicator |
 

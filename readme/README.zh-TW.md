@@ -102,11 +102,11 @@ epx start                         # 代理 + 儀表板位於 localhost:10100
 
 | 工具 | 連接方式 |
 |---|---|
-| Codex | 開啟儀表板 **Connect** 頁面的 Codex 開關，然後照常執行 `codex`。在本機監聽時，這會讓 Codex 內建供應商指向代理。使用終端機時，請在儀表板新增供應商之前執行 `epx init` 並接受其 Codex 提示。 |
+| Codex | 開啟儀表板 **Route** 頁面的 Codex 開關，然後照常執行 `codex`。在本機監聽時，這會讓 Codex 內建供應商指向代理。使用終端機時，請在儀表板新增供應商之前執行 `epx init` 並接受其 Codex 提示。 |
 | Claude Code | 安裝 `claude` CLI 後執行 `epx claude`。它會在需要時啟動代理，並透過代理啟動 Claude Code。 |
 | Claude Desktop | 執行 `epx claude desktop`。全新安裝時會為整個應用程式設定閘道設定檔；既有的 first-party 設定會保留，可執行 `epx claude desktop apply --gateway` 明確切換。詳見 [Claude Code 指南](https://easyproxy.me/zh-tw/guides/claude-code/)。 切換後請完全結束並重新開啟 Claude Desktop。 |
 | Grok Build | 在本機監聽且啟用 Grok 整合時，若 `~/.grok` 存在，`epx start` 會註冊模型；在 Grok Build 中選擇 `epx-*` 模型。遠端設定請參見 [Grok Build 指南](https://easyproxy.me/zh-tw/guides/grok-build/)。新增供應商後，重新啟動代理（或在啟用 Codex 自動啟動時執行 `epx ensure`）以更新清單。 |
-| 具備受管理整合的工具 | 使用儀表板的 **Connect** 頁面，或執行 `epx integration client enable --client <id>`。 |
+| 具備受管理整合的工具 | 使用儀表板的 **Route** 頁面，或執行 `epx integration client enable --client <id>`。 |
 | 其他工具 | 將自訂 OpenAI 相容基本 URL 設為 `http://localhost:10100/v1`，或將 Anthropic 基本 URL 設為 `http://localhost:10100`。 |
 
 [用戶端支援頁面](https://easyproxy.me/zh-tw/reference/client-support/)列出各工具的連接方式與使用的協定。
@@ -121,7 +121,7 @@ epx start                         # 代理 + 儀表板位於 localhost:10100
 
 | 平台 | 檔案 | 說明 |
 |---|---|---|
-| macOS 13+（Apple Silicon 與 Intel） | `EasyProxy-<version>-macos.dmg` | 通用建置，以 Developer ID 簽章並經過公證 |
+| macOS 14+（Apple Silicon 與 Intel） | `EasyProxy-<version>-macos.dmg` | 通用建置；在設定 Apple Developer ID 簽章與公證前為未簽章版本（macOS Gatekeeper 可能需 **右鍵 → 打開**） |
 | Windows（x64） | `EasyProxy-<version>-windows-x64.msi` | 正透過 SignPath Foundation 推出程式碼簽章（[程式碼簽章政策](https://easyproxy.me/zh-tw/reference/code-signing/)）；在版本簽章之前，SmartScreen 會詢問一次，選擇 **More info → Run anyway** |
 | Linux（x86_64） | `EasyProxy-<version>-linux-x86_64.AppImage` 或 `-linux-amd64.deb` | 系統匣需要支援 AppIndicator 的桌面環境 |
 
