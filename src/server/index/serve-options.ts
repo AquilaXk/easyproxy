@@ -1279,7 +1279,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           inboundProtocol: "responses",
           ...(isOtlpTracingEnabled(config) ? { otlpSpan: startOtlpRequestSpan(req, config, { method: req.method, pathname: url.pathname, protocol: "responses" }) } : {}),
         };
-        const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
+        const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission, undefined, { loopbackListener: !isApiAuthRequired(policy) });
         return runAdmittedHttpTurn(req, policy, async turnAdmissionLease => {
           let response: Response;
           try {
@@ -1442,7 +1442,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         };
         const sessionReq = withCallerSessionIdentity(withGrokSessionIdentity(req), admission);
         // Capture at authentication: runAdmittedHttpTurn can wait for body capacity first (#7859).
-        const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
+        const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission, undefined, { loopbackListener: !isApiAuthRequired(policy) });
         return runAdmittedHttpTurn(sessionReq, policy, async turnAdmissionLease => {
           let response: Response;
           try {
@@ -1535,7 +1535,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         const claimRequestLog = (work: (lease: ActiveTurnLease) => Promise<Response>) =>
           (lease: ActiveTurnLease) => { ownsRequestLog = true; return work(lease); };
         // Capture at authentication: runAdmittedHttpTurn can wait for body capacity first (#7859).
-        const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
+        const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission, undefined, { loopbackListener: !isApiAuthRequired(policy) });
         const response = await runAdmittedHttpTurn(sessionReq, policy, claimRequestLog(async turnAdmissionLease => withCors(
           await handleClaudeMessages(sessionReq, config, logCtx, { requestId, start, turnAdmissionLease, admission, advisorAdmissionPolicy, onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer) }, policy, { claudeIntercept: ingress === "claude-intercept" }),
           req,
@@ -1576,7 +1576,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         // Only expose an id when the handler or a logged refusal owns its history row.
         let ownsRequestLog = false;
         // Capture at authentication: runAdmittedHttpTurn can wait for body capacity first (#7859).
-        const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
+        const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission, undefined, { loopbackListener: !isApiAuthRequired(policy) });
         const response = await runAdmittedHttpTurn(sessionReq, policy, async turnAdmissionLease => {
           ownsRequestLog = true;
           return withCors(

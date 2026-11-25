@@ -142,7 +142,7 @@ test("HTTP handler keeps recovery memoization for the admitted principal only", 
       { type: "message", role: "user", content: [{ type: "input_text", text: "after" }] },
     ] }) });
     const admission = resolveResponsesApiAuth(req, { hostname: "127.0.0.1", apiKeys: config.apiKeys });
-    expect(admission?.kind).toBe("loopback");
+    expect(admission?.kind).toBe(caller ? "configured" : "loopback");
     const response = await handleResponses(req, config, { model: "", provider: "" }, { admission: admission! });
     expect(response.status).toBe(200);
     await response.text();

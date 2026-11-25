@@ -4,6 +4,9 @@ import { transientRetryOn5xxPolicyConfigError } from "../config/load-degrade";
 import { providerRelativeSendPathConfigError } from "../config/provider-relative-send-path";
 import { contextTierRecordConfigError, modelCapabilitiesConfigError, providerInputModalitiesConfigError } from "../config/provider-validation";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getConfigDir } from "../config/paths";
 import { initialModelSelection } from "../providers/initial-model-selection";
 import { extractAccountId } from "../oauth/chatgpt";
 import { formatErrorResponse } from "../bridge";
@@ -170,13 +173,44 @@ export function isSameOriginAsRequest(req: Request, origin: string): boolean {
   }
 }
 
+export function requestDashboardOrigin(req: Request, config: RequestPolicyView): string | null {
+  const proxied = dashboardProxyOrigin(req, config as EpxConfig);
+  if (proxied) return proxied;
+  let protocol: string;
+  try {
+    protocol = new URL(req.url).protocol;
+  } catch {
+    return null;
+  }
+  if (protocol !== "http:" && protocol !== "https:") return null;
+  const host = req.headers.get("Host");
+  if (host !== null && host !== "") {
+    if (!parseHttpHost(host)) return null;
+    try {
+      return new URL(`${protocol}//${host}`).origin;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const origin = new URL(req.url).origin;
+    return origin === "null" ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
 export function isAllowedRequestOrigin(req: Request, config: RequestPolicyView): boolean {
   const origin = req.headers.get("Origin");
-  if (!isApiAuthRequired(config)) {
-    if (!isLoopbackRequestHost(req.headers.get("Host"))) return false;
-    return !origin || isLoopbackOriginValue(origin) || isExtraAllowedOrigin(origin, config);
+  if (!isApiAuthRequired(config) && !isLoopbackRequestHost(req.headers.get("Host"))) {
+    return false;
   }
-  return !origin || isLoopbackOriginValue(origin) || isSameOriginAsRequest(req, origin) || isExtraAllowedOrigin(origin, config);
+  if (!origin) return true;
+  if (isExtraAllowedOrigin(origin, config)) return true;
+  const parsedOrigin = comparableOrigin(origin);
+  if (!parsedOrigin) return false;
+  const dashboardOrigin = requestDashboardOrigin(req, config);
+  return dashboardOrigin !== null && parsedOrigin === dashboardOrigin;
 }
 
 function isExtraAllowedOrigin(origin: string, cfg: RequestPolicyView): boolean {
@@ -413,12 +447,13 @@ export interface LinkIngressPolicy {
   allowedKeyIds: ReadonlySet<string>;
 }
 
-export type RequestPolicyView = Pick<EpxConfig, "hostname" | "corsAllowOrigins" | "apiKeys"> & {
+export type RequestPolicyView = Pick<EpxConfig, "hostname" | "corsAllowOrigins" | "apiKeys" | "dashboardTrustedProxy" | "runtimeRole"> & {
   linkIngress?: LinkIngressPolicy;
 };
 
 export type DataPlaneAdmissionOptions = {
   linkIngress?: ReadonlySet<string>;
+  allowLoopbackOnly?: boolean;
   now?: number;
 };
 
@@ -432,6 +467,8 @@ export function requestPolicyView(
     hostname: bindHostname,
     ...(config.corsAllowOrigins ? { corsAllowOrigins: config.corsAllowOrigins } : {}),
     ...(config.apiKeys ? { apiKeys: config.apiKeys } : {}),
+    ...(config.dashboardTrustedProxy ? { dashboardTrustedProxy: config.dashboardTrustedProxy } : {}),
+    ...(config.runtimeRole ? { runtimeRole: config.runtimeRole } : {}),
     ...(linkIngress ? { linkIngress } : {}),
   };
 }
@@ -586,37 +623,63 @@ export function isApiKeyExpired(entry: Pick<EpxApiKeyEntry, "expiresAt">, now = 
   return !Number.isFinite(expiresMs) || expiresMs <= now;
 }
 
+type DataPlaneAdmissionOutcome =
+  | { status: "matched"; admission: DataPlaneAdmission }
+  | { status: "expired" }
+  | { status: "unmatched" };
+
+function resolveDataPlaneAdmissionOutcome(
+  token: string,
+  config: Pick<EpxConfig, "apiKeys">,
+  source: DataPlaneAdmissionSource = "dedicated",
+  options: DataPlaneAdmissionOptions = {},
+): DataPlaneAdmissionOutcome {
+  const actual = token.trim();
+  if (!actual) return { status: "unmatched" };
+  const actualBytes = SHARED_TEXT_ENCODER.encode(actual);
+  if (!options.linkIngress) {
+    const envMat = getEnvTokenMaterial(configuredApiAuthToken(config));
+    if (envMat && timingSafeBytesEqual(actualBytes, envMat.bytes)) {
+      return { status: "matched", admission: { kind: "environment", source, contextPrincipalId: envMat.principalId } };
+    }
+  }
+  const apiKeys = config.apiKeys;
+  if (!apiKeys?.length) return { status: "unmatched" };
+  const now = options.now ?? Date.now();
+  let matchedExpired = false;
+  for (const k of apiKeys) {
+    if (k.loopbackOnly === true && options.allowLoopbackOnly !== true) continue;
+    const keyId = typeof k.id === "string" ? k.id : "";
+    if (options.linkIngress && !options.linkIngress.has(keyId)) continue;
+    const mat = getApiKeyMaterial(apiKeys, k);
+    const primaryMatch = timingSafeBytesEqual(actualBytes, mat.primary.bytes);
+    const pendingMatch = !!mat.pending && timingSafeBytesEqual(actualBytes, mat.pending.bytes);
+    if (!primaryMatch && !pendingMatch) continue;
+    if (isApiKeyExpired(k, now)) {
+      matchedExpired = true;
+      continue;
+    }
+    if (primaryMatch) {
+      return { status: "matched", admission: { kind: "configured", keyId, source, contextPrincipalId: mat.primary.principalId } };
+    }
+    if (pendingMatch && mat.pending) {
+      if (mat.pending.expiresAtMs > now) {
+        return { status: "matched", admission: { kind: "configured", keyId, source, contextPrincipalId: mat.pending.principalId } };
+      }
+      matchedExpired = true;
+    }
+  }
+  return matchedExpired ? { status: "expired" } : { status: "unmatched" };
+}
+
 export function resolveDataPlaneAdmissionSecret(
   token: string,
   config: Pick<EpxConfig, "apiKeys">,
   source: DataPlaneAdmissionSource = "dedicated",
   options: DataPlaneAdmissionOptions = {},
 ): DataPlaneAdmission | null {
-  const actual = token.trim();
-  if (!actual) return null;
-  const actualBytes = SHARED_TEXT_ENCODER.encode(actual);
-  if (!options.linkIngress) {
-    const envMat = getEnvTokenMaterial(configuredApiAuthToken(config));
-    if (envMat && timingSafeBytesEqual(actualBytes, envMat.bytes)) {
-      return { kind: "environment", source, contextPrincipalId: envMat.principalId };
-    }
-  }
-  const apiKeys = config.apiKeys;
-  if (!apiKeys?.length) return null;
-  const now = options.now ?? Date.now();
-  for (const k of apiKeys) {
-    if (isApiKeyExpired(k, now)) continue;
-    const keyId = typeof k.id === "string" ? k.id : "";
-    if (options.linkIngress && !options.linkIngress.has(keyId)) continue;
-    const mat = getApiKeyMaterial(apiKeys, k);
-    if (timingSafeBytesEqual(actualBytes, mat.primary.bytes)) {
-      return { kind: "configured", keyId, source, contextPrincipalId: mat.primary.principalId };
-    }
-    if (mat.pending && mat.pending.expiresAtMs > now && timingSafeBytesEqual(actualBytes, mat.pending.bytes)) {
-      return { kind: "configured", keyId, source, contextPrincipalId: mat.pending.principalId };
-    }
-  }
-  return null;
+  const outcome = resolveDataPlaneAdmissionOutcome(token, config, source, options);
+  return outcome.status === "matched" ? outcome.admission : null;
 }
 
 function canonicalHubManagementOrigin(value: unknown): string | null {
@@ -648,7 +711,7 @@ export function isContextPrincipalCurrent(principal: string | undefined, config:
     if (!secret || mintContextPrincipal("configured", keyId, secret) !== principal) return false;
     // Preserve the resolver's precedence if an environment token or another key
     // now shadows this entry. The same key id with a replacement secret is not this owner.
-    return contextPrincipalIdOf(resolveDataPlaneAdmissionSecret(secret, config) ?? undefined) === principal;
+    return contextPrincipalIdOf(resolveDataPlaneAdmissionSecret(secret, config, "dedicated", { allowLoopbackOnly: true }) ?? undefined) === principal;
   };
   for (const key of config.apiKeys ?? []) {
     const keyId = typeof key.id === "string" ? key.id : "";
@@ -682,7 +745,7 @@ export function resolveContextPrincipalFromHeaders(
   const apiKey = headers.get("x-api-key")?.trim();
   for (const [token, source] of [[dedicated, "dedicated"], [bearer, "bearer"], [apiKey, "x-api-key"]] as const) {
     if (!token) continue;
-    const resolved = resolveDataPlaneAdmissionSecret(token, config, source);
+    const resolved = resolveDataPlaneAdmissionSecret(token, config, source, { allowLoopbackOnly: true });
     const principal = contextPrincipalIdOf(resolved ?? undefined);
     if (principal) return principal;
   }
@@ -733,7 +796,7 @@ export function resolveDurableReplayPrincipal(
 
 /** Whether `token` is a data-plane admission secret. */
 export function isDataPlaneAdmissionSecret(token: string, config: EpxConfig): boolean {
-  return resolveDataPlaneAdmissionSecret(token, config) !== null;
+  return resolveDataPlaneAdmissionSecret(token, config, "dedicated", { allowLoopbackOnly: !isApiAuthRequired(config) }) !== null;
 }
 
 /**
@@ -838,21 +901,85 @@ export function hasForwardableCodexBearer(headers: Headers, config: EpxConfig): 
   return !!bearer && !!accountId && !isProxyAdmissionSecret(bearer, config);
 }
 
+const LOOPBACK_DSH_BEARER_PLACEHOLDER = "epx_data_dsh";
+
+function isProxyCredentialShape(token: string, source: DataPlaneAdmissionSource): boolean {
+  if (source === "bearer" && token === LOOPBACK_DSH_BEARER_PLACEHOLDER) return false;
+  return /^epx_(?:data|admin|session)_/.test(token) || /^epx_[0-9a-f]{40}$/.test(token);
+}
+
+function readLiveAdminFileToken(): string | undefined {
+  try {
+    const path = join(getConfigDir(), "admin-api-token");
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 512) return undefined;
+    const token = readFileSync(path, "utf8").trim();
+    return /^epx_admin_[A-Za-z0-9_-]{43}$/.test(token) ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isLiveLoopbackAdminSecret(token: string): boolean {
+  if (isManagementAdmissionSecret(token)) return true;
+  if (!token.startsWith("epx_admin_")) return false;
+  const fileToken = readLiveAdminFileToken();
+  return fileToken !== undefined && secretEquals(token, fileToken);
+}
+
 /**
  * Resolving form of `hasValidApiAuth`: identical header precedence, identical
  * decision, but it names the admission instead of collapsing it to a boolean.
  */
 export function resolveApiAuth(req: Request, config: RequestPolicyView): DataPlaneAdmission | null {
-  // A loopback bind never reads a token at all, so there is no key to name.
-  if (!isApiAuthRequired(config)) return { kind: "loopback", source: "loopback" };
+  const loopback = !isApiAuthRequired(config);
+  const options: DataPlaneAdmissionOptions = loopback
+    ? { linkIngress: config.linkIngress?.allowedKeyIds, allowLoopbackOnly: true }
+    : { linkIngress: config.linkIngress?.allowedKeyIds };
+  const hasConfiguredKeys = (config.apiKeys?.length ?? 0) > 0;
   const dedicated = req.headers.get("x-easyproxy-api-key")?.trim();
-  if (dedicated) return resolveDataPlaneAdmissionSecret(dedicated, config, "dedicated", { linkIngress: config.linkIngress?.allowedKeyIds });
+  if (dedicated) {
+    if (loopback && isLiveLoopbackAdminSecret(dedicated)) {
+      return { kind: "loopback", source: "loopback" };
+    }
+    const outcome = resolveDataPlaneAdmissionOutcome(dedicated, config, "dedicated", options);
+    if (outcome.status === "matched") {
+      return loopback && outcome.admission.kind === "environment"
+        ? { kind: "loopback", source: "loopback" }
+        : outcome.admission;
+    }
+    if (!loopback || isProxyCredentialShape(dedicated, "dedicated") || outcome.status === "expired" || hasConfiguredKeys) {
+      return null;
+    }
+  }
   const bearer = authorizationCredential(req.headers);
-  if (bearer) return resolveDataPlaneAdmissionSecret(bearer, config, "bearer", { linkIngress: config.linkIngress?.allowedKeyIds });
+  if (bearer) {
+    const isProxyShape = isProxyCredentialShape(bearer, "bearer");
+    const outcome = !loopback || isProxyShape
+      ? resolveDataPlaneAdmissionOutcome(bearer, config, "bearer", options)
+      : null;
+    if (outcome?.status === "matched") {
+      return loopback && outcome.admission.kind === "environment"
+        ? { kind: "loopback", source: "loopback" }
+        : outcome.admission;
+    }
+    if (!loopback || isProxyShape || outcome?.status === "expired") return null;
+  }
   // Anthropic-SDK clients (Claude Code with ANTHROPIC_API_KEY) authenticate via x-api-key.
   const apiKey = req.headers.get("x-api-key")?.trim();
-  if (apiKey) return resolveDataPlaneAdmissionSecret(apiKey, config, "x-api-key", { linkIngress: config.linkIngress?.allowedKeyIds });
-  return null;
+  if (apiKey) {
+    const isProxyShape = isProxyCredentialShape(apiKey, "x-api-key");
+    const outcome = !loopback || isProxyShape
+      ? resolveDataPlaneAdmissionOutcome(apiKey, config, "x-api-key", options)
+      : null;
+    if (outcome?.status === "matched") {
+      return loopback && outcome.admission.kind === "environment"
+        ? { kind: "loopback", source: "loopback" }
+        : outcome.admission;
+    }
+    if (!loopback || isProxyShape || outcome?.status === "expired") return null;
+  }
+  return loopback ? { kind: "loopback", source: "loopback" } : null;
 }
 
 export function hasValidApiAuth(req: Request, config: RequestPolicyView): boolean {
@@ -870,19 +997,47 @@ export function requireApiAuth(req: Request, config: RequestPolicyView, _kind: "
  * domains can never be confused.
  */
 export function resolveResponsesApiAuth(req: Request, config: RequestPolicyView): DataPlaneAdmission | null {
-  if (!isApiAuthRequired(config)) return { kind: "loopback", source: "loopback" };
+  const loopback = !isApiAuthRequired(config);
+  const options: DataPlaneAdmissionOptions = loopback
+    ? { linkIngress: config.linkIngress?.allowedKeyIds, allowLoopbackOnly: true }
+    : { linkIngress: config.linkIngress?.allowedKeyIds };
+  const hasConfiguredKeys = (config.apiKeys?.length ?? 0) > 0;
   // The dedicated header still WINS, because it is unambiguous.
   const dedicated = req.headers.get("x-easyproxy-api-key")?.trim();
-  if (dedicated) return resolveDataPlaneAdmissionSecret(dedicated, config, "dedicated", { linkIngress: config.linkIngress?.allowedKeyIds });
+  if (dedicated) {
+    if (loopback && isLiveLoopbackAdminSecret(dedicated)) {
+      return { kind: "loopback", source: "loopback" };
+    }
+    const outcome = resolveDataPlaneAdmissionOutcome(dedicated, config, "dedicated", options);
+    if (outcome.status === "matched") {
+      return loopback && outcome.admission.kind === "environment"
+        ? { kind: "loopback", source: "loopback" }
+        : outcome.admission;
+    }
+    if (!loopback || isProxyCredentialShape(dedicated, "dedicated") || outcome.status === "expired" || hasConfiguredKeys) {
+      return null;
+    }
+  }
   // #1686: a bearer may also be one of OUR admission secrets. Rejecting it outright meant a
   // Codex client configured with `env_key` could not reach Direct at all. Admitting it is only
   // safe because the upstream credential is then SUBSTITUTED rather than forwarded -- see
   // materializeCodexUpstreamAuth. A bearer that is NOT our secret stays unadmitted here and
   // remains Codex Direct passthrough, so the two bearer domains still never mix.
   const bearer = authorizationCredential(req.headers);
-  if (bearer) return resolveDataPlaneAdmissionSecret(bearer, config, "bearer", { linkIngress: config.linkIngress?.allowedKeyIds });
+  if (bearer) {
+    const isProxyShape = isProxyCredentialShape(bearer, "bearer");
+    const outcome = !loopback || isProxyShape
+      ? resolveDataPlaneAdmissionOutcome(bearer, config, "bearer", options)
+      : null;
+    if (outcome?.status === "matched") {
+      return loopback && outcome.admission.kind === "environment"
+        ? { kind: "loopback", source: "loopback" }
+        : outcome.admission;
+    }
+    if (!loopback || isProxyShape || outcome?.status === "expired") return null;
+  }
   // `x-api-key` is deliberately NOT accepted on this transport.
-  return null;
+  return loopback ? { kind: "loopback", source: "loopback" } : null;
 }
 
 

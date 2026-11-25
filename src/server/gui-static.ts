@@ -144,13 +144,18 @@ function runtimeRoleMeta(runtimeRole: string): string {
 function managementAuthRequiredMeta(required: boolean): string {
   return `<meta name="easyproxy-management-auth-required" content="${required ? "1" : "0"}">`;
 }
+const GUI_HTML_SECURITY_HEADERS = {
+  ...browserSecurityHeaders(),
+  "Content-Security-Policy": "frame-ancestors 'none'; script-src 'self'; connect-src 'self'; object-src 'none'",
+};
+
 function htmlDocumentResponse(html: string): Response {
   return new Response(html, {
     headers: {
       "Content-Type": "text/html",
       "Cache-Control": "no-store",
       Pragma: "no-cache",
-      ...browserSecurityHeaders(),
+      ...GUI_HTML_SECURITY_HEADERS,
     },
   });
 }
@@ -204,42 +209,45 @@ export function serveGuiFile(
   if (!filePath) return null;
 
   const root = resolve(guiDist);
-  let servedPath = filePath;
+  const requestedRel = relative(root, filePath).replace(/\\/g, "/");
+  if (requestedRel === "classic" || requestedRel.startsWith("classic/")) {
+    if (!extname(pathname)) {
+      return new Response(null, {
+        status: 308,
+        headers: {
+          Location: "/",
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+          ...GUI_HTML_SECURITY_HEADERS,
+        },
+      });
+    }
+    return null;
+  }
+
+  const servedPath = filePath;
   if (!isFile(servedPath)) {
-    const requestedRel = relative(root, servedPath).replace(/\\/g, "/");
-    if (requestedRel.startsWith("classic/assets/")) {
-      const name = requestedRel.slice("classic/assets/".length);
-      if (!name.includes("/") && HASHED_ASSET_PATTERN.test(name)) {
-        const sharedPath = resolve(root, "assets", name);
-        if (isFile(sharedPath)) servedPath = sharedPath;
+    if (!extname(pathname)) {
+      const indexPath = join(guiDist, "index.html");
+      if (isFile(indexPath)) {
+        return htmlResponse(indexPath, session, runtimeRole, managementAuthRequired);
       }
     }
-    if (!isFile(servedPath)) {
-      if (!extname(pathname)) {
-        // A directory with its own index.html is a separate app (the classic dashboard at
-        // /classic/); every other extensionless path is the main dashboard's SPA fallback.
-        const nestedIndex = join(filePath, "index.html");
-        const indexPath = isFile(nestedIndex) ? nestedIndex : join(guiDist, "index.html");
-        if (isFile(indexPath)) {
-          return htmlResponse(indexPath, session, runtimeRole, managementAuthRequired);
-        }
-      }
-      return null;
-    }
+    return null;
   }
 
   const ext = extname(servedPath);
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
   if (ext === ".html") return htmlResponse(servedPath, session, runtimeRole, managementAuthRequired);
 
-  // "assets/" and "classic/assets/" match Vite's assetsDir for the main and classic builds.
+  // "assets/" matches Vite's assetsDir for the main build.
   // servedPath is already resolve()-normalized, so rel cannot contain ".." fragments.
   //
-  // Immutable 1-year caching is only applied when the file is under assets/ or classic/assets/
+  // Immutable 1-year caching is only applied when the file is under assets/
   // AND its basename matches Vite's content-hash pattern (e.g. index-B5r7LNHN.js). Any unhashed
   // asset (e.g. runtime-config.js) falls back to no-cache so clients revalidate.
   const rel = relative(root, servedPath).replace(/\\/g, "/");
-  const isHashedAsset = (rel.startsWith("assets/") || rel.startsWith("classic/assets/"))
+  const isHashedAsset = rel.startsWith("assets/")
     && HASHED_ASSET_PATTERN.test(basename(servedPath));
   const cacheControl = isHashedAsset
     ? "public, max-age=31536000, immutable"

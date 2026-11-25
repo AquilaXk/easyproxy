@@ -27,6 +27,7 @@ interface Stash extends Written {
   prior: { gateway: Prior; defaultModelId: Prior; list: Prior; modelsPresent: boolean };
   pending?: Written;
   pathWiseOnly?: true;
+  issuedKeyId?: string;
 }
 const statesOf = (stash: Stash): Written[] => [stash, ...(stash.pending ? [stash.pending] : [])];
 
@@ -63,11 +64,38 @@ function serialize(p: Parsed): Buffer {
   return Buffer.from((p.bom ? BOM : "") + text + (p.trailing ? p.eol : ""));
 }
 
-function ours(gw: unknown, target?: GatewayTarget): "match" | "other-url" | "no" {
+function stashedGatewayMatch(gw: unknown, stash: Stash | null): "match" | "other-url" | "no" {
+  if (!isObj(gw) || gw.enabled !== true || !stash) return "no";
+  const candidates = statesOf(stash)
+    .map(state => state.written.gateway)
+    .filter((entry): entry is Json => isObj(entry) && typeof entry.url === "string" && typeof entry.apiKey === "string");
+  for (const written of candidates) {
+    if (gw.apiKey !== written.apiKey) continue;
+    return normalizeUrl(gw.url) === normalizeUrl(written.url) ? "match" : "other-url";
+  }
+  return "no";
+}
+
+function ours(gw: unknown, target?: GatewayTarget, stash: Stash | null = null): "match" | "other-url" | "no" {
   if (!isObj(gw) || gw.enabled !== true) return "no";
   if (target && normalizeUrl(gw.url) === normalizeUrl(target.url)) return "match";
-  if (!target) return gw.apiKey === GATEWAY_PLACEHOLDER_KEY ? "match" : "no";
-  return gw.apiKey === GATEWAY_PLACEHOLDER_KEY ? "other-url" : "no";
+  if (!target) {
+    if (gw.apiKey === GATEWAY_PLACEHOLDER_KEY) return "match";
+    return stashedGatewayMatch(gw, stash) === "match" ? "match" : "no";
+  }
+  if (gw.apiKey === GATEWAY_PLACEHOLDER_KEY) return "other-url";
+  const stashed = stashedGatewayMatch(gw, stash);
+  return stashed === "no" ? "no" : "other-url";
+}
+
+export function readAntigravityIssuedKeyId(ctx: GatewayClientContext): string | undefined {
+  if (!inspectStashPresence(ctx, ID)) return undefined;
+  try {
+    const stash = readStash<Stash>(ctx, ID);
+    return typeof stash?.issuedKeyId === "string" && stash.issuedKeyId.trim() ? stash.issuedKeyId.trim() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function status(ctx: GatewayClientContext, target?: GatewayTarget): GatewayClientStatus {
@@ -76,7 +104,11 @@ function status(ctx: GatewayClientContext, target?: GatewayTarget): GatewayClien
   const parsed = parseSettings(file?.bytes ?? null);
   const gw = typeof parsed === "string" ? undefined : parsed.doc.gateway;
   const hasRecord = inspectStashPresence(ctx, ID);
-  const match = ours(gw, target) === "match";
+  let stash: Stash | null = null;
+  if (hasRecord) {
+    try { stash = readStash<Stash>(ctx, ID); } catch { stash = null; }
+  }
+  const match = ours(gw, target, stash) === "match";
   const state = match ? "connected" : hasRecord || file === undefined ? "drifted" : "disconnected";
   const overrides: GatewayClientStatus["overrides"] = [];
   const admin = adminGatewayOverride(ctx);
@@ -114,7 +146,7 @@ function connect(ctx: GatewayClientContext, target: GatewayTarget): GatewayClien
   const { doc } = parsed;
   let stash = checkedStash(ctx, path);
   assertSameTarget(stash, file?.target);
-  const keep = stash !== null && ours(doc.gateway, undefined) === "match";
+  const keep = stash !== null && (ours(doc.gateway, undefined, stash) === "match" || ours(doc.gateway, target, stash) === "match");
   const onDisk = keep && file ? statesOf(stash!).find(st => st.writtenSha256 === file.hash) : undefined;
   const models = isObj(doc.models) ? doc.models : undefined;
   const dir = join(ctx.home, ".antigravity");
@@ -150,7 +182,8 @@ function connect(ctx: GatewayClientContext, target: GatewayTarget): GatewayClien
   }
   const out = serialize(parsed);
   const outSha = sha256(out);
-  const next = stash as Stash;
+  const next: Stash = { ...(stash as Stash), ...(target.issuedKeyId ? { issuedKeyId: target.issuedKeyId } : {}) };
+  if (!target.issuedKeyId) delete next.issuedKeyId;
   const applied: Written = { written: { gateway, defaultModelId: target.defaultModel ?? (keep ? next.written.defaultModelId : null) }, writtenSha256: outSha };
   assertClientSize(out);
   writeStash(ctx, ID, { ...next, pending: applied });

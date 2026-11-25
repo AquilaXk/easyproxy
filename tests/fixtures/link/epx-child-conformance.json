@@ -282,10 +282,21 @@
       "path": "/v1/models",
       "query": "",
       "hostHeader": "localhost:10100",
-      "originHeader": "http://localhost:3000",
+      "originHeader": "http://localhost:10100",
       "upgradeHeader": null,
       "expectedAction": "relay_data",
       "expectedAuthHeader": "bearer"
+    },
+    {
+      "id": "cross_port_loopback_origin_get_403",
+      "method": "GET",
+      "path": "/v1/models",
+      "query": "",
+      "hostHeader": "localhost:10100",
+      "originHeader": "http://localhost:3000",
+      "upgradeHeader": null,
+      "expectedAction": "reject_403_origin",
+      "expectedAuthHeader": "none"
     },
     {
       "id": "get_artifact",
@@ -403,9 +414,20 @@
       "path": "/v1/responses",
       "query": "",
       "hostHeader": "127.0.0.1:10100",
-      "originHeader": "http://127.0.0.1:5173",
+      "originHeader": "http://127.0.0.1:10100",
       "upgradeHeader": "websocket",
       "expectedAction": "reject_426_websocket",
+      "expectedAuthHeader": "none"
+    },
+    {
+      "id": "cross_port_loopback_ws_403",
+      "method": "GET",
+      "path": "/v1/responses",
+      "query": "",
+      "hostHeader": "127.0.0.1:10100",
+      "originHeader": "http://127.0.0.1:5173",
+      "upgradeHeader": "websocket",
+      "expectedAction": "reject_403_origin",
       "expectedAuthHeader": "none"
     },
     {

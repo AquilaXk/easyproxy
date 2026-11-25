@@ -51,6 +51,8 @@ import {
 import { cancelKiroDeviceLogin, kiroDeviceConfigBaseline, selectKiroDeviceProfile, startKiroDeviceLogin, statusKiroDeviceLogin, type KiroDeviceMethod } from "../../oauth/kiro-device-login";
 import { parseKiroIamOptions } from "../../oauth/kiro-iam-identity-center";
 import { providerDestinationResolvedError } from "../../lib/destination-policy";
+import { providerEgressConfigError } from "../../lib/provider-egress";
+import { redactUrlForLog } from "../../lib/redact";
 import { accountDisplayLabel, emailMaskingEnabled, maskedAccountLabel } from "../../lib/privacy";
 import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
 import { enrichProviderFromCatalog, listKeyLoginProviders } from "../../oauth/key-providers";
@@ -188,7 +190,7 @@ function validateKeyName(
   return { value };
 }
 
-export type IssuedApiKey = Pick<EpxApiKeyEntry, "id" | "name" | "key" | "createdAt">;
+export type IssuedApiKey = Pick<EpxApiKeyEntry, "id" | "name" | "key" | "createdAt" | "loopbackOnly" | "allowedProviders" | "allowedModels">;
 
 /** Shared one-time data-key issuance used by the dashboard and link transactions. */
 export function issueApiKeyInProcess(
@@ -196,6 +198,7 @@ export function issueApiKeyInProcess(
   name: string,
   reservedId?: string,
   configureEntry?: (entry: IssuedApiKey) => void,
+  persistConfig: (config: EpxConfig) => void = saveConfigPreservingClaudeCode,
 ): IssuedApiKey {
   const checked = validateKeyName(name, { required: true });
   if ("error" in checked) throw new Error(checked.error);
@@ -213,7 +216,7 @@ export function issueApiKeyInProcess(
   const previous = config.apiKeys;
   config.apiKeys = [...(previous ?? []), entry];
   try {
-    saveConfigPreservingClaudeCode(config);
+    persistConfig(config);
     reconcileLiveStateStores();
   } catch (error) {
     config.apiKeys = previous;
@@ -223,12 +226,16 @@ export function issueApiKeyInProcess(
 }
 
 /** Revoke and persist one data key; callers can retain their own record on false. */
-export function revokeApiKeyInProcess(config: EpxConfig, id: string): boolean {
+export function revokeApiKeyInProcess(
+  config: EpxConfig,
+  id: string,
+  persistConfig: (config: EpxConfig) => void = saveConfigPreservingClaudeCode,
+): boolean {
   const before = config.apiKeys ?? [];
   if (!before.some(key => key.id === id)) return false;
   config.apiKeys = before.filter(key => key.id !== id);
   try {
-    saveConfigPreservingClaudeCode(config);
+    persistConfig(config);
     reconcileLiveStateStores();
   } catch (error) {
     config.apiKeys = before;
@@ -1126,7 +1133,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     accountProbeRunning = true;
     try {
       const { probeAntigravityAccounts } = await import("../../providers/quota/antigravity-account-probe");
-      const results = await probeAntigravityAccounts({ accountId, signal: req.signal });
+      const results = await probeAntigravityAccounts({ accountId, signal: req.signal, providerConfig: config.providers[provider] });
       if (!results) return jsonResponse({ error: "account not found" }, 404);
       return jsonResponse({ provider, probedAt: new Date().toISOString(), results });
     } finally {
@@ -1201,6 +1208,30 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const { setAccountAlias } = await import("../../oauth/store");
     if (!(await setAccountAlias(provider, accountId, alias || undefined))) return jsonResponse({ error: "account not found" }, 404);
     return jsonResponse({ ok: true, provider, accountId, alias: alias || null });
+  }
+  if (url.pathname === "/api/oauth/accounts/proxy" && req.method === "PUT") {
+    const body = await readManagementJsonBodyOr(req, {}) as { provider?: unknown; accountId?: unknown; proxy?: unknown };
+    const provider = oauthCredentialSlot(typeof body.provider === "string" ? body.provider.trim().toLowerCase() : "");
+    const accountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
+    if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
+    if (!accountId) return jsonResponse({ error: "missing accountId" }, 400);
+    if (body.proxy !== null && body.proxy !== undefined && typeof body.proxy !== "string") {
+      return jsonResponse({ error: "proxy must be a string or null" }, 400);
+    }
+    const rawProxy = typeof body.proxy === "string" ? body.proxy.trim() : "";
+    if (rawProxy) {
+      const err = providerEgressConfigError({ proxy: rawProxy });
+      if (err) return jsonResponse({ error: err }, 400);
+    }
+    const { setAccountProxy } = await import("../../oauth/store");
+    if (!(await setAccountProxy(provider, accountId, rawProxy || null))) return jsonResponse({ error: "account not found" }, 404);
+    return jsonResponse({
+      ok: true,
+      provider,
+      accountId,
+      hasProxy: Boolean(rawProxy),
+      ...(rawProxy ? { proxyLabel: redactUrlForLog(rawProxy) } : {}),
+    });
   }
   if (url.pathname === "/api/oauth/accounts" && req.method === "DELETE") {
     const provider = oauthCredentialSlot((url.searchParams.get("provider") ?? "").trim().toLowerCase());
@@ -1420,6 +1451,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
         createdAt: k.createdAt,
         // Scope is metadata, not secret: an operator has to be able to read
         // what a key may reach without minting a replacement to find out.
+        ...(k.loopbackOnly ? { loopbackOnly: true } : {}),
         ...(k.allowedProviders ? { allowedProviders: [...k.allowedProviders] } : {}),
         ...(k.allowedModels ? { allowedModels: [...k.allowedModels] } : {}),
         ...(k.pendingRotation ? { pendingRotation: {

@@ -20,14 +20,18 @@ describe("clickjacking response headers", () => {
     expect(corsHeaders()).toMatchObject(EXPECTED);
   });
 
-  test("static dashboard responses include the framing policy", () => {
+  test("static dashboard responses include framing and strict document CSP policies", () => {
     const guiDist = mkdtempSync(join(tmpdir(), "epx-gui-headers-"));
     writeFileSync(join(guiDist, "index.html"), "<!doctype html><title>test</title>");
     try {
       const response = serveGuiFile("/", guiDist);
       expect(response).not.toBeNull();
       expect(response?.headers.get("X-Frame-Options")).toBe("DENY");
-      expect(response?.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
+      const csp = response?.headers.get("Content-Security-Policy") ?? "";
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(csp).toContain("script-src 'self'");
+      expect(csp).toContain("connect-src 'self'");
+      expect(csp).toContain("object-src 'none'");
     } finally {
       removeTreeWithRetry(guiDist);
     }

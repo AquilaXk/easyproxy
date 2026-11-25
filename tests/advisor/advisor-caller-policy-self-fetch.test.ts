@@ -195,15 +195,21 @@ describe("a validated self-fetch key's paid-combo consent on a public bind's loo
     });
   }
 
-  test("an unkeyed caller on the loopback listener is still refused the metered target", async () => {
+  test("an unkeyed or unrecognized caller on the loopback listener is still refused the metered target", async () => {
     const h = meteredHarness({ host: true, caller: true, comboOptIn: true });
-    const response = await listener(h.config).fetch(new Request("http://127.0.0.1:10200/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-easyproxy-api-key": HOST_KEY },
-      body: JSON.stringify({ model: "combo/inner", messages: [{ role: "user", content: "hi" }], stream: false }),
-    }), loopbackServer as unknown as ServerArg);
-    expect(response.status).not.toBe(200);
-    expect(h.expertCalls).toBe(0);
+    const serve = listener(h.config);
+    for (const headers of [
+      { "content-type": "application/json" },
+      { "content-type": "application/json", "x-easyproxy-api-key": "epx_data_" + "u".repeat(40) },
+    ]) {
+      const response = await serve.fetch(new Request("http://127.0.0.1:10200/v1/chat/completions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ model: "combo/inner", messages: [{ role: "user", content: "hi" }], stream: false }),
+      }), loopbackServer as unknown as ServerArg);
+      expect(response.status).not.toBe(200);
+      expect(h.expertCalls).toBe(0);
+    }
   });
 });
 

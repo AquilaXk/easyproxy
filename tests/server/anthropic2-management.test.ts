@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { setPersistedConfigMutationBeforeCommitForTests } from "../../src/config/persisted-mutation";
 import { saveConfig, loadConfig } from "../../src/config";
 import { handleOauthAccountRoutes } from "../../src/server/management/oauth-account-routes";
+import { getAccountSet } from "../../src/oauth/store";
 import { writeAnthropicPoolSettings } from "../../src/server/management/anthropic-pool-settings";
 import { poolSettingsCapability } from "../../src/oauth/pool-settings-capability";
 import { getCachedProviderAccountQuota, setCachedProviderAccountQuotaForTests } from "../../src/providers/quota";
@@ -41,14 +42,14 @@ test("both B pool writers persist nested settings and preserve A", async () => {
   }
 });
 test("equal account IDs keep B thresholds, selection, pause and removal separate", async () => {
-  const a = JSON.parse(readFileSync(home.path("auth.json"), "utf8")).anthropic;
+  const a = structuredClone(getAccountSet("anthropic"));
   expect((await route("/api/oauth/accounts/auto-switch", "PUT", { provider: "anthropic2", accountId: "same", threshold: 12 })).status).toBe(200);
   const list = await route("/api/oauth/accounts?provider=anthropic2");
   expect(await list.json()).toMatchObject({ provider: "anthropic2", accounts: [{ id: "same", autoSwitchThresholdOverride: 12, effectiveAutoSwitchThreshold: 12, autoSwitchThreshold: 37 }] });
   expect((await route("/api/oauth/accounts/active", "PUT", { provider: "anthropic2", accountId: "same" })).status).toBe(200);
   expect((await route("/api/oauth/accounts/pause", "PUT", { provider: "anthropic2", accountId: "same", paused: true })).status).toBe(200);
   expect((await route("/api/oauth/accounts?provider=anthropic2&id=same", "DELETE")).status).toBe(200);
-  expect(JSON.parse(readFileSync(home.path("auth.json"), "utf8")).anthropic).toEqual(a);
+  expect(getAccountSet("anthropic")).toEqual(a);
 });
 test("missing, disabled and unmarked B never mutate pool or account state", async () => {
   const row = structuredClone(config.providers.anthropic2!);

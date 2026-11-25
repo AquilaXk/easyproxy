@@ -901,6 +901,8 @@ export const apiKeyEntrySchema = z.object({
   createdAt: z.string().catch(""),
   // Fail closed: corrupted expiry timestamps drop the entry rather than granting eternal access.
   expiresAt: z.string().datetime({ offset: true }).optional(),
+  // Not `.catch`ed: a corrupted loopback-only marker must not widen a local key onto public listeners.
+  loopbackOnly: z.boolean().optional(),
   // A damaged overlap record must never discard the still-authoritative key.
   pendingRotation: pendingApiKeyRotationSchema.optional().catch(undefined),
   // Deliberately NOT `.catch`ed, unlike every field above. Degrading a damaged

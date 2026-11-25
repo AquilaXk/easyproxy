@@ -31,11 +31,13 @@ export function captureAdmissionPolicy(
   config: Pick<EpxConfig, "apiKeys" | "hostname" | "fallback">,
   admission?: DataPlaneAdmission,
   modelScope = resolveAdmissionModelScope(config, admission),
+  options?: { loopbackListener?: boolean },
 ): CapturedAdmissionPolicy {
   return immutableAdmissionPolicy({
     modelScope: modelScope ?? { providers: [], models: [] },
     allowMeteredComboTargets: admissionMayUseMeteredComboTargets(config, admission, { allowMeteredTargets: true }),
     meteredRequiresComboOptIn: !admission || admission.kind === "loopback"
+      || options?.loopbackListener === true
       || admission.callerPolicy?.meteredRequiresComboOptIn === true,
     fallbackPolicies: [
       ...(admission?.callerPolicy?.fallbackPolicies ?? []),

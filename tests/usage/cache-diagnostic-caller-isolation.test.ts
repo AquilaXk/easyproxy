@@ -236,16 +236,22 @@ describe("cache diagnostic authenticated caller isolation", () => {
       });
     }
 
-    test(`${protocol}: loopback admission never treats unverified credential headers as caller identity`, async () => {
+    test(`${protocol}: loopback admission enforces verified x-easyproxy-api-key identity while ignoring unverified bearer/x-api-key headers`, async () => {
       const cfg = { ...config(), hostname: "127.0.0.1" };
-      for (const header of ["authorization", "x-easyproxy-api-key", "x-api-key"] as const) {
-        expect(await send(protocol, cfg, CALLER_A, header)).toBeUndefined();
+      for (const header of ["authorization", "x-api-key"] as const) {
         expect(await send(protocol, cfg, CALLER_A, header)).toBeUndefined();
       }
-      for (const row of rows()) {
-        expect(row.continuation.inbound.status).toBe("uncomparable");
-        expect(row.continuation.outbound.status).toBe("uncomparable");
-      }
+      const unverifiedReq = new Request(`http://localhost/v1/${protocol === "chat" ? "chat/completions" : protocol}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-easyproxy-api-key": "synthetic-unverified-caller" },
+        body: "{}",
+      });
+      expect((protocol === "messages" ? resolveApiAuth : resolveResponsesApiAuth)(unverifiedReq, cfg)).toBeNull();
+      const callerA = await send(protocol, cfg, CALLER_A, "x-easyproxy-api-key");
+      const callerB = await send(protocol, cfg, CALLER_B, "x-easyproxy-api-key");
+      expect(callerA).toBeDefined();
+      expect(callerB).toBeDefined();
+      expect(callerA).not.toBe(callerB);
       expectPrivacy();
     });
   }

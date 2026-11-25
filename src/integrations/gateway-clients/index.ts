@@ -10,6 +10,7 @@ import type { GatewayClientConnector, GatewayClientContext, GatewayClientId, Gat
 
 export type * from "./types";
 export { GATEWAY_PLACEHOLDER_KEY } from "./io";
+export { readAntigravityIssuedKeyId } from "./antigravity";
 
 export const GATEWAY_CLIENTS: Readonly<Record<GatewayClientId, GatewayClientConnector>> = {
   antigravity: ANTIGRAVITY_CONNECTOR,
@@ -65,11 +66,25 @@ export function disconnectRecordedGatewayClients(ctx: GatewayClientContext, held
   removeEmptyStashDirectory(ctx);
 }
 
-export function connectGatewayClient(id: GatewayClientId, ctx: GatewayClientContext, config: Pick<EpxConfig, "hostname" | "unauthenticatedLoopbackListener">, port: number, model?: string): GatewayActionOutcome {
+export function connectGatewayClient(
+  id: GatewayClientId,
+  ctx: GatewayClientContext,
+  config: Pick<EpxConfig, "hostname" | "unauthenticatedLoopbackListener">,
+  port: number,
+  model?: string,
+  targetCredential?: { apiKey: string; issuedKeyId?: string },
+): GatewayActionOutcome {
   const resolved = resolveGatewayTarget(config, port, model);
   if (!resolved.ok) return { ok: false, id, action: "connect", code: resolved.code, message: resolved.message };
-  const result = withGatewayLifecycle(ctx, () => GATEWAY_CLIENTS[id].connect(ctx, resolved.target));
-  return { ...result, id, action: "connect", status: GATEWAY_CLIENTS[id].status(ctx, resolved.target) };
+  const target: GatewayTarget = targetCredential
+    ? {
+        ...resolved.target,
+        apiKey: targetCredential.apiKey,
+        ...(targetCredential.issuedKeyId ? { issuedKeyId: targetCredential.issuedKeyId } : {}),
+      }
+    : resolved.target;
+  const result = withGatewayLifecycle(ctx, () => GATEWAY_CLIENTS[id].connect(ctx, target));
+  return { ...result, id, action: "connect", status: GATEWAY_CLIENTS[id].status(ctx, target) };
 }
 
 export function disconnectGatewayClient(id: GatewayClientId, ctx: GatewayClientContext, target?: GatewayTarget): GatewayActionOutcome {

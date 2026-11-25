@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { detectInitial, LOCALES } from "../../gui/src/i18n/shared";
 
-// The inline <head> script in gui/index.html sets <html lang> before first paint so the
-// :lang() font stacks in styles.css apply without a flash. It must agree with detectInitial().
+// The external /boot.js script in gui/index.html sets <html lang> before first paint so the
+// :lang() font stacks in styles.css apply without a flash while keeping inline scripts out under CSP.
 const html = readFileSync(join(import.meta.dir, "../../gui/index.html"), "utf8");
-const bootScript = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+const bootScript = readFileSync(join(import.meta.dir, "../../gui/public/boot.js"), "utf8");
 
 const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -60,6 +60,13 @@ const cases: [string | null, boolean, string][] = [
 ];
 
 test("index.html boot script sets <html lang> exactly like detectInitial()", () => {
+  expect(html).toContain('<script src="/boot.js"></script>');
+  const scriptTags = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+  expect(scriptTags.length).toBeGreaterThanOrEqual(2);
+  for (const [, attrs, inlineBody] of scriptTags) {
+    expect(attrs).toMatch(/\bsrc=["'][^"']+["']/i);
+    expect(inlineBody!.trim()).toBe("");
+  }
   expect(bootScript).toContain("epx-lang");
   for (const [stored, blocked, language] of cases) {
     const storage = storageWith(stored, blocked);

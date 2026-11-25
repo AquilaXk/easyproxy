@@ -45,7 +45,12 @@ for (const protocol of ["responses", "chat", "messages"] as const) {
           findLiveProxy: async () => ({ port: 12345, pid: 1, hostname: "127.0.0.1", source: "runtime" }),
           fetchImpl: (async (url, init) => {
             dataCalls++;
-            if (scenario === "changed-policy" && dataCalls === 2) config.hostname = "127.0.0.1";
+            if (scenario === "changed-policy" && dataCalls === 2) {
+              config.apiKeys = [
+                ...(config.apiKeys ?? []),
+                { id: "added-key", name: "added", key: "wrong-selected", createdAt: "2026-01-01T00:00:00.000Z" },
+              ];
+            }
             const req = new Request(url, init);
             const admission = protocol === "messages" ? resolveApiAuth(req, config) : resolveResponsesApiAuth(req, config);
             if (!admission) return protocol === "messages"

@@ -348,6 +348,11 @@ export interface EpxApiKeyEntry {
   createdAt: string;
   /** Optional UTC/ISO-8601 expiry timestamp; expired keys are refused at admission (fail closed). */
   expiresAt?: string;
+  /**
+   * When true, this key may only be admitted on a loopback listener (`!isApiAuthRequired`).
+   * Public, LAN, and hub-link listeners refuse it fail-closed (401).
+   */
+  loopbackOnly?: boolean;
   pendingRotation?: EpxPendingApiKeyRotation;
   /**
    * Resolved provider names this key may reach. Absent or empty means every

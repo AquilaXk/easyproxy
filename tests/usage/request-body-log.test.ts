@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync, zstdCompressSync } from "node:zlib";
+import { loadConfig, saveConfig } from "../../src/config";
 import { startServer } from "../../src/server";
 import { observeRequestLogsForTests, requestLogEntryFromPersistedUsage, type RequestLogEntry } from "../../src/server/request-log";
 import { normalizePersistedUsageRow, readRecentUsageEntries } from "../../src/usage/log";
@@ -42,6 +43,8 @@ describe("request log rows carry the request body as received (#3023)", () => {
     const key = `epx_data_${"a".repeat(40)}`, keyId = "test-link-key", linkId = "lnk_0123456789abcdef";
     const rows: RequestLogEntry[] = [];
     const stop = observeRequestLogsForTests(row => { rows.push(row); });
+    const baseCfg = loadConfig();
+    saveConfig({ ...baseCfg, apiKeys: [{ id: keyId, name: "test-link-key", key, createdAt: "2026-01-01T00:00:00.000Z" }] });
     const server = startServer(0);
     // The Home's hub-link session hands each verified request, bytes and headers as sent, to the real data plane.
     const sessions = createLinkRelaySessions({ fingerprints: () => [serviceApiTokenFingerprint(key)], homeFeatures: () => [LINK_REQUEST_ZSTD_FEATURE] });

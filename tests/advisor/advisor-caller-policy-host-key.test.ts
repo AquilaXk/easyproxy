@@ -162,15 +162,23 @@ describe("Advisor self-fetch credential host policy on the real listener (#7894)
     });
   }
 
-  test("an ordinary loopback caller presenting the restricted host key keeps loopback admission", async () => {
+  test("an ordinary unkeyed loopback caller keeps loopback admission while a restricted host key enforces its scope", async () => {
     releaseSpendHome = acquireOwnedSpendHome();
     const h = harness("secondary", false);
-    const response = await listener(h.config).fetch(new Request("http://127.0.0.1:10200/v1/chat/completions", {
+    const unkeyed = await listener(h.config).fetch(new Request("http://127.0.0.1:10200/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "expert/gpt-6-astra", messages: [{ role: "user", content: "hi" }], stream: false }),
+    }), loopbackServer as unknown as ServerArg);
+    expect(unkeyed.status).toBe(200);
+    expect(h.expertCalls).toBe(1);
+
+    const keyed = await listener(h.config).fetch(new Request("http://127.0.0.1:10200/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", "x-easyproxy-api-key": HOST_KEY },
       body: JSON.stringify({ model: "expert/gpt-6-astra", messages: [{ role: "user", content: "hi" }], stream: false }),
     }), loopbackServer as unknown as ServerArg);
-    expect(response.status).toBe(200);
+    expect(keyed.status).toBe(403);
     expect(h.expertCalls).toBe(1);
   });
 

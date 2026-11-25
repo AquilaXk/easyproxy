@@ -309,7 +309,7 @@ test("the Linux bundle directory and the resource path follow the desktop Tauri 
   expect(Object.values(config.bundle?.resources ?? {})).toContain("gui/dist");
 });
 
-test("a directory with its own index.html is served as a separate app with the session bootstrap", async () => {
+test("retired /classic routes permanently redirect extensionless paths to / and disable stale classic HTML", async () => {
   const guiDist = temporaryRoot("epx-gui-static-classic-");
   writeFileSync(join(guiDist, "index.html"), "<!doctype html><html><head><title>main</title></head><body></body></html>");
   mkdirSync(join(guiDist, "classic"), { recursive: true });
@@ -322,21 +322,21 @@ test("a directory with its own index.html is served as a separate app with the s
     expiresAt: Date.now() + 60_000,
     issuance: "loopback",
   };
-  for (const pathname of ["/classic", "/classic/"]) {
+  for (const pathname of ["/classic", "/classic/", "/classic/models"]) {
     const response = serveGuiFile(pathname, guiDist, session);
     expect(response).not.toBeNull();
+    expect(response!.status).toBe(308);
+    expect(response!.headers.get("Location")).toBe("/");
     expect(response!.headers.get("Cache-Control")).toBe("no-store");
-    const html = await response!.text();
-    expect(html).toContain("<title>classic</title>");
-    expect(html).toContain('<meta name="easyproxy-session-token" content="fixture-token">');
+    expect(response!.headers.get("Pragma")).toBe("no-cache");
   }
-  // Any other extensionless path, including one under the classic directory, is still the main SPA.
-  for (const pathname of ["/models", "/classic/models"]) {
-    expect(await serveGuiFile(pathname, guiDist, session)!.text()).toContain("<title>main</title>");
-  }
+  expect(serveGuiFile("/classic/index.html", guiDist, session)).toBeNull();
+  const mainHtml = await serveGuiFile("/models", guiDist, session)!.text();
+  expect(mainHtml).toContain("<title>main</title>");
+  expect(mainHtml).toContain('<meta name="easyproxy-session-token" content="fixture-token">');
 });
 
-test("classic hashed assets receive immutable caching and fall back safely to main assets", async () => {
+test("retired /classic static assets return null even if stale files exist", () => {
   const guiDist = temporaryRoot("epx-gui-static-classic-assets-");
   mkdirSync(join(guiDist, "assets"), { recursive: true });
   mkdirSync(join(guiDist, "classic", "assets"), { recursive: true });
@@ -345,21 +345,9 @@ test("classic hashed assets receive immutable caching and fall back safely to ma
   writeFileSync(join(guiDist, "classic", "assets", "index-ZyXwVu98.js"), "console.log('classic');");
   writeFileSync(join(guiDist, "classic", "assets", "unhashed.js"), "console.log('unhashed');");
 
-  const ownHashed = serveGuiFile("/classic/assets/index-ZyXwVu98.js", guiDist);
-  expect(ownHashed).not.toBeNull();
-  expect(ownHashed!.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
-  expect(await ownHashed!.text()).toBe("console.log('classic');");
-
-  const ownUnhashed = serveGuiFile("/classic/assets/unhashed.js", guiDist);
-  expect(ownUnhashed).not.toBeNull();
-  expect(ownUnhashed!.headers.get("Cache-Control")).toBe("no-cache");
-
-  const fallbackHashed = serveGuiFile("/classic/assets/shared-AbCdEf12.js", guiDist);
-  expect(fallbackHashed).not.toBeNull();
-  expect(fallbackHashed!.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
-  expect(await fallbackHashed!.text()).toBe("console.log('shared');");
-
-  // Unhashed or nested classic misses must NOT fall back into assets/.
+  expect(serveGuiFile("/classic/assets/index-ZyXwVu98.js", guiDist)).toBeNull();
+  expect(serveGuiFile("/classic/assets/unhashed.js", guiDist)).toBeNull();
+  expect(serveGuiFile("/classic/assets/shared-AbCdEf12.js", guiDist)).toBeNull();
   expect(serveGuiFile("/classic/assets/runtime-config.js", guiDist)).toBeNull();
   expect(serveGuiFile("/classic/assets/sub/shared-AbCdEf12.js", guiDist)).toBeNull();
 });

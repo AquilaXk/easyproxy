@@ -127,7 +127,7 @@ fn is_loopback_hostname(host: &str) -> bool {
     )
 }
 
-fn parse_authority_hostname(authority: &str) -> Option<&str> {
+fn parse_authority(authority: &str, default_port: u16) -> Option<(String, u16)> {
     let trimmed = authority.trim();
     if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('@') || trimmed.contains(' ')
     {
@@ -135,54 +135,66 @@ fn parse_authority_hostname(authority: &str) -> Option<&str> {
     }
     if let Some(rest) = trimmed.strip_prefix('[') {
         let end = rest.find(']')?;
+        let host = &trimmed[..=end + 1];
         let tail = &rest[end + 1..];
-        if !tail.is_empty() {
-            let port = tail.strip_prefix(':')?;
-            if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        let port = if tail.is_empty() {
+            default_port
+        } else {
+            let p = tail.strip_prefix(':')?;
+            if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
                 return None;
             }
-        }
-        return Some(&trimmed[..=end + 1]);
+            p.parse::<u16>().ok()?
+        };
+        return Some((host.to_ascii_lowercase(), port));
     }
     if let Some((h, p)) = trimmed.rsplit_once(':') {
-        if h.contains(':')
-            || h.is_empty()
-            || (!p.is_empty() && !p.bytes().all(|b| b.is_ascii_digit()))
+        if h.contains(':') || h.is_empty() || p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit())
         {
             return None;
         }
-        return Some(h);
+        let port = p.parse::<u16>().ok()?;
+        return Some((h.to_ascii_lowercase(), port));
     }
-    Some(trimmed)
+    Some((trimmed.to_ascii_lowercase(), default_port))
 }
 
-/// Mirrors `isAllowedRequestOrigin` (`src/server/auth-cors.ts:83-125`) for loopback listeners.
+/// Mirrors `isAllowedRequestOrigin` (`src/server/auth-cors.ts`) for loopback listeners.
 pub fn is_allowed_loopback_request_origin(
     host_header: Option<&str>,
     origin_header: Option<&str>,
 ) -> bool {
-    if let Some(host_val) = host_header
-        && let Some(hostname) = parse_authority_hostname(host_val)
-        && !is_loopback_hostname(hostname)
-    {
-        return false;
-    }
+    let parsed_host = match host_header {
+        None | Some("") => None,
+        Some(host_val) => {
+            let Some(parsed) = parse_authority(host_val, 80) else {
+                return false;
+            };
+            if !is_loopback_hostname(&parsed.0) {
+                return false;
+            }
+            Some(parsed)
+        }
+    };
     let Some(origin) = origin_header else {
         return true;
     };
     let trimmed = origin.trim();
-    let rest = if let Some(r) = trimmed.strip_prefix("http://") {
-        r
-    } else if let Some(r) = trimmed.strip_prefix("https://") {
-        r
-    } else {
+    // Direct loopback listener receives plain HTTP requests; only same-scheme/host/port
+    // dashboard origins match without explicit CORS configuration.
+    let Some(rest) = trimmed.strip_prefix("http://") else {
         return false;
     };
-    let authority = rest.split('/').next().unwrap_or("");
-    let Some(hostname) = parse_authority_hostname(authority) else {
+    if rest.contains('/') || rest.contains('?') || rest.contains('#') {
+        return false;
+    }
+    let Some(parsed_origin) = parse_authority(rest, 80) else {
         return false;
     };
-    is_loopback_hostname(hostname)
+    let Some(host) = parsed_host else {
+        return false;
+    };
+    parsed_origin == host
 }
 
 pub fn classify_child_ingress(
