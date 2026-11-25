@@ -217,7 +217,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
         </div>
 
         <div className="modal-body flex flex-col gap-3">
-          <div className="rounded-card border border-line bg-inset p-3 text-xs text-fg-muted">
+          <div className="rounded-card border border-solid border-line bg-inset p-3 text-xs text-fg-muted">
             {uxT(locale, "ccSwitch.consentNotice")}
           </div>
 
@@ -277,7 +277,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
           )}
 
           {preview && preview.providers.length > 0 && (
-            <div className="max-h-[240px] overflow-auto rounded-card border border-line">
+            <div className="max-h-[240px] overflow-auto rounded-card border border-solid border-line">
               <table className="table" style={{ width: "100%", fontSize: 12 }}>
                 <thead>
                   <tr>
@@ -345,7 +345,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
                 </label>
               )}
 
-              <label className="flex items-start gap-2 rounded-card border border-line bg-inset p-2.5 text-xs">
+              <label className="flex items-start gap-2 rounded-card border border-solid border-line bg-inset p-2.5 text-xs">
                 <input
                   type="checkbox"
                   checked={consentChecked}

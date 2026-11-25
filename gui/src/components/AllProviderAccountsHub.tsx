@@ -224,7 +224,7 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
 
   return (
     <section
-      className="ui-v2 flex flex-col gap-3 rounded-card border border-line bg-surface p-4 mb-5"
+      className="flex flex-col gap-3 rounded-card border border-solid border-line bg-surface p-4 mb-5"
       aria-labelledby="accounts-hub-title"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -235,7 +235,7 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
           <p className="m-0 mt-0.5 text-xs text-fg-muted">{uxT(locale, "accountsHub.subtitle")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-0.5 rounded-[7px] bg-inset p-0.5 ring-1 ring-inset ring-line">
+          <div className="ui-v2 inline-flex items-center gap-0.5 rounded-[7px] bg-inset p-0.5 ring-1 ring-inset ring-line">
             {(["all", "oauth", "keys"] as const).map(tab => (
               <button
                 key={tab}
@@ -274,7 +274,7 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
             <article
               key={card.name}
               data-hub-provider={card.name}
-              className="flex flex-col gap-2.5 rounded-control border border-line bg-inset p-3"
+              className="flex flex-col gap-2.5 rounded-control border border-solid border-line bg-inset p-3"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -303,7 +303,7 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
               )}
 
               {card.accounts.length > 0 && (
-                <div className="flex flex-col gap-1.5 border-t border-line pt-2">
+                <div className="flex flex-col gap-1.5 border-t border-solid border-line pt-2">
                   {card.accounts.map(acc => {
                     const rowLabel = acc.labelFallback ?? oauthAccountDisplayLabel(card.accounts, acc, t);
                     return (

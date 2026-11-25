@@ -202,7 +202,7 @@ export function LogsFilterBar({
           <div
             role="group"
             aria-label={uxT(locale, "logs.durationLabel")}
-            className="inline-flex h-[var(--epx-control-h)] items-center gap-0.5 rounded-control border border-line bg-inset p-0.5"
+            className="ui-v2 inline-flex h-[var(--epx-control-h)] items-center gap-0.5 rounded-control border border-solid border-line bg-inset p-0.5"
           >
             {([
               { value: undefined, labelKey: "logs.durationAll" },

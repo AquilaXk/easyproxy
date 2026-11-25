@@ -376,9 +376,9 @@
 .integrations-page .awi-clientconfig-row-actions .btn:not(.btn-primary) { background: transparent; border-color: transparent; box-shadow: none; color: var(--epx-fg-muted); }
 .integrations-page .awi-clientconfig-row-actions .btn:not(.btn-primary):hover:not(:disabled) { background: var(--epx-surface-2); color: var(--epx-fg); }
 
-/* ---- Cursor, Droid, Codex, and Hermes integration sub-surfaces in .ui-v2 --------- */
-.integrations-page.ui-v2 .page-head > h1,
-.integrations-page.ui-v2 .page-head > h2 {
+/* ---- Cursor, Droid, Codex, and Hermes integration sub-surfaces ---------------- */
+.integrations-page .page-head > h1,
+.integrations-page .page-head > h2 {
   margin: 0;
   font-size: 20px;
   line-height: 28px;
@@ -386,23 +386,23 @@
   letter-spacing: -0.02em;
   color: var(--epx-fg);
 }
-.integrations-page.ui-v2 :is(.cursor-card, .droid-reasoning-panel) {
+.integrations-page :is(.cursor-card, .droid-reasoning-panel) {
   border: 0;
   border-radius: 12px;
   background: var(--epx-surface);
   box-shadow: inset 0 0 0 1px var(--epx-line);
 }
-.integrations-page.ui-v2 .cursor-gateway-value {
+.integrations-page .cursor-gateway-value {
   border: 0;
   border-radius: 8px;
   background: var(--epx-inset);
   box-shadow: inset 0 0 0 1px var(--epx-line);
 }
-.integrations-page.ui-v2 .cursor-model-table th,
-.integrations-page.ui-v2 .cursor-model-table td,
-.integrations-page.ui-v2 .droid-reasoning-row,
-.integrations-page.ui-v2 .droid-reasoning-unsupported,
-.integrations-page.ui-v2 .aside-profile-list,
-.integrations-page.ui-v2 .aside-profile-row {
+.integrations-page .cursor-model-table th,
+.integrations-page .cursor-model-table td,
+.integrations-page .droid-reasoning-row,
+.integrations-page .droid-reasoning-unsupported,
+.integrations-page .aside-profile-list,
+.integrations-page .aside-profile-row {
   border-color: var(--epx-line);
 }

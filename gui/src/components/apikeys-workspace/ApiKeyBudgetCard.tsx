@@ -248,7 +248,7 @@ export function ApiKeyBudgetCard({
         {dirty && <span className="badge badge-amber">{uxT(locale, "budget.unsaved")}</span>}
       </div>
       <p className="muted mb-3 text-[13px]">{uxT(locale, "budget.subtitle")}</p>
-      <p className="mb-3 rounded-lg border border-border-subtle bg-surface-2 px-3 py-2 text-xs text-fg-muted" role="note">
+      <p className="mb-3 rounded-lg border border-solid border-border-subtle bg-surface-2 px-3 py-2 text-xs text-fg-muted" role="note">
         {uxT(locale, "budget.loopbackNotice")}
       </p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -257,7 +257,7 @@ export function ApiKeyBudgetCard({
           const usedFmt = row.used.toLocaleString(localeTag);
           const limitFmt = row.limit !== undefined ? row.limit.toLocaleString(localeTag) : uxT(locale, "budget.unlimited");
           return (
-            <div key={row.id} className="flex flex-col gap-1.5 rounded-card border border-line bg-inset p-3">
+            <div key={row.id} className="flex flex-col gap-1.5 rounded-card border border-solid border-line bg-inset p-3">
               <label htmlFor={row.id} className="text-xs font-medium text-fg-muted">{row.label}</label>
               <input
                 id={row.id}
@@ -285,7 +285,7 @@ export function ApiKeyBudgetCard({
             </div>
           );
         })}
-        <div className="flex flex-col gap-1.5 rounded-card border border-line bg-inset p-3">
+        <div className="flex flex-col gap-1.5 rounded-card border border-solid border-line bg-inset p-3">
           <label htmlFor="awi-budget-daily-cost" className="text-xs font-medium text-fg-muted">
             {uxT(locale, "budget.dailyCostLabel")}
           </label>
@@ -322,7 +322,7 @@ export function ApiKeyBudgetCard({
       </div>
 
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <div className="flex flex-col gap-2 rounded-card border border-line bg-inset p-3">
+        <div className="flex flex-col gap-2 rounded-card border border-solid border-line bg-inset p-3">
           <span className="text-xs font-medium text-fg-muted">{uxT(locale, "budget.allowedProvidersLabel")}</span>
           {providerChoices.length > 0 && (
             <div className="flex flex-wrap gap-1.5" role="group" aria-label={uxT(locale, "budget.allowedProvidersLabel")}>
@@ -336,8 +336,8 @@ export function ApiKeyBudgetCard({
                     disabled={busy}
                     onClick={() => toggleProvider(provider)}
                     className={selected
-                      ? "btn btn-sm border border-[var(--epx-highlight)] bg-[var(--epx-accent-soft)] text-[var(--epx-highlight)]"
-                      : "btn btn-ghost btn-sm border border-line text-fg-muted"}
+                      ? "btn btn-sm border border-solid border-[var(--epx-highlight)] bg-[var(--epx-accent-soft)] text-[var(--epx-highlight)]"
+                      : "btn btn-ghost btn-sm border border-solid border-line text-fg-muted"}
                   >
                     {provider}
                   </button>
@@ -348,7 +348,7 @@ export function ApiKeyBudgetCard({
           <span className="text-xs text-fg-subtle">{uxT(locale, "budget.allProviders")}</span>
         </div>
 
-        <div className="flex flex-col gap-2 rounded-card border border-line bg-inset p-3">
+        <div className="flex flex-col gap-2 rounded-card border border-solid border-line bg-inset p-3">
           <label htmlFor="awi-budget-allowed-models" className="text-xs font-medium text-fg-muted">
             {uxT(locale, "budget.allowedModelsLabel")}
           </label>

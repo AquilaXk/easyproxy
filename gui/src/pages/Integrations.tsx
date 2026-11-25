@@ -191,7 +191,7 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
   };
 
   return (
-    <section className="integrations-page ui-v2 flex min-w-0 flex-col gap-5 font-sans text-fg">
+    <section className="integrations-page flex min-w-0 flex-col gap-5 font-sans text-fg">
       <div className="page-head">
         <h1>{t("nav.connect")}</h1>
       </div>

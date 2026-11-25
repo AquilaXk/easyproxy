@@ -229,7 +229,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
   };
 
   return (
-    <section className="integration-native-page ui-v2 flex flex-col gap-4" aria-labelledby="codex-integration-title">
+    <section className="integration-native-page flex flex-col gap-4" aria-labelledby="codex-integration-title">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex max-w-[60ch] flex-col gap-1">
           <h3 id="codex-integration-title" className="m-0">{t("integrations.codex.title")}</h3>
@@ -267,7 +267,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
           || native.state === "unsafe"
           || (connected && native.disableBlocked !== null);
         return (
-          <div className="rounded-card border border-line bg-surface p-4 flex flex-col gap-3">
+          <div className="rounded-card border border-solid border-line bg-surface p-4 flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0 flex flex-col gap-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -309,7 +309,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         />
       )}
 
-      <div className="rounded-card border border-line bg-surface p-4 flex flex-col gap-3">
+      <div className="rounded-card border border-solid border-line bg-surface p-4 flex flex-col gap-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <h4 className="m-0 text-sm font-semibold text-fg">{uxT(locale, "codexRoute.modeTitle")}</h4>
@@ -323,7 +323,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         </div>
 
         {(state?.accountMode === "absent" || state?.accountMode === "disabled") ? (
-          <div className="flex items-center justify-between gap-3 rounded-control border border-line bg-inset p-3">
+          <div className="flex items-center justify-between gap-3 rounded-control border border-solid border-line bg-inset p-3">
             <span className="text-xs text-fg-muted">{t("codexAuth.openaiUnavailableDesc")}</span>
             <button
               type="button"
@@ -351,7 +351,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
                   disabled={busyKey !== null || state === null || state.accountMode === "invalid"}
                   onClick={() => { void setAccountMode(mode); }}
                   className={cn(
-                    "cursor-pointer rounded-control border p-3 text-left transition-colors",
+                    "ui-v2 cursor-pointer rounded-control border border-solid p-3 text-left transition-colors",
                     selected
                       ? "border-line-strong bg-raised ring-1 ring-highlight"
                       : "border-line bg-inset hover:border-line-strong",
@@ -370,7 +370,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         )}
       </div>
 
-      <div className="rounded-card border border-line bg-surface p-4 flex flex-col gap-3">
+      <div className="rounded-card border border-solid border-line bg-surface p-4 flex flex-col gap-3">
         <h4 className="m-0 text-sm font-semibold text-fg">{uxT(locale, "codexRoute.switchesTitle")}</h4>
 
         <div className="flex items-center justify-between gap-3 py-1">
@@ -386,7 +386,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
           />
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
+        <div className="flex items-center justify-between gap-3 border-t border-solid border-line pt-3">
           <div className="min-w-0">
             <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.desktopAuthless")}</div>
             <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.desktopAuthlessHint")}</div>
@@ -399,7 +399,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
           />
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
+        <div className="flex items-center justify-between gap-3 border-t border-solid border-line pt-3">
           <div className="min-w-0">
             <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.accountPicker")}</div>
             <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.accountPickerHint")}</div>

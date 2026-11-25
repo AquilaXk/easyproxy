@@ -733,7 +733,7 @@ export default function Logs({
     : 0;
 
   return (
-    <div className="logs-page ui-v2 flex min-w-0 flex-col gap-5 font-sans text-fg">
+    <div className="logs-page flex min-w-0 flex-col gap-5 font-sans text-fg">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="m-0 text-title font-semibold tracking-[-0.025em]">{t("nav.logs")}</h1>
         <div
@@ -1303,7 +1303,7 @@ function LogDetailDialog({
     <dialog
       ref={dialogRef}
       {...(modal ? ({ closedby: "any" } as Record<string, string>) : {})}
-      className="modal-overlay log-detail-drawer ui-v2"
+      className="modal-overlay log-detail-drawer"
       aria-labelledby="log-detail-title"
       onCancel={e => { e.preventDefault(); onClose(); }}
       onClose={() => { if (!switchingRef.current) onClose(); }}

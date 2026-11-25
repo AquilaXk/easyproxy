@@ -378,7 +378,7 @@ export function ProviderEgressAndKeychainSection({
       </div>
 
       {supportsKeychain && keychainState && (
-        <div className="flex flex-col gap-2 pt-2 border-t border-line">
+        <div className="flex flex-col gap-2 pt-2 border-t border-solid border-line">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <span className="pwi-settings-label">{uxT(locale, "providerEgress.keychainTitle")}</span>
@@ -427,7 +427,7 @@ export function ProviderEgressAndKeychainSection({
       )}
 
       {isCanonicalOpenAi && (
-        <div className="flex flex-col gap-1.5 pt-2 border-t border-line">
+        <div className="flex flex-col gap-1.5 pt-2 border-t border-solid border-line">
           <span className="pwi-settings-label">{uxT(locale, "providerEgress.historySlimTitle")}</span>
           <Select
             fullWidth

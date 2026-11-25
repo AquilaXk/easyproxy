@@ -206,7 +206,7 @@ export function Combobox({
         <ul
           id={listboxId}
           role="listbox"
-          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 m-0 max-h-60 list-none overflow-y-auto rounded-[var(--epx-radius-md)] border border-[var(--epx-border-strong)] bg-[var(--epx-surface-elevated,var(--surface))] p-1 shadow-[var(--epx-shadow-lg)]"
+          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 m-0 max-h-60 list-none overflow-y-auto rounded-[var(--epx-radius-md)] border border-solid border-[var(--epx-border-strong)] bg-[var(--epx-surface-elevated,var(--surface))] p-1 shadow-[var(--epx-shadow-lg)]"
         >
           {filtered.length === 0 ? (
             <li

@@ -215,7 +215,7 @@ export default function Debug({ apiBase, embedded, active = true }: { apiBase: s
   };
 
   return (
-    <div className="debug-v2 ui-v2 flex min-w-0 flex-col gap-4 font-sans text-fg">
+    <div className="debug-v2 flex min-w-0 flex-col gap-4 font-sans text-fg">
       <DebugPageHeader embedded={embedded} />
 
       {/* A failed settings read is not a slow one. Both used to land in this single branch, so a

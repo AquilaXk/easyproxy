@@ -608,7 +608,7 @@ export default function Providers({
 
   if (!config) {
     return (
-      <div className="providers-page ui-v2 flex min-w-0 flex-col gap-5 font-sans text-fg">
+      <div className="providers-page flex min-w-0 flex-col gap-5 font-sans text-fg">
         <div className="page-head">
           <h1>{t("nav.providers")}</h1>
         </div>
@@ -695,7 +695,7 @@ export default function Providers({
   };
 
   return (
-    <div className="providers-page ui-v2 flex min-w-0 flex-col gap-5 font-sans text-fg">
+    <div className="providers-page flex min-w-0 flex-col gap-5 font-sans text-fg">
       <div className="page-head">
         <h1>{t("nav.providers")}</h1>
         <div className="row">
