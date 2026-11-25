@@ -373,7 +373,7 @@ export default function GatewayGuardrailsPanel({
         )}
       </div>
 
-      <section className="flex flex-col gap-2.5 rounded-card border border-line bg-inset p-3.5" aria-labelledby="guardrails-dryrun-title">
+      <section className="flex flex-col gap-2.5 rounded-card border border-solid border-line bg-inset p-3.5" aria-labelledby="guardrails-dryrun-title">
         <div className="flex flex-col gap-0.5">
           <h4 id="guardrails-dryrun-title" className="m-0 text-[13px] font-semibold text-fg">
             {uxT(locale, "guardrails.dryRunTitle")}
@@ -404,7 +404,7 @@ export default function GatewayGuardrailsPanel({
           {dryRunError && <span role="alert" className="text-xs text-danger">{dryRunError}</span>}
         </div>
         {dryRunResult && (
-          <div className="flex flex-col gap-2 rounded-control border border-line bg-surface p-3" aria-live="polite">
+          <div className="flex flex-col gap-2 rounded-control border border-solid border-line bg-surface p-3" aria-live="polite">
             <div className="flex flex-wrap items-center gap-2">
               <span className={dryRunResult.blocked ? "badge badge-red" : (dryRunResult.redactions > 0 || dryRunResult.compressedItems > 0) ? "badge badge-amber" : "badge badge-muted"}>
                 {dryRunResult.blocked
@@ -432,7 +432,7 @@ export default function GatewayGuardrailsPanel({
             {dryRunResult.previewText.length > 0 && (
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium text-fg-subtle">{uxT(locale, "guardrails.dryRunPreviewLabel")}</span>
-                <pre className="m-0 max-h-48 overflow-auto rounded-control border border-line bg-bg p-2.5 font-mono text-xs whitespace-pre-wrap break-words text-fg">
+                <pre className="m-0 max-h-48 overflow-auto rounded-control border border-solid border-line bg-bg p-2.5 font-mono text-xs whitespace-pre-wrap break-words text-fg">
                   {dryRunResult.previewText}
                 </pre>
               </div>

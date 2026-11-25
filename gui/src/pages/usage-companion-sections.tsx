@@ -182,7 +182,7 @@ export function CompanionInstall({ response, fetchedAt, installOs, onInstallOs, 
     </div>
   );
   const disclosure = (label: string, open: boolean) => (
-    <details className="usage-companion-install-guide grid gap-3 border-t border-line pt-3" open={open}>
+    <details className="usage-companion-install-guide grid gap-3 border-t border-solid border-line pt-3" open={open}>
       <summary className="w-fit cursor-pointer text-[13px] font-medium text-fg-muted hover:text-fg">{label}</summary>
       <div className="pt-3">{guide}</div>
     </details>
@@ -302,7 +302,7 @@ export function CompanionSettingsForm({ current, disabled, providerNames, onUpda
         <GroupHeading>{t("usageV2.companionMenuBar")}</GroupHeading>
         <Segment label={t("usage.companion.menuBarShows")} value={current.menuBarMetric} options={MENU_METRICS} optionLabel={value => t(MENU_METRIC_KEYS[value])} onChange={value => onUpdate({ menuBarMetric: value })} />
       </div>
-      <div className="grid gap-3 border-t border-line pt-4">
+      <div className="grid gap-3 border-t border-solid border-line pt-4">
         <GroupHeading>{t("usageV2.companionChart")}</GroupHeading>
         <Segment label={t("usage.companion.window")} value={current.chartHours} options={WINDOWS} optionLabel={value => t(WINDOW_KEYS[value])} onChange={value => onUpdate({ chartHours: value, bucketMinutes: bucketMinutesForWindow(value) })} />
         <Segment label={t("usage.companion.style")} value={current.chartStyle} options={CHART_STYLES} optionLabel={value => value === "line" ? t("usage.companion.styleLine") : t("usage.companion.styleStacked")} onChange={value => onUpdate({ chartStyle: value })} />
@@ -311,7 +311,7 @@ export function CompanionSettingsForm({ current, disabled, providerNames, onUpda
           <SelectControl label={t("usage.companion.groupBy")} value={current.chartGrouping} options={GROUPINGS} optionLabel={value => value === "model" ? t("usage.companion.groupModel") : t("usage.companion.groupAccount")} onChange={value => onUpdate({ chartGrouping: value })} />
         </div>
       </div>
-      <fieldset className="usage-companion-switches m-0 grid gap-1 border-0 border-t border-line p-0 pt-4">
+      <fieldset className="usage-companion-switches m-0 grid gap-1 border-0 border-t border-solid border-line p-0 pt-4">
         <legend className="float-left mb-2 w-full p-0"><GroupHeading>{t("usage.companion.popoverSections")}</GroupHeading></legend>
         {SECTION_OPTIONS.map(([key, label]) => (
           <div key={key} className="usage-companion-switch flex items-center justify-between gap-3 py-1 text-[13px] text-fg">
@@ -320,7 +320,7 @@ export function CompanionSettingsForm({ current, disabled, providerNames, onUpda
           </div>
         ))}
       </fieldset>
-      <details className="usage-companion-advanced border-t border-line pt-4">
+      <details className="usage-companion-advanced border-t border-solid border-line pt-4">
         <summary className="w-fit cursor-pointer text-[13px] font-semibold text-fg">{t("usage.companion.advanced")}</summary>
         <div className="usage-companion-advanced-body grid gap-4 pt-3">
           <SelectControl label={t("usage.companion.aggregation")} value={current.aggregation} options={AGGREGATIONS} optionLabel={value => t(AGGREGATION_KEYS[value])} onChange={value => onUpdate({ aggregation: value })} />

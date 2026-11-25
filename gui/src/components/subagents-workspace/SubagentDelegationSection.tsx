@@ -297,7 +297,7 @@ export default function SubagentDelegationSection({
             <span className="text-[14px] font-medium text-fg">{t("sub.advanced")}</span>
             <span className="min-w-0 truncate text-[13px] text-fg-subtle">{t("subagentsV2.advancedHint")}</span>
           </summary>
-          <div className="flex flex-col divide-y divide-line border-t border-line">
+          <div className="flex flex-col divide-y divide-line border-t border-solid border-line">
           {/*
             The multi-agent surface switch (v1 / base / v2). It lived on Models and on the
             dashboard; both were editors for the same /api/v2 value. It is a delegation

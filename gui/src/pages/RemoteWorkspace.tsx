@@ -167,7 +167,7 @@ export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: strin
             <div className="flex flex-col gap-4 p-4">
             <Button variant="outline" className="self-start" onClick={() => void createPairing()} disabled={busy !== null}><IconPlus /> {t("remote.createPairing")}</Button>
             {pairing ? (
-              <div className="remote-pairing-result flex flex-col gap-3 border-t border-line pt-4">
+              <div className="remote-pairing-result flex flex-col gap-3 border-t border-solid border-line pt-4">
                 <div className="flex flex-col gap-1">
                   <span className="text-[12px] font-medium text-fg-muted">{t("remote.pairingCode")}</span>
                   <span className="font-mono text-[24px] leading-8 font-semibold tracking-[0.1em] text-fg">{pairing.code}</span>

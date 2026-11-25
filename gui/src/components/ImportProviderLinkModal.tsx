@@ -170,7 +170,7 @@ export default function ImportProviderLinkModal({
         {error && <div className="alert alert-err text-xs" role="alert">{error}</div>}
 
         {preview && (
-          <div className="border rounded-lg p-3 text-xs flex flex-col gap-1">
+          <div className="border border-solid border-line rounded-lg p-3 text-xs flex flex-col gap-1">
             <div><strong>{preview.name}</strong> · <code>{preview.adapter}</code></div>
             <div className="text-fg-muted break-all"><code>{preview.baseUrl}</code></div>
             <div>

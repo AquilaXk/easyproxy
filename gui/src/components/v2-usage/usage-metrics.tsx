@@ -102,7 +102,7 @@ export function UsageSummaryCards({
   return (
     <div className="flex flex-col gap-2.5">
       <div className="@container overflow-hidden rounded-[12px] bg-surface ring-1 ring-line" role="group" aria-label={t("usage.section.overview")}>
-        <div className="grid grid-cols-1 *:-mt-px *:-ml-px *:border-t *:border-l *:border-line @md:grid-cols-2 @3xl:grid-cols-4">
+        <div className="grid grid-cols-1 *:-mt-px *:-ml-px *:border-t *:border-l *:border-solid *:border-line @md:grid-cols-2 @3xl:grid-cols-4">
           <Stat
             label={t("usage.card.requests")}
             value={number.format(summary.requests)}

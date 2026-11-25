@@ -7,6 +7,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { clearClientResourceStoresForTests } from "../src/client-resource";
 import { AllProviderAccountsHub } from "../src/components/AllProviderAccountsHub";
+import { CcSwitchImportModal } from "../src/components/CcSwitchImportModal";
+import GatewayGuardrailsPanel from "../src/components/GatewayGuardrailsPanel";
+import { Combobox } from "../src/components/ui-v2/combobox";
 import { LanguageProvider } from "../src/i18n/provider";
 import Debug from "../src/pages/Debug";
 import Integrations from "../src/pages/Integrations";
@@ -164,7 +167,37 @@ describe("Stage 4C /classic/ retirement and bridge/.ui-v2 layer boundary", () =>
           ],
         });
       }
-      if (url.includes("/api/providers")) return jsonOk([]);
+      if (url.includes("/api/providers/cc-switch/preview")) {
+        return jsonOk({
+          available: true,
+          keychainAvailable: true,
+          defaultSources: [{ path: "/tmp/.cc-switch/providers.json", kind: "json" }],
+          journalActive: false,
+          discovered: 1,
+          eligible: 1,
+          conflicts: 0,
+          conflictNames: [],
+          invalid: 0,
+          invalidReasons: {},
+          providers: [{
+            name: "imported-claude",
+            sourceId: "c1",
+            appType: "claude",
+            adapter: "anthropic",
+            baseUrl: "https://relay.example.com/v1",
+            defaultModel: "claude-sonnet-4-5",
+            hasApiKey: true,
+          }],
+        });
+      }
+      if (url.includes("/api/providers")) return jsonOk([{ name: "openai", hasProxy: false }]);
+      if (url.includes("/api/gateway-guardrails")) {
+        return jsonOk({
+          outboundSecretGuard: { mode: "redact" },
+          toolOutputCompression: { enabled: true, minChars: 12000, headChars: 4000, tailChars: 4000, stripAnsi: true },
+          stats: { scannedRequests: 0, secretDetections: 0, secretBlocks: 0, compressedToolOutputs: 0, savedChars: 0 },
+        });
+      }
       if (url.includes("/api/oauth/status")) return jsonOk({ providers: [] });
       if (url.includes("/api/oauth/accounts")) return jsonOk({ accounts: [] });
       if (url.includes("/api/provider-quotas")) return jsonOk([]);
@@ -257,7 +290,7 @@ describe("Stage 4C /classic/ retirement and bridge/.ui-v2 layer boundary", () =>
     }
     assertBridgeControlsHaveNoUiV2Ancestor(container);
 
-    // 2. Providers + ProviderWorkspaceShell
+    // 2. Providers + ProviderWorkspaceShell + ProviderDetails/ProviderSettings
     await act(async () => {
       root!.render(
         <LanguageProvider>
@@ -273,6 +306,22 @@ describe("Stage 4C /classic/ retirement and bridge/.ui-v2 layer boundary", () =>
     expect(pwsShell).not.toBeNull();
     expect(pwsShell!.closest(".ui-v2")).toBeNull();
     expect(providersPage!.querySelectorAll(".btn").length).toBeGreaterThan(0);
+    expect(providersPage!.querySelectorAll(".pws-filter-btn").length).toBeGreaterThan(0);
+    const openaiRailRow = providersPage!.querySelector<HTMLButtonElement>(".providers-workspace-rail-row");
+    expect(openaiRailRow).not.toBeNull();
+    await act(async () => { openaiRailRow!.click(); });
+    await flushTicks();
+    expect(providersPage!.querySelectorAll(".pws-detail-tab").length).toBeGreaterThan(0);
+    const settingsTab = [...providersPage!.querySelectorAll<HTMLButtonElement>(".pws-detail-tab")]
+      .find(tab => tab.id.endsWith("-settings") || /settings/i.test(tab.textContent ?? ""));
+    expect(settingsTab).toBeDefined();
+    await act(async () => { settingsTab!.click(); });
+    await flushTicks();
+    const egressBordered = providersPage!.querySelectorAll('section[aria-labelledby="pwi-egress-title"] .border-t');
+    expect(egressBordered.length).toBeGreaterThan(0);
+    for (const el of egressBordered) {
+      expect(el.classList.contains("border-solid")).toBe(true);
+    }
     assertBridgeControlsHaveNoUiV2Ancestor(container);
 
     // 3. Logs + LogDetailDialog + LogsFilterBar
@@ -348,12 +397,43 @@ describe("Stage 4C /classic/ retirement and bridge/.ui-v2 layer boundary", () =>
       expect(el.classList.contains("border-solid")).toBe(true);
     }
     assertBridgeControlsHaveNoUiV2Ancestor(container);
+
+    // 6. CcSwitchImportModal, GatewayGuardrailsPanel, and Combobox outside .ui-v2
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <div>
+            <CcSwitchImportModal apiBase="" onClose={() => {}} onChanged={() => {}} />
+            <GatewayGuardrailsPanel apiBase="" />
+            <Combobox value="" onChange={() => {}} options={["gpt-5", "claude-sonnet-4-5"]} aria-label="Model picker" />
+          </div>
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    const comboInput = container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+    expect(comboInput).not.toBeNull();
+    await act(async () => { comboInput.focus(); });
+    await flushTicks();
+    const listbox = container.querySelector<HTMLElement>('ul[role="listbox"]');
+    expect(listbox).not.toBeNull();
+    expect(listbox!.classList.contains("border-solid")).toBe(true);
+    expect(listbox!.classList.contains("border-line-strong")).toBe(true);
+    expect(listbox!.classList.contains("bg-raised")).toBe(true);
+    expect(listbox!.classList.contains("rounded-panel")).toBe(true);
+    for (const el of container.querySelectorAll(".border, .border-t, .border-b")) {
+      if (!el.closest(".ui-v2")) {
+        expect(el.classList.contains("border-solid")).toBe(true);
+      }
+    }
+    assertBridgeControlsHaveNoUiV2Ancestor(container);
   });
 
   test("design theme bridge imports unified providers, connect, and logs sheets without .ui-v2 selector guards", () => {
     const themeCss = readFileSync(join(import.meta.dir, "..", "src", "design", "theme.css"), "utf8");
     const providersCss = readFileSync(join(import.meta.dir, "..", "src", "design", "pages", "providers.css"), "utf8");
     const connectCss = readFileSync(join(import.meta.dir, "..", "src", "design", "pages", "connect.css"), "utf8");
+    const comboboxTsx = readFileSync(join(import.meta.dir, "..", "src", "components", "ui-v2", "combobox.tsx"), "utf8");
 
     expect(themeCss).toContain('@import "./pages/connect.css" layer(bridge);');
     expect(themeCss).toContain('@import "./pages/logs.css" layer(bridge);');
@@ -363,5 +443,10 @@ describe("Stage 4C /classic/ retirement and bridge/.ui-v2 layer boundary", () =>
     expect(providersCss).not.toContain(".ui-v2");
     expect(connectCss).toContain(".integrations-page .page-head > h1");
     expect(connectCss).not.toContain(".ui-v2");
+    expect(comboboxTsx).not.toContain("--epx-border-strong");
+    expect(comboboxTsx).not.toContain("--epx-radius-md");
+    expect(comboboxTsx).not.toContain("--epx-radius-sm");
+    expect(comboboxTsx).not.toContain("--epx-surface-elevated");
+    expect(comboboxTsx).not.toContain("--epx-surface-hover");
   });
 });

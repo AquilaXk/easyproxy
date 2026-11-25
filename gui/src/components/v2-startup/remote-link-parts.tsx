@@ -69,7 +69,7 @@ export function LinkIntro({ onTurnOn }: { onTurnOn: () => void }) {
           </div>
           {machine(childIcon, t("link.role.child"), t("link.role.childHint"))}
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line pt-4 text-[13px] leading-5 text-fg-muted">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-solid border-line pt-4 text-[13px] leading-5 text-fg-muted">
           <span className="min-w-0 flex-1">{t("link.setup.requirements")}</span>
           <a href="https://easyproxy.me/guides/remote-link/" target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-1 font-medium text-highlight hover:underline [&_svg]:size-3.5">

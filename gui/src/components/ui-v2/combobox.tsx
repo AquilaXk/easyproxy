@@ -206,7 +206,7 @@ export function Combobox({
         <ul
           id={listboxId}
           role="listbox"
-          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 m-0 max-h-60 list-none overflow-y-auto rounded-[var(--epx-radius-md)] border border-solid border-[var(--epx-border-strong)] bg-[var(--epx-surface-elevated,var(--surface))] p-1 shadow-[var(--epx-shadow-lg)]"
+          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 m-0 max-h-60 list-none overflow-y-auto rounded-panel border border-solid border-line-strong bg-raised p-1 shadow-lg"
         >
           {filtered.length === 0 ? (
             <li
@@ -229,11 +229,11 @@ export function Combobox({
                   onMouseEnter={() => setActiveIndex(idx)}
                   onClick={() => selectOption(opt.value)}
                   className={cn(
-                    "flex cursor-pointer items-center justify-between gap-2 rounded-[var(--epx-radius-sm)] px-2.5 py-1.5 text-[12.5px] leading-5 transition-colors",
+                    "flex cursor-pointer items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-[12.5px] leading-5 transition-colors",
                     active
-                      ? "bg-[var(--epx-surface-hover)] text-fg"
-                      : "text-fg hover:bg-[var(--epx-surface-hover)]",
-                    selected && "font-medium text-[var(--epx-highlight)]",
+                      ? "bg-accent-soft text-fg"
+                      : "text-fg hover:bg-accent-soft",
+                    selected && "font-medium text-highlight",
                   )}
                 >
                   <span className="min-w-0 truncate font-mono">{opt.label ?? opt.value}</span>

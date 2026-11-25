@@ -256,7 +256,7 @@ export default function StorageProfileBackupCard({
           <p className="m-0 text-xs text-fg-muted">{t("storageBackup.restoreConfirmNote")}</p>
 
           {inspected && (
-            <div className="border rounded-lg p-2 text-xs flex flex-col gap-1">
+            <div className="border border-solid border-line rounded-lg p-2 text-xs flex flex-col gap-1">
               <div>
                 <strong>{inspected.mode}</strong> · {inspected.configValidation.ok ? "valid" : inspected.configValidation.error}
               </div>
