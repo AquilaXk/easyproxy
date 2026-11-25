@@ -1,37 +1,28 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-/*
- * The classic dashboard (gui/classic, served at /classic/) and the switch between it and the
- * current one. These read the wiring the build and the first paint depend on.
- */
-const read = (path: string) => Bun.file(new URL(path, import.meta.url)).text();
+const read = (relPath: string) => readFileSync(join(import.meta.dir, "..", relPath), "utf8");
 
-test("a remembered classic choice forwards before first paint, except for the tray popover", async () => {
-  const html = await read("../index.html");
-  expect(html).toContain('edition = localStorage.getItem("epx-ui");');
-  expect(html).toContain('edition === "classic"');
-  expect(html).toContain('location.hash.indexOf("#/tray") !== 0');
-  expect(html).toContain('location.replace("/classic/" + location.search + location.hash)');
+test("boot script no longer routes users to /classic/", () => {
+  const boot = read("public/boot.js");
+  expect(boot).not.toContain("/classic/");
+  expect(boot).not.toContain("classic");
 });
 
-test("both dashboards carry a switch to the other one", async () => {
-  const edition = await read("../src/lib/dashboard-edition.ts");
-  expect(edition).toContain('export const DASHBOARD_EDITION_KEY = "epx-ui";');
-  expect(edition).toContain('edition === "classic" ? "/classic/" : "/"');
-  const app = await read("../src/App.tsx");
-  expect(app).toContain('switchDashboardEdition("classic")');
-  expect(app).toContain('t("shellV2.uiClassic")');
-  const advanced = await read("../src/pages/AdvancedHub.tsx");
-  expect(advanced).toContain('aria-label={t("shellV2.uiClassic")}');
-  const classicApp = await read("../classic/src/App.tsx");
-  expect(classicApp).toContain('switchDashboardEdition("current")');
-  expect(classicApp).toContain('import { switchDashboardEdition } from "./lib/dashboard-edition";');
+test("v2 shell and advanced hub have retired classic UI switching", () => {
+  const app = read("src/App.tsx");
+  const advanced = read("src/pages/AdvancedHub.tsx");
+
+  expect(app).not.toContain("dashboard-edition");
+  expect(app).not.toContain("switchDashboardEdition");
+  expect(app).not.toContain("classic-ui");
+  expect(app).not.toContain("onSwitchClassic");
+  expect(advanced).not.toContain("onSwitchClassic");
 });
 
-test("the classic build is part of the dashboard build and lands under dist/classic", async () => {
-  const pkg = JSON.parse(await read("../package.json")) as { scripts: Record<string, string> };
-  expect(pkg.scripts.build).toContain("vite build -c vite.classic.config.ts");
-  const config = await read("../vite.classic.config.ts");
-  expect(config).toContain("base: '/classic/'");
-  expect(config).toContain("outDir: join(GUI, 'dist', 'classic')");
+test("GUI build script builds only the unified v2 dashboard", () => {
+  const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+  expect(pkg.scripts.build).toBe("tsc -b && vite build");
+  expect(pkg.scripts.build).not.toContain("vite.classic.config.ts");
 });

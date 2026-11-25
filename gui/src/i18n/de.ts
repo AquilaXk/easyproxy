@@ -3124,7 +3124,7 @@ export const de: Record<TKey, string> = {
   "pws.noMatchFilters": "Keine Provider entsprechen den Filtern.",
   "pws.noProvidersConfigured": "Keine Provider konfiguriert.",
   "pws.workspaceMainAria": "Provider-Details",
-  "pws.detailComingSoon": "Detailansicht folgt — nutze die klassische Ansicht zur Verwaltung.",
+  "pws.detailComingSoon": "Detailansicht folgt.",
   "pws.selectPrompt": "Wähle einen Provider aus der Liste.",
   "pws.connectFirst": "Verbinde deinen ersten Provider",
   "pws.empty.browseFree": "Kostenlose Provider ansehen",

@@ -1,10 +1,12 @@
-import { useCallback, useId, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { useDataSurface } from "../../data-surface";
 import { DataSurfaceSkeleton } from "../../components/data-surface";
+import { Combobox } from "../../components/ui-v2/combobox";
 import { useT, type TKey } from "../../i18n/shared";
 import { Notice } from "../../ui";
 import {
   loadGatewayClients,
+  loadGatewayModelOptions,
   runGatewayClientAction,
   type GatewayClientAction,
   type GatewayClientActionOutcome,
@@ -14,6 +16,14 @@ import {
   type GatewayNoteCode,
   type GatewayOverrideCode,
 } from "./gateway-clients-api";
+
+const FALLBACK_ANTIGRAVITY_MODELS: readonly string[] = [
+  "gemini-3-pro",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "claude-sonnet-4-5",
+  "claude-opus-4-5",
+];
 
 /**
  * Antigravity and agy read their gateway from files the proxy can write, so unlike the Cursor
@@ -91,10 +101,12 @@ function describeOutcome(id: GatewayClientId, action: GatewayClientAction, outco
 function GatewayClientCard({
   apiBase,
   client,
+  discoveredModels,
   onSettled,
 }: {
   apiBase: string;
   client: GatewayClientStatus;
+  discoveredModels: readonly string[];
   onSettled: () => void;
 }) {
   const t = useT();
@@ -109,6 +121,20 @@ function GatewayClientCard({
     const key = NOTE_KEYS[note.code];
     return key ? [{ code: note.code, key }] : [];
   });
+  const modelOptions = useMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const add = (id: string | undefined) => {
+      const trimmed = id?.trim();
+      if (!trimmed || seen.has(trimmed)) return;
+      seen.add(trimmed);
+      out.push(trimmed);
+    };
+    add(client.defaultModel);
+    for (const id of discoveredModels) add(id);
+    for (const id of FALLBACK_ANTIGRAVITY_MODELS) add(id);
+    return out;
+  }, [client.defaultModel, discoveredModels]);
 
   const run = async (action: GatewayClientAction) => {
     setPending(action);
@@ -150,14 +176,13 @@ function GatewayClientCard({
       {client.id === "antigravity" && (
         <div className="stack">
           <label className="field-label" htmlFor={modelId}>{t("gatewayClients.model")}</label>
-          <input
+          <Combobox
             id={modelId}
-            className="input gateway-client-model"
+            inputClassName="gateway-client-model"
             value={modelDraft ?? client.defaultModel ?? ""}
-            onChange={event => setModelDraft(event.target.value)}
+            onChange={value => setModelDraft(value)}
+            options={modelOptions}
             disabled={pending !== null}
-            spellCheck={false}
-            autoComplete="off"
             aria-describedby={hintId}
           />
           <span id={hintId} className="muted">{t("gatewayClients.modelHint")}</span>
@@ -188,20 +213,30 @@ function GatewayClientCard({
   );
 }
 
+interface GatewayClientsSurfaceData {
+  clients: GatewayClientStatus[];
+  models: string[];
+}
+
 export default function GatewayClientsPage({ apiBase, active }: { apiBase: string; active: boolean }) {
   const t = useT();
-  const fetchClients = useCallback(async (signal: AbortSignal) => {
-    const clients = await loadGatewayClients(apiBase, signal);
+  const fetchClients = useCallback(async (signal: AbortSignal): Promise<GatewayClientsSurfaceData> => {
+    const [clients, models] = await Promise.all([
+      loadGatewayClients(apiBase, signal),
+      loadGatewayModelOptions(apiBase, signal),
+    ]);
     if (!clients) throw new Error("gateway client status unavailable");
-    return clients;
+    return { clients, models };
   }, [apiBase]);
-  const resource = useDataSurface<GatewayClientStatus[]>(
+  const resource = useDataSurface<GatewayClientsSurfaceData>(
     `integration-gateway-clients:${apiBase}`,
     [apiBase],
     fetchClients,
     { isEmpty: () => false, enabled: active },
   );
-  const clients = resource.state.data ?? null;
+  const surface = resource.state.data ?? null;
+  const clients = surface?.clients ?? null;
+  const discoveredModels = surface?.models ?? [];
 
   return (
     <section className="integration-native-page cursor-page" aria-labelledby="gateway-clients-title">
@@ -210,7 +245,13 @@ export default function GatewayClientsPage({ apiBase, active }: { apiBase: strin
       {resource.state.showError && <Notice tone="err">{t("gatewayClients.unavailable")}</Notice>}
       {!clients && !resource.state.showError && <DataSurfaceSkeleton label={t("gatewayClients.loading")} rows={3} />}
       {clients?.map(client => (
-        <GatewayClientCard key={`${apiBase}:${client.id}`} apiBase={apiBase} client={client} onSettled={() => resource.refresh()} />
+        <GatewayClientCard
+          key={`${apiBase}:${client.id}`}
+          apiBase={apiBase}
+          client={client}
+          discoveredModels={discoveredModels}
+          onSettled={() => resource.refresh()}
+        />
       ))}
     </section>
   );

@@ -21,6 +21,7 @@ export interface ComboboxProps {
   inputClassName?: string;
   "aria-label"?: string;
   "aria-labelledby"?: string;
+  "aria-describedby"?: string;
   maxOptions?: number;
 }
 
@@ -52,6 +53,7 @@ export function Combobox({
   inputClassName,
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledBy,
+  "aria-describedby": ariaDescribedBy,
   maxOptions = 80,
 }: ComboboxProps) {
   const i18n = useContext(I18nContext);
@@ -121,6 +123,7 @@ export function Combobox({
         aria-activedescendant={activeOptionId}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
+        aria-describedby={ariaDescribedBy}
         autoComplete="off"
         spellCheck={false}
         required={required}

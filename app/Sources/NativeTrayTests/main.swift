@@ -142,4 +142,48 @@ let unrelatedError = try decode(["errors": ["Usage unavailable"], "providers": [
 check(!NativeTraySwitch.settles(snapshot: unrelatedError, pendingRow: "pool-b:0"), "An unrelated error does not settle")
 let failedSwitch = try decode(["errors": ["The runtime refused that account right now."], "switchFailed": true, "refreshing": false, "providers": []])
 check(NativeTraySwitch.settles(snapshot: failedSwitch, pendingRow: "pool-b:0"), "The host's failure marker settles at once")
+
+// Stage 4B: codexAccountMode Pool/Direct + detectedClients + 10+ locale .lproj bundles + passive IDE detection.
+let modeSnapshot = try decode([
+    "providers": [
+        ["id": "openai", "label": "OpenAI", "unavailable": false, "switchable": true, "codexAccountMode": "direct", "accounts": []],
+    ],
+    "detectedClients": [
+        ["id": "antigravity", "label": "Antigravity", "installed": true, "connected": true, "state": "connected"],
+        ["id": "claude", "label": "Claude", "installed": true, "connected": false, "state": "detected"],
+        ["id": "cursor", "label": "Cursor", "installed": false, "connected": false, "state": "notDetected"],
+    ],
+])
+check(modeSnapshot.providers.first?.codexAccountMode == "direct", "Provider decodes codexAccountMode")
+check(modeSnapshot.detectedClients?.count == 3 && modeSnapshot.detectedClients?[0].connected == true, "Snapshot decodes detectedClients")
+
+for code in ["en", "ko", "ja", "zh-Hans", "zh-Hant", "de", "fr", "pt", "ru", "tr", "vi"] {
+    let loc = Locale(identifier: code)
+    let accountsTitle = NativeTrayL10n.text("tray.section.accounts", locale: loc)
+    let connectedLabel = NativeTrayL10n.text("tray.client.connected", locale: loc)
+    let refreshLabel = NativeTrayL10n.text("tray.action.refresh", locale: loc)
+    let providerUnavailable = NativeTrayL10n.text("tray.provider.unavailable", locale: loc)
+    let resetLine = NativeTrayL10n.formatted("tray.reset.in", "12m", locale: loc)
+    check(!accountsTitle.isEmpty && accountsTitle != "tray.section.accounts", "Locale \(code) translates accounts title")
+    check(!connectedLabel.isEmpty && connectedLabel != "tray.client.connected", "Locale \(code) translates client status")
+    check(!refreshLabel.isEmpty && refreshLabel != "tray.action.refresh", "Locale \(code) translates refresh action")
+    check(!providerUnavailable.isEmpty && providerUnavailable != "tray.provider.unavailable", "Locale \(code) translates provider unavailable notice")
+    check(resetLine.contains("12m"), "Locale \(code) formats reset countdown")
+}
+check(NativeTrayL10n.text("tray.section.accounts", locale: Locale(identifier: "ko")) != NativeTrayL10n.text("tray.section.accounts", locale: Locale(identifier: "en")),
+      "Korean localization differs from English")
+
+let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent("epx-tray-detect-\(UUID().uuidString)", isDirectory: true)
+try FileManager.default.createDirectory(at: tempHome.appendingPathComponent(".antigravity"), withIntermediateDirectories: true)
+try #"{"gateway":{"url":"http://127.0.0.1:10100"}}"#.write(to: tempHome.appendingPathComponent(".antigravity/settings.json"), atomically: true, encoding: .utf8)
+try FileManager.default.createDirectory(at: tempHome.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+try #"{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}"#.write(to: tempHome.appendingPathComponent(".claude/settings.json"), atomically: true, encoding: .utf8)
+defer { try? FileManager.default.removeItem(at: tempHome) }
+
+let detectedLocal = NativeTrayLocalClientDetector.detect(homeDirectory: tempHome)
+check(detectedLocal.count == 3, "Local passive detector returns Antigravity, Claude, and Cursor")
+check(detectedLocal[0].id == "antigravity" && detectedLocal[0].connected && detectedLocal[0].state == "connected", "Antigravity passive detection sees connected gateway")
+check(detectedLocal[1].id == "claude" && detectedLocal[1].installed && !detectedLocal[1].connected && detectedLocal[1].state == "detected", "Claude passive detection sees local install without gateway")
+check(detectedLocal[2].id == "cursor" && !detectedLocal[2].installed && detectedLocal[2].state == "notDetected", "Cursor passive detection reports notDetected when absent")
+
 print("PASS: \(assertions) native tray contract/formatting assertions")

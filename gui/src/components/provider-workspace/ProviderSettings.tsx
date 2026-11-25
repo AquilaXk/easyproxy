@@ -29,6 +29,7 @@ import { authModeLabel } from "./ProviderRail";
 import { ProviderProtocolPanel } from "./ProviderProtocolPanel";
 import ProviderModelDiscovery from "./ProviderModelDiscovery";
 import { ProviderKeyPacing, type KeyPacingDraft, type KeyPacingStatus } from "./ProviderKeyPacing";
+import { ProviderEgressAndKeychainSection } from "./ProviderEgressAndKeychainSection";
 import type { WorkspaceItem, ProviderUpdateCallback } from "./types";
 import {
   createProviderDraftStore,
@@ -86,6 +87,7 @@ type ProviderSettingsProps = {
   accountModeFocusToken?: number;
   /** Called once the account mode focus request has been handled. */
   onAccountModeFocused?: () => void;
+  onRefreshConfig?: () => void;
 };
 
 /**
@@ -108,7 +110,7 @@ export default function ProviderSettings(props: ProviderSettingsProps) {
 
 function ProviderSettingsForm({
   item, availableModels = EMPTY_MODELS, apiBase, targetKey, targetLabel, draftStore, onUpdateProvider, onDirtyChange, onRegisterSave, onRegisterDiscard,
-  accountModeFocusToken = 0, onAccountModeFocused,
+  accountModeFocusToken = 0, onAccountModeFocused, onRefreshConfig,
 }: ProviderSettingsProps & { targetKey: string; draftStore: ProviderDraftStore }) {
   const { t, locale } = useI18n();
   // This mount's identity in the draft store. Created once per mount, so a newer
@@ -690,6 +692,12 @@ function ProviderSettingsForm({
       {apiBase !== undefined && liveModelDiscoverySupported && item.liveModels !== false && (
         <ProviderModelDiscovery key={JSON.stringify([targetKey, apiBase, item.name])} apiBase={apiBase} provider={item.name} />
       )}
+      <ProviderEgressAndKeychainSection
+        item={item}
+        apiBase={apiBase}
+        isCanonicalOpenAi={isCanonicalOpenAi}
+        onRefreshConfig={onRefreshConfig}
+      />
       <section className="pwi-pacing-card" aria-labelledby="pwi-pacing-title">
         <div className="pwi-pacing-head">
           <div><h3 id="pwi-pacing-title">{t("pws.pacingTitle")}</h3><p>{t("pws.pacingDesc")}</p></div>

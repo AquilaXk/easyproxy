@@ -1,11 +1,13 @@
 //! Independent, bounded reads; a failed section cannot discard another section's result.
 use crate::companion_query::timeline_query;
 use crate::{
-    native_tray_accounts as accounts, native_tray_snapshot as snapshot, proxy::ProxyClient,
+    native_tray_accounts as accounts, native_tray_clients as clients,
+    native_tray_snapshot as snapshot, proxy::ProxyClient,
 };
 use serde_json::{json, Value};
 use std::{
     future::Future,
+    path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{task::JoinSet, time::Instant};
@@ -143,6 +145,29 @@ pub async fn load(
                 value,
                 models: None,
                 error: "Account limits are unavailable.",
+            }
+        });
+    }
+    {
+        let proxy = proxy.clone();
+        tasks.spawn(async move {
+            let gateway_clients = bounded(proxy.get("/api/gateway-clients"), READ_BUDGET)
+                .await
+                .and_then(Result::ok);
+            let native_integrations = bounded(proxy.get("/api/native-integrations"), READ_BUDGET)
+                .await
+                .and_then(Result::ok);
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let detected = clients::detect_local_clients(
+                home.as_deref(),
+                gateway_clients.as_ref(),
+                native_integrations.as_ref(),
+            );
+            Section {
+                key: "detectedClients",
+                value: Some(json!(detected)),
+                models: None,
+                error: "",
             }
         });
     }

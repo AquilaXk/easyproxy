@@ -1,0 +1,195 @@
+/* Providers v2 bridge: repaints provider-workspace-shell, settings, and overview cards
+   onto the unified --epx-* hairline/surface design language inside @layer bridge. */
+
+.providers-page.ui-v2 .page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.providers-page.ui-v2 .page-head > h1,
+.providers-page.ui-v2 .page-head > h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--epx-fg);
+}
+
+.ui-v2 .pws-shell-container {
+  font-family: var(--font-ui);
+  color: var(--epx-fg);
+}
+
+.ui-v2 .pws-shell-container .pws-root {
+  gap: 18px;
+}
+
+.ui-v2 .pws-shell-container .pws-rail {
+  padding: 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--epx-surface);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+
+.ui-v2 .pws-shell-container .pws-search-input {
+  border-color: var(--epx-line);
+  border-radius: 8px;
+  background: var(--epx-inset);
+  color: var(--epx-fg);
+}
+.ui-v2 .pws-shell-container .pws-search-input:focus-visible {
+  outline: 2px solid var(--epx-highlight);
+  outline-offset: 1px;
+}
+
+.ui-v2 .pws-shell-container .pws-filter-btn {
+  border-color: var(--epx-line);
+  border-radius: 8px;
+  background: var(--epx-inset);
+  color: var(--epx-fg-muted);
+}
+.ui-v2 .pws-shell-container .pws-filter-btn:hover,
+.ui-v2 .pws-shell-container .pws-filter-btn--active {
+  background: var(--epx-raised);
+  color: var(--epx-fg);
+  border-color: var(--epx-line-strong);
+}
+
+.ui-v2 .pws-shell-container .pws-filter-menu {
+  border: 0;
+  border-radius: 12px;
+  background: var(--epx-raised);
+  box-shadow: 0 0 0 1px var(--epx-line), var(--epx-shadow-lg);
+}
+
+.ui-v2 .pws-shell-container .pws-rail-group-head {
+  color: var(--epx-fg-subtle);
+}
+
+.ui-v2 .pws-shell-container .providers-workspace-rail-row {
+  border-radius: 8px;
+}
+.ui-v2 .pws-shell-container .providers-workspace-rail-row:hover {
+  background: var(--epx-accent-soft);
+}
+.ui-v2 .pws-shell-container .providers-workspace-rail-row--selected,
+.ui-v2 .pws-shell-container .providers-workspace-rail-row--selected:hover {
+  background: var(--epx-raised);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.06), inset 0 0 0 1px var(--epx-line);
+}
+.ui-v2 .pws-shell-container .providers-workspace-rail-secondary {
+  color: var(--epx-fg-muted);
+}
+
+.ui-v2 .pws-shell-container .pws-main {
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--epx-surface);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+
+.ui-v2 .pws-shell-container .pws-dashboard-title,
+.ui-v2 .pws-shell-container .pws-detail-title {
+  color: var(--epx-fg);
+  letter-spacing: -0.015em;
+}
+.ui-v2 .pws-shell-container .pws-dashboard-subtitle,
+.ui-v2 .pws-shell-container .pws-kv-row dt {
+  color: var(--epx-fg-muted);
+}
+
+.ui-v2 .pws-shell-container .pws-dashboard-card {
+  border: 0;
+  border-radius: 10px;
+  background: var(--epx-inset);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+.ui-v2 .pws-shell-container .pws-dashboard-row:hover {
+  background: var(--epx-accent-soft);
+}
+.ui-v2 .pws-shell-container .pws-dashboard-row--attention {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--epx-warning) 35%, transparent);
+  background: color-mix(in oklab, var(--epx-warning) 8%, var(--epx-inset));
+}
+
+.ui-v2 .pws-shell-container .pws-detail-tabs {
+  border-bottom-color: var(--epx-line);
+}
+.ui-v2 .pws-shell-container .pws-detail-tab {
+  color: var(--epx-fg-muted);
+}
+.ui-v2 .pws-shell-container .pws-detail-tab:hover {
+  color: var(--epx-fg);
+}
+.ui-v2 .pws-shell-container .pws-detail-tab--active {
+  color: var(--epx-fg);
+  border-bottom-color: var(--epx-highlight);
+}
+
+.ui-v2 .pws-shell-container .pws-section-title {
+  color: var(--epx-fg);
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+
+.ui-v2 .pws-shell-container .pwi-auth-state,
+.ui-v2 .pws-shell-container .pwi-auth-optin-row,
+.ui-v2 .pws-shell-container .pwi-device-code-wrap,
+.ui-v2 .pws-shell-container .pwi-pacing-card,
+.ui-v2 .pws-shell-container .pwi-pacing-status span {
+  border: 0;
+  border-radius: 10px;
+  background: var(--epx-inset);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+
+.ui-v2 .pws-shell-container .pwi-pacing-row {
+  background: var(--epx-surface);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+
+.ui-v2 .pws-shell-container .pwi-settings-textarea,
+.ui-v2 .pws-shell-container .pwi-json-textarea,
+.ui-v2 .pws-shell-container .pws-notes-textarea {
+  border-color: var(--epx-line);
+  border-radius: 8px;
+  background: var(--epx-inset);
+  color: var(--epx-fg);
+}
+.ui-v2 .pws-shell-container .pwi-settings-textarea:focus-visible,
+.ui-v2 .pws-shell-container .pwi-json-textarea:focus-visible,
+.ui-v2 .pws-shell-container .pws-notes-textarea:focus-visible {
+  border-color: var(--epx-highlight);
+  outline: 2px solid var(--epx-highlight);
+  outline-offset: 1px;
+}
+
+.ui-v2 .pws-shell-container .pwi-settings-sticky-bar {
+  background: var(--epx-surface);
+  border-top-color: var(--epx-line);
+}
+
+.ui-v2 .pws-shell-container .pws-empty-tile,
+.ui-v2 .pws-shell-container .pws-sponsor {
+  border: 0;
+  border-radius: 12px;
+  background: var(--epx-inset);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+.ui-v2 .pws-shell-container .pws-empty-tile:hover {
+  background: var(--epx-raised);
+  box-shadow: inset 0 0 0 1px var(--epx-line-strong), var(--epx-shadow-sm);
+}
+
+@container provider-workspace (max-width: 680px) {
+  .ui-v2 .pws-shell-container .pws-rail {
+    border-bottom: 0;
+  }
+  .ui-v2 .pws-shell-container .pws-main {
+    padding: 14px;
+  }
+}

@@ -41,20 +41,37 @@ struct NativeTrayUsageView: View {
                 Spacer()
                 if store.snapshot?.refreshing == true { ProgressView().controlSize(.small) }
                 Button { store.action(4) } label: { Image(systemName: "gearshape") }
-                    .buttonStyle(.plain).help("Settings").accessibilityLabel("Settings")
+                    .buttonStyle(.plain)
+                    .help(NativeTrayL10n.text("tray.action.settings"))
+                    .accessibilityLabel(NativeTrayL10n.text("tray.action.settings"))
             }.padding(14)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if let snapshot = store.snapshot {
+                        if snapshot.settings.showAccounts && !snapshot.providers.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(NativeTrayL10n.text("tray.section.accounts"))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                ForEach(snapshot.providers) { provider in
+                                    NativeTrayProviderView(provider: provider, pendingSwitch: store.pendingSwitch) { account in
+                                        store.requestSwitch(provider: provider, account: account)
+                                    }
+                                }
+                            }
+                            if snapshot.settings.showToday || snapshot.settings.show30Days || snapshot.settings.showChart || (snapshot.settings.showModels && !snapshot.models.isEmpty) {
+                                Divider()
+                            }
+                        }
                         if snapshot.settings.showToday || snapshot.settings.show30Days {
                             HStack(alignment: .top, spacing: 16) {
                                 if snapshot.settings.showToday {
-                                    NativeTrayTotalsView(title: "Today", totals: snapshot.today, showCost: snapshot.settings.showCost)
+                                    NativeTrayTotalsView(title: NativeTrayL10n.text("tray.section.today"), totals: snapshot.today, showCost: snapshot.settings.showCost)
                                 }
                                 if snapshot.settings.showToday && snapshot.settings.show30Days { Divider() }
                                 if snapshot.settings.show30Days {
-                                    NativeTrayTotalsView(title: "30 days", totals: snapshot.month, showCost: snapshot.settings.showCost)
+                                    NativeTrayTotalsView(title: NativeTrayL10n.text("tray.section.month"), totals: snapshot.month, showCost: snapshot.settings.showCost)
                                 }
                             }
                         }
@@ -65,49 +82,46 @@ struct NativeTrayUsageView: View {
                         if snapshot.settings.showModels && !snapshot.models.isEmpty {
                             Divider()
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Models").font(.subheadline).foregroundStyle(.secondary)
+                                Text(NativeTrayL10n.text("tray.section.models")).font(.subheadline).foregroundStyle(.secondary)
                                 ForEach(snapshot.models) { row in
                                     HStack {
                                         Text(row.label).lineLimit(1).help(row.label)
                                         Spacer(minLength: 8)
-                                        Text("\(NativeTrayFormat.tokens(row.requests)) requests")
+                                        Text("\(NativeTrayFormat.tokens(row.requests)) \(NativeTrayL10n.text("tray.requests").lowercased())")
                                             .foregroundStyle(.secondary).font(.caption)
                                         Text(NativeTrayFormat.tokens(row.tokens)).monospacedDigit()
                                     }
                                 }
                             }
                         }
-                        if snapshot.settings.showAccounts {
+                        let detectedClients = NativeTrayLocalClientDetector.detect(snapshotClients: snapshot.detectedClients)
+                        if !detectedClients.isEmpty {
                             Divider()
-                            ForEach(snapshot.providers) { provider in
-                                NativeTrayProviderView(provider: provider, pendingSwitch: store.pendingSwitch) { account in
-                                    store.requestSwitch(provider: provider, account: account)
-                                }
-                            }
+                            NativeTrayDetectedClientsView(clients: detectedClients)
                         }
                         ForEach(Array(snapshot.errors.enumerated()), id: \.offset) { _, error in
                             Label(error, systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.secondary).font(.caption)
                         }
                     } else {
-                        HStack { ProgressView().controlSize(.small); Text("Loading usage…") }
+                        HStack { ProgressView().controlSize(.small); Text(NativeTrayL10n.text("tray.loading")) }
                             .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, 40)
                     }
                     if store.decodeFailed {
-                        Text("Usage data could not be read. Try refreshing.").foregroundStyle(.secondary)
+                        Text(NativeTrayL10n.text("tray.empty")).foregroundStyle(.secondary)
                     }
                 }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
             }
             Divider()
             HStack(spacing: 10) {
-                Button("Refresh") { store.action(1) }
+                Button(NativeTrayL10n.text("tray.action.refresh")) { store.action(1) }
                     .disabled(store.snapshot?.refreshing == true && !store.decodeFailed)
                 if let updated = NativeTrayFormat.date(store.snapshot?.updatedAt) {
                     Text(updated, style: .time).font(.caption).foregroundStyle(.secondary)
                         .help("Last successful update")
                 }
                 Spacer()
-                Button("Dashboard") { store.action(3) }
+                Button(NativeTrayL10n.text("tray.openDashboard")) { store.action(3) }
             }.controlSize(.small).padding(12)
         }
         .font(.system(size: 12))
@@ -124,19 +138,19 @@ private struct NativeTrayTotalsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title).font(.subheadline).foregroundStyle(.secondary)
-            row("Total tokens", NativeTrayFormat.tokens(totals?.tokens), headline: true)
-            row("Input", NativeTrayFormat.tokens(totals?.input))
+            row(NativeTrayL10n.text("tray.tokens"), NativeTrayFormat.tokens(totals?.tokens), headline: true)
+            row(NativeTrayL10n.text("tray.input"), NativeTrayFormat.tokens(totals?.input))
             if let cached = totals?.cachedPercent {
-                Text("\(Int(cached.rounded()))% cached").font(.caption2).foregroundStyle(.secondary)
+                Text("\(Int(cached.rounded()))% \(NativeTrayL10n.text("tray.cached").lowercased())").font(.caption2).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            row("Output", NativeTrayFormat.tokens(totals?.output))
+            row(NativeTrayL10n.text("tray.output"), NativeTrayFormat.tokens(totals?.output))
             if showCost {
-                row("Cost · est.", (totals?.cost?.formatted(.currency(code: "USD")) ?? "—") + (totals?.costIncomplete == true ? "*" : ""))
+                row(NativeTrayL10n.text("tray.cost.est"), (totals?.cost?.formatted(.currency(code: "USD")) ?? "—") + (totals?.costIncomplete == true ? "*" : ""))
                     .help(totals?.costIncomplete == true ? "Some requests have no price or usage. API list-price equivalent, not an actual charge." : "API list-price equivalent, not an actual charge")
             }
-            row("Requests", NativeTrayFormat.tokens(totals?.requests))
-            if let coverage = totals?.coverage, coverage < 100 { row("Coverage", "\(Int(coverage.rounded()))%") }
+            row(NativeTrayL10n.text("tray.requests"), NativeTrayFormat.tokens(totals?.requests))
+            if let coverage = totals?.coverage, coverage < 100 { row(NativeTrayL10n.text("tray.coverage"), "\(Int(coverage.rounded()))%") }
             if totals?.incomplete == true {
                 Text("Some usage records are unavailable").font(.caption2).foregroundStyle(.secondary)
             }

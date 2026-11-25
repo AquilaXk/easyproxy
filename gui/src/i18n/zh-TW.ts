@@ -1628,7 +1628,7 @@ export const zhTW: Record<TKey, string> = {
   "pws.noMatchFilters": "沒有符合篩選的供應商。",
   "pws.noProvidersConfigured": "尚未配置供應商。",
   "pws.workspaceMainAria": "供應商詳細資料",
-  "pws.detailComingSoon": "詳細資料檢視即將推出 — 請在經典檢視中管理。",
+  "pws.detailComingSoon": "詳細資料檢視即將推出。",
   "pws.selectPrompt": "從列表中選擇一個供應商。",
   "pws.connectFirst": "連線你的第一個供應商",
   "pws.empty.browseFree": "瀏覽免費供應商",

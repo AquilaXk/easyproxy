@@ -15,6 +15,7 @@ import { FILE_CLIENTS, TABS, type IntegrationTab } from "./integrations/integrat
 const ApiKeys = lazy(() => import("./ApiKeys"));
 const Claude = lazy(() => import("./Claude"));
 const ClaudeDesktop = lazy(() => import("./ClaudeDesktop"));
+const CodexIntegrationPage = lazy(() => import("./integrations/CodexIntegrationPage"));
 const Grok = lazy(() => import("./Grok"));
 const CursorIntegrationPage = lazy(() => import("./integrations/CursorIntegrationPage"));
 const GatewayClientsPage = lazy(() => import("./integrations/GatewayClientsPage"));
@@ -190,7 +191,7 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
   };
 
   return (
-    <section className="integrations-page">
+    <section className="integrations-page ui-v2 flex min-w-0 flex-col gap-5 font-sans text-fg">
       <div className="page-head">
         <h1>{t("nav.connect")}</h1>
       </div>
@@ -294,17 +295,7 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
                 {definition.id === "keys" && <ApiKeys apiBase={apiBase} active={active} />}
                 {definition.id === "sync" && <EcosystemSyncPage apiBase={apiBase} active={active} />}
                 {definition.id === "codex" && (
-                  <section className="integration-native-page" aria-labelledby="codex-integration-title">
-                    <h3 id="codex-integration-title">{t("integrations.codex.title")}</h3>
-                    <p>{t("integrations.codex.body")}</p>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => navigateHash("startup")}
-                    >
-                      {t("integrations.codex.openService")}
-                    </button>
-                  </section>
+                  <CodexIntegrationPage apiBase={apiBase} active={active} />
                 )}
                 {definition.id === "grok" && <Grok apiBase={apiBase} active={active} />}
                 {definition.id === "claude" && <Claude apiBase={apiBase} active={active} embedded />}

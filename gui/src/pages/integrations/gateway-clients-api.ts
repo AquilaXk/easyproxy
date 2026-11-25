@@ -48,6 +48,34 @@ export async function loadGatewayClients(apiBase: string, signal?: AbortSignal):
   }
 }
 
+export async function loadGatewayModelOptions(apiBase: string, signal?: AbortSignal): Promise<string[]> {
+  try {
+    const response = await fetch(`${apiBase}/api/models`, { signal });
+    const body = await readJsonIfOk<unknown>(response);
+    const list = Array.isArray(body)
+      ? body
+      : body && typeof body === "object" && Array.isArray((body as { models?: unknown }).models)
+        ? (body as { models: unknown[] }).models
+        : [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const item of list) {
+      const id = typeof item === "string"
+        ? item.trim()
+        : item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string"
+          ? (item as { id: string }).id.trim()
+          : "";
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 const RESTORES = new Set(["exact", "path-wise", "none"]);
 
 type ActionBody = { ok?: unknown; code?: unknown; message?: unknown; profilePath?: unknown; changed?: unknown; restore?: unknown };

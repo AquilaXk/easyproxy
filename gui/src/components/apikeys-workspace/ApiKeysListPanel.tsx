@@ -288,8 +288,13 @@ export default function ApiKeysListPanel({
                       >
                         {k.name}
                       </button>
-                      {(limitCount > 0 || providerScopeCount > 0 || modelScopeCount > 0) && (
+                      {(k.loopbackOnly === true || limitCount > 0 || providerScopeCount > 0 || modelScopeCount > 0) && (
                         <>
+                          {k.loopbackOnly === true && (
+                            <span className="badge badge-muted ml-2">
+                              {uxT(locale, "budget.loopbackOnlyBadge")}
+                            </span>
+                          )}
                           {limitCount > 0 && (
                             <span className="badge badge-muted ml-2">
                               {uxT(locale, "budget.badgeCompact", { count: limitCount })}

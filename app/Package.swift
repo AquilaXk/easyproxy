@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "EasyProxyWidget",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "NativeTray", type: .static, targets: ["NativeTray"]),
@@ -11,7 +12,11 @@ let package = Package(
         .executable(name: "MenuBarCoreTests", targets: ["MenuBarCoreTests"]),
     ],
     targets: [
-        .target(name: "NativeTray", path: "Sources/NativeTray"),
+        .target(
+            name: "NativeTray",
+            path: "Sources/NativeTray",
+            resources: [.process("Resources")]
+        ),
         .executableTarget(name: "NativeTrayTests", dependencies: ["NativeTray"], path: "Sources/NativeTrayTests"),
         .target(name: "MenuBarCore", path: "Sources/MenuBarCore"),
         .executableTarget(

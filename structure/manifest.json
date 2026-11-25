@@ -1070,8 +1070,10 @@
       "documents": [
         "src/cli/",
         "src/providers/cc-switch-import-bytes.ts",
+        "src/providers/cc-switch-import-keys.ts",
         "src/providers/cc-switch-import-source.ts",
         "src/providers/cc-switch-import.ts",
+        "src/server/management/cc-switch-routes.ts",
         "scripts/generate-epx-skill-surface.ts",
         "skills/epx/"
       ]

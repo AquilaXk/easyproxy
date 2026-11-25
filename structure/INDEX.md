@@ -458,6 +458,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/providers/antigravity-quota-identity.ts` | [`providers/jev-decision.md`](providers/jev-decision.md) |
 | `src/providers/api-key-pause.ts` | [`account-auto-pause.md`](account-auto-pause.md) |
 | `src/providers/cc-switch-import-bytes.ts` | [`cli-management.md`](cli-management.md) |
+| `src/providers/cc-switch-import-keys.ts` | [`cli-management.md`](cli-management.md) |
 | `src/providers/cc-switch-import-source.ts` | [`cli-management.md`](cli-management.md) |
 | `src/providers/cc-switch-import.ts` | [`cli-management.md`](cli-management.md) |
 | `src/providers/codex-capacity.ts` | [`providers/openai-tiers.md`](providers/openai-tiers.md) |
@@ -540,6 +541,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/live.ts` | [`providers/codex-installation-identity.md`](providers/codex-installation-identity.md) |
 | `src/server/management/` | [`providers/oauth-code-display-login.md`](providers/oauth-code-display-login.md)<br>[`providers/lm-studio-chat.md`](providers/lm-studio-chat.md)<br>[`clients/export-model-names.md`](clients/export-model-names.md) |
 | `src/server/management/anthropic-pool-settings.ts` | [`providers/anthropic-account-pool.md`](providers/anthropic-account-pool.md) |
+| `src/server/management/cc-switch-routes.ts` | [`cli-management.md`](cli-management.md) |
 | `src/server/management/codex-cli-update-routes.ts` | [`codex-cli-update.md`](codex-cli-update.md) |
 | `src/server/management/companion-routes.ts` | [`desktop-shell.md`](desktop-shell.md) |
 | `src/server/management/consent-session.ts` | [`telemetry.md`](telemetry.md) |

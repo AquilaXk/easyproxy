@@ -36,6 +36,7 @@
 @import "./pages/subagents.css" layer(bridge);
 @import "./pages/usage.css" layer(bridge);
 @import "./pages/logs.css" layer(bridge);
+@import "./pages/providers.css" layer(bridge);
 @import "./pages/connect.css" layer(bridge);
 @import "./pages/startup.css" layer(bridge);
 @import "./pages/proxy.css" layer(bridge);

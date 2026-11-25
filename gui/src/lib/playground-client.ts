@@ -110,7 +110,7 @@ export function buildPlaygroundCurl(
   endpoint: PlaygroundEndpoint,
   payload: Record<string, unknown>,
 ): string {
-  const base = apiBase ? apiBase.replace(/\/+$/, "") : (typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:8787");
+  const base = apiBase ? apiBase.replace(/\/+$/, "") : (typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:10100");
   return [
     "curl -sS -N",
     `-X POST ${shellSingleQuote(`${base}${endpoint}`)}`,

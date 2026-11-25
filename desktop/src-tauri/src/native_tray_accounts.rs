@@ -9,6 +9,7 @@ pub struct Source {
     /// The route that switches this provider's active account, when it has one. Chosen here, from
     /// the host's own view of the config; the panel never names a route.
     pub switch: Option<AccountSwitchKind>,
+    pub codex_account_mode: Option<String>,
 }
 
 pub fn sources(config: &Value) -> Option<Vec<Source>> {
@@ -38,6 +39,20 @@ pub fn sources(config: &Value) -> Option<Vec<Source>> {
                 } else {
                     (None, None)
                 };
+                let codex_account_mode = if name == "openai"
+                    && (text(row, "authMode").is_empty() || text(row, "authMode") == "forward")
+                {
+                    Some(
+                        if text(row, "codexAccountMode") == "direct" {
+                            "direct"
+                        } else {
+                            "pool"
+                        }
+                        .to_string(),
+                    )
+                } else {
+                    None
+                };
                 let label = if !text(row, "label").is_empty() {
                     text(row, "label")
                 } else {
@@ -55,6 +70,7 @@ pub fn sources(config: &Value) -> Option<Vec<Source>> {
                     label: label.into(),
                     path,
                     switch,
+                    codex_account_mode,
                 }
             })
             .collect(),
@@ -157,6 +173,9 @@ pub fn provider(source: &Source, body: Option<&Value>, unavailable: bool) -> Val
     let mut row = json!({"id":source.name,"label":source.label,
         "unavailable":unavailable || malformed,"accounts":accounts,
         "switchable":source.switch.is_some()});
+    if let Some(mode) = &source.codex_account_mode {
+        row["codexAccountMode"] = json!(mode);
+    }
     // Optional: older panels ignore unknown keys, and a provider without a mark simply has none.
     if let Some(icon) = crate::provider_icons::icon(&source.name) {
         row["iconSvg"] = json!(icon.svg);
@@ -247,6 +266,7 @@ mod tests {
             label: "Example".into(),
             path: None,
             switch: Some(AccountSwitchKind::OAuth),
+            codex_account_mode: None,
         };
         provider(&source, Some(&body), false)["accounts"]
             .as_array()
@@ -377,6 +397,7 @@ mod tests {
             label: name.into(),
             path: None,
             switch: None,
+            codex_account_mode: None,
         };
         let openai = provider(&source("openai"), None, false);
         assert!(openai["iconSvg"].as_str().unwrap().contains("<svg"));
@@ -458,5 +479,17 @@ mod tests {
         assert_eq!(switch_request(find("forward"), "x"), None);
         assert_eq!(provider(find("forward"), None, false)["switchable"], false);
         assert_eq!(provider(find("xai"), None, false)["switchable"], true);
+        assert_eq!(
+            provider(find("openai"), None, false)["codexAccountMode"],
+            "pool"
+        );
+        let direct_rows = sources(&json!({
+            "providers": { "openai": { "authMode": "forward", "codexAccountMode": "direct" } }
+        }))
+        .unwrap();
+        assert_eq!(
+            provider(&direct_rows[0], None, false)["codexAccountMode"],
+            "direct"
+        );
     }
 }

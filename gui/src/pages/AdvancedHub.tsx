@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useState } from "react";
 import { useT, type TKey } from "../i18n/shared";
 import { getLoadedDict, isLocaleLoaded, preloadLocaleCatalog, type Dict } from "../i18n/runtime-catalogs";
 import type { Page } from "../app-routing";
-import { IconActivity, IconBot, IconClaude, IconCodex, IconHardDrive, IconHistory, IconList, IconSearch, IconServer, IconShuffle, IconStar, IconTerminal } from "../icons";
+import { IconActivity, IconBot, IconClaude, IconCodex, IconHardDrive, IconList, IconSearch, IconServer, IconShuffle, IconStar, IconTerminal } from "../icons";
 import { HubCard } from "@/components/ui-v2/hub-card";
 
 /*
@@ -13,7 +13,6 @@ import { HubCard } from "@/components/ui-v2/hub-card";
 
 interface AdvancedHubProps {
   navigate: (page: Page, subPath?: string) => void;
-  onSwitchClassic?: () => void;
 }
 
 interface Entry {
@@ -61,7 +60,7 @@ function englishTerm(entry: Entry, enDict?: Partial<Dict>): string {
   return "name" in entry.term ? entry.term.name : (enDict?.[entry.term.key] ?? "");
 }
 
-export default function AdvancedHub({ navigate, onSwitchClassic }: AdvancedHubProps) {
+export default function AdvancedHub({ navigate }: AdvancedHubProps) {
   const t = useT();
   const [query, setQuery] = useState("");
   const termText = (entry: Entry) => "name" in entry.term ? entry.term.name : t(entry.term.key);
@@ -115,27 +114,6 @@ export default function AdvancedHub({ navigate, onSwitchClassic }: AdvancedHubPr
               openLabel={t("shellV2.stepOpen")}
             />
           ))}
-        </div>
-      )}
-      {onSwitchClassic && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-8 shrink-0 place-items-center rounded-control bg-inset text-fg-muted [&_svg]:size-4">
-              <IconHistory aria-hidden />
-            </span>
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-[13px] font-medium text-fg">{t("shellV2.uiClassic")}</span>
-              <span className="text-xs text-fg-muted">{t("shellV2.uiClassicHint")}</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onSwitchClassic}
-            aria-label={t("shellV2.uiClassic")}
-            className="inline-flex h-[var(--epx-control-h-sm)] shrink-0 cursor-pointer items-center gap-1.5 rounded-control border border-line-strong bg-raised px-3 text-[13px] font-medium text-fg transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-highlight"
-          >
-            {t("shellV2.uiClassic")}
-          </button>
         </div>
       )}
     </div>

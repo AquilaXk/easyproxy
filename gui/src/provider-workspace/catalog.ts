@@ -73,6 +73,10 @@ export interface WorkspaceProvider {
   codexAccountMode?: "direct" | "pool";
   /** Derived state of the two xAI Grok Responses model-adapter entries. */
   xaiResponsesOptInState?: boolean | "mixed";
+  hasProxy?: boolean;
+  proxyLabel?: string;
+  noProxy?: string | string[];
+  tlsProfile?: { profile: "antigravity-browser"; status: "disabled" | "pending" | "active" | "failed" };
   initialModelSelection?: { status: "pending" | "ready" | "all-off"; modelCount?: number };
   discovery?: ProviderDiscoverySummary;
 }

@@ -27,6 +27,10 @@ export interface ProvidersConfig {
     note?: string;
     codexAccountMode?: "direct" | "pool";
     xaiResponsesOptInState?: boolean | "mixed";
+    hasProxy?: boolean;
+    proxyLabel?: string;
+    noProxy?: string | string[];
+    tlsProfile?: { profile: "antigravity-browser"; status: "disabled" | "pending" | "active" | "failed" };
   }>;
 }
 

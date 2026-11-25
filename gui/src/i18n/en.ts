@@ -1950,7 +1950,7 @@ export const en = {
   "pws.noMatchFilters": "No providers match the filters.",
   "pws.noProvidersConfigured": "No providers configured.",
   "pws.workspaceMainAria": "Provider details",
-  "pws.detailComingSoon": "Detail view coming soon — use the classic view to manage this provider.",
+  "pws.detailComingSoon": "Detail view coming soon.",
   "pws.selectPrompt": "Select a provider from the list.",
   "pws.connectFirst": "Connect your first provider",
   "pws.empty.browseFree": "Browse free providers",

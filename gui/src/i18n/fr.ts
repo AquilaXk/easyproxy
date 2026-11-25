@@ -1923,7 +1923,7 @@ export const fr: Record<TKey, string> = {
   "pws.noMatchFilters": "Aucun fournisseur ne correspond aux filtres.",
   "pws.noProvidersConfigured": "Aucun fournisseur configuré.",
   "pws.workspaceMainAria": "Détails du fournisseur",
-  "pws.detailComingSoon": "La vue détaillée sera bientôt disponible — utilisez la vue classique pour gérer ce fournisseur.",
+  "pws.detailComingSoon": "La vue détaillée sera bientôt disponible.",
   "pws.selectPrompt": "Sélectionnez un fournisseur dans la liste.",
   "pws.connectFirst": "Connecter votre premier fournisseur",
   "pws.empty.browseFree": "Parcourir les fournisseurs gratuits",

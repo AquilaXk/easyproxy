@@ -1934,7 +1934,7 @@ export const pt: Record<TKey, string> = {
   "pws.noMatchFilters": "Nenhum provedor corresponde aos filtros.",
   "pws.noProvidersConfigured": "Nenhum provedor configurado.",
   "pws.workspaceMainAria": "Detalhes do provedor",
-  "pws.detailComingSoon": "Visão detalhada em breve — use a visão clássica para gerenciar este provedor.",
+  "pws.detailComingSoon": "Visão detalhada em breve.",
   "pws.selectPrompt": "Selecione um provedor na lista.",
   "pws.connectFirst": "Conecte seu primeiro provedor",
   "pws.empty.browseFree": "Explorar provedores gratuitos",

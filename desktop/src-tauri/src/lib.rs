@@ -31,6 +31,8 @@ mod menu;
 #[cfg(target_os = "macos")]
 mod native_tray_accounts;
 #[cfg(target_os = "macos")]
+mod native_tray_clients;
+#[cfg(target_os = "macos")]
 mod native_tray_data;
 #[cfg(target_os = "macos")]
 mod native_tray_snapshot;

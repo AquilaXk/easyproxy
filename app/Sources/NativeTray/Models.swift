@@ -14,6 +14,7 @@ public struct NativeTraySnapshot: Decodable {
     public let providers: [NativeTrayProvider]
     /// Set on the publish that reports a failed account switch.
     public let switchFailed: Bool?
+    public let detectedClients: [NativeTrayDetectedClient]?
 
     public static func decode(_ data: Data) throws -> Self {
         let snapshot = try JSONDecoder().decode(Self.self, from: data)
@@ -100,6 +101,7 @@ public struct NativeTrayProvider: Decodable, Identifiable {
     public let iconPaint: String?
     /// Whether the host can switch this provider's active account. Absent on older hosts.
     public let switchable: Bool?
+    public let codexAccountMode: String?
     public struct Account: Decodable, Identifiable {
         public let id: String
         public let label: String

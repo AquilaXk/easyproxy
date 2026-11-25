@@ -81,6 +81,7 @@ export default function ProviderDetails({
   onSetDisabled,
   onSetDefault,
   onRefreshQuota,
+  onRefreshConfig,
 }: {
   item: WorkspaceItem;
   preset?: CatalogPreset;
@@ -139,6 +140,7 @@ export default function ProviderDetails({
   onSetDefault?: (name: string) => void;
   /** Force a fresh quota read for this provider; resolves with whether it succeeded. */
   onRefreshQuota?: () => Promise<boolean>;
+  onRefreshConfig?: () => void;
 }) {
   const t = useT();
   // A shared-login row (Kimi (Responses)) signs in through its owner: its busy state is the owner's.
@@ -548,6 +550,7 @@ export default function ProviderDetails({
             onRegisterDiscard={registerSettingsDiscard}
             accountModeFocusToken={accountModeFocusToken}
             onAccountModeFocused={clearAccountModeFocus}
+            onRefreshConfig={onRefreshConfig}
           />
         )}
       </div>

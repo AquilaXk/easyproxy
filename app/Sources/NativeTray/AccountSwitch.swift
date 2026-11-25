@@ -48,19 +48,20 @@ struct NativeTrayAccountHeader: View {
                 if pending {
                     ProgressView().controlSize(.mini).accessibilityLabel("Switching account")
                 } else if offersUse {
-                    Button("Use", action: onUse)
+                    Button(NativeTrayL10n.text("tray.account.use"), action: onUse)
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
                         .disabled(busy)
                         .focused($focused)
                         .opacity(hovered || focused ? 1 : 0)
                         .help("Make this the active account")
-                        .accessibilityLabel("Use \(account.label)")
+                        .accessibilityLabel("\(NativeTrayL10n.text("tray.account.use")) \(account.label)")
                 }
                 if let plan = account.plan { Text(plan).foregroundStyle(.secondary) }
                 if account.active {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        .accessibilityLabel("Active account").help("Active account")
+                        .accessibilityLabel(NativeTrayL10n.text("tray.account.active"))
+                        .help(NativeTrayL10n.text("tray.account.active"))
                 }
             }
             .font(.caption)

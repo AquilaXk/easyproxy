@@ -115,7 +115,7 @@ export default function Home({
   const rawEndpoint = endpointUrl?.trim() || "";
   const baseOrigin = rawEndpoint.replace(/\/v1\/?$/, "").replace(/\/+$/, "");
   const endpoint = baseOrigin ? (protocolMode === "openai" ? `${baseOrigin}/v1` : baseOrigin) : "";
-  const snippetEndpoint = endpoint || (protocolMode === "openai" ? "http://127.0.0.1:8787/v1" : "http://127.0.0.1:8787");
+  const snippetEndpoint = endpoint || (protocolMode === "openai" ? "http://127.0.0.1:10100/v1" : "http://127.0.0.1:10100");
   const snippetCode = buildQuickstartSnippet(protocolMode, snippetLang, snippetEndpoint);
   const requests7d = usage.data?.summary?.requests ?? 0;
   const tokens7d = usage.data?.summary?.totalTokens ?? 0;

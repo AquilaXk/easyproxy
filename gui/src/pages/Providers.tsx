@@ -10,7 +10,8 @@ import { ensureOpenAiProvider, openAiAccountProviderState, OpenAiEnableError } f
 import { oauthTosRisk } from "../oauth-tos-risk";
 import { ToastNotice, type NoticeTone } from "../ui";
 import { IconPlus } from "../icons";
-import { useT } from "../i18n/shared";
+import { useI18n } from "../i18n/shared";
+import { uxT } from "../i18n/ux-overhaul-copy";
 import { useProviderAccountPools, type AccountSelectionTarget } from "../hooks/useProviderAccountPools";
 import { useCodexAccountPool } from "../hooks/useCodexAccountPool";
 import { useJsonConfigEditor } from "../hooks/useJsonConfigEditor";
@@ -32,6 +33,7 @@ import { canCreateJevAutoFrom } from "../jev-decision-service";
 import { useProviderSettingsDeepLink } from "./providers-deep-link";
 import { PROVIDERS_HASH, readProviderImportUrl } from "../protocol-deep-links";
 import ImportProviderLinkModal from "../components/ImportProviderLinkModal";
+import { CcSwitchImportModal } from "../components/CcSwitchImportModal";
 import { subscribeKiroDeviceFinal } from "../kiro-device-login-finalizer";
 import type { BrowserLaunch } from "../oauth-browser-launch";
 import { oauthCredentialSiblingsOf, oauthCredentialSlot } from "../../../src/oauth/credential-siblings";
@@ -239,7 +241,7 @@ export default function Providers({
   openAddRequested?: boolean;
   onOpenAddConsumed?: () => void;
 }) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const draftTargetKey = targetKey ?? apiBase;
   const draftTargetLabel = targetLabel ?? providerDraftTargetLabel(draftTargetKey);
   const target = useMemo(() => ({ apiBase, targetKey: draftTargetKey }), [apiBase, draftTargetKey]);
@@ -264,6 +266,7 @@ export default function Providers({
   /** In-memory only; a target switch parks its drafts here for the return trip. */
   const draftStore = useMemo(() => createProviderDraftStore(), []);
   const [adding, setAdding] = useState(false);
+  const [ccSwitchOpen, setCcSwitchOpen] = useState(false);
   const [importLinkOpen, setImportLinkOpen] = useState(() => Boolean(readProviderImportUrl()));
   const [initialImportLinkUrl, setInitialImportLinkUrl] = useState(() => readProviderImportUrl() ?? "");
   const [status, setStatus] = useState("");
@@ -605,7 +608,7 @@ export default function Providers({
 
   if (!config) {
     return (
-      <>
+      <div className="providers-page ui-v2 flex min-w-0 flex-col gap-5 font-sans text-fg">
         <div className="page-head">
           <h1>{t("nav.providers")}</h1>
         </div>
@@ -619,7 +622,7 @@ export default function Providers({
               </div>
             </div>
           )}
-      </>
+      </div>
     );
   }
 
@@ -692,10 +695,13 @@ export default function Providers({
   };
 
   return (
-    <>
+    <div className="providers-page ui-v2 flex min-w-0 flex-col gap-5 font-sans text-fg">
       <div className="page-head">
         <h1>{t("nav.providers")}</h1>
         <div className="row">
+          <button type="button" className="btn btn-ghost" onClick={() => setCcSwitchOpen(true)}>
+            {uxT(locale, "ccSwitch.button")}
+          </button>
           <button type="button" className="btn btn-ghost" onClick={() => { setInitialImportLinkUrl(""); setImportLinkOpen(true); }}>
             {t("prov.importLink")}
           </button>
@@ -783,6 +789,7 @@ export default function Providers({
             loginCapture={loginCapture(oauthCredentialSlot(item.name))}
             authHandlers={authHandlers}
             onRefreshQuota={() => refreshProviderQuota(item.name)}
+            onRefreshConfig={() => { void fetchConfig(); }}
             isDefault={item.name === config.defaultProvider}
             onRemoveProvider={removeProvider}
             onSetDisabled={setProviderDisabled}
@@ -904,6 +911,19 @@ export default function Providers({
           }}
         />
       )}
-    </>
+      {ccSwitchOpen && (
+        <CcSwitchImportModal
+          apiBase={apiBase}
+          onClose={() => setCcSwitchOpen(false)}
+          onChanged={firstImported => {
+            if (firstImported) setWorkspaceSelected(firstImported);
+            void fetchConfig();
+            void fetchOauth();
+            void fetchProviderQuotas(true);
+            bumpModelsRefresh();
+          }}
+        />
+      )}
+    </div>
   );
 }

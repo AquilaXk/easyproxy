@@ -11,9 +11,21 @@ struct NativeTrayProviderView: View {
             HStack(spacing: 6) {
                 NativeTrayProviderMark(provider: provider)
                 Text(provider.label).font(.subheadline.weight(.semibold))
+                Spacer(minLength: 4)
+                if let mode = provider.codexAccountMode {
+                    let isPool = mode != "direct"
+                    Text(NativeTrayL10n.text(isPool ? "tray.mode.pool" : "tray.mode.direct"))
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(isPool ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.14))
+                        )
+                        .foregroundStyle(isPool ? Color.accentColor : Color.secondary)
+                }
             }
             if provider.unavailable || provider.accounts.isEmpty {
-                Text(provider.unavailable ? "Account limits unavailable" : "No quota data")
+                Text(NativeTrayL10n.text(provider.unavailable ? "tray.provider.unavailable" : "tray.quota.unavailable"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             ForEach(provider.accounts) { account in
@@ -28,22 +40,63 @@ struct NativeTrayProviderView: View {
                         Text(email).font(.caption2).foregroundStyle(.secondary)
                     }
                     if account.unavailable || account.windows.isEmpty {
-                        Text("No quota data").font(.caption2).foregroundStyle(.secondary)
+                        Text(NativeTrayL10n.text("tray.quota.unavailable")).font(.caption2).foregroundStyle(.secondary)
                     }
                     ForEach(account.windows) { window in
+                        let resetLabel = NativeTrayFormat.reset(window.resetAt)
                         HStack(spacing: 8) {
                             Text(window.label).lineLimit(1).frame(width: 96, alignment: .leading)
                             Text(NativeTrayFormat.percentText(window.value))
                                 .monospacedDigit().frame(width: 36, alignment: .trailing)
                             NativeTrayQuotaBar(window: window)
-                            Text(NativeTrayFormat.reset(window.resetAt)).monospacedDigit()
-                                .frame(width: 70, alignment: .trailing)
+                            Text(resetLabel == "—" ? "—" : NativeTrayL10n.formatted("tray.reset.in", resetLabel))
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .frame(minWidth: 78, alignment: .trailing)
                                 .help(window.resetDate?.formatted(date: .complete, time: .standard) ?? "Reset time unavailable")
                         }.font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct NativeTrayDetectedClientsView: View {
+    let clients: [NativeTrayDetectedClient]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(NativeTrayL10n.text("tray.section.clients"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(clients) { client in
+                    let badgeText = client.connected
+                        ? NativeTrayL10n.text("tray.client.connected")
+                        : (client.installed ? NativeTrayL10n.text("tray.client.detected") : NativeTrayL10n.text("tray.client.notDetected"))
+                    let dotColor: Color = client.connected ? .green : (client.installed ? .orange : .secondary)
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(dotColor)
+                            .frame(width: 6, height: 6)
+                        Text(client.label)
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                        Text(badgeText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 0)
+                    }
+                    .help("\(client.label): \(badgeText)")
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.secondary.opacity(0.08)))
+                }
+            }
+        }
     }
 }
 

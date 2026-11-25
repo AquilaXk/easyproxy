@@ -31,7 +31,6 @@ import QuotaSummaryBar from "./components/quota-summary-bar/QuotaSummaryBar";
 import { SidebarGithubRow } from "./components/sidebar-github-row";
 import { TelemetryConsentCard } from "./components/telemetry-consent-card";
 import { IconMenu, IconGlobe, IconPower, IconX, IconRefresh } from "./icons";
-import { switchDashboardEdition } from "./lib/dashboard-edition";
 import { groupForPage, visibleGroupPages } from "./nav-groups";
 import { SidebarNav } from "./components/sidebar-nav";
 import { SectionSwitcher } from "./components/SectionSwitcher";
@@ -630,14 +629,7 @@ export default function App() {
         setNavOpen(false);
       },
     },
-    {
-      id: "classic-ui",
-      itemName: t("shellV2.uiClassic"),
-      contextName: actionContext,
-      keywords: "classic legacy old ui dashboard",
-      run: () => switchDashboardEdition("classic"),
-    },
-  ], [actionContext, copyProxyEndpoint, handleCodexRestart, locale, navigateToPage, playgroundShortcut, t]);
+  ], [actionContext, copyProxyEndpoint, handleCodexRestart, locale, navigateToPage, playgroundShortcut]);
 
   return (
     <div ref={appRef} className={`app${desktopShell ? " app--desktop" : ""}${desktopMac ? " app--macos" : ""}${navCollapsed ? " app--nav-collapsed" : ""}`}>
@@ -899,7 +891,7 @@ export default function App() {
                   sessionEpoch={sharedSessionEpoch}
                   onRequestAuth={handleRetryAdminAuth} />}
                 {page === "setup" && <SetupHub apiBase={sharedBase} navigate={navigateToPage} />}
-                {page === "advanced" && <AdvancedHub navigate={navigateToPage} onSwitchClassic={() => switchDashboardEdition("classic")} />}
+                {page === "advanced" && <AdvancedHub navigate={navigateToPage} />}
                 {page === "dashboard" && <Dashboard apiBase={sharedBase} targetKey={sharedTarget.key} readOnly={targets.link !== undefined} connected={targets.connected}
                   authenticationPending={targets.connected && !sharedSessionReady} refreshEpoch={sharedSessionEpoch} />}
                 {page === "startup" && <Startup apiBase={sharedBase} machineApiBase={machineBase} connected={targets.connected} />}

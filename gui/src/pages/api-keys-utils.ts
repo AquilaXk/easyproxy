@@ -21,6 +21,7 @@ export interface ApiKeyEntry {
   name: string;
   prefix: string;
   createdAt: string;
+  loopbackOnly?: boolean;
   rpmLimit?: number;
   maxDailyRequests?: number;
   dailyTokenLimit?: number;

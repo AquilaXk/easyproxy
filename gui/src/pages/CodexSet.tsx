@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useT } from "../i18n/shared";
 import CodexSetMultiauth from "./codex-set-multiauth";
+import { AllProviderAccountsHub } from "../components/AllProviderAccountsHub";
 import CodexSetPrompt from "./codex-set-prompt";
 import CodexDesktopCompatibility from "./codex-desktop-compatibility";
 import CodexCliUpdate from "./codex-cli-update";
@@ -105,6 +106,7 @@ export default function CodexSet({ apiBase, machineApiBase = apiBase, connected 
           aria-labelledby="codex-set-tab-multiauth"
           hidden={tab !== "multiauth"}
         >
+          <AllProviderAccountsHub key={targetKey ?? apiBase} apiBase={apiBase} />
           <CodexSetMultiauth apiBase={apiBase} targetKey={targetKey} />
         </div>
       )}

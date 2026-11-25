@@ -248,6 +248,9 @@ export function ApiKeyBudgetCard({
         {dirty && <span className="badge badge-amber">{uxT(locale, "budget.unsaved")}</span>}
       </div>
       <p className="muted mb-3 text-[13px]">{uxT(locale, "budget.subtitle")}</p>
+      <p className="mb-3 rounded-lg border border-border-subtle bg-surface-2 px-3 py-2 text-xs text-fg-muted" role="note">
+        {uxT(locale, "budget.loopbackNotice")}
+      </p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {integerRows.map(row => {
           const percent = pct(row.used, row.limit);

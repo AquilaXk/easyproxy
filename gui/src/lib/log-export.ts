@@ -87,7 +87,7 @@ export function buildLogReplayCurl(detail: LogExportRecord, apiBase: string): st
       serviceTier: seed.serviceTier,
     },
   );
-  const cleanBase = (apiBase || (typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:8787"))
+  const cleanBase = (apiBase || (typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:10100"))
     .replace(/\/+$/, "");
   return [
     "curl -sS -N",
