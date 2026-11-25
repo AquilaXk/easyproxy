@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   ANTIGRAVITY_IDE_VERSION,
   CLAUDE_CODE_HEADERS,
+  antigravityCliUserAgent,
+  antigravityHostPlatform,
   antigravityUserAgent,
   claudeCodeSessionId,
   stainlessArchName,
@@ -26,26 +28,34 @@ function parsed(overrides: Partial<EpxParsedRequest> = {}): EpxParsedRequest {
 }
 
 describe("client fingerprint — helpers", () => {
-  test("antigravity UA has the real IDE shape, never the literal giveaway", async () => {
+  const [hostOs, hostArch] = antigravityHostPlatform().split("/");
+
+  test("antigravity UA has the real IDE shape aligned to the host OS/arch", async () => {
     const prevGoogle = process.env.GOOGLE_ANTIGRAVITY_USER_AGENT;
     try {
       delete process.env.GOOGLE_ANTIGRAVITY_USER_AGENT;
       const ua = antigravityUserAgent();
-      expect(ua).toBe(`antigravity/ide/${ANTIGRAVITY_IDE_VERSION} (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)`);
+      const cliUa = antigravityCliUserAgent();
+      expect(ua).toBe(`antigravity/ide/${ANTIGRAVITY_IDE_VERSION} (os_type=${hostOs}; arch=${hostArch}; aidev_client; auth_method=oauth)`);
+      expect(cliUa).toContain(`os_type=${hostOs}; arch=${hostArch};`);
       expect(ua).not.toBe("antigravity");
     } finally {
       if (prevGoogle !== undefined) process.env.GOOGLE_ANTIGRAVITY_USER_AGENT = prevGoogle;
     }
   });
 
-  test("antigravity UA honors explicit version and authMethod overrides", async () => {
+  test("antigravity UA honors explicit version, authMethod, and account platform overrides", async () => {
     const prevGoogle = process.env.GOOGLE_ANTIGRAVITY_USER_AGENT;
     try {
       delete process.env.GOOGLE_ANTIGRAVITY_USER_AGENT;
-      expect(antigravityUserAgent("9.9.9")).toBe("antigravity/ide/9.9.9 (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)");
+      expect(antigravityUserAgent("9.9.9")).toBe(`antigravity/ide/9.9.9 (os_type=${hostOs}; arch=${hostArch}; aidev_client; auth_method=oauth)`);
       expect(antigravityUserAgent(ANTIGRAVITY_IDE_VERSION, "api_key")).toBe(
-        `antigravity/ide/${ANTIGRAVITY_IDE_VERSION} (os_type=windows; arch=amd64; aidev_client; auth_method=api_key)`,
+        `antigravity/ide/${ANTIGRAVITY_IDE_VERSION} (os_type=${hostOs}; arch=${hostArch}; aidev_client; auth_method=api_key)`,
       );
+      expect(antigravityUserAgent(ANTIGRAVITY_IDE_VERSION, "oauth", "linux/amd64")).toBe(
+        `antigravity/ide/${ANTIGRAVITY_IDE_VERSION} (os_type=linux; arch=amd64; aidev_client; auth_method=oauth)`,
+      );
+      expect(antigravityCliUserAgent(undefined, "oauth", "linux/amd64")).toContain("os_type=linux; arch=amd64;");
     } finally {
       if (prevGoogle !== undefined) process.env.GOOGLE_ANTIGRAVITY_USER_AGENT = prevGoogle;
     }
@@ -67,7 +77,7 @@ describe("client fingerprint — helpers", () => {
     try {
       process.env.GOOGLE_ANTIGRAVITY_USER_AGENT = "   ";
       expect(antigravityUserAgent()).toBe(
-        `antigravity/ide/${ANTIGRAVITY_IDE_VERSION} (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)`,
+        `antigravity/ide/${ANTIGRAVITY_IDE_VERSION} (os_type=${hostOs}; arch=${hostArch}; aidev_client; auth_method=oauth)`,
       );
     } finally {
       if (prevGoogle === undefined) delete process.env.GOOGLE_ANTIGRAVITY_USER_AGENT;

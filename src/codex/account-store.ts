@@ -17,7 +17,12 @@ import {
   loadConfig,
   withConfigMutationLockSync,
 } from "../config";
+import { getConfigPath } from "../config/paths";
+import { providerEgressConfigError } from "../lib/provider-egress";
+import { providerEgressFetch } from "../lib/provider-tls-profile";
+import { OPENAI_CODEX_PROVIDER_ID } from "../providers/openai-tiers-destination";
 import { notifyCodexStoreLoaded } from "../lib/decision-quota-sink";
+import { CredentialVaultError, sealCodexStoreDocument, unsealCodexCredentialObject } from "../lib/credential-vault";
 import { assertNotRealHomeUnderTest } from "../lib/test-home-guard";
 import type { CodexAccount, CodexAccountCredentialRecord, CodexAccountCredentials } from "../types";
 import { advanceCodexCredentialMutationEpoch } from "./credential-mutation-epoch";
@@ -64,13 +69,20 @@ export function inspectLocalCodexCredentialSlots(raw: Record<string, unknown> | 
   if (raw === null) return { count: 0, sourcePaths: [] };
   let count = 0;
   const sourcePaths: string[] = [];
-  for (const value of Object.values(raw)) {
+  for (const [id, value] of Object.entries(raw)) {
     let credential: CodexAccountCredentials | undefined;
-    if (isCredentialRecord(value)) {
-      credential = value.credential;
-      if (!credential && value.deletedAt === undefined) throw new Error("Unrecognized Codex credential record");
-    } else if (isCredential(value)) credential = value;
-    else throw new Error("Invalid Codex credential record");
+    if (isObject(value) && Object.hasOwn(value, "generation")) {
+      const unsealedRow = isObject(value.credential)
+        ? { ...value, credential: unsealCodexCredentialObject(value.credential, id) }
+        : value;
+      if (!isCredentialRecord(unsealedRow)) throw new Error("Invalid Codex credential record");
+      credential = unsealedRow.credential;
+      if (!credential && unsealedRow.deletedAt === undefined) throw new Error("Unrecognized Codex credential record");
+    } else {
+      const unsealed = unsealCodexCredentialObject(value, id);
+      if (isCredential(unsealed)) credential = unsealed;
+      else throw new Error("Invalid Codex credential record");
+    }
     if (credential) {
       count += 1;
       if (credential.sourceAuthPath) sourcePaths.push(credential.sourceAuthPath);
@@ -108,7 +120,8 @@ function isCredentialRecord(value: unknown): value is CodexAccountCredentialReco
     && (value.lastCodexValidationStatus === undefined || value.lastCodexValidationStatus === "ok" || value.lastCodexValidationStatus === "failed")
     && (value.lastCodexValidationError === undefined || typeof value.lastCodexValidationError === "string")
     && (value.codexValidationPending === undefined || typeof value.codexValidationPending === "boolean")
-    && (value.lastCodexValidationTerminal === undefined || typeof value.lastCodexValidationTerminal === "boolean");
+    && (value.lastCodexValidationTerminal === undefined || typeof value.lastCodexValidationTerminal === "boolean")
+    && (value.proxy === undefined || (typeof value.proxy === "string" && value.proxy.trim().length > 0 && providerEgressConfigError({ proxy: value.proxy.trim() }) === null));
 }
 
 export function refreshGrantFingerprintForToken(refreshToken: string): string {
@@ -122,8 +135,32 @@ function recordGrantFingerprint(record: CodexAccountCredentialRecord): string | 
   );
 }
 
-function normalizeRecord(value: CodexAccountCredentials | CodexAccountCredentialRecord | undefined): CodexAccountCredentialRecord | undefined {
+function normalizeRecord(
+  value: CodexAccountCredentials | CodexAccountCredentialRecord | undefined,
+  accountId?: string,
+): CodexAccountCredentialRecord | undefined {
   if (!value) return undefined;
+  if (isObject(value) && isObject(value.credential) && Object.hasOwn(value.credential, "__vault")) {
+    if (!accountId) return undefined;
+    const unsealed = { ...value, credential: unsealCodexCredentialObject(value.credential, accountId) };
+    if (isCredentialRecord(unsealed)) {
+      const refreshGrantFingerprint = recordGrantFingerprint(unsealed);
+      return refreshGrantFingerprint ? { ...unsealed, refreshGrantFingerprint } : unsealed;
+    }
+    return undefined;
+  }
+  if (isObject(value) && Object.hasOwn(value, "__vault")) {
+    if (!accountId) return undefined;
+    const unsealed = unsealCodexCredentialObject(value, accountId);
+    if (isCredential(unsealed)) {
+      return {
+        credential: unsealed,
+        generation: 0,
+        refreshGrantFingerprint: refreshGrantFingerprintForToken(unsealed.refreshToken),
+      };
+    }
+    return undefined;
+  }
   if (isCredentialRecord(value)) {
     const refreshGrantFingerprint = recordGrantFingerprint(value);
     return refreshGrantFingerprint ? { ...value, refreshGrantFingerprint } : value;
@@ -149,7 +186,7 @@ export function peekCodexAccountRecordStore(): Record<string, CodexAccountCreden
   try {
     const raw = JSON.parse(fsNs.readFileSync(path, "utf-8")) as RawCodexAccountStore;
     for (const [id, value] of Object.entries(raw)) {
-      const record = normalizeRecord(value);
+      const record = normalizeRecord(value, id);
       if (record) normalized[id] = record;
     }
   } catch {
@@ -164,7 +201,15 @@ function loadCodexAccountRecordStore(): CodexAccountStore {
   return result.status === "ok" ? result.records : {};
 }
 
-type CodexAccountRecordStoreResult = { status: "ok"; records: CodexAccountStore } | { status: "failed" };
+function loadCodexAccountRecordStoreForMutation(): CodexAccountStore {
+  const result = loadCodexAccountRecordStoreResult();
+  if (result.status === "failed" && result.vaultError) throw result.vaultError;
+  return result.status === "ok" ? result.records : {};
+}
+
+type CodexAccountRecordStoreResult =
+  | { status: "ok"; records: CodexAccountStore }
+  | { status: "failed"; vaultError?: CredentialVaultError };
 
 interface CodexAccountStoreCacheEntry {
   path: string;
@@ -236,7 +281,7 @@ function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStor
     const raw = JSON.parse(fsNs.readFileSync(path, "utf-8")) as RawCodexAccountStore;
     if (!isObject(raw)) throw new Error("invalid Codex account store shape");
     for (const [id, value] of Object.entries(raw)) {
-      const record = normalizeRecord(value);
+      const record = normalizeRecord(value, id);
       if (record) normalized[id] = record;
     }
   } catch (error) {
@@ -244,6 +289,10 @@ function loadCodexAccountRecordStoreResult(clone = true): CodexAccountRecordStor
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       notifyCodexStoreLoaded({});
       return { status: "ok", records: {} };
+    }
+    if (error instanceof CredentialVaultError) {
+      notifyCodexStoreLoaded({});
+      return { status: "failed", vaultError: error };
     }
     backupInvalidConfig(path);
     notifyCodexStoreLoaded({});
@@ -281,7 +330,8 @@ function persist(store: CodexAccountStore): void {
   const dir = getConfigDir();
   assertNotRealHomeUnderTest(dir);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-  publishCredentialSync(() => atomicWriteFile(codexAccountsPath(), JSON.stringify(store, null, 2) + "\n"));
+  const sealed = sealCodexStoreDocument(store);
+  publishCredentialSync(() => atomicWriteFile(codexAccountsPath(), JSON.stringify(sealed, null, 2) + "\n"));
   notifyCodexStoreLoaded(store);
 }
 
@@ -313,14 +363,32 @@ function poolAccountLogLabel(id: string): string {
  */
 function preservedValidationMetadata(record: CodexAccountCredentialRecord | undefined): Pick<
   CodexAccountCredentialRecord,
-  "lastCodexValidatedAt" | "lastCodexValidationStatus" | "lastCodexValidationError" | "codexValidationPending"
+  "lastCodexValidatedAt" | "lastCodexValidationStatus" | "lastCodexValidationError" | "codexValidationPending" | "proxy"
 > {
   return {
     ...(record?.codexValidationPending === true ? { codexValidationPending: true } : {}),
     ...(record?.lastCodexValidatedAt !== undefined ? { lastCodexValidatedAt: record.lastCodexValidatedAt } : {}),
     ...(record?.lastCodexValidationStatus !== undefined ? { lastCodexValidationStatus: record.lastCodexValidationStatus } : {}),
     ...(record?.lastCodexValidationError !== undefined ? { lastCodexValidationError: record.lastCodexValidationError } : {}),
+    ...(record?.proxy ? { proxy: record.proxy } : {}),
   };
+}
+
+export function setCodexAccountProxy(id: string, proxy: string | undefined | null): boolean {
+  const trimmed = typeof proxy === "string" ? proxy.trim() : "";
+  if (trimmed) {
+    const error = providerEgressConfigError({ proxy: trimmed });
+    if (error) throw new Error(error);
+  }
+  return withCredentialMutationLockSync(() => {
+    const store = loadCodexAccountRecordStoreForMutation();
+    const record = store[id];
+    if (!record || record.deletedAt != null) return false;
+    if (trimmed) record.proxy = trimmed;
+    else delete record.proxy;
+    persistCredentialMutation(store);
+    return true;
+  });
 }
 
 export function getCodexAccountCredential(id: string): CodexAccountCredentials | null {
@@ -335,7 +403,7 @@ export function saveCodexAccountCredential(
   options: { validationPending?: boolean } = {},
 ): number {
   return withCredentialMutationLockSync(() => {
-    const store = loadCodexAccountRecordStore();
+    const store = loadCodexAccountRecordStoreForMutation();
     const current = store[id];
     const refreshGrantFingerprint = current?.credential?.refreshToken === cred.refreshToken
       ? current.refreshGrantFingerprint ?? refreshGrantFingerprintForToken(cred.refreshToken)
@@ -361,7 +429,7 @@ export function saveCodexAccountCredential(
 
 export function markCodexAccountValidated(id: string, atMs: number = Date.now(), generation?: number): void {
   withCredentialMutationLockSync(() => {
-    const store = loadCodexAccountRecordStore();
+    const store = loadCodexAccountRecordStoreForMutation();
     const current = store[id];
     if (!current || current.deletedAt != null || !current.credential) return;
     if (current.codexValidationPending && generation === undefined) return;
@@ -405,7 +473,7 @@ export function markCodexAccountValidationFailed(
   options: MarkCodexAccountValidationFailedOptions = {},
 ): boolean {
   return withCredentialMutationLockSync(() => {
-    const store = loadCodexAccountRecordStore();
+    const store = loadCodexAccountRecordStoreForMutation();
     const current = store[id];
     if (!current || current.deletedAt != null || !current.credential) return false;
     // Deferred validation is settled only by a caller that names the generation it observed.
@@ -489,7 +557,7 @@ export function capturePoolQuotaWriter(accountId: string, dispatched: Dispatched
       return { accountId, credentialGeneration: dispatched.generation, historyIdentity: current.quotaHistoryIdentity };
     }
     return withCredentialMutationLockSync(() => {
-      const store = loadCodexAccountRecordStore();
+      const store = loadCodexAccountRecordStoreForMutation();
       const locked = store[accountId];
       if (!matchesDispatchedPoolCredential(locked, dispatched)) return undefined;
       if (!validQuotaHistoryIdentity(locked.quotaHistoryIdentity)) {
@@ -575,7 +643,7 @@ export function saveCodexAccountCredentialIfGeneration(
   cred: CodexAccountCredentials,
 ): boolean {
   return withCredentialMutationLockSync(() => {
-    const store = loadCodexAccountRecordStore();
+    const store = loadCodexAccountRecordStoreForMutation();
     const current = store[id];
     if (!current || current.generation !== generation || current.deletedAt != null || !current.credential) {
       return false;
@@ -634,7 +702,7 @@ export function commitRefreshedCodexCredentialWithAliases(
   cred: CodexAccountCredentials,
 ): { committed: boolean; propagatedAliases: { id: string; generation: number }[] } {
   return withCredentialMutationLockSync(() => {
-    const store = loadCodexAccountRecordStore();
+    const store = loadCodexAccountRecordStoreForMutation();
     const current = store[id];
     if (!current || current.generation !== generation || current.deletedAt != null || !current.credential || current.credential.sourceAuthPath) {
       return { committed: false, propagatedAliases: [] };
@@ -694,7 +762,7 @@ export function commitRefreshedCodexCredentialWithAliases(
 
 export function tombstoneCodexAccount(id: string): number {
   return withCredentialMutationLockSync(() => {
-    const store = loadCodexAccountRecordStore();
+    const store = loadCodexAccountRecordStoreForMutation();
     const current = store[id];
     const generation = (current?.generation ?? 0) + 1;
     store[id] = { generation, deletedAt: Date.now() };
@@ -1245,7 +1313,7 @@ function resolveOrcaSourceToken(id: string, forced?: ForcedRefreshFence): CodexR
   }
 
   return withCredentialMutationLockSync(() => {
-    const store = loadCodexAccountRecordStore();
+    const store = loadCodexAccountRecordStoreForMutation();
     const record = store[id];
     const prior = record?.credential;
     if (!record || record.deletedAt != null || !prior?.sourceAuthPath || !prior.sourceSubject) {
@@ -1494,7 +1562,17 @@ async function resolveCodexToken(
         provenance: "self-refresh",
       };
     }
-    const res = await fetch(CHATGPT_TOKEN_URL, {
+    let configuredProvider = existsSync(getConfigPath()) ? (() => {
+      try { return loadConfig().providers?.[OPENAI_CODEX_PROVIDER_ID]; } catch { return undefined; }
+    })() : undefined;
+    const egressFetch = providerEgressFetch(OPENAI_CODEX_PROVIDER_ID, {
+      ...(configuredProvider ?? {}),
+      adapter: "openai-responses",
+      authMode: "forward",
+      baseUrl: "https://auth.openai.com",
+      ...(lockedRecord.proxy ? { proxy: lockedRecord.proxy } : {}),
+    });
+    const res = await egressFetch(CHATGPT_TOKEN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

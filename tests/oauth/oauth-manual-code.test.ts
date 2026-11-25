@@ -12,6 +12,7 @@ import {
   startLoginFlow,
   submitManualLoginCode,
 } from "../../src/oauth";
+import { getAccountSet } from "../../src/oauth/store";
 import { parseCallbackInput } from "../../src/oauth/callback-server";
 import { loginState, waitForManualLoginCode } from "../../src/oauth/login-flow-state";
 import { saveConfig } from "../../src/config";
@@ -307,10 +308,13 @@ describe("OAuth manual login code fallback", () => {
       expect(verifier).toBeTruthy();
       expect(b64url(createHash("sha256").update(verifier).digest())).toBe(challenge);
 
-      // Credential persisted under EASYPROXY_HOME.
+      // Credential persisted under EASYPROXY_HOME (encrypted at rest via __vault).
       const authFile = join(TEST_DIR, "auth.json");
       expect(existsSync(authFile)).toBe(true);
-      expect(readFileSync(authFile, "utf8")).toContain("refresh-1");
+      const rawAuth = readFileSync(authFile, "utf8");
+      expect(rawAuth).toContain('"__vault"');
+      expect(rawAuth).not.toContain("refresh-1");
+      expect(getAccountSet("xai")?.accounts[0]?.credential.refresh).toBe("refresh-1");
     } finally {
       mock.restore();
       cancelLoginFlow("xai");

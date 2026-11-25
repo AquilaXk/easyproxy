@@ -93,6 +93,7 @@ import { parseRange, parseUsageSurface, summarizeUsage } from "../../usage/summa
 import { stripCodexRuntimeProviderFields } from "../../codex/auth-context";
 import { getProviderRegistryEntry } from "../../providers/registry";
 import { providerHasStoredApiKey } from "../../providers/api-keys";
+import { bindUpstreamHistorySlimConfig, resolveUpstreamHistorySlim } from "../responses/history-slim";
 import { VISION_REASONING_EFFORTS, isVisionReasoningEffort } from "../../reasoning-effort";
 import { normalizeVisionReasoningForModel } from "../../vision/reasoning";
 import {
@@ -481,6 +482,7 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
       reasoningRetention: config.reasoningRetention ?? null,
       // Absent means both phases keep their existing routes; the GUI renders that as "Off".
       memoryModels: config.memoryModels ?? null,
+      upstreamHistorySlim: resolveUpstreamHistorySlim(config.upstreamHistorySlim),
       startupHealth: await readStartupHealthSnapshot(config),
       codexRuntime: {
         path: displayCodexRuntimePath(resolved.runtime.command),
@@ -580,6 +582,7 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
       compactionRecovery?: unknown;
       memoryModels?: unknown;
       reasoningRetention?: unknown;
+      upstreamHistorySlim?: unknown;
     };
     if (body.codexAutoStart === undefined
       && body.streamMode === undefined
@@ -599,8 +602,9 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
       && body.compactionRouting === undefined
       && body.compactionRecovery === undefined
       && body.reasoningRetention === undefined
-      && body.memoryModels === undefined) {
-      return jsonResponse({ error: "provide codexAutoStart, streamMode, appOwnedMemoryBudgetMb, codexAccountPickerEnabled, codexQuotaAutoRefresh, oauthOpenBrowser, showCodexCredits, ultraFastTier, fastRows, codexMainAccountHardLock, codexMainAccountHardLockThresholds, codexMainAccountHardLockFallback, codexDesktopAuthless, codexReserveEnabled, codexClientCompaction, compactionRouting, compactionRecovery, reasoningRetention, or memoryModels" }, 400);
+      && body.memoryModels === undefined
+      && body.upstreamHistorySlim === undefined) {
+      return jsonResponse({ error: "provide codexAutoStart, streamMode, appOwnedMemoryBudgetMb, codexAccountPickerEnabled, codexQuotaAutoRefresh, oauthOpenBrowser, showCodexCredits, ultraFastTier, fastRows, codexMainAccountHardLock, codexMainAccountHardLockThresholds, codexMainAccountHardLockFallback, codexDesktopAuthless, codexReserveEnabled, codexClientCompaction, compactionRouting, compactionRecovery, reasoningRetention, memoryModels, or upstreamHistorySlim" }, 400);
     }
     if (body.codexAutoStart !== undefined && typeof body.codexAutoStart !== "boolean") {
       return jsonResponse({ error: "codexAutoStart boolean is required" }, 400);
@@ -613,6 +617,12 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
     }
     if (body.streamMode !== undefined && !isStreamMode(body.streamMode)) {
       return jsonResponse({ error: "streamMode must be auto, legacy-tee, or eager-relay" }, 400);
+    }
+    if (body.upstreamHistorySlim !== undefined
+      && body.upstreamHistorySlim !== null
+      && body.upstreamHistorySlim !== "off"
+      && body.upstreamHistorySlim !== "codex") {
+      return jsonResponse({ error: "upstreamHistorySlim must be off, codex, or null" }, 400);
     }
     if (body.codexAccountPickerEnabled !== undefined
       && typeof body.codexAccountPickerEnabled !== "boolean") {
@@ -764,6 +774,8 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
         hasCodexReserveMigration: Object.hasOwn(config, "codexReserveMigration"),
         codexClientCompaction: config.codexClientCompaction,
         hasCodexClientCompaction: Object.hasOwn(config, "codexClientCompaction"),
+        upstreamHistorySlim: config.upstreamHistorySlim,
+        hasUpstreamHistorySlim: Object.hasOwn(config, "upstreamHistorySlim"),
       };
       try {
         if (typeof body.codexAutoStart === "boolean") {
@@ -813,6 +825,10 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
         else if (body.codexDesktopAuthless === false) deleteConfigTopLevelKey(config, "codexDesktopAuthless");
         if (body.codexClientCompaction === true) config.codexClientCompaction = true;
         else if (body.codexClientCompaction === false) deleteConfigTopLevelKey(config, "codexClientCompaction");
+        if (body.upstreamHistorySlim === "codex") config.upstreamHistorySlim = "codex";
+        else if (body.upstreamHistorySlim === "off" || body.upstreamHistorySlim === null) {
+          deleteConfigTopLevelKey(config, "upstreamHistorySlim");
+        }
         if (compactionRouting === null) deleteConfigTopLevelKey(config, "compactionRouting");
         else if (compactionRouting?.success) config.compactionRouting = compactionRouting.data;
         if (compactionRecovery === null) deleteConfigTopLevelKey(config, "compactionRecovery");
@@ -896,6 +912,10 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
         if (previousSettings.hasCodexClientCompaction) {
           config.codexClientCompaction = previousSettings.codexClientCompaction;
         } else deleteConfigTopLevelKey(config, "codexClientCompaction");
+        if (previousSettings.hasUpstreamHistorySlim) {
+          config.upstreamHistorySlim = previousSettings.upstreamHistorySlim;
+        } else deleteConfigTopLevelKey(config, "upstreamHistorySlim");
+        bindUpstreamHistorySlimConfig(config);
         restoreCompactionRouting();
         throw error;
       }
@@ -932,11 +952,13 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
       ? catalogRefreshIsPending(catalogRefresh)
       : false;
     invalidateStartupHealthCache();
+    bindUpstreamHistorySlimConfig(config);
     if (quotaAutoRefreshChange) void runCodexQuotaAutoRefresh(config);
     return jsonResponse({
       ok: true,
       codexAutoStart: codexAutoStartEnabled(config),
       streamMode: config.streamMode ?? "auto",
+      upstreamHistorySlim: resolveUpstreamHistorySlim(config.upstreamHistorySlim),
       appOwnedMemoryBudgetMb: config.appOwnedMemoryBudgetMb ?? 256,
       codexAccountPickerEnabled: pickerIsEnabled,
       codexQuotaAutoRefresh: quotaAutoRefreshSettings(config),

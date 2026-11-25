@@ -41,21 +41,12 @@ function expectedCall(url: string, userAgent = url === summaryUrl ? antigravityC
 
 afterEach(() => setAntigravityAccountQuotaTransportForTests(null));
 
-describe("Antigravity quota summary 403 compatibility retry (#5940)", () => {
-  for (const cancelFails of [false, true]) {
-    test(`retries once with identical bearer and project, even when cancellation ${cancelFails ? "fails" : "succeeds"}`, async () => {
-      let cancelled = false;
-      const denied = new Response(new ReadableStream({ cancel() {
-        cancelled = true;
-        if (cancelFails) throw new Error("cancel failed");
-      } }), { status: 403 });
-      const calls = transport([denied, Response.json(summary)]);
-      const result = await probeAntigravityUsageQuota("test-access", "test-project");
-      expect(cancelled).toBe(true);
-      expect(calls).toEqual([expectedCall(summaryUrl), expectedCall(summaryUrl, "antigravity/1.0")]);
-      expect(result).toMatchObject({ kind: "available", source: "google-antigravity:retrieveUserQuotaSummary", quota: { customWindows: [{ label: "Gem", percent: 40 }] } });
-    });
-  }
+describe("Antigravity quota summary fails closed on 403 without legacy antigravity/1.0 fallback", () => {
+  test("403 stops without sending a legacy antigravity/1.0 retry", async () => {
+    const calls = transport([new Response(null, { status: 403 })]);
+    expect(await probeAntigravityUsageQuota("test-access", "test-project")).toMatchObject({ kind: "unavailable", failure: "access_denied" });
+    expect(calls).toEqual([expectedCall(summaryUrl)]);
+  });
 
   test("successful CLI summary needs no retry", async () => {
     const calls = transport([Response.json(summary)]);
@@ -95,19 +86,17 @@ describe("Antigravity quota summary 403 compatibility retry (#5940)", () => {
     expect(calls).toEqual([expectedCall(summaryUrl)]);
   });
 
-  for (const status of [401, 403, 302]) {
-    test(`retry status ${status} stops without further requests`, async () => {
-      const calls = transport([new Response(null, { status: 403 }), new Response(null, { status, headers: { location: "https://redirect.example/" } })]);
-      expect(await probeAntigravityUsageQuota("test-access", "test-project")).toMatchObject({ kind: "unavailable", failure: status === 302 ? "redirect_blocked" : "access_denied" });
-      expect(calls).toEqual([expectedCall(summaryUrl), expectedCall(summaryUrl, "antigravity/1.0")]);
-    });
-  }
+  test("302 redirect stops without further requests", async () => {
+    const calls = transport([new Response(null, { status: 302, headers: { location: "https://redirect.example/" } })]);
+    expect(await probeAntigravityUsageQuota("test-access", "test-project")).toMatchObject({ kind: "unavailable", failure: "redirect_blocked" });
+    expect(calls).toEqual([expectedCall(summaryUrl)]);
+  });
 
   for (const failure of [new Error("transport failed"), new Response(null, { status: 500 }), Response.json({})]) {
-    test(`retry failure (${failure instanceof Error ? "transport" : failure.status}) recovers through IDE models probe`, async () => {
-      const calls = transport([new Response(null, { status: 403 }), failure, Response.json(models)]);
+    test(`summary failure (${failure instanceof Error ? "transport" : failure.status}) recovers through IDE models probe with matching host OS/arch`, async () => {
+      const calls = transport([failure, Response.json(models)]);
       expect(await probeAntigravityUsageQuota("test-access", "test-project")).toMatchObject({ kind: "available", source: "google-antigravity:fetchAvailableModels", quota: { customWindows: [{ label: "Gem", percent: 25 }, { label: "gemini", modelId: "gemini", percent: 25 }] } });
-      expect(calls).toEqual([expectedCall(summaryUrl), expectedCall(summaryUrl, "antigravity/1.0"), expectedCall(modelsUrl)]);
+      expect(calls).toEqual([expectedCall(summaryUrl), expectedCall(modelsUrl)]);
     });
   }
 

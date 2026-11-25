@@ -137,6 +137,7 @@ import {
   type RequestLogContext,
 } from "./request-log";
 import { recordKeyAttemptFailure } from "./request-log-key-failure";
+import { bindOAuthSnapshotToProvider } from "../lib/provider-egress";
 import { fetchWithHeaderTimeout, physicalSendObserverInit, providerFetch, safeHostLabel, sendWithConnectionPolicy } from "./responses/fetch-helpers";
 import { isLocalUpstream } from "../lib/local-upstream";
 import { resolveConnectTimeoutMs, resolveJsonBodyReadTimeoutMs } from "../stall-timeout";
@@ -610,7 +611,8 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
   // An OAuth route is served by the account the existing OAuth selection commits now, at
   // dispatch; the token lives on this lane's provider copy only, never on the shared route.
   let oauthBinding: NativeOAuthBinding | undefined;
-  const oauthProvider = (binding: NativeOAuthBinding): EpxProviderConfig => ({ ...route.provider, apiKey: binding.snapshot.accessToken });
+  const oauthProvider = (binding: NativeOAuthBinding): EpxProviderConfig =>
+    bindOAuthSnapshotToProvider(route.provider, binding.snapshot, { setApiKey: true });
   if (route.provider.authMode === "oauth") {
     try {
       oauthBinding = await resolveNativeOAuthBindingForInstance(nativeInstance!, config, { routeTarget, sessionKey: options.sessionKey, model: route.modelId });

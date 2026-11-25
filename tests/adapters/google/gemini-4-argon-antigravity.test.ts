@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createGoogleAdapter as createGoogleAdapterProduction } from "../../../src/adapters/google";
-import { antigravityCliUserAgent } from "../../../src/adapters/client-fingerprint";
+import { antigravityCliUserAgent, antigravityHostPlatform } from "../../../src/adapters/client-fingerprint";
 import {
   ANTIGRAVITY_CLI_REQUEST_UA,
   ANTIGRAVITY_DISCOVERY_UA,
@@ -25,10 +25,11 @@ import { withTestTranslatorBudget } from "../../helpers/translator-budget";
 
 // Verified 2026-10-14 against live CCA: Gemini 4 Argon answers only to the CLI family, and the
 // IDE UA gets 404 "Requested entity was not found". The reverse also holds: under the CLI UA,
-// gemini-3.7-flash-tiered and gemini-3.1-pro-low 404. Both strings are pinned exactly because
-// the backend gates by family AND version.
-const CLI_UA = "antigravity/cli/1.3.4 (os_type=darwin; arch=arm64; aidev_client; auth_method=oauth)";
-const IDE_UA = "antigravity/ide/2.5.5 (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)";
+// gemini-3.7-flash-tiered and gemini-3.1-pro-low 404. Both strings keep the family + version
+// while pinning OS/arch to the single consistent host platform.
+const [HOST_OS, HOST_ARCH] = antigravityHostPlatform().split("/");
+const CLI_UA = `antigravity/cli/1.3.4 (os_type=${HOST_OS}; arch=${HOST_ARCH}; aidev_client; auth_method=oauth)`;
+const IDE_UA = `antigravity/ide/2.5.5 (os_type=${HOST_OS}; arch=${HOST_ARCH}; aidev_client; auth_method=oauth)`;
 
 const createGoogleAdapter = (...args: Parameters<typeof createGoogleAdapterProduction>) =>
   withTestTranslatorBudget(createGoogleAdapterProduction(...args));

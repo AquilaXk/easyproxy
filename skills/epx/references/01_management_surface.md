@@ -27,7 +27,7 @@ These answer in the CLI head and never reach the proxy, so they work with nothin
 |---|---|
 | [lifecycle](01_surface_lifecycle.md) | 29 |
 | [providers-models](01_surface_providers-models.md) | 56 |
-| [accounts](01_surface_accounts.md) | 44 |
+| [accounts](01_surface_accounts.md) | 45 |
 | [agents-routing](01_surface_agents-routing.md) | 83 |
 | [integrations](01_surface_integrations.md) | 45 |
 | [observe-system](01_surface_observe-system.md) | 98 |
@@ -614,6 +614,10 @@ Original invocation order. These headings preserve links to the previous single-
 ### `epx account alias`
 
 [State-changing task](01_surface_accounts.md#epx-account-alias)
+
+### `epx account proxy`
+
+[State-changing task](01_surface_accounts.md#epx-account-proxy)
 
 ### `epx account priority`
 
@@ -1773,6 +1777,6 @@ Original invocation order. These headings preserve links to the previous single-
 
 ## Counts
 
-- declared capabilities: 431
-- of those, state-changing: 266
+- declared capabilities: 432
+- of those, state-changing: 267
 - head-resolved invocations: 2

@@ -104,6 +104,7 @@ async function probeOneAntigravityAccount(
   activeAccountId: string | undefined,
   now: number,
   signal?: AbortSignal,
+  providerConfig?: import("../../types").EpxProviderConfig,
 ): Promise<AccountProbeResult> {
   const credential = account.credential;
   const maskedLabel = maskedAccountLabel(credential?.email);
@@ -131,7 +132,7 @@ async function probeOneAntigravityAccount(
     return current !== undefined && current.paused !== true && current.credential.access === credential.access
       && current.credential.projectId === credential.projectId && current.credential.expires === credential.expires
       && (expiresAt === null || expiresAt > Date.now());
-  });
+  }, { config: providerConfig, accountProxy: account.proxy, hostPlatform: account.hostPlatform });
   return { ...base, ...verdictFromRaw(raw), latencyMs: Date.now() - started };
 }
 
@@ -145,6 +146,7 @@ export async function probeAntigravityAccounts(options: {
   accountId?: string;
   now?: number;
   signal?: AbortSignal;
+  providerConfig?: import("../../types").EpxProviderConfig;
 } = {}): Promise<AccountProbeResult[] | null> {
   const accountIds = [...new Set(peekAuthStore()[PROVIDER]?.accounts.map(account => account.id))];
   const targets = options.accountId === undefined ? accountIds : [options.accountId];
@@ -157,7 +159,7 @@ export async function probeAntigravityAccounts(options: {
       // Re-read the roster as each probe starts: a pause made after the snapshot must suppress the request.
       const latest = peekAuthStore()[PROVIDER];
       const current = latest?.accounts.find(account => account.id === targets[index]);
-      if (current) results[index] = await probeOneAntigravityAccount(current, latest?.activeAccountId, options.now ?? Date.now(), options.signal);
+      if (current) results[index] = await probeOneAntigravityAccount(current, latest?.activeAccountId, options.now ?? Date.now(), options.signal, options.providerConfig);
     }
   };
   await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, targets.length) }, worker));

@@ -131,6 +131,8 @@ export interface ModelsAuthResolution {
   readonly oauthGeneration?: string;
   readonly oauthApiBaseUrl?: string;
   readonly oauthProjectId?: string;
+  readonly oauthProxy?: string;
+  readonly oauthHostPlatform?: import("../../adapters/client-fingerprint").AntigravityHostPlatform;
   /** Vertex discovery credential bound to its authority (passive gathers). */
   readonly vertexAuth?: import("../../providers/google-vertex-model-discovery").VertexDiscoveryAuth;
 }
@@ -342,8 +344,9 @@ export function captureModelsRequest(
   provider: EpxProviderConfig,
   oauthApiBaseUrl: string | undefined,
   workbuddy?: import("../../oauth/types").WorkBuddyOAuthMetadata,
+  hostPlatform?: import("../../adapters/client-fingerprint").AntigravityHostPlatform,
 ): CapturedModelsRequest {
-  const observed = { oauthApiBaseUrl, workbuddy };
+  const observed = { oauthApiBaseUrl, workbuddy, ...(hostPlatform ? { hostPlatform } : {}) };
   const withoutCredential = buildVertexProviderModelsRequest(name, provider, undefined)
     ?? buildModelsRequest(provider, undefined, name, observed);
   const withCredential = buildVertexProviderModelsRequest(name, provider, REQUEST_CREDENTIAL_SENTINEL)
@@ -413,10 +416,15 @@ export function captureProviderGather(
     : authResolver.kind === "refreshing" && provider.authMode === "oauth" && mayResolveModelsOAuth(name, provider)
       ? getOAuthCredentialApiBaseUrl(name)
       : undefined;
-  const request = captureModelsRequest(name, provider, oauthApiBaseUrl, observedAuth?.workbuddy);
-  const refreshingOAuthAccountId = !observedAuth && authResolver.kind === "refreshing" && provider.authMode === "oauth" && mayResolveModelsOAuth(name, provider)
-    ? getAccountSet(name)?.activeAccountId
+  const refreshingActiveAccount = !observedAuth && authResolver.kind === "refreshing" && provider.authMode === "oauth" && mayResolveModelsOAuth(name, provider)
+    ? (() => {
+        const set = getAccountSet(name);
+        return set?.accounts.find(a => a.id === set.activeAccountId);
+      })()
     : undefined;
+  const hostPlatform = observedAuth?.oauthHostPlatform ?? refreshingActiveAccount?.hostPlatform;
+  const request = captureModelsRequest(name, provider, oauthApiBaseUrl, observedAuth?.workbuddy, hostPlatform);
+  const refreshingOAuthAccountId = refreshingActiveAccount?.id;
   const resolved = resolveProviderModelDiscovery(name, provider);
   const discovery = detachedFrozen({
     ...(resolved.spec ? { spec: resolved.spec } : {}),

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { saveConfig } from "../../src/config";
 import { flushConfigDirHardeningForTests } from "../../src/config/paths";
 import { loadCodexAccountStore, peekCodexAccountRecordSnapshot, readCodexAccountRecord, saveCodexAccountCredential } from "../../src/codex/account-store";
+import { sealCodexStoreDocument, unsealCodexStoreDocument } from "../../src/lib/credential-vault";
 import { serializedJsonByteLength } from "../../src/server/json-serialized-bytes";
 import { compressToolOutputText } from "../../src/lib/tool-output-compression";
 import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
@@ -478,9 +479,10 @@ describe("gateway hotpath & protocol hygiene", () => {
       expect(diskReads).toBe(2);
 
       // External overwrite invalidates via BigIntStats mismatch (read directly via realRead).
-      const diskObj = JSON.parse(realRead(accountsPath, "utf8") as string) as Record<string, { credential: { accessToken: string } }>;
+      const rawDiskObj = JSON.parse(realRead(accountsPath, "utf8") as string) as Record<string, unknown>;
+      const diskObj = unsealCodexStoreDocument(rawDiskObj) as Record<string, { credential: { accessToken: string } }>;
       diskObj["cached-a"]!.credential.accessToken = "tk-external-99999";
-      writeFileSync(accountsPath, JSON.stringify(diskObj));
+      writeFileSync(accountsPath, JSON.stringify(sealCodexStoreDocument(diskObj)));
       expect(loadCodexAccountStore()["cached-a"]?.accessToken).toBe("tk-external-99999");
       expect(diskReads).toBe(3);
     } finally {

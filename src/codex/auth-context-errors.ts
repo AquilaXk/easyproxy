@@ -83,6 +83,8 @@ export type CodexAuthContext =
       quotaScope?: CodexQuotaScope;
       /** What happened to this thread's binding on this request (#4546). */
       affinityDecision?: CodexAffinityDecision;
+      /** Per-account egress proxy URL pinned on this pool slot. */
+      proxy?: string;
       /** Scope that owns `probeLeaseId`, when it is a scoped recovery probe. */
       probeQuotaScope?: CodexQuotaScope;
       /**

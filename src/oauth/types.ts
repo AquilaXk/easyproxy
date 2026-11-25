@@ -104,6 +104,8 @@ export type OAuthCredentials = {
 };
 
 /** One logged-in account inside a provider's account set (multiauth). */
+export type AntigravityHostPlatform = `${"darwin" | "windows" | "linux"}/${"arm64" | "amd64"}`;
+
 export interface ProviderAccount {
   /** Stable short id, generated once at append time; never re-derived after rotation. */
   id: string;
@@ -141,6 +143,10 @@ export interface ProviderAccount {
    * not know the cause still keeps the account out of the pool.
    */
   needsReauthCause?: "tos_violation";
+  /** Optional per-account proxy URL (HTTP/HTTPS/SOCKS5) pinning this account's egress. */
+  proxy?: string;
+  /** Account-pinned Antigravity host OS/architecture (`darwin|windows|linux` / `arm64|amd64`). */
+  hostPlatform?: AntigravityHostPlatform;
   addedAt?: number;
 }
 

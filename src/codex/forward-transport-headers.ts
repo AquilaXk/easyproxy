@@ -1,10 +1,11 @@
-import { CodexInstallationIdUnavailableError, codexInstallationIdForAccount } from "./installation-id";
+import { CodexInstallationIdUnavailableError, codexInstallationIdForAccount, codexWindowIdForAccount } from "./installation-id";
 
 /** Native request metadata shared by the HTTP adapter and WS preparation. */
 export const CODEX_RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite";
 export const CODEX_RESPONSES_LITE_METADATA_KEY = "ws_request_header_x_openai_internal_codex_responses_lite";
 export const CODEX_ROUTING_HINT_HEADER = "x-codex-routing-hint";
 export const CODEX_INSTALLATION_ID_HEADER = "x-codex-installation-id";
+export const CODEX_WINDOW_ID_HEADER = "x-codex-window-id";
 export const CODEX_TURN_METADATA_HEADER = "x-codex-turn-metadata";
 export const CODEX_TURN_STATE_HEADER = "x-codex-turn-state";
 export const CODEX_ATTESTATION_HEADER = "x-oai-attestation";
@@ -27,6 +28,11 @@ const MAX_ESCAPED_TURN_METADATA_BYTES = 3 * MAX_TURN_METADATA_BYTES;
 /** Compatibility export: caller values never contribute to the selected account identity. */
 export function deriveCodexAccountInstallationId(chatgptAccountId: string, _callerInstallationId: string): string {
   return codexInstallationIdForAccount(chatgptAccountId);
+}
+
+/** Isolate `x-codex-window-id` per pooled ChatGPT account so rotated turns never share one caller window id. */
+export function deriveCodexAccountWindowId(chatgptAccountId: string, callerWindowId = ""): string {
+  return codexWindowIdForAccount(chatgptAccountId, callerWindowId);
 }
 
 /**
@@ -76,6 +82,10 @@ export function isolateCodexPoolAccountHeaders(headers: Headers, chatgptAccountI
   if (installId !== null) {
     headers.set(CODEX_INSTALLATION_ID_HEADER, deriveCodexAccountInstallationId(chatgptAccountId, installId));
   }
+  const windowId = headers.get(CODEX_WINDOW_ID_HEADER);
+  if (windowId !== null) {
+    headers.set(CODEX_WINDOW_ID_HEADER, deriveCodexAccountWindowId(chatgptAccountId, windowId));
+  }
   const turnMeta = headers.get(CODEX_TURN_METADATA_HEADER);
   if (turnMeta) {
     headers.set(CODEX_TURN_METADATA_HEADER, rewriteTurnMetadataInstallationId(turnMeta, chatgptAccountId));
@@ -95,6 +105,11 @@ export function isolateCodexPoolClientMetadata(body: unknown, chatgptAccountId: 
   if (Object.hasOwn(meta, CODEX_INSTALLATION_ID_HEADER)) {
     const nextId = codexInstallationIdForAccount(chatgptAccountId);
     if (nextId !== rawInstallId) nextMeta = { ...meta, [CODEX_INSTALLATION_ID_HEADER]: nextId };
+  }
+  const rawWindowId = meta[CODEX_WINDOW_ID_HEADER];
+  if (Object.hasOwn(meta, CODEX_WINDOW_ID_HEADER) && typeof rawWindowId === "string") {
+    const nextWindowId = deriveCodexAccountWindowId(chatgptAccountId, rawWindowId);
+    if (nextWindowId !== rawWindowId) nextMeta = { ...(nextMeta ?? meta), [CODEX_WINDOW_ID_HEADER]: nextWindowId };
   }
   const rawTurnMeta = (nextMeta ?? meta)[CODEX_TURN_METADATA_HEADER];
   if (typeof rawTurnMeta === "string" && rawTurnMeta.trim()) {

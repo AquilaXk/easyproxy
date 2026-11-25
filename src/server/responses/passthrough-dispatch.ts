@@ -1,4 +1,5 @@
 import { clientFacingModelText } from "../../lib/error-destination";
+import { bindOAuthSnapshotToProvider } from "../../lib/provider-egress";
 import { providerAffinityGenerationIsCurrent } from "../../providers/api-key-selection";
 import { markProxyError } from "../../lib/client-error-body";
 import { CodexInstallationIdUnavailableError } from "../../codex/installation-id";
@@ -1377,17 +1378,18 @@ export async function preparePassthroughExchange(
       if (route.providerName === "kiro") {
         parsed._kiroAuthContext = { ...(refreshed.kiro ?? {}) };
       }
-      let refreshedProvider = resolveProviderTransport(
-        route.providerName,
-        {
-          ...route.provider,
-          apiKey: refreshed.accessToken,
-          ...(refreshed.projectId ? { project: refreshed.projectId } : {}),
-        },
-        parsed.options.promptCacheKey,
-        route.providerName === "github-copilot"
-          ? resolveCopilotApiBaseUrl(refreshed.apiBaseUrl)
-          : undefined,
+      const baseRouteProvider = route.provider;
+      let refreshedProvider = bindOAuthSnapshotToProvider(
+        resolveProviderTransport(
+          route.providerName,
+          bindOAuthSnapshotToProvider(baseRouteProvider, refreshed, { setApiKey: true }),
+          parsed.options.promptCacheKey,
+          route.providerName === "github-copilot"
+            ? resolveCopilotApiBaseUrl(refreshed.apiBaseUrl)
+            : undefined,
+        ),
+        refreshed,
+        { baseProvider: baseRouteProvider },
       );
       try { await resolveCopilotSelection(parsed, false, refreshedProvider); }
       catch (err) { return transportFailureResponse(err); }

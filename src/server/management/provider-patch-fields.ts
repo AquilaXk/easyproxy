@@ -392,6 +392,34 @@ export function applyProviderPatchFields(
     next.upstreamWebsocket = rawBody.upstreamWebsocket;
     touched = true;
   }
+  if (Object.hasOwn(rawBody, "noProxy")) {
+    const value = rawBody.noProxy;
+    if (value === null || value === "") {
+      delete next.noProxy;
+    } else if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) next.noProxy = trimmed;
+      else delete next.noProxy;
+    } else if (Array.isArray(value) && value.every(entry => typeof entry === "string")) {
+      const cleaned = value.map(entry => entry.trim()).filter(Boolean);
+      if (cleaned.length > 0) next.noProxy = cleaned;
+      else delete next.noProxy;
+    } else {
+      return { error: "noProxy must be a string, string array, or null" };
+    }
+    touched = true;
+  }
+  if (Object.hasOwn(rawBody, "tlsProfile")) {
+    const value = rawBody.tlsProfile;
+    if (value === null || value === "") {
+      delete next.tlsProfile;
+    } else if (value === "antigravity-browser") {
+      next.tlsProfile = value;
+    } else {
+      return { error: "tlsProfile must be antigravity-browser or null" };
+    }
+    touched = true;
+  }
   // The Models page edits the catalog hints in place; keep them on the existing
   // provider mutation path so validation, cache invalidation, and convergence stay unified (#1073).
   if (Object.hasOwn(rawBody, "contextWindow")) {

@@ -57,6 +57,13 @@ export const ACCOUNT_CAPABILITIES: readonly Capability[] = [
     details: ["- clears with an empty string. Codex resolves existing aliases; other families take an ID. Native main cannot be renamed; aliases are at most 80 printable characters. rename is an existing command alias."],
   },
   {
+    command: ["account", "proxy"], summary: "Pin or clear a per-account outbound proxy URL for an OAuth or Codex pool account.",
+    usage: "epx account proxy <provider> <account-id|alias> (<proxy-url>|--stdin|-) [--json]",
+    routes: [{ method: "GET", path: "/api/codex-auth/accounts" }, { method: "PUT", path: "/api/codex-auth/accounts/proxy" }, { method: "PUT", path: "/api/oauth/accounts/proxy" }],
+    flags: [{ name: "--stdin", value: "boolean", summary: "Read the proxy URL from stdin instead of argv." }, { name: "--json", value: "boolean", summary: "Emit the redacted proxy receipt." }], mutates: true, json: "envelope",
+    details: ["- clears the pinned proxy so the account inherits provider or global egress. Responses redact any embedded proxy credentials."],
+  },
+  {
     command: ["account", "priority"], summary: "Read or change Codex account selection order.",
     usage: "epx account priority <provider> <account-id|alias|main> [<-100..100|first|earlier|normal|later|last|reset>] [--json]",
     routes: [{ method: "GET", path: "/api/codex-auth/accounts" }, { method: "GET", path: "/api/codex-auth/active" }, { method: "PUT", path: "/api/codex-auth/accounts/priority" }],

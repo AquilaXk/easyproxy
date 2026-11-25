@@ -6,6 +6,7 @@ import { isRegistryModelDiscoveryUrl, readBoundedDiscoveryJson } from "../../pro
 import { parseAntigravityAvailableModels, type AntigravityAvailableModel } from "../../providers/antigravity-models";
 import { captureAntigravityModelObservation, recordAntigravityAccountRoster } from "../../providers/antigravity-account-roster";
 import type { EpxProviderConfig } from "../../types";
+import { antigravityDiscoveryUserAgent } from "../../adapters/google-antigravity-wire";
 import { materializeCapturedHeaders, type CapturedModelsRequest } from "./gather-capture";
 
 /** True while the active account still holds the exact usable credential discovery sent. */
@@ -46,8 +47,11 @@ export async function discoverAntigravitySiblings(
       const project = provider.project ?? snapshot.projectId;
       if (!project || !current(snapshot)) continue;
       const observation = captureAntigravityModelObservation();
-      const response = await providerOutboundPost(name, provider, request.url, {
-        headers: materializeCapturedHeaders(request, snapshot.accessToken),
+      const siblingHeaders = materializeCapturedHeaders(request, snapshot.accessToken);
+      if (snapshot.hostPlatform) siblingHeaders["User-Agent"] = antigravityDiscoveryUserAgent(snapshot.hostPlatform);
+      const siblingProvider = snapshot.proxy ? { ...provider, proxy: snapshot.proxy } : provider;
+      const response = await providerOutboundPost(name, siblingProvider, request.url, {
+        headers: siblingHeaders,
         body: JSON.stringify({ project }), signal: AbortSignal.timeout(8000),
       }, { isCanonicalUrl: isRegistryModelDiscoveryUrl, beforeSend: () => current(snapshot) });
       if (!response.ok || await providerRedirectError(response, request.url)) continue;

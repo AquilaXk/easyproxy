@@ -1,4 +1,5 @@
 import { FORWARD_HEADERS } from "../adapters/openai-responses";
+import { bindOAuthSnapshotToProvider } from "../lib/provider-egress";
 import { AgentAssertionUnsupportedError, authorizationCredential, hasAgentAssertionAuthorization } from "../lib/authorization-scheme";
 import { captureConfigGeneration } from "../lib/state-store-sweeper";
 import { extractAccountId } from "../oauth/chatgpt";
@@ -134,8 +135,9 @@ export function applyCodexAuthContextToProvider(
   if (mode !== "pool" || (ctx.kind !== "pool" && ctx.kind !== "main-pool") || provider.authMode !== "forward") return provider;
   assertCodexAccountValidationReady(ctx.accountId);
   if (ctx.kind === "pool") assertPoolAccountCredits(ctx.accountId, poolContextCreditHoldResetAt(ctx), poolContextCreditRecoveryNeeded(ctx), ctx.quotaScope);
+  const pinnedProvider = bindOAuthSnapshotToProvider(provider, ctx.kind === "pool" ? { proxy: ctx.proxy } : {});
   return {
-    ...provider,
+    ...pinnedProvider,
     _codexAccountOverride: {
       accessToken: ctx.accessToken,
       chatgptAccountId: ctx.chatgptAccountId,

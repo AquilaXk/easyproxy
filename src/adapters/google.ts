@@ -27,6 +27,7 @@ import { safeAntigravityHttpErrorMessage, safeVertexHttpErrorMessage } from "./g
 import { readDisplaySafeErrorPayloadText } from "./upstream-http-error";
 import { googleModeLabel, googlePromptBlockedEvent, googleStopReason, isGoogleTruncatedTurn, vertexTruncationErrorEvent } from "./google-truncation";
 import { antigravitySessionAnchor, antigravityUserAgentForWireModel, antigravitySessionId, isLikelyRealThoughtSignature, sanitizeAntigravityClaudeSignatures } from "./google-antigravity-wire";
+import { getProviderHostPlatform } from "../lib/provider-egress";
 import { summarizeGoogleWireShape } from "./google-wire-shape";
 import { usageFromGemini } from "./google-usage";
 import { compileGoogleWireBody } from "./google-wire-compiler";
@@ -1239,7 +1240,7 @@ export function createGoogleAdapter(provider: EpxProviderConfig): ProviderAdapte
           requestId: `agent-${crypto.randomUUID()}`,
           request,
         };
-        headers["User-Agent"] = antigravityUserAgentForWireModel(wireModelId);
+        headers["User-Agent"] = antigravityUserAgentForWireModel(wireModelId, getProviderHostPlatform(provider));
         headers["Authorization"] = `Bearer ${token}`;
         return { url, method: "POST", headers, body: JSON.stringify(envelope) };
       }

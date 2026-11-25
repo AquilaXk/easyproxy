@@ -7,6 +7,7 @@ import { getCodexHome } from "./paths";
 import { advanceCodexCredentialMutationEpoch } from "./credential-mutation-epoch";
 import { readNativeMainAuthBytes } from "./native-main-auth-file";
 import { assertPlainLocalPath, ORCA_ACCOUNT_DIRECTORY, parseOrcaAuth, readBoundedLocalFile, readOrcaAuthSource, sameLocalPath } from "./orca-auth-source";
+import { sealCodexStoreDocument, unsealCodexStoreDocument } from "../lib/credential-vault";
 
 export class OrcaImportError extends Error {
   constructor(message: string) { super(message); this.name = "OrcaImportError"; }
@@ -78,7 +79,7 @@ function prepare(sourceDir: string, registryPath: string) {
   const recoverable = new Map<string, { id: string; credential: Record<string, unknown> }>();
   const storePath = join(getConfigDir(), "codex-accounts.json");
   const storeRaw = optionalFile(storePath);
-  const store = storeRaw === undefined ? {} : object(JSON.parse(storeRaw));
+  const store = storeRaw === undefined ? {} : unsealCodexStoreDocument(object(JSON.parse(storeRaw)));
   for (const [id, entry] of Object.entries(store)) {
     const record = object(entry);
     // Retain orphan and tombstoned records; a credential is still evidence of identity.
@@ -202,7 +203,7 @@ export function importOrcaAccounts(options: { sourceDir: string; registryPath: s
       if (optionalFile(getConfigPath()) !== state.configRaw || optionalFile(state.storePath) !== state.storeRaw) {
         throw new OrcaImportError("Target accounts changed during import; retry.");
       }
-      if (writesCredentials) atomicWriteFile(state.storePath, JSON.stringify(state.store, null, 2) + "\n");
+      if (writesCredentials) atomicWriteFile(state.storePath, JSON.stringify(sealCodexStoreDocument(state.store), null, 2) + "\n");
       try {
         const outcome = mutatePersistedConfig(config => {
           if (optionalFile(getConfigPath()) !== state.configRaw) throw new OrcaImportError("Target configuration changed; retry.");

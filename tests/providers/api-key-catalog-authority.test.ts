@@ -63,7 +63,7 @@ test("OAuth scoped rows follow the passive active credential and never repair ma
   const bytes = readFileSync(path, "utf8");
   expect(knownModelIdsForProvider("cursor", provider)).toContain("private-oauth-model");
   expect(readFileSync(path, "utf8")).toBe(bytes);
-  writeFileSync(path, bytes.replaceAll("oauth-a", "oauth-b"));
+  await saveCredential("cursor", { access: "oauth-b", refresh: "refresh-b", expires: Date.now() + 3_600_000 });
   expect(knownModelIdsForProvider("cursor", provider)).not.toContain("private-oauth-model");
   writeFileSync(path, "{malformed");
   expect(knownModelIdsForProvider("cursor", provider)).not.toContain("private-oauth-model");

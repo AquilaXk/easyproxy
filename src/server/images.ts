@@ -44,9 +44,11 @@ import { admissionScopeDenial } from "./admission-model-scope";
 import type { RequestLogContext } from "./request-log";
 import { codexLogAccountId, decodeRequestErrorResponse } from "./responses";
 import { getValidAccessToken, getOAuthCredentialProjectId, OAuthAccountPausedError } from "../oauth/index";
+import { getAccountSet } from "../oauth/store";
+import { providerEgressFetch } from "../lib/provider-tls-profile";
 import { safeAntigravityHttpErrorMessage } from "../adapters/google-errors";
 import { sanitizeUpstreamErrorText } from "../adapters/upstream-http-error";
-import { ANTIGRAVITY_REQUEST_UA } from "../adapters/google-antigravity-wire";
+import { antigravityUserAgentForWireModel } from "../adapters/google-antigravity-wire";
 import {
   decodeValidatedImageBase64,
   fetchPublicHttpsImage,
@@ -332,6 +334,17 @@ async function tryCcaImageGeneration(
   // Pin to the registry endpoint — never use a config-level baseUrl override for OAuth token transmission.
   const registryEntry = getProviderRegistryEntry("google-antigravity");
   const baseUrl = registryEntry?.baseUrl ?? "https://daily-cloudcode-pa.googleapis.com";
+  const accountSet = getAccountSet("google-antigravity");
+  const activeAccount = accountSet?.accounts.find(a => a.id === accountSet.activeAccountId);
+  const configuredAntigravity = config.providers["google-antigravity"];
+  const egressFetch = providerEgressFetch("google-antigravity", {
+    ...(configuredAntigravity ?? {}),
+    adapter: "google",
+    authMode: "oauth",
+    googleMode: "cloud-code-assist",
+    baseUrl,
+    ...(activeAccount?.proxy ? { proxy: activeAccount.proxy } : {}),
+  });
   const envelope = {
     model: CCA_IMAGE_MODEL,
     userAgent: "antigravity",
@@ -347,13 +360,13 @@ async function tryCcaImageGeneration(
   let upstream: Response;
   try {
     try {
-      upstream = await fetch(`${baseUrl}/v1internal:generateContent`, {
+      upstream = await egressFetch(`${baseUrl}/v1internal:generateContent`, {
         method: "POST",
         redirect: "manual",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`,
-          "User-Agent": ANTIGRAVITY_REQUEST_UA,
+          "User-Agent": antigravityUserAgentForWireModel(CCA_IMAGE_MODEL, activeAccount?.hostPlatform),
         },
         body: JSON.stringify(envelope),
         signal: linkedSignal.signal,

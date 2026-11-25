@@ -224,11 +224,16 @@ async function warmAccount(config: EpxConfig, accountId: string): Promise<void |
     if (isCodexAccountPaused(config, accountId) || isAccountNeedsReauth(accountId)) return false;
     const poolWriter = capturePoolQuotaWriter(accountId, token);
     try {
-      await warmCodexAccount({ ...token, onCompleted: headers => {
-        if (isCodexAccountGenerationLive(accountId, token.generation)) {
-          applyAccountQuotaFromUpstreamHeaders(accountId, headers, writerGeneration, undefined, { poolWriter, poolResponse: true });
-        }
-      } });
+      await warmCodexAccount({
+        ...token,
+        provider: config.providers?.[OPENAI_CODEX_PROVIDER_ID],
+        ...(record.proxy ? { proxy: record.proxy } : {}),
+        onCompleted: headers => {
+          if (isCodexAccountGenerationLive(accountId, token.generation)) {
+            applyAccountQuotaFromUpstreamHeaders(accountId, headers, writerGeneration, undefined, { poolWriter, poolResponse: true });
+          }
+        },
+      });
     } catch (error) {
       if (error instanceof CodexWarmupError && error.status === 401) {
         markAccountNeedsReauth(accountId, writerGeneration, token.generation);

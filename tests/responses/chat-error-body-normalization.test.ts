@@ -150,7 +150,7 @@ test("listener retains CORS and the proxy log id on normalized Chat errors", asy
   const { saveConfig } = await import("../../src/config");
   const { startServer } = await import("../../src/server");
   const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({ error: { message: KEY, type: KEY, code: KEY } }, { status: 401, headers: { "x-request-id": KEY, "retry-after": KEY } }) });
-  saveConfig({ port: 0, defaultProvider: "fixture", providers: { fixture: { adapter: "openai-chat", baseUrl: `${upstream.url}v1`, allowPrivateNetwork: true, authMode: "key", apiKey: KEY, models: ["model"] } } });
+  saveConfig({ port: 0, corsAllowOrigins: ["http://localhost:3000"], defaultProvider: "fixture", providers: { fixture: { adapter: "openai-chat", baseUrl: `${upstream.url}v1`, allowPrivateNetwork: true, authMode: "key", apiKey: KEY, models: ["model"] } } });
   const server = startServer(0);
   try {
     const response = await fetch(new URL("/v1/chat/completions", server.url), { method: "POST", headers: { "content-type": "application/json", origin: "http://localhost:3000" }, body: JSON.stringify({ model: "fixture/model", messages: [{ role: "user", content: "hi" }] }) });

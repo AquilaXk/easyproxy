@@ -28,6 +28,7 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
+import { CREDENTIAL_VAULT_ENV_KEY, CredentialVaultError, unsealAuthStoreDocument } from "../lib/credential-vault";
 import { join } from "node:path";
 import { getConfigDir } from "../config/paths";
 import { resolveEnvValue } from "../config/proxy-env";
@@ -112,7 +113,7 @@ function envReference(raw: string): string | undefined {
   return /^\$\{(\w+)\}$/.exec(raw)?.[1] ?? raw.slice(1);
 }
 
-function build(configRead: StoreRead, authRead: StoreRead, signature: string, now: number): Snapshot {
+function build(configRead: StoreRead, authRead: StoreRead, signature: string, now: number, dir: string): Snapshot {
   const values = new Set<string>();
   // Excerpt windows of credential-field values (keys, tokens): copy that repeats 8+ characters of a
   // configured credential is refused like the whole value. Provider header values are matched whole
@@ -189,7 +190,16 @@ function build(configRead: StoreRead, authRead: StoreRead, signature: string, no
     const key = config.value.codexRoleCapability.artificialAnalysis.apiKey;
     addReference(typeof key === "string" ? key.trim() : key);
   }
-  if (isRecord(auth.value)) walkAuth(auth.value, 0);
+  if (isRecord(auth.value)) {
+    let authDocument: Record<string, unknown> = auth.value;
+    try {
+      authDocument = unsealAuthStoreDocument(auth.value, dir);
+    } catch (error) {
+      if (error instanceof CredentialVaultError) complete = false;
+      else throw error;
+    }
+    if (complete) walkAuth(authDocument, 0);
+  }
 
   const names = [...envNames].sort();
   const containment = credentialContainmentIndex(values);
@@ -212,12 +222,12 @@ export function configuredCredentials(now = Date.now()): ConfiguredCredentials {
   const dir = getConfigDir();
   const configRead = readStore(join(dir, "config.json"));
   const authRead = readStore(join(dir, "auth.json"));
-  const signature = `${configRead.state}|${authRead.state}|${providerKeyResolutionGeneration()}|${dir}`;
+  const signature = `${configRead.state}|${authRead.state}|${providerKeyResolutionGeneration()}|${process.env[CREDENTIAL_VAULT_ENV_KEY] ? "vk1" : "vk0"}|${dir}`;
   const stale = !cached
     || cached.signature !== signature
     || cached.envFingerprint !== envFingerprint(cached.envNames)
     || (!cached.view.complete && now - cached.builtAt >= INCOMPLETE_RETRY_MS);
-  if (stale) cached = build(configRead, authRead, signature, now);
+  if (stale) cached = build(configRead, authRead, signature, now, dir);
   return cached!.view;
 }
 

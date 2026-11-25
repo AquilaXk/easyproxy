@@ -1157,6 +1157,7 @@ async function resolveCodexAuthContextUnannotated(
     assertCodexAccountValidationReady(accountId);
     if (configuredCodexMainDuplicate(config, accountId)) throw new CodexPoolAuthenticationError(CODEX_MAIN_DUPLICATE_ACTION);
     assertPoolAccountCredits(accountId, poolCreditHoldResetAt(policy, accountId, config), poolCreditRecoveryNeeded(policy, accountId), quotaScope);
+    const accountProxy = readCodexAccountRecord(accountId)?.proxy;
     return bindPoolCreditPolicy({
       kind: "pool",
       accountId,
@@ -1165,6 +1166,7 @@ async function resolveCodexAuthContextUnannotated(
       poolQuotaWriter: capturePoolQuotaWriter(accountId, token),
       accessToken: token.accessToken,
       chatgptAccountId: token.chatgptAccountId,
+      ...(accountProxy ? { proxy: accountProxy } : {}),
       ...(fixedAccountId !== undefined ? { fixedAccount: true } : {}),
       ...(affinityKey ? { affinityKey } : {}),
       ...(conversationStateKey ? { conversationStateKey } : {}),

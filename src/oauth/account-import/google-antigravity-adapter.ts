@@ -1,7 +1,10 @@
+import { existsSync } from "node:fs";
+import { loadConfig } from "../../config";
+import { getConfigPath } from "../../config/paths";
 import { validateAntigravityImportCredential } from "../google-antigravity";
 import { upsertCredentialByIdentity } from "../store";
 import type { OAuthCredentials } from "../types";
-import { probeAntigravityUsageQuota } from "../../providers/quota/antigravity";
+import { probeAntigravityUsageQuota, type AntigravityQuotaRequestOptions } from "../../providers/quota/antigravity";
 import {
   ACCOUNT_IMPORT_FORMAT,
   ACCOUNT_IMPORT_MAX_EMAIL_LENGTH,
@@ -28,10 +31,26 @@ export interface AntigravityImportAdapterDeps {
  * named project. Only a parsed quota answer admits it; denial, rate limiting, transport failure
  * or an unusable body all keep the record out.
  */
-export async function verifyAntigravityImportProject(accessToken: string, projectId: string, signal?: AbortSignal): Promise<boolean> {
+function configuredAntigravityProvider(): AntigravityQuotaRequestOptions["config"] | undefined {
+  if (!existsSync(getConfigPath())) return undefined;
+  try { return loadConfig().providers?.["google-antigravity"]; } catch { return undefined; }
+}
+
+export async function verifyAntigravityImportProject(
+  accessToken: string,
+  projectId: string,
+  signal?: AbortSignal,
+  options?: AntigravityQuotaRequestOptions,
+): Promise<boolean> {
   if (signal?.aborted) return false;
   try {
-    return (await probeAntigravityUsageQuota(accessToken, projectId, signal)).kind === "available" && !signal?.aborted;
+    const resolvedOptions: AntigravityQuotaRequestOptions | undefined = options?.config
+      ? options
+      : (() => {
+          const config = configuredAntigravityProvider();
+          return config ? { ...options, config } : options;
+        })();
+    return (await probeAntigravityUsageQuota(accessToken, projectId, signal, resolvedOptions)).kind === "available" && !signal?.aborted;
   } catch {
     return false;
   }

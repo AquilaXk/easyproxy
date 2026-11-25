@@ -352,6 +352,7 @@ describe("drain 503 JSON (#452)", () => {
       port: publicPort,
       hostname: "0.0.0.0",
       unauthenticatedLoopbackListener: { enabled: true, port: loopbackPort },
+      corsAllowOrigins: ["http://localhost:20100"],
       defaultProvider: "xiaomi",
       providers: {
         xiaomi: {

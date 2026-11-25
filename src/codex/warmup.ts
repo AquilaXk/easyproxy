@@ -1,4 +1,13 @@
+import { existsSync } from "node:fs";
+import type { EpxProviderConfig } from "../types";
+import { loadConfig } from "../config";
+import { getConfigPath } from "../config/paths";
 import { readBoundedResponseBody } from "../lib/bounded-body";
+import { providerEgressFetch } from "../lib/provider-tls-profile";
+import { CODEX_FORWARD_BASE_URL, OPENAI_CODEX_PROVIDER_ID } from "../providers/openai-tiers-destination";
+import { CODEX_INSTALLATION_ID_HEADER } from "./forward-transport-headers";
+import { codexInstallationIdForAccount } from "./installation-id";
+import { loadPersistedCodexRuntime } from "./runtime";
 
 export class CodexWarmupError extends Error {
   code: "http_status" | "missing_body" | "stream_failed" | "stream_incomplete" | "stream_error" | "stream_too_large" | "invalid_sse" | "no_terminal" | "transport";
@@ -22,8 +31,36 @@ export interface CodexWarmupOptions {
   chatgptAccountId: string;
   model?: string;
   timeoutMs?: number;
+  /** Optional provider or account-pinned egress override. */
+  provider?: EpxProviderConfig;
+  proxy?: string;
   /** Publish quota headers only after a completed inference, never on a failed stream. */
   onCompleted?: (headers: Headers) => void;
+}
+
+const DEFAULT_CODEX_CLI_VERSION = "0.166.0";
+const CODEX_ORIGINATOR = "codex_cli_rs";
+
+function codexWarmupUserAgent(): string {
+  let version = DEFAULT_CODEX_CLI_VERSION;
+  try { version = loadPersistedCodexRuntime()?.selectedVersion?.trim() || DEFAULT_CODEX_CLI_VERSION; } catch { /* fallback */ }
+  const osName = process.platform === "darwin" ? "Mac OS" : process.platform === "win32" ? "Windows" : "Linux";
+  const arch = process.arch === "arm64" ? "arm64" : "x86_64";
+  return `${CODEX_ORIGINATOR}/${version} (${osName}; ${arch})`;
+}
+
+function codexWarmupEgressFetch(options: CodexWarmupOptions): typeof globalThis.fetch {
+  let baseProvider = options.provider;
+  if (!baseProvider && existsSync(getConfigPath())) {
+    try { baseProvider = loadConfig().providers?.[OPENAI_CODEX_PROVIDER_ID]; } catch { baseProvider = undefined; }
+  }
+  return providerEgressFetch(OPENAI_CODEX_PROVIDER_ID, {
+    ...(baseProvider ?? {}),
+    adapter: "openai-responses",
+    authMode: "forward",
+    baseUrl: CODEX_FORWARD_BASE_URL,
+    ...(options.proxy ? { proxy: options.proxy } : {}),
+  });
 }
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
@@ -247,13 +284,20 @@ async function tryWarmup(options: CodexWarmupOptions, model: string): Promise<vo
   try {
     let res: Response;
     try {
-      res = await fetch(CODEX_RESPONSES_URL, {
+      const egressFetch = codexWarmupEgressFetch(options);
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${options.accessToken}`,
+        "ChatGPT-Account-Id": options.chatgptAccountId,
+        "Content-Type": "application/json",
+        originator: CODEX_ORIGINATOR,
+        "User-Agent": codexWarmupUserAgent(),
+      };
+      if (options.chatgptAccountId.trim()) {
+        headers[CODEX_INSTALLATION_ID_HEADER] = codexInstallationIdForAccount(options.chatgptAccountId);
+      }
+      res = await egressFetch(CODEX_RESPONSES_URL, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${options.accessToken}`,
-          "ChatGPT-Account-Id": options.chatgptAccountId,
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({
           model,
           instructions: "Reply with OK.",

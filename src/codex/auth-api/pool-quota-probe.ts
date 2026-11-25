@@ -264,6 +264,7 @@ export async function recoverPoolQuotaFrom401(ctx: {
 
   const writerGeneration = captureConfigGeneration();
   const poolWriter = capturePoolQuotaWriter(accountId, refreshed);
+  const accountProxy = readCodexAccountRecord(accountId)?.proxy;
   const replayRead = await fetchCodexUsage<PoolQuotaResult>(`pool:${accountId}:${writerGeneration}:${refreshed.generation}`, {
     headers: {
       Authorization: `Bearer ${refreshed.accessToken}`,
@@ -271,8 +272,11 @@ export async function recoverPoolQuotaFrom401(ctx: {
     },
     signal: AbortSignal.timeout(WHAM_REQUEST_TIMEOUT_MS),
   }, () => markQuotaProbeAttempted(ctx.quotaProbeEvidence, refreshed.generation),
-  ctx.recoveryProbeNow === undefined ? { poolAccountId: accountId }
-    : { poolAccountId: accountId, recoveryProbe: true, now: () => ctx.recoveryProbeNow! });
+  {
+    poolAccountId: accountId,
+    ...(accountProxy ? { accountProxy } : {}),
+    ...(ctx.recoveryProbeNow === undefined ? {} : { recoveryProbe: true, now: () => ctx.recoveryProbeNow! }),
+  });
   if (!replayRead) return { quota: existing ?? null, needsReauth: false, credentialGeneration: refreshed.generation, quotaProbeSkipped: true };
   if (replayRead.kind === "joined") {
     if (!isCodexAccountGenerationLive(accountId, refreshed.generation)
@@ -414,13 +418,17 @@ export async function fetchFreshPoolAccountQuota(
       if (quotaProbeEvidence.mayDispatch?.(generation) === false) {
         return { quota: getAccountQuota(accountId), needsReauth: false, credentialGeneration: generation, quotaProbeSkipped: true };
       }
+      const accountProxy = readCodexAccountRecord(accountId)?.proxy;
       const admission = await fetchCodexUsage<PoolQuotaResult>(
         `pool:${accountId}:${writerGeneration}:${generation}${afterDispatchSequence === undefined ? "" : `:post-reset:${afterDispatchSequence}`}`, {
         headers: { Authorization: `Bearer ${accessToken}`, "ChatGPT-Account-Id": chatgptAccountId },
         signal: AbortSignal.timeout(8000),
       }, () => markQuotaProbeAttempted(quotaProbeEvidence, generation),
-      recoveryProbeNow === undefined ? { poolAccountId: accountId }
-        : { poolAccountId: accountId, recoveryProbe: true, now: () => recoveryProbeNow });
+      {
+        poolAccountId: accountId,
+        ...(accountProxy ? { accountProxy } : {}),
+        ...(recoveryProbeNow === undefined ? {} : { recoveryProbe: true, now: () => recoveryProbeNow }),
+      });
       if (!admission) return { quota: existing ?? null, needsReauth: false, credentialGeneration: generation, quotaProbeSkipped: true };
       if (admission.kind === "joined") return isCodexAccountGenerationLive(accountId, generation)
         && quotaProbeEvidence.mayPublish?.() !== false
@@ -598,6 +606,7 @@ export async function fetchPoolAccountQuota(
         await warmCodexAccount({
           accessToken: sourceToken?.accessToken ?? record.credential.accessToken,
           chatgptAccountId: sourceToken?.chatgptAccountId ?? record.credential.chatgptAccountId,
+          ...(record.proxy ? { proxy: record.proxy } : {}),
         });
         markCodexAccountValidated(accountId, Date.now(), generation);
         clearAccountNeedsReauth(accountId, generation);

@@ -540,8 +540,8 @@ describe("upgraded homes near the manifest byte limit (#8093)", () => {
       const base = manifest(dir);
       const filler: string[] = [];
       const size = () => Buffer.byteLength(JSON.stringify({ ...base, paths: [...base.paths, ...filler].sort() }, null, 2) + "\n");
-      while (size() < 64 * 1024 - 300) filler.push("f-" + String(filler.length).padStart(4, "0") + "-" + "x".repeat(200));
-      filler.push("z-" + "y".repeat(64 * 1024 - size() - 10));
+      while (size() < 64 * 1024 - 230) filler.push("f-" + String(filler.length).padStart(4, "0") + "-" + "x".repeat(100));
+      filler.push("z-" + "y".repeat(Math.min(240, Math.max(0, 64 * 1024 - size() - 10))));
       while (size() > 64 * 1024) filler[filler.length - 1] = filler[filler.length - 1]!.slice(0, -1);
       const nearLimit = JSON.stringify({ ...base, paths: [...base.paths, ...filler].sort() }, null, 2) + "\n";
       expect(Buffer.byteLength(nearLimit)).toBeGreaterThan(64 * 1024 - 40);

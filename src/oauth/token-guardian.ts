@@ -194,6 +194,7 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
               accessToken: mainToken.accessToken,
               chatgptAccountId: mainToken.chatgptAccountId,
               model: opts.codexWarmupModel,
+              provider: openai,
             });
             backoff.delete(key);
             result.warmed.push(key);
@@ -246,6 +247,8 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
               accessToken: token.accessToken,
               chatgptAccountId: token.chatgptAccountId,
               model: opts.codexWarmupModel,
+              provider: openai,
+              ...(current.proxy ? { proxy: current.proxy } : {}),
             });
             markCodexAccountValidated(id, Date.now(), token.generation);
             result.warmed.push(key);

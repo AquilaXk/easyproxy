@@ -63,6 +63,7 @@ import type { FastPolicyAuthority } from "../../providers/fastwire";
 import { effectiveGoogleMode, getProviderRegistryEntry, providerMatchesRegistryTransport, registryEntryForProviderDestination } from "../../providers/registry";
 import { discoveredAntigravityDefaultEffort, parseAntigravityAvailableModels, registerAntigravityDiscoveredWireModels } from "../../providers/antigravity-models";
 import { captureAntigravityModelObservation, recordAntigravityAccountRoster } from "../../providers/antigravity-account-roster";
+import { antigravityDiscoveryUserAgent } from "../../adapters/google-antigravity-wire";
 import { antigravityActiveAccountCurrent, discoverAntigravitySiblings } from "./antigravity-discovery";
 import { applyProviderContextCap, providerContextCap, resolveUnknownRoutedContextWindow } from "../../providers/context-cap";
 import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
@@ -194,6 +195,8 @@ export function observedModelsAuthResolver(
         ...(observation.snapshot.providerUserId ? { oauthProviderUserId: observation.snapshot.providerUserId } : {}),
         ...(observation.snapshot.apiBaseUrl ? { oauthApiBaseUrl: observation.snapshot.apiBaseUrl } : {}),
         ...(observation.snapshot.projectId ? { oauthProjectId: observation.snapshot.projectId } : {}),
+        ...(observation.snapshot.proxy ? { oauthProxy: observation.snapshot.proxy } : {}),
+        ...(observation.snapshot.hostPlatform ? { oauthHostPlatform: observation.snapshot.hostPlatform } : {}),
       };
     },
   };
@@ -356,6 +359,8 @@ async function fetchProviderModelsUncached(
           ...(snapshot.providerUserId ? { oauthProviderUserId: snapshot.providerUserId } : {}),
           ...(snapshot.apiBaseUrl ? { oauthApiBaseUrl: snapshot.apiBaseUrl } : {}),
           ...(snapshot.projectId ? { oauthProjectId: snapshot.projectId } : {}),
+          ...(snapshot.proxy ? { oauthProxy: snapshot.proxy } : {}),
+          ...(snapshot.hostPlatform ? { oauthHostPlatform: snapshot.hostPlatform } : {}),
         }))
         .catch(() => ({ apiKey: undefined, observed: false }))
       : {
@@ -831,10 +836,14 @@ async function fetchProviderModelsUncached(
   // The captured request predates any refresh, so a refreshing gather rebuilds it
   // from the auth it resolved: the token and its origin, together.
   const request = resolveAuth.kind === "refreshing" && name !== "anthropic2"
-    ? captureModelsRequest(name, prov, auth.oauthApiBaseUrl, auth.workbuddy)
+    ? captureModelsRequest(name, prov, auth.oauthApiBaseUrl, auth.workbuddy, auth.oauthHostPlatform)
     : captured.request;
+  const effectiveProv = auth.oauthProxy ? { ...prov, proxy: auth.oauthProxy } : prov;
   const url = request.url;
   let headers = materializeCapturedHeaders(request, apiKey);
+  if (cloudCodeAssist && auth.oauthHostPlatform) {
+    headers["User-Agent"] = antigravityDiscoveryUserAgent(auth.oauthHostPlatform);
+  }
   // One Ollama authority contract: for canonical ollama-cloud/ollama-native rows, discovery
   // (/v1/models), enrichment (/api/show) and inference (/api/chat) must all materialize the
   // SAME effective credential/header authority. buildModelsRequest's generic tail writes the
@@ -898,12 +907,12 @@ async function fetchProviderModelsUncached(
         && (!vertexSendGuard || (vertexAuth !== undefined && vertexDiscoveryAuthIsCurrent(prov, vertexAuth, headers, requestUrl))) });
     const antigravityObservation = cloudCodeAssist ? captureAntigravityModelObservation() : undefined;
     const res = request.method === "POST"
-      ? await providerOutboundPost(name, prov, url, {
+      ? await providerOutboundPost(name, effectiveProv, url, {
         headers,
         body: JSON.stringify({ project }),
         signal: AbortSignal.timeout(8000),
       }, outboundDependencies(url))
-      : await providerOutboundGet(name, prov, url, {
+      : await providerOutboundGet(name, effectiveProv, url, {
         headers,
         signal: vertexDeadline ?? AbortSignal.timeout(8000),
       }, outboundDependencies(url));

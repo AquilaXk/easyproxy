@@ -2,7 +2,9 @@ import { handleCodexAccountPreservation } from "./account-preservation";
 import { persistCodexAccountSelection } from "./account-selection";
 import { CODEX_ACCOUNT_LOG_LABEL_RE, codexAccountLogLabel } from "../account-label";
 import { handleUseRemainingQuotaRoute } from "./use-remaining-route";
-import { poolQuotaHistoryIdentity, readCodexAccountRecord } from "../account-store";
+import { poolQuotaHistoryIdentity, readCodexAccountRecord, setCodexAccountProxy } from "../account-store";
+import { providerEgressConfigError } from "../../lib/provider-egress";
+import { redactUrlForLog } from "../../lib/redact";
 import { estimateCodexQuotaCapacity, insufficientCodexCapacity } from "../quota-capacity";
 import type { CodexCapacityResult } from "../quota-capacity";
 import { readUsageSnapshotForManagement } from "../../usage/log";
@@ -97,6 +99,31 @@ export async function handleCodexAuthAPI(
     else delete account.alias;
     saveRuntimeConfig(config, runtimeConfig);
     return jsonResponse({ ok: true, id, alias: alias || null });
+  }
+
+  if (url.pathname === "/api/codex-auth/accounts/proxy" && req.method === "PUT") {
+    const body = await req.json().catch(() => ({})) as { id?: unknown; proxy?: unknown };
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (id === MAIN_CODEX_ACCOUNT_ID) return jsonResponse({ error: "Main Codex account proxy is configured at provider level" }, 400);
+    if (!isValidCodexAccountId(id)) return jsonResponse({ error: "Invalid account id format" }, 400);
+    if (body.proxy !== null && body.proxy !== undefined && typeof body.proxy !== "string") {
+      return jsonResponse({ error: "proxy must be a string or null" }, 400);
+    }
+    const rawProxy = typeof body.proxy === "string" ? body.proxy.trim() : "";
+    if (rawProxy) {
+      const err = providerEgressConfigError({ proxy: rawProxy });
+      if (err) return jsonResponse({ error: err }, 400);
+    }
+    const runtimeConfig = getRuntimeConfig(config);
+    const account = (runtimeConfig.codexAccounts ?? []).find(candidate => candidate.id === id && !candidate.isMain);
+    if (!account) return jsonResponse({ error: "Account not found" }, 404);
+    if (!setCodexAccountProxy(id, rawProxy || null)) return jsonResponse({ error: "Account credential not found" }, 404);
+    return jsonResponse({
+      ok: true,
+      id,
+      hasProxy: Boolean(rawProxy),
+      ...(rawProxy ? { proxyLabel: redactUrlForLog(rawProxy) } : {}),
+    });
   }
 
   if (url.pathname === "/api/codex-auth/accounts/pause" && req.method === "PUT") {

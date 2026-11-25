@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuthStore } from "../../src/oauth/store";
+import { unsealAuthStoreDocument } from "../../src/lib/credential-vault";
 import type { OAuthCredentials } from "../../src/oauth/types";
 import type { AnthropicInstanceId } from "../../src/providers/anthropic-instance-id";
 import type { EpxConfig } from "../../src/types";
@@ -145,8 +146,11 @@ async function runWriters(values: readonly [OAuthCredentials, OAuthCredentials],
       expect(row.instance).toBe(instances[index]);
     });
     // Parse disk bytes directly: normalization must not conceal a lost/corrupt row.
-    const store = JSON.parse(readFileSync(join(root, "epx", "auth.json"), "utf8")) as AuthStore;
-    expect(store !== null && typeof store === "object" && !Array.isArray(store)).toBe(true);
+    const diskText = readFileSync(join(root, "epx", "auth.json"), "utf8");
+    const rawDisk = JSON.parse(diskText) as Record<string, unknown>;
+    expect(rawDisk !== null && typeof rawDisk === "object" && !Array.isArray(rawDisk)).toBe(true);
+    expect(diskText).toContain('"__vault"');
+    const store = unsealAuthStoreDocument(rawDisk, join(root, "epx")) as AuthStore;
     expect(readFileSync(join(root, "epx", "config.json"), "utf8")).toBe(configBytes);
     return { results, store };
   } finally {

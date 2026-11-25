@@ -90,7 +90,8 @@ test.each(["unchanged", "replacement", "selection", "aba"] as const)("passive Ki
   ensureQuotaPoolIdentity();
   if (change === "replacement") {
     const store = JSON.parse(readFileSync(getAuthStorePath(), "utf8"));
-    store.kimi.accounts.find((row: { id: string }) => row.id === active).credential.access = "external-replacement";
+    const row = store.kimi.accounts.find((entry: { id: string }) => entry.id === active);
+    row.credential = { access: "external-replacement", refresh: "refresh-a", expires: row.credential.expires };
     writeFileSync(`${getAuthStorePath()}.replacement`, JSON.stringify(store));
     renameSync(`${getAuthStorePath()}.replacement`, getAuthStorePath());
   }

@@ -7,6 +7,8 @@ import { hardenSecretDir, hardenSecretPath } from "../lib/windows-secret-acl";
 
 const SECRET_BYTES = 32;
 const DOMAIN = "easyproxy-codex-installation-id-v1\0";
+const WINDOW_DOMAIN = "easyproxy-codex-window-id-v1\0";
+const WINDOW_ORDINAL_SUFFIX = /:(\d{1,4})$/;
 
 /** Sanitized, retryable refusal: neither a path nor a credential belongs in its cause. */
 export class CodexInstallationIdUnavailableError extends Error {
@@ -57,16 +59,34 @@ function installationSecret(dir: string): Buffer {
   } finally { unlinkSync(temporary); }
 }
 
+function deriveAccountUuid(domain: string, accountKey: string, configDir: string): string {
+  const account = accountKey.trim();
+  if (!account) throw new CodexInstallationIdUnavailableError();
+  const bytes = createHmac("sha256", installationSecret(configDir)).update(domain).update(account).digest().subarray(0, 16);
+  // RFC 9562 §5.4 layout; pseudorandom HMAC bits replace per-request randomness.
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** Stable per upstream account and local installation, independent of bearer/caller identity. */
 export function codexInstallationIdForAccount(accountKey: string, configDir = getConfigDir()): string {
   try {
-    const account = accountKey.trim();
-    if (!account) throw new CodexInstallationIdUnavailableError();
-    const bytes = createHmac("sha256", installationSecret(configDir)).update(DOMAIN).update(account).digest().subarray(0, 16);
-    // RFC 9562 §5.4 layout; pseudorandom HMAC bits replace per-request randomness.
-    bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-    const hex = bytes.toString("hex");
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    return deriveAccountUuid(DOMAIN, accountKey, configDir);
+  } catch { throw new CodexInstallationIdUnavailableError(); }
+}
+
+/**
+ * Stable per-account `x-codex-window-id` derived via HMAC so rotating pool accounts never carry
+ * a single caller window identifier across accounts. Preserves an optional numeric tab ordinal
+ * (`:0`, `:1`, ...) while remaining idempotent on repeated isolation passes.
+ */
+export function codexWindowIdForAccount(accountKey: string, callerWindowId?: string, configDir = getConfigDir()): string {
+  try {
+    const uuid = deriveAccountUuid(WINDOW_DOMAIN, accountKey, configDir);
+    const trimmed = callerWindowId?.trim() ?? "";
+    const ordinalMatch = trimmed ? WINDOW_ORDINAL_SUFFIX.exec(trimmed) : null;
+    return `${uuid}:${ordinalMatch ? ordinalMatch[1] : "0"}`;
   } catch { throw new CodexInstallationIdUnavailableError(); }
 }

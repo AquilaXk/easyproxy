@@ -10,6 +10,7 @@ import { getProviderRegistryEntry } from "../providers/registry";
 import { sendTrackingRequestSlot, waitForProviderRequestSlot, RequestPacingQueueOverloadError, RequestPacingProviderRemovedError } from "../providers/request-pacing";
 import { usageFromGemini } from "../adapters/google-usage";
 import { antigravityUserAgentForWireModel } from "../adapters/google-antigravity-wire";
+import { providerEgressFetch } from "../lib/provider-tls-profile";
 import { fetchWithAttemptDeadline, releaseResponseBodyBestEffort } from "../lib/upstream-retry";
 import { reserveWorkflowSend } from "../lib/workflow-budget";
 import { currentWorkflowBudgetPolicy } from "../lib/workflow-budget-config";
@@ -230,11 +231,19 @@ export async function handleGeminiNative(
             Object.assign(logCtx.activeAttempt!, reasoning);
           }
           dispatched = true;
+          const accountProxy = access.proxy ?? account.proxy;
+          const hostPlatform = access.hostPlatform ?? account.hostPlatform;
+          const effectiveProvider = accountProxy ? { ...provider, proxy: accountProxy } : provider;
+          const outboundFetch = providerEgressFetch(
+            GEMINI_NATIVE_PROVIDER,
+            effectiveProvider,
+            deps.fetch === globalThis.fetch ? undefined : deps.fetch,
+          );
           return await fetchWithAttemptDeadline(`${baseUrl.replace(/\/$/, "")}/v1internal:${method}`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${access.accessToken}`, "User-Agent": antigravityUserAgentForWireModel(model) },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${access.accessToken}`, "User-Agent": antigravityUserAgentForWireModel(model, hostPlatform) },
             body,
-          }, config.connectTimeoutMs ?? 200_000, ac.signal, true, deps.fetch);
+          }, config.connectTimeoutMs ?? 200_000, ac.signal, true, outboundFetch);
         } finally {
           try { if (dispatched) report?.(1); }
           finally { report?.close?.(); }

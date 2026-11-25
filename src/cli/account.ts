@@ -15,6 +15,7 @@ import {
   cmdPause,
   cmdPauseExhausted,
   cmdPriority,
+  cmdProxy,
   cmdRefresh,
   cmdRemove,
   cmdSticky,
@@ -54,6 +55,7 @@ const ACCOUNT_USAGE = `Usage:
   epx account auto-switch <provider> <on|off|status|threshold <0-100>> [--json]
   epx account auto-switch <anthropic|anthropic2> <on|off|status|inherit|threshold <0-100>> --account <id> [--json]
   epx account alias <provider> <account-or-key-id|alias> <display-name|-> [--json]
+  epx account proxy <provider> <account-id|alias> (<proxy-url>|--stdin|-) [--json]
   epx account preserve-signed-in openai [on|off|status] [--apply-to-bound] [--json]
   epx account priority <provider> <account-id|alias|main> [<-100..100|first|earlier|normal|later|last|reset>] [--json]
   epx account pause <provider> <account-id|alias|main> [--json]
@@ -483,6 +485,7 @@ export async function cmdAccount(args: string[], deps: AccountDeps = {}): Promis
     if (sub === "refresh") return await cmdRefresh(rest, deps);
     if (sub === "auto-switch") return await cmdAutoSwitch(rest, deps);
     if (sub === "alias" || sub === "rename") return await cmdAlias(rest, deps);
+    if (sub === "proxy") return await cmdProxy(rest, deps);
     if (sub === "preserve-signed-in") {
       const { cmdPreserveSignedIn } = await import("./account-preservation");
       return cmdPreserveSignedIn(rest, deps);

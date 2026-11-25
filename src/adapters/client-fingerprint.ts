@@ -12,6 +12,7 @@
  * intentionally NOT modeled — those are brittle and a wrong guess does more harm than the gap.
  */
 import { createHash } from "node:crypto";
+import type { AntigravityHostPlatform } from "../oauth/types";
 import {
   CLAUDE_CLI_RUNTIME_VERSION,
   CLAUDE_CLI_SDK_PACKAGE_VERSION,
@@ -73,11 +74,35 @@ export function claudeCodeSessionId(token: string | undefined, sessionKey?: stri
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
+// ── Antigravity Host Platform ──
+export type { AntigravityHostPlatform };
+
+const VALID_ANTIGRAVITY_PLATFORM = /^(darwin|windows|linux)\/(arm64|amd64)$/;
+
+export function normalizeAntigravityPlatform(value: unknown): AntigravityHostPlatform | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().toLowerCase();
+  return VALID_ANTIGRAVITY_PLATFORM.test(trimmed) ? (trimmed as AntigravityHostPlatform) : undefined;
+}
+
+/**
+ * Single consistent host OS/architecture shared by both Antigravity `ide` and `cli` User-Agents
+ * so one account never presents itself as two different operating systems/CPUs on adjacent requests.
+ */
+export function antigravityHostPlatform(override?: string): AntigravityHostPlatform {
+  const explicit = normalizeAntigravityPlatform(override);
+  if (explicit) return explicit;
+  const envOverride = normalizeAntigravityPlatform(process.env.GOOGLE_ANTIGRAVITY_PLATFORM);
+  if (envOverride) return envOverride;
+  const osType = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "windows" : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "amd64";
+  return `${osType}/${arch}`;
+}
+
 // ── Antigravity IDE ──
 /** Pinned fallback Antigravity IDE language-server version (matches the bundled LS 2.5.5). */
 export const ANTIGRAVITY_IDE_VERSION = "2.5.5";
 const ANTIGRAVITY_IDE_CLIENT_NAME = "aidev_client";
-const ANTIGRAVITY_IDE_PLATFORM = "windows/amd64";
 
 /**
  * Real Antigravity IDE User-Agent format, decompiled from 2.5.5 Go LS (`setHeaders` @ `0x1018fbe00`):
@@ -88,22 +113,20 @@ const ANTIGRAVITY_IDE_PLATFORM = "windows/amd64";
  * Must be the IDE client family (`antigravity/ide/...`): Cloud Code Assist backend gates
  * newer agent models (e.g. `gemini-3.7-flash`) by User-Agent and answers 404 NOT_FOUND to
  * CLI-shaped UAs even with a valid OAuth token. Only `antigravity/ide/<ver>` unlocks them.
- * The exception is Gemini 4 Argon and Carbon, which CCA was observed to serve ONLY to the CLI
- * family. The CLI rule matches the whole Gemini 4 generation in anticipation: Hydrogen has not been
- * seen on CCA, so its client requirement is unverified. See `antigravityCliUserAgent`.
+ * The exception is Gemini 4 Argon, Carbon, and Hydrogen, which CCA serves ONLY to the CLI
+ * family. Both `ide` and `cli` fix OS and arch to the same single host platform per account.
  * A `GOOGLE_ANTIGRAVITY_USER_AGENT` override (set by the caller) takes precedence upstream.
  */
-export function antigravityUserAgent(version = ANTIGRAVITY_IDE_VERSION, authMethod = "oauth"): string {
+export function antigravityUserAgent(version = ANTIGRAVITY_IDE_VERSION, authMethod = "oauth", platform?: string): string {
   const ov = process.env.GOOGLE_ANTIGRAVITY_USER_AGENT?.trim();
   if (ov) return ov;
-  const [osType, arch] = ANTIGRAVITY_IDE_PLATFORM.split("/");
+  const [osType, arch] = antigravityHostPlatform(platform).split("/");
   return `antigravity/ide/${version} (os_type=${osType}; arch=${arch}; ${ANTIGRAVITY_IDE_CLIENT_NAME}; auth_method=${authMethod})`;
 }
 
 // ── Antigravity CLI ──
 /** Antigravity CLI version whose User-Agent CCA was verified to serve Gemini 4 Argon to. */
 export const ANTIGRAVITY_CLI_VERSION = "1.3.4";
-const ANTIGRAVITY_CLI_PLATFORM = "darwin/arm64";
 
 /**
  * Antigravity CLI User-Agent:
@@ -119,7 +142,7 @@ const ANTIGRAVITY_CLI_PLATFORM = "darwin/arm64";
  * `GOOGLE_ANTIGRAVITY_USER_AGENT` deliberately does not apply here: that override names the IDE
  * header, and letting it replace this one would re-lock Argon for anyone who set it.
  */
-export function antigravityCliUserAgent(version = ANTIGRAVITY_CLI_VERSION, authMethod = "oauth"): string {
-  const [osType, arch] = ANTIGRAVITY_CLI_PLATFORM.split("/");
+export function antigravityCliUserAgent(version = ANTIGRAVITY_CLI_VERSION, authMethod = "oauth", platform?: string): string {
+  const [osType, arch] = antigravityHostPlatform(platform).split("/");
   return `antigravity/cli/${version} (os_type=${osType}; arch=${arch}; ${ANTIGRAVITY_IDE_CLIENT_NAME}; auth_method=${authMethod})`;
 }

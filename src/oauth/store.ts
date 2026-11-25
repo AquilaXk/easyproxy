@@ -40,6 +40,7 @@ import { join } from "node:path";
 import { getConfigDir, atomicWriteFile, backupInvalidConfig, hardenConfigDir, hardenExistingSecret, withConfigMutationLockSync, loadConfig } from "../config";
 import { atomicWriteFileNoFollowUnclaimed } from "../config/atomic-write";
 import { assertNotRealHomeUnderTest } from "../lib/test-home-guard";
+import { CredentialVaultError, sealAuthStoreDocument, unsealOAuthCredentialObject } from "../lib/credential-vault";
 import { StatFileCache } from "../lib/stat-file-cache";
 import { recordOwnedConfigPath, registerOwnedConfigPath, type OwnedPathRegistration } from "../lib/config-ownership";
 import {
@@ -65,6 +66,8 @@ import { validateCopilotApiBaseUrl } from "./github-copilot";
 import { validateDevinApiBaseUrl } from "./devin/api-base";
 import { REFRESH_SKEW_MS } from "./refresh-policy";
 import { parseAnthropicAccountThreshold } from "./anthropic-account-threshold";
+import { providerEgressConfigError } from "../lib/provider-egress";
+import { antigravityHostPlatform, normalizeAntigravityPlatform, type AntigravityHostPlatform } from "../adapters/client-fingerprint";
 import type { OAuthAccountSelection, OAuthCredentialSource, OAuthCredentials, ProviderAccount, ProviderAccountSet } from "./types";
 
 export type AuthStore = Record<string, ProviderAccountSet>;
@@ -395,7 +398,12 @@ function loadAuthStoreInternal(): { store: AuthStore; hadLegacy: boolean } {
   let result: { store: AuthStore; hadLegacy: boolean };
   try {
     result = normalizeAuthStore(JSON.parse(readFileSync(path, "utf-8")));
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialVaultError) {
+      peekAuthStoreCache.invalidate(path);
+      notifyAuthStoreLoaded({});
+      throw error;
+    }
     backupInvalidConfig(path);
     peekAuthStoreCache.invalidate(path);
     notifyAuthStoreLoaded({});
@@ -461,7 +469,8 @@ function persist(store: AuthStore): void {
   }
   hardenConfigDir();
   const path = getAuthStorePath();
-  publishCredentialSync(() => atomicWriteFile(path, JSON.stringify(store, null, 2) + "\n"));
+  const sealed = sealAuthStoreDocument(store);
+  publishCredentialSync(() => atomicWriteFile(path, JSON.stringify(sealed, null, 2) + "\n"));
   peekAuthStoreCache.invalidate(path);
   notifyAuthStoreLoaded(store);
 }
@@ -570,9 +579,11 @@ export function isStorableKiroClientPart(value: unknown): value is string {
     && value === value.trim() && !/[\x00-\x1f\x7f]/.test(value);
 }
 
-function normalizeCredential(cred: unknown): OAuthCredentials | null {
+function normalizeCredential(cred: unknown, vaultSlotId?: string): OAuthCredentials | null {
   if (!cred || typeof cred !== "object") return null;
-  const candidate = cred as Partial<OAuthCredentials>;
+  const unwrapped = vaultSlotId ? unsealOAuthCredentialObject(cred, vaultSlotId) : cred;
+  if (!unwrapped || typeof unwrapped !== "object") return null;
+  const candidate = unwrapped as Partial<OAuthCredentials>;
   if (typeof candidate.access !== "string" || typeof candidate.refresh !== "string" || typeof candidate.expires !== "number") {
     return null;
   }
@@ -697,11 +708,11 @@ function distinctAccountId(cred: OAuthCredentials, accounts: readonly ProviderAc
   }
 }
 
-function normalizeAccount(value: unknown): ProviderAccount | null {
+function normalizeAccount(provider: string, value: unknown): ProviderAccount | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<ProviderAccount>;
   if (typeof candidate.id !== "string" || candidate.id.length === 0) return null;
-  const credential = normalizeCredential(candidate.credential);
+  const credential = normalizeCredential(candidate.credential, `${provider}:${candidate.id}`);
   if (!credential) return null;
   const account: ProviderAccount = { id: candidate.id, credential };
   if (typeof candidate.alias === "string" && candidate.alias.trim()) account.alias = candidate.alias.trim();
@@ -735,14 +746,19 @@ function normalizeAccount(value: unknown): ProviderAccount | null {
     account.credentialRevision = { sequence: revision.sequence, id: revision.id };
   }
   if (candidate.loginOrigin === "kiro-device") account.loginOrigin = candidate.loginOrigin;
+  if (typeof candidate.proxy === "string" && candidate.proxy.trim() && providerEgressConfigError({ proxy: candidate.proxy.trim() }) === null) {
+    account.proxy = candidate.proxy.trim();
+  }
+  const hostPlatform = normalizeAntigravityPlatform(candidate.hostPlatform);
+  if (hostPlatform) account.hostPlatform = hostPlatform;
   return account;
 }
 
-function normalizeAccountSet(raw: unknown): { set: ProviderAccountSet | null; wasLegacy: boolean } {
+function normalizeAccountSet(provider: string, raw: unknown): { set: ProviderAccountSet | null; wasLegacy: boolean } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { set: null, wasLegacy: false };
   const candidate = raw as Partial<ProviderAccountSet>;
   if (Array.isArray(candidate.accounts)) {
-    const accounts = candidate.accounts.map(normalizeAccount).filter((a): a is ProviderAccount => a !== null);
+    const accounts = candidate.accounts.map(entry => normalizeAccount(provider, entry)).filter((a): a is ProviderAccount => a !== null);
     if (accounts.length === 0) return { set: null, wasLegacy: false };
     const active = typeof candidate.activeAccountId === "string" && accounts.some(a => a.id === candidate.activeAccountId)
       ? candidate.activeAccountId
@@ -758,7 +774,7 @@ function normalizeAccountSet(raw: unknown): { set: ProviderAccountSet | null; wa
     return { set, wasLegacy: false };
   }
   // Legacy single-credential value.
-  const cred = normalizeCredential(raw);
+  const cred = normalizeCredential(raw, `${provider}:legacy`);
   if (!cred) return { set: null, wasLegacy: false };
   const id = newAccountId(cred);
   return { set: { activeAccountId: id, accounts: [{ id, credential: cred }] }, wasLegacy: true };
@@ -767,7 +783,7 @@ function normalizeAccountSet(raw: unknown): { set: ProviderAccountSet | null; wa
 export function countLocalOAuthCredentialSlots(raw: Record<string, unknown> | null): number {
   if (raw === null) return 0;
   let count = 0;
-  for (const value of Object.values(raw)) {
+  for (const [provider, value] of Object.entries(raw)) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid OAuth provider row");
     const row = value as Record<string, unknown>;
     if (Object.hasOwn(row, "accounts")) {
@@ -777,12 +793,12 @@ export function countLocalOAuthCredentialSlots(raw: Record<string, unknown> | nu
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("Invalid OAuth account");
         const account = entry as Record<string, unknown>;
         if (typeof account.id !== "string" || !account.id || ids.has(account.id)
-          || !normalizeCredential(account.credential)) throw new Error("Invalid OAuth credential slot");
+          || !normalizeCredential(account.credential, `${provider}:${account.id}`)) throw new Error("Invalid OAuth credential slot");
         ids.add(account.id);
         count += 1;
       }
     } else {
-      if (!normalizeCredential(row)) throw new Error("Invalid legacy OAuth credential");
+      if (!normalizeCredential(row, `${provider}:legacy`)) throw new Error("Invalid legacy OAuth credential");
       count += 1;
     }
   }
@@ -794,7 +810,7 @@ function normalizeAuthStore(raw: unknown): { store: AuthStore; hadLegacy: boolea
   const normalized: AuthStore = {};
   let hadLegacy = false;
   for (const [provider, value] of Object.entries(raw)) {
-    const { set, wasLegacy } = normalizeAccountSet(value);
+    const { set, wasLegacy } = normalizeAccountSet(provider, value);
     if (set) normalized[provider] = set;
     if (wasLegacy) hadLegacy = true;
   }
@@ -920,6 +936,7 @@ export function mutateStore<T>(
     scrubLegacyBackup?: (result: T) => readonly string[];
     finalizeResult?: (result: T, store: AuthStore) => void;
     afterPersist?: (result: T) => void;
+    shouldPersist?: (result: T) => boolean;
     withConfigLock?: boolean;
   },
 ): Promise<T> {
@@ -979,12 +996,17 @@ export function mutateStore<T>(
     // provisional value visible inside their callback. Finalization cannot await or mutate disk.
     options?.finalizeResult?.(result, store);
     const publish = () => { if (options?.withConfigLock) options.assertBeforePersist?.(); persist(store); };
-    if (options?.withConfigLock) withConfigMutationLockSync(publish); else publish();
+    const shouldPersist = options?.shouldPersist ? options.shouldPersist(result) : true;
+    if (shouldPersist) {
+      if (options?.withConfigLock) withConfigMutationLockSync(publish); else publish();
+    }
     if (scrubbedProviders.length > 0) scrubLegacyBackup(scrubbedProviders);
-    // A committed observer may establish ordering before the generic selection
-    // publication, but its failure can never turn a durable write into a reported failure.
-    try { options?.afterPersist?.(result); } catch { /* The authoritative write already committed. */ }
-    for (const provider of changedProviders) publishAccountSelection(provider, "oauth");
+    if (shouldPersist) {
+      // A committed observer may establish ordering before the generic selection
+      // publication, but its failure can never turn a durable write into a reported failure.
+      try { options?.afterPersist?.(result); } catch { /* The authoritative write already committed. */ }
+      for (const provider of changedProviders) publishAccountSelection(provider, "oauth");
+    }
     return result;
   }finally{guard.release();}}, retainedValues, options?.waitMs);
 }
@@ -1177,7 +1199,11 @@ export async function saveCredentialWithReceipt(
       if (fallback) updatedSet.activeAccountId = fallback.id;
     }
     // Every explicit login, including an in-place legacy slot upgrade, starts new evidence.
-    store[provider]!.accounts.find(account => account.id === accountId)!.loginId = randomUUID();
+    const finalAccount = store[provider]!.accounts.find(account => account.id === accountId)!;
+    finalAccount.loginId = randomUUID();
+    if (provider === "google-antigravity" && !finalAccount.hostPlatform) {
+      finalAccount.hostPlatform = antigravityHostPlatform();
+    }
     return {
       provider,
       accountId,
@@ -1339,7 +1365,12 @@ export async function upsertCredentialByIdentity(
       return "updated";
     }
     const id = newAccountId(safe);
-    const account: ProviderAccount = { id, credential: safe, addedAt: Date.now() };
+    const account: ProviderAccount = {
+      id,
+      credential: safe,
+      addedAt: Date.now(),
+      ...(provider === "google-antigravity" ? { hostPlatform: antigravityHostPlatform() } : {}),
+    };
     if (set) {
       set.accounts.push(account);
       set.activeAccountId ??= id;
@@ -1372,7 +1403,10 @@ export async function removeCredential(provider: string): Promise<"removed" | "n
     set.activeAccountId = set.accounts.find(account => account.paused !== true && account.needsReauth !== true)?.id
       ?? set.accounts[0]!.id;
     return "removed" as const;
-  }, [provider], { scrubLegacyBackup: result => result === "removed" ? [provider] : [] });
+  }, [provider], {
+    shouldPersist: result => result === "removed",
+    scrubLegacyBackup: result => result === "removed" ? [provider] : [],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1412,7 +1446,7 @@ export function getAccountCredential(provider: string, accountId: string): OAuth
 export function getAccountCredentialWithStatus(
   provider: string,
   accountId: string,
-): { credential: OAuthCredentials; needsReauth: boolean; paused: boolean } | null {
+): { credential: OAuthCredentials; needsReauth: boolean; paused: boolean; proxy?: string; hostPlatform?: AntigravityHostPlatform } | null {
   provider = oauthCredentialSlot(provider);
   const account = loadAuthStore()[provider]?.accounts.find(a => a.id === accountId);
   if (!account?.credential) return null;
@@ -1420,6 +1454,8 @@ export function getAccountCredentialWithStatus(
     credential: account.credential,
     needsReauth: account.needsReauth === true,
     paused: account.paused === true,
+    ...(account.proxy ? { proxy: account.proxy } : {}),
+    ...(account.hostPlatform ? { hostPlatform: account.hostPlatform } : {}),
   };
 }
 
@@ -1547,6 +1583,22 @@ export async function setAccountAlias(provider: string, accountId: string, alias
     else delete account.alias;
     return true;
   }, [provider, accountId, alias]);
+}
+
+export async function setAccountProxy(provider: string, accountId: string, proxy: string | undefined | null): Promise<boolean> {
+  provider = oauthCredentialSlot(provider);
+  const trimmed = typeof proxy === "string" ? proxy.trim() : "";
+  if (trimmed) {
+    const error = providerEgressConfigError({ proxy: trimmed });
+    if (error) throw new Error(error);
+  }
+  return await mutateStore(store => {
+    const account = store[provider]?.accounts.find(a => a.id === accountId);
+    if (!account) return false;
+    if (trimmed) account.proxy = trimmed;
+    else delete account.proxy;
+    return true;
+  }, [provider, accountId, trimmed || null]);
 }
 
 export type SetAccountPausedResult =
@@ -1723,6 +1775,8 @@ export async function replaceProviderAccountSet(
         ...(account.needsReauthReason === "verify_account" ? { needsReauthReason: account.needsReauthReason, ...(account.needsReauthCause === "tos_violation" ? { needsReauthCause: account.needsReauthCause } : {}) } : {}),
         ...(account.addedAt !== undefined ? { addedAt: account.addedAt } : {}),
         ...(account.loginId ? { loginId: account.loginId } : {}),
+        ...(account.proxy ? { proxy: account.proxy } : {}),
+        ...(account.hostPlatform ? { hostPlatform: account.hostPlatform } : {}),
       })),
     };
     return false;

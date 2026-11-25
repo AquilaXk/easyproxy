@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createGoogleAdapter as createGoogleAdapterProduction } from "../../../src/adapters/google";
+import { antigravityUserAgent } from "../../../src/adapters/client-fingerprint";
 import { antigravitySessionId, isLikelyRealThoughtSignature } from "../../../src/adapters/google-antigravity-wire";
 import { ANTIGRAVITY_MODELS, ANTIGRAVITY_MODEL_EFFORTS, canonicalAntigravityUsageModel, parseAntigravityAvailableModels, registerAntigravityDiscoveredWireModels, resolveAntigravityEffortWireModel, resolveAntigravityWireModelId } from "../../../src/providers/antigravity-models";
 import { MODEL_DISCOVERY_MAX_MODEL_ID_LENGTH, MODEL_DISCOVERY_MAX_MODELS } from "../../../src/providers/model-discovery";
@@ -58,8 +59,9 @@ describe("antigravity CCA envelope", () => {
     expect(req.headers["Authorization"]).toBe("Bearer ya29.token");
     // The exact default must not drift: Google gates models by family AND version,
     // so any change to version/platform could silently re-lock gemini-3.7-flash.
-    expect(req.headers["User-Agent"]).toBe(
-      "antigravity/ide/2.5.5 (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)",
+    expect(req.headers["User-Agent"]).toBe(antigravityUserAgent());
+    expect(req.headers["User-Agent"]).toMatch(
+      /^antigravity\/ide\/2\.5\.5 \(os_type=(darwin|windows|linux); arch=(arm64|amd64); aidev_client; auth_method=oauth\)$/,
     );
     // The literal "antigravity" giveaway UA must no longer be sent.
     expect(req.headers["User-Agent"]).not.toBe("antigravity");

@@ -496,13 +496,11 @@ async function fetchAccountQuota(
       } else {
         const token = await getTokenForAccountQuotaProbe(provider, accountId);
         if (provider === "google-antigravity") {
-          // Per-account Gem/Cla windows (#1082). The project id is part of the stored
-          // credential; without it the probe cannot be made, and that is "unavailable",
-          // never 0%.
-          const credential = getAccountCredential(provider, accountId);
+          const account = getAccountSet(provider)?.accounts.find(row => row.id === accountId);
+          const credential = account?.credential ?? getAccountCredential(provider, accountId);
           diagnosticIdentity = credential?.access === token ? antigravityQuotaDiagnosticIdentity(accountId, credential) : undefined;
           if (!diagnosticIdentity || !credential?.projectId) throw new Error("antigravity account unavailable");
-          const result = await probeAntigravityUsageQuota(token, credential.projectId);
+          const result = await probeAntigravityUsageQuota(token, credential.projectId, undefined, { config: providerConfig, accountProxy: account?.proxy, hostPlatform: account?.hostPlatform });
           quota = result.kind === "available" ? result.quota : null;
           if (result.kind === "unavailable") quotaFailure = result.failure;
         } else {

@@ -11,6 +11,8 @@ import { getMainQuotaCredentialGeneration, isMainQuotaWriterLive, matchesMainQuo
 import type { EpxConfig } from "../../types";
 import { BOUNDED_BODY_MAX_BYTES, readBoundedResponseBody } from "../../lib/bounded-body";
 import { cancelBodyOnAbort, signalWithTimeout } from "../../lib/abort";
+import { providerEgressFetch } from "../../lib/provider-tls-profile";
+import { CODEX_FORWARD_BASE_URL, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers-destination";
 import { hasLegacyMainCodexPoolAccount, isValidCodexAccountId } from "../account-id";
 import { markManualResetCreditOperationAmbiguous, openManualResetCreditOperation, settleManualResetCreditOperation } from "../reset-credit-operation-ledger";
 import type { AdmissionLease } from "../../lib/admission";
@@ -25,10 +27,22 @@ interface ResetCreditAuth {
   isMain: boolean;
   accessToken: string;
   chatgptAccountId: string;
+  accountProxy?: string;
   nativeMainLease?: AdmissionLease;
   nativeMainSharedClaimHeld?: true;
   poolGeneration?: number;
   mainProof?: MainResetQuotaProof;
+}
+
+function resetCreditEgressFetch(runtimeConfig: EpxConfig, accountProxy?: string): typeof globalThis.fetch {
+  const baseProvider = runtimeConfig.providers?.[OPENAI_CODEX_PROVIDER_ID];
+  return providerEgressFetch(OPENAI_CODEX_PROVIDER_ID, {
+    ...(baseProvider ?? {}),
+    adapter: "openai-responses",
+    authMode: "forward",
+    baseUrl: CODEX_FORWARD_BASE_URL,
+    ...(accountProxy ? { proxy: accountProxy } : {}),
+  });
 }
 
 async function withResetCreditAuth<T>(
@@ -82,6 +96,7 @@ async function withResetCreditAuth<T>(
     return { ok: false, response: jsonResponse({ error: "Unknown Codex account" }, 404) };
   }
   const cred = await getValidCodexToken(accountId);
+  const accountProxy = readCodexAccountRecord(accountId)?.proxy;
   return {
     ok: true,
     value: await operation({
@@ -89,6 +104,7 @@ async function withResetCreditAuth<T>(
       poolGeneration: cred.generation,
       accessToken: cred.accessToken,
       chatgptAccountId: cred.chatgptAccountId,
+      ...(accountProxy ? { accountProxy } : {}),
     }),
   };
 }
@@ -149,7 +165,8 @@ export function createResetCreditWhamClient(config: EpxConfig, accountId: string
   };
   return {
     inspect: () => run(async auth => {
-      const resp = await fetch("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits", {
+      const egressFetch = resetCreditEgressFetch(getRuntimeConfig(config), auth.accountProxy);
+      const resp = await egressFetch("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits", {
         headers: { Authorization: `Bearer ${auth.accessToken}`, "ChatGPT-Account-Id": auth.chatgptAccountId },
         signal: AbortSignal.timeout(8000),
       });
@@ -169,7 +186,8 @@ export function createResetCreditWhamClient(config: EpxConfig, accountId: string
       }) };
     }),
     consume: redeemRequestId => run(async auth => {
-      const resp = await fetch("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume", {
+      const egressFetch = resetCreditEgressFetch(getRuntimeConfig(config), auth.accountProxy);
+      const resp = await egressFetch("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${auth.accessToken}`,
@@ -301,7 +319,8 @@ export async function inspectResetCredits(config: EpxConfig, accountId: string, 
     try {
       let resp: Response;
       try {
-        resp = await fetch(
+        const egressFetch = resetCreditEgressFetch(getRuntimeConfig(config), auth.accountProxy);
+        resp = await egressFetch(
           "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
           {
             headers: {
@@ -388,7 +407,8 @@ export async function consumeResetCredits(config: EpxConfig, accountId: string, 
     try {
       let resp: Response;
       try {
-        resp = await fetch(
+        const egressFetch = resetCreditEgressFetch(getRuntimeConfig(config), auth.accountProxy);
+        resp = await egressFetch(
           "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
           {
             method: "POST",

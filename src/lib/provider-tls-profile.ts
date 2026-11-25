@@ -1,12 +1,14 @@
 import type { EpxProviderConfig } from "../types";
 import { redactSecretString } from "./redact";
 import { runtimeProviderFetch } from "./provider-runtime-fetch";
-import { markEgressTransparentExecutor } from "./provider-egress";
+import { markEgressTransparentExecutor, providerEgressSendInit } from "./provider-egress";
 import {
+  configuredOutboundFetch,
   outboundProxyConfigured,
   proxyEnvPresent,
   resolveProxyRoute,
   socks5ProxyFromEnv,
+  type ProxyCapableRequestInit,
   type ProxyEnvMap,
 } from "./proxy-env";
 
@@ -218,4 +220,45 @@ export function providerTlsFetch(
       throw preserveTransportError(error);
     }
   }) as typeof globalThis.fetch);
+}
+
+/**
+ * Shared provider egress transport for auxiliary and OAuth paths outside the main adapter turn loop.
+ * Resolves `proxy`/`noProxy`, forces manual redirects, and engages `providerTlsFetch` when
+ * `tlsProfile` is configured on canonical Antigravity hosts.
+ */
+const defaultEgressOutboundFetch: typeof globalThis.fetch = markEgressTransparentExecutor(
+  Object.assign(
+    (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => configuredOutboundFetch(input, init),
+    { preconnect: globalThis.fetch.preconnect?.bind(globalThis.fetch) },
+  ) as typeof globalThis.fetch,
+);
+
+/**
+ * Shared provider egress transport for auxiliary and OAuth paths outside the main adapter turn loop.
+ * Resolves `proxy`/`noProxy`, forces manual redirects, and engages `providerTlsFetch` when
+ * `tlsProfile` is configured on canonical Antigravity hosts.
+ */
+export function providerEgressFetch(
+  providerName: string,
+  provider: Pick<
+    EpxProviderConfig,
+    "adapter" | "authMode" | "googleMode" | "baseUrl" | "proxy" | "noProxy" | "tlsProfile"
+  >,
+  baseFetch: typeof globalThis.fetch = defaultEgressOutboundFetch,
+): typeof globalThis.fetch {
+  const execute = (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit): Promise<Response> => {
+    const destination = typeof input === "string" || input instanceof URL ? input : input.url;
+    const transport = provider.tlsProfile && isCanonicalAntigravityUrl(destination)
+      ? providerTlsFetch(providerName, provider, baseFetch)
+      : baseFetch;
+    const egressInit = providerEgressSendInit({ providerName, provider }, transport, input);
+    const nextInit: ProxyCapableRequestInit = {
+      ...(init ?? {}),
+      ...egressInit,
+      redirect: init?.redirect ?? "manual",
+    };
+    return transport(input, nextInit);
+  };
+  return Object.assign(execute, { preconnect: baseFetch.preconnect?.bind(baseFetch) }) as typeof globalThis.fetch;
 }

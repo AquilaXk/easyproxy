@@ -8,7 +8,7 @@
 Use these declarations to choose a task, then check its flags and authority before execution.
 Non-mutating probes may still contact providers, consume quota or refresh caches.
 
-Declared capabilities: 44.
+Declared capabilities: 45.
 
 ### `epx account login`
 
@@ -473,6 +473,27 @@ State-changing: yes. JSON mode: `envelope`.
 | `--json` | boolean | Emit the applied alias, or null after clearing. |
 
 - - clears with an empty string. Codex resolves existing aliases; other families take an ID. Native main cannot be renamed; aliases are at most 80 printable characters. rename is an existing command alias.
+
+### `epx account proxy`
+
+Usage: `epx account proxy <provider> <account-id|alias> (<proxy-url>|--stdin|-) [--json]`
+
+Pin or clear a per-account outbound proxy URL for an OAuth or Codex pool account.
+
+State-changing: yes. JSON mode: `envelope`.
+
+| Method | Route |
+|---|---|
+| GET | `/api/codex-auth/accounts` |
+| PUT | `/api/codex-auth/accounts/proxy` |
+| PUT | `/api/oauth/accounts/proxy` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--stdin` | boolean | Read the proxy URL from stdin instead of argv. |
+| `--json` | boolean | Emit the redacted proxy receipt. |
+
+- - clears the pinned proxy so the account inherits provider or global egress. Responses redact any embedded proxy credentials.
 
 ### `epx account priority`
 

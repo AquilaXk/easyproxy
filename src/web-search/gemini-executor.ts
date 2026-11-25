@@ -16,6 +16,7 @@ import { readBoundedResponseBytes } from "../lib/bounded-body";
 import { sidecarEnter } from "../lib/sidecar-tracker";
 import { redactSecretString } from "../lib/redact";
 import { antigravityUserAgentForWireModel } from "../adapters/google-antigravity-wire";
+import { providerEgressFetch } from "../lib/provider-tls-profile";
 import { resolveAntigravityEffortWireModel } from "../providers/antigravity-models";
 import { getProviderRegistryEntry } from "../providers/registry";
 import { MAX_SIDECAR_RESPONSE_BYTES, type WebSearchSource } from "./parse";
@@ -30,16 +31,20 @@ function isRec(v: unknown): v is Record<string, unknown> {
 export async function runGeminiWebSearch(
   query: string,
   providerName: string,
-  _provider: EpxProviderConfig,
+  provider: EpxProviderConfig,
   settings: SidecarSettings,
   abortSignal?: AbortSignal,
 ): Promise<SidecarOutcome> {
   let token: string;
   let project: string | undefined;
+  let accountProxy: string | undefined;
+  let hostPlatform: string | undefined;
   try {
     const snapshot = await getValidAccessTokenSnapshot(providerName);
     token = snapshot.accessToken;
     project = snapshot.projectId;
+    accountProxy = snapshot.proxy;
+    hostPlatform = snapshot.hostPlatform;
   } catch (e) {
     return { text: "", sources: [], error: `gemini sidecar auth failed: ${publicOAuthAuthenticationErrorMessage(e)}` };
   }
@@ -67,14 +72,22 @@ export async function runGeminiWebSearch(
   const linkedSignal = signalWithTimeout(settings.timeoutMs, abortSignal);
   const sidecarExit = sidecarEnter("web-search");
   const t0 = Date.now();
+  const egressFetch = providerEgressFetch(providerName, {
+    ...provider,
+    adapter: "google",
+    authMode: "oauth",
+    googleMode: "cloud-code-assist",
+    baseUrl: base,
+    ...(accountProxy ? { proxy: accountProxy } : {}),
+  });
   try {
     const res = await fetchWithResetRetry(
-      recovery => fetch(`${base}/v1internal:generateContent`, applyUpstreamRecoveryInit({
+      recovery => egressFetch(`${base}/v1internal:generateContent`, applyUpstreamRecoveryInit({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`,
-          "User-Agent": antigravityUserAgentForWireModel(wireModelId),
+          "User-Agent": antigravityUserAgentForWireModel(wireModelId, hostPlatform),
         },
         body: JSON.stringify(envelope),
         signal: linkedSignal.signal,

@@ -1,6 +1,7 @@
 import { formatErrorResponse } from "../../bridge";
 import { releaseCodexAuthContextProbeLease } from "../../codex/auth-context";
 import { markProxyError } from "../../lib/client-error-body";
+import { bindOAuthSnapshotToProvider } from "../../lib/provider-egress";
 import { SendBudgetExhaustedError, isNonReplayableResponse } from "../../lib/upstream-retry";
 import {
   OAuthAccountPausedError,
@@ -207,17 +208,18 @@ export async function recoverOAuth401Replay(
   if (route.providerName === "kiro") {
     parsed._kiroAuthContext = { ...(refreshed.kiro ?? {}) };
   }
-  let refreshedProvider = resolveProviderTransport(
-    route.providerName,
-    {
-      ...route.provider,
-      apiKey: refreshed.accessToken,
-      ...(refreshed.projectId ? { project: refreshed.projectId } : {}),
-    },
-    parsed.options.promptCacheKey,
-    route.providerName === "github-copilot"
-      ? resolveCopilotApiBaseUrl(refreshed.apiBaseUrl)
-      : undefined,
+  const baseRouteProvider = route.provider;
+  let refreshedProvider = bindOAuthSnapshotToProvider(
+    resolveProviderTransport(
+      route.providerName,
+      bindOAuthSnapshotToProvider(baseRouteProvider, refreshed, { setApiKey: true }),
+      parsed.options.promptCacheKey,
+      route.providerName === "github-copilot"
+        ? resolveCopilotApiBaseUrl(refreshed.apiBaseUrl)
+        : undefined,
+    ),
+    refreshed,
+    { baseProvider: baseRouteProvider },
   );
   const copilotRefusal = await resolveRotatedCopilotSelection(refreshedProvider);
   if (copilotRefusal) return { kind: "return", response: copilotRefusal };

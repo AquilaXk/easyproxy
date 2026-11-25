@@ -5,6 +5,13 @@ import { z } from "zod/v4";
 import { readClientConnectionState } from "../client/state";
 import { integrationsDir } from "../integrations/ownership";
 import { readBoundedRegularFileSync } from "../lib/bounded-file-read";
+import {
+  CredentialVaultError,
+  sealAuthStoreDocument,
+  sealCodexStoreDocument,
+  unsealAuthStoreDocument,
+  unsealCodexStoreDocument,
+} from "../lib/credential-vault";
 import { assertJsonNestingDepth, JsonNestingDepthExceededError } from "../lib/json-depth-guard";
 import { packageVersion } from "../lib/package-version";
 import { assertNotRealHomeUnderTest } from "../lib/test-home-guard";
@@ -518,8 +525,19 @@ export async function exportProfileBackup(options: {
     };
   }
 
-  const authDoc = readOptionalJsonObject(getAuthStorePath());
-  const codexDoc = readOptionalJsonObject(join(configDir, "codex-accounts.json"));
+  const rawAuthDoc = readOptionalJsonObject(getAuthStorePath());
+  const rawCodexDoc = readOptionalJsonObject(join(configDir, "codex-accounts.json"));
+  let authDoc: Record<string, unknown> | undefined;
+  let codexDoc: Record<string, unknown> | undefined;
+  try {
+    authDoc = rawAuthDoc ? unsealAuthStoreDocument(rawAuthDoc, configDir) : undefined;
+    codexDoc = rawCodexDoc ? unsealCodexStoreDocument(rawCodexDoc, configDir) : undefined;
+  } catch (error) {
+    if (error instanceof CredentialVaultError) {
+      throw new ProfileBackupError(error.message, error.status, "backup_vault_unavailable");
+    }
+    throw error;
+  }
 
   // local-credentials.json tracks host-local OS Keychain / Credential Manager tickets & epoch;
   // it is deliberately excluded from portable profile backups.
@@ -944,9 +962,12 @@ export async function restoreProfileBackup(
             for (const store of encryptedStores) {
               const payloadDoc = files[store.key];
               if (payloadDoc) {
+                const diskDoc = store.key === "auth.json"
+                  ? sealAuthStoreDocument(payloadDoc, configDir)
+                  : sealCodexStoreDocument(payloadDoc, configDir);
                 profileBackupTestHooks?.onBeforeWriteStore?.(store.key, store.snap.path);
                 mkdirSync(dirname(store.snap.path), { recursive: true, mode: 0o700 });
-                atomicWriteFileNoFollow(store.snap.path, `${JSON.stringify(payloadDoc, null, 2)}\n`);
+                atomicWriteFileNoFollow(store.snap.path, `${JSON.stringify(diskDoc, null, 2)}\n`);
                 rollbackRecords.push({ path: store.snap.path, preBytes: store.snap.rawBytes });
                 restoredFiles.push(store.key);
               } else if (store.snap.rawBytes !== null) {

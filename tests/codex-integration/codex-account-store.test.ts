@@ -208,8 +208,11 @@ describe("codex-account-store CRUD", () => {
     const cred = { accessToken: "tk_a", refreshToken: "rf_a", expiresAt: Date.now() + 3600_000, chatgptAccountId: "acc_a" };
     saveCodexAccountCredential("wrapped", cred);
 
-    const raw = JSON.parse(readFileSync(ACCOUNTS_PATH, "utf-8")) as Record<string, unknown>;
-    expect(raw.wrapped).toMatchObject({ credential: cred, generation: 1 });
+    const raw = JSON.parse(readFileSync(ACCOUNTS_PATH, "utf-8")) as Record<string, { credential?: Record<string, unknown>; generation?: number }>;
+    expect(raw.wrapped?.generation).toBe(1);
+    expect(raw.wrapped?.credential?.__vault).toBeDefined();
+    expect(raw.wrapped?.credential?.accessToken).toBeUndefined();
+    expect(raw.wrapped?.credential?.refreshToken).toBeUndefined();
     expect(readCodexAccountRecord("wrapped")).toMatchObject({ credential: cred, generation: 1 });
   });
 

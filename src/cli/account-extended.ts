@@ -54,6 +54,7 @@ const EXTENDED_USAGE = `Usage:
   epx account auto-switch <provider> <on|off|status|threshold <0-100>> [--json]
   epx account auto-switch <anthropic|anthropic2> <on|off|status|inherit|threshold <0-100>> --account <id> [--json]
   epx account alias <provider> <id|alias|main> <display-name|-> [--json]
+  epx account proxy <provider> <id|alias> (<proxy-url>|--stdin|-) [--json]
   epx account priority <provider> <id|alias|main> [<-100..100|first|earlier|normal|later|last|reset>] [--json]
   epx account pause <provider> <id|alias|main> [--json]
   epx account resume <provider> <id|alias|main> [--if-healthy] [--json]
@@ -1198,6 +1199,48 @@ export async function cmdAlias(args: string[], deps: AccountDeps): Promise<numbe
   const result = { ok: true, provider: name, id, alias: alias || null };
   if (wantsJson) console.log(JSON.stringify(result, null, 2));
   else console.log(alias ? `${name}: ${requestedId} is now “${alias}”` : `${name}: cleared alias for ${requestedId}`);
+  return 0;
+}
+
+export async function cmdProxy(args: string[], deps: AccountDeps): Promise<number> {
+  const wantsJson = flag(args, "--json");
+  const useStdin = flag(args, "--stdin");
+  const name = args.shift();
+  const requestedId = args.shift();
+  const requestedProxy = args.shift();
+  if (!name || !requestedId || args.length) return usage();
+  if (useStdin && requestedProxy !== undefined) return usage("Error: pass either <proxy-url> or --stdin, not both");
+  if (!useStdin && requestedProxy === undefined) return usage();
+  const classified = configAndType(deps, name);
+  if ("error" in classified) return usage(`Error: ${classified.error}`);
+  if (classified.type === "api-key") return usage("Error: per-account proxy pinning applies only to OAuth and Codex pool accounts");
+  if (classified.type === "codex" && (requestedId === "main" || requestedId === MAIN_ID)) {
+    return usage("Error: the main Codex App login proxy is configured at provider level");
+  }
+  let rawProxy = requestedProxy ?? "";
+  if (useStdin) {
+    rawProxy = (await readSecretLine(deps, "proxy URL")).trim();
+    if (!rawProxy) return usage("Error: no proxy URL read from stdin");
+  }
+  const proxy = rawProxy === "-" ? "" : rawProxy.trim();
+  const baseUrl = await resolveBaseUrl(deps);
+  if (!baseUrl) return proxyUnreachable();
+  let id = requestedId;
+  if (classified.type === "codex") {
+    const target = await resolveCodexAccountTarget(deps, baseUrl, requestedId);
+    if ("networkDown" in target) return proxyUnreachable(target.transportError);
+    if ("error" in target) return reportCodexAccountTargetError(target);
+    id = target.id;
+  }
+  const path = classified.type === "codex" ? "/api/codex-auth/accounts/proxy" : "/api/oauth/accounts/proxy";
+  const body = classified.type === "codex" ? { id, proxy: proxy || null } : { provider: name, accountId: id, proxy: proxy || null };
+  const response = await apiJson(deps, baseUrl, "PUT", path, body);
+  if (response.status === 0) return proxyUnreachable(response.transportError);
+  if (response.status !== 200) return apiError(response.json, `failed to update proxy for ${requestedId}`, response.status);
+  const proxyLabel = typeof response.json?.proxyLabel === "string" ? response.json.proxyLabel : undefined;
+  const result = { ok: true, provider: name, id, hasProxy: Boolean(proxy), ...(proxyLabel ? { proxyLabel } : {}) };
+  if (wantsJson) console.log(JSON.stringify(result, null, 2));
+  else console.log(proxy ? `${name}: ${requestedId} proxy pinned${proxyLabel ? ` (${proxyLabel})` : ""}` : `${name}: cleared proxy pin for ${requestedId}`);
   return 0;
 }
 

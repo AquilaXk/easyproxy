@@ -193,10 +193,15 @@ describe("OAuth status privacy", () => {
     } as never);
 
     const stored = readFileSync(join(TEST_DIR, "auth.json"), "utf8");
+    const accounts = getAccountSet("xai")?.accounts ?? [];
+    const legacyAccounts = getAccountSet("legacy")?.accounts ?? [];
 
-    expect(stored).toContain("access-token");
-    expect(stored).toContain("refresh-token");
-    expect(stored).toContain("legacy-access");
+    expect(stored).toContain('"__vault"');
+    expect(stored).not.toContain("access-token");
+    expect(stored).not.toContain("refresh-token");
+    expect(stored).not.toContain("legacy-access");
+    expect(accounts.some(row => row.credential.access === "access-token" && row.credential.refresh === "refresh-token")).toBe(true);
+    expect(legacyAccounts.some(row => row.credential.access === "legacy-access")).toBe(true);
     expect(stored).toContain("\"source\": \"credential-file\"");
     expect(stored).not.toContain("attacker-controlled-source");
     expect(stored).not.toContain("legacy prompt");

@@ -1,5 +1,12 @@
-import { getConfigDir } from "../config/paths";
+import { existsSync } from "node:fs";
+import type { EpxProviderConfig } from "../types";
+import { loadConfig } from "../config";
+import { getConfigDir, getConfigPath } from "../config/paths";
+import { providerEgressFetch } from "../lib/provider-tls-profile";
+import { CODEX_FORWARD_BASE_URL, OPENAI_CODEX_PROVIDER_ID } from "../providers/openai-tiers-destination";
 import { parseRetryAfterMs } from "./routing/cooldown-math";
+
+const CODEX_WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
 const BASE_DELAY_MS = 5 * 60_000;
 const MAX_DELAY_MS = 60 * 60_000;
@@ -42,8 +49,25 @@ export interface CodexUsageSchedule {
   poolAccountId?: string;
   /** Recovery claims already have their own five-minute admission interval. */
   recoveryProbe?: true;
+  /** Optional provider or per-account proxy override for WHAM egress. */
+  provider?: EpxProviderConfig;
+  accountProxy?: string;
   /** The sweep's clock also drives its quota-query deadline. */
   now?: () => number;
+}
+
+function codexUsageEgressFetch(schedule: CodexUsageSchedule): typeof globalThis.fetch {
+  let baseProvider = schedule.provider;
+  if (!baseProvider && existsSync(getConfigPath())) {
+    try { baseProvider = loadConfig().providers?.[OPENAI_CODEX_PROVIDER_ID]; } catch { baseProvider = undefined; }
+  }
+  return providerEgressFetch(OPENAI_CODEX_PROVIDER_ID, {
+    ...(baseProvider ?? {}),
+    adapter: "openai-responses",
+    authMode: "forward",
+    baseUrl: CODEX_FORWARD_BASE_URL,
+    ...(schedule.accountProxy ? { proxy: schedule.accountProxy } : {}),
+  });
 }
 
 /** Removal invalidates even active reads, so their late settlements cannot restore pacing. */
@@ -68,7 +92,7 @@ export async function fetchCodexUsage<T>(
 ): Promise<CodexUsageRead<T> | null> {
   if (schedule.unpaced) {
     onDispatch?.();
-    const response = await fetch("https://chatgpt.com/backend-api/wham/usage", init);
+    const response = await codexUsageEgressFetch(schedule)(CODEX_WHAM_USAGE_URL, init);
     return { kind: "owner", response, settle: () => {} };
   }
   const pacingKey = scopedKey(schedule.pacingKey ?? baseQueryKey(key));
@@ -134,7 +158,7 @@ export async function fetchCodexUsage<T>(
   };
   try {
     onDispatch?.();
-    response = await fetch("https://chatgpt.com/backend-api/wham/usage", init);
+    response = await codexUsageEgressFetch(schedule)(CODEX_WHAM_USAGE_URL, init);
     return { kind: "owner", response, settle };
   } catch (error) {
     settle(false);

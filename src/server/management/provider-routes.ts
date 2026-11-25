@@ -138,7 +138,7 @@ import {
   LOCAL_PROVIDER_RELOAD_PATH,
 } from "../../lib/local-provider-reload-contract";
 import { refreshConfigDerivedRegistries } from "../../config/derived-registries";
-import { redactSecretString } from "../../lib/redact";
+import { redactSecretString, redactUrlForLog } from "../../lib/redact";
 import {
   XAI_RESPONSES_OPT_IN_MODELS,
   XAI_RESPONSES_DEFAULT_VERSION,
@@ -191,6 +191,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     return jsonResponse(Object.entries(config.providers).map(([name, p]) => ({
       name, adapter: p.adapter, baseUrl: publicProviderBaseUrl(p.baseUrl), defaultModel: p.defaultModel,
       hasApiKey: providerHasStoredApiKey(p),
+      hasProxy: Boolean(p.proxy),
+      ...(p.proxy ? { proxyLabel: redactUrlForLog(p.proxy) } : {}),
+      ...(p.noProxy !== undefined ? { noProxy: p.noProxy } : {}),
       // Presence only (#959 review): header names and values never leave the process.
       hasHeaders: !!p.headers && Object.keys(p.headers).length > 0,
       allowPrivateNetwork: p.allowPrivateNetwork === true,
@@ -1173,5 +1176,81 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       throw error;
     }
   }
+
+  if (url.pathname === "/api/providers/egress" && req.method === "PUT") {
+    const name = url.searchParams.get("name")?.trim();
+    if (!name || !isValidProviderName(name) || !hasOwnProvider(config.providers, name)) {
+      return jsonResponse({ error: "unknown provider" }, 404);
+    }
+    let rawBody: unknown;
+    try { rawBody = await readManagementJsonBody(req); }
+    catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
+    if (!isPlainRecord(rawBody)) return jsonResponse({ error: "egress body must be a plain object" }, 400);
+    const hasProxyField = Object.hasOwn(rawBody, "proxy");
+    const hasNoProxyField = Object.hasOwn(rawBody, "noProxy");
+    const hasTlsProfileField = Object.hasOwn(rawBody, "tlsProfile");
+    if (!hasProxyField && !hasNoProxyField && !hasTlsProfileField) {
+      return jsonResponse({ error: "provide at least one of proxy, noProxy, or tlsProfile" }, 400);
+    }
+    const buildEgressCandidate = (base: EpxProviderConfig): { ok: true; next: EpxProviderConfig } | { ok: false; error: string } => {
+      const next: EpxProviderConfig = { ...base };
+      if (hasProxyField) {
+        if (rawBody.proxy === null || rawBody.proxy === "") delete next.proxy;
+        else if (typeof rawBody.proxy === "string" && rawBody.proxy.trim()) next.proxy = rawBody.proxy.trim();
+        else return { ok: false, error: "proxy must be a proxy URL string or null" };
+      }
+      if (hasNoProxyField) {
+        const val = rawBody.noProxy;
+        if (val === null || val === "") delete next.noProxy;
+        else if (typeof val === "string") {
+          const trimmed = val.trim();
+          if (trimmed) next.noProxy = trimmed;
+          else delete next.noProxy;
+        } else if (Array.isArray(val) && val.every(item => typeof item === "string")) {
+          const cleaned = val.map(item => item.trim()).filter(Boolean);
+          if (cleaned.length > 0) next.noProxy = cleaned;
+          else delete next.noProxy;
+        } else return { ok: false, error: "noProxy must be a string, string array, or null" };
+      }
+      if (hasTlsProfileField) {
+        if (rawBody.tlsProfile === null || rawBody.tlsProfile === "") delete next.tlsProfile;
+        else if (rawBody.tlsProfile === "antigravity-browser") next.tlsProfile = "antigravity-browser";
+        else return { ok: false, error: "tlsProfile must be antigravity-browser or null" };
+      }
+      const err = providerManagementConfigError(
+        name,
+        providerTransportValidationCandidate(next as unknown as Record<string, unknown>),
+        { allowOperatorOverlays: true },
+      );
+      if (err) return { ok: false, error: err };
+      return { ok: true, next };
+    };
+
+    const initial = buildEgressCandidate(config.providers[name]!);
+    if (!initial.ok) return jsonResponse({ error: initial.error }, 400);
+
+    let replayError: string | undefined;
+    withConfigMutationLockSync(() => {
+      const replay = buildEgressCandidate(config.providers[name]!);
+      if (!replay.ok) { replayError = replay.error; return; }
+      const validation = validateConfigCandidate({ ...config, providers: { ...config.providers, [name]: replay.next } });
+      if (!validation.ok) { replayError = validation.error; return; }
+      commitProviderPatch(config, () => {
+        config.providers[name] = replay.next;
+      }, deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode);
+    });
+    if (replayError !== undefined) return jsonResponse({ error: replayError }, 409);
+    reconcileLiveStateStores();
+    const updated = config.providers[name]!;
+    return jsonResponse({
+      success: true,
+      name,
+      hasProxy: Boolean(updated.proxy),
+      ...(updated.proxy ? { proxyLabel: redactUrlForLog(updated.proxy) } : {}),
+      ...(updated.noProxy !== undefined ? { noProxy: updated.noProxy } : {}),
+      ...providerTlsProfileDiagnostic(name, updated),
+    });
+  }
+
   return null;
 }

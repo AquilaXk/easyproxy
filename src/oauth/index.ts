@@ -44,7 +44,10 @@ import { anthropicOAuthDefinition, assertAnthropicInstanceLoginConfig, Anthropic
 import { loginKimi, refreshKimiToken } from "./kimi";
 import { loginNous, NousTokenError, refreshNousToken, clearNousRefreshIntent } from "./nous";
 import { loginChatGPT, refreshChatGPTToken, type ChatGPTLoginFlow } from "./chatgpt";
-import { loginAntigravity, refreshAntigravityToken } from "./google-antigravity";
+import { loginAntigravity, refreshAntigravityToken, type AntigravityOAuthEgressOptions } from "./google-antigravity";
+import { antigravityDiscoveryUserAgent } from "../adapters/google-antigravity-wire";
+import type { AntigravityHostPlatform } from "../adapters/client-fingerprint";
+import { redactUrlForLog } from "../lib/redact";
 import { AntigravityProjectDiscoveryError } from "./antigravity-discovery-diagnostics";
 import { loginCursor, refreshCursorToken } from "./cursor";
 import { loginZed, refreshZedToken } from "./zed";
@@ -135,6 +138,10 @@ export interface OAuthAccessSnapshot {
    * `accountId` is the local store slot key, a hash, and must never stand in for it.
    */
   providerUserId?: string;
+  /** Account-level proxy URL override when pinned on this credential slot. */
+  proxy?: string;
+  /** Account-pinned Antigravity host OS/architecture so `ide` and `cli` requests agree. */
+  hostPlatform?: AntigravityHostPlatform;
 }
 
 export interface ObservedOAuthAccessSnapshot extends OAuthAccessSnapshot {
@@ -234,6 +241,8 @@ export interface OAuthProviderDef {
     credential?: OAuthCredentials,
     /** Store row being refreshed; passed by the generic lock only. */
     accountId?: string,
+    /** Account-level egress/platform pinning passed by the generic lock. */
+    egress?: AntigravityOAuthEgressOptions,
   ): Promise<OAuthCredentials>;
   /** provider entry written into config.json on first login. */
   providerConfig: EpxProviderConfig;
@@ -360,8 +369,11 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderDef> = {
     defaultModel: oauthDefaultModel("kiro"),
   },
   "google-antigravity": {
-    login: (ctrl, opts) => loginAntigravity(ctrl, { forceAccountSelect: opts?.forceLogin === true }),
-    refresh: refreshAntigravityToken,
+    login: (ctrl, opts, providerConfig) => loginAntigravity(ctrl, {
+      forceAccountSelect: opts?.forceLogin === true,
+      ...(providerConfig ? { egress: { provider: providerConfig } } : {}),
+    }),
+    refresh: (rt, signal, _credential, _accountId, egress) => refreshAntigravityToken(rt, signal, egress),
     providerConfig: oauthConfig("google-antigravity"),
     defaultModel: oauthDefaultModel("google-antigravity"),
   },
@@ -496,7 +508,13 @@ export function publicOAuthAuthenticationErrorMessage(error: unknown): string {
   return "OAuth authentication failed. Check the EasyProxy account status and retry.";
 }
 
-function accessSnapshot(provider: string, accountId: string, cred: OAuthCredentials, oauthProvider = provider): OAuthAccessSnapshot {
+function accessSnapshot(
+  provider: string,
+  accountId: string,
+  cred: OAuthCredentials,
+  oauthProvider = provider,
+  accountMeta?: { proxy?: string; hostPlatform?: AntigravityHostPlatform },
+): OAuthAccessSnapshot {
   // Derived, not read back: a stored `authType` is trusted when present, but a credential imported
   // before the field existed still routes correctly because the client pair implies SSO OIDC.
   const kiroAuthType = cred.kiro?.authType
@@ -531,6 +549,8 @@ function accessSnapshot(provider: string, accountId: string, cred: OAuthCredenti
     ...(cred.projectId ? { projectId: cred.projectId } : {}),
     ...(accountApiBaseUrl ? { apiBaseUrl: accountApiBaseUrl } : {}),
     ...(oauthProvider === "zed" && cred.accountId ? { providerUserId: cred.accountId } : {}),
+    ...(accountMeta?.proxy ? { proxy: accountMeta.proxy } : {}),
+    ...(accountMeta?.hostPlatform ? { hostPlatform: accountMeta.hostPlatform } : {}),
     // Stored account metadata remains authoritative. Metadata-less legacy/environment credentials
     // may use explicit environment routing, but never borrow the currently signed-in local CLI account.
     ...(provider === "kiro"
@@ -575,7 +595,10 @@ export function observeActiveOAuthAccessToken(
   return {
     kind: "available",
     snapshot: {
-      ...accessSnapshot(provider, account.id, account.credential),
+      ...accessSnapshot(provider, account.id, account.credential, provider, {
+        ...(account.proxy ? { proxy: account.proxy } : {}),
+        ...(account.hostPlatform ? { hostPlatform: account.hostPlatform } : {}),
+      }),
       ...(apiBaseUrl ? { apiBaseUrl } : {}),
     },
   };
@@ -604,7 +627,10 @@ async function resolveAccessSnapshotForAccount(
   if (row.paused === true) throw new OAuthAccountPausedError();
   if (requireUsableAccount && row.needsReauth) throw new OAuthLoginRequiredError(provider);
   const cred = row.credential;
-  const current = accessSnapshot(provider, accountId, cred, oauthProvider);
+  const current = accessSnapshot(provider, accountId, cred, oauthProvider, {
+    ...(row.proxy ? { proxy: row.proxy } : {}),
+    ...(row.hostPlatform ? { hostPlatform: row.hostPlatform } : {}),
+  });
   if (rejectedGeneration !== undefined && current.generation !== rejectedGeneration) return current;
   if (rejectedGeneration === undefined && cred.expires > Date.now() + REFRESH_SKEW_MS) return current;
 
@@ -667,7 +693,10 @@ async function resolveAccessSnapshotForAccount(
       if (persisted.access !== accessToken) {
         throw new Error(`OAuth refresh persisted an unexpected access token for ${provider}`);
       }
-      return accessSnapshot(provider, accountId, persisted, oauthProvider);
+      return accessSnapshot(provider, accountId, persisted, oauthProvider, {
+        ...(persistedRow.proxy ? { proxy: persistedRow.proxy } : {}),
+        ...(persistedRow.hostPlatform ? { hostPlatform: persistedRow.hostPlatform } : {}),
+      });
     })().catch(error => {
       if (abort.signal.reason instanceof OAuthTokenRefreshStaleError) throw abort.signal.reason;
       throw error;
@@ -981,7 +1010,13 @@ export async function refreshGenericAccountWithLock(
     const generation = credentialGeneration(stored);
     try {
       if (deps.authorityCurrent && !deps.authorityCurrent()) throw new OAuthDiscoveryRefreshCancelledError();
-      const refreshed = await def.refresh(stored.refresh, deps.signal, stored, accountId);
+      const refreshEgress: AntigravityOAuthEgressOptions | undefined = row.proxy || row.hostPlatform
+        ? {
+            ...(row.proxy ? { accountProxy: row.proxy } : {}),
+            ...(row.hostPlatform ? { hostPlatform: row.hostPlatform } : {}),
+          }
+        : undefined;
+      const refreshed = await def.refresh(stored.refresh, deps.signal, stored, accountId, refreshEgress);
       const fresh = merged(refreshed, stored);
       const outcome = await mergeAccountCredential(provider, accountId, fresh, {
         expectedGeneration: generation,
@@ -1138,6 +1173,7 @@ function modelDiscoveryTransportSeed(providerName: string, prov: EpxProviderConf
 export interface ModelsRequestObservedAuth {
   readonly workbuddy?: import("./types").WorkBuddyOAuthMetadata;
   readonly oauthApiBaseUrl?: string;
+  readonly hostPlatform?: AntigravityHostPlatform;
 }
 
 export function buildModelsRequest(
@@ -1185,7 +1221,7 @@ export function buildModelsRequest(
     headers["Content-Type"] = "application/json";
     // CLI UA: CCA lists Gemini 4 Argon's wire ids only to the CLI client family. Inference keeps
     // choosing per wire model (antigravityUserAgentForWireModel).
-    headers["User-Agent"] = ANTIGRAVITY_DISCOVERY_UA;
+    headers["User-Agent"] = antigravityDiscoveryUserAgent(observedAuth?.hostPlatform);
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     return guarded({
       method: "POST" as const,
@@ -1757,6 +1793,12 @@ export interface OAuthAccountSummary {
   planLabel?: string;
   /** Anthropic display-only organization name of the grant; absent when none was observed. */
   organizationName?: string;
+  /** Whether this account pins its own outbound proxy (raw credentials never leave the store). */
+  hasProxy?: boolean;
+  /** Redacted proxy endpoint label (`scheme://host:port`), never including credentials. */
+  proxyLabel?: string;
+  /** Account-pinned Antigravity host OS/architecture (`darwin|windows|linux` / `arm64|amd64`). */
+  hostPlatform?: AntigravityHostPlatform;
 }
 
 /**
@@ -1787,6 +1829,8 @@ export function getLoginStatus(provider: string, maskEmails = true, flowId?: str
     ...((provider === "anthropic" || provider === "anthropic2") && anthropicSubscriptionLabel(a.credential.plan)
       ? { planLabel: anthropicSubscriptionLabel(a.credential.plan) } : {}),
     ...((provider === "anthropic" || provider === "anthropic2") ? oauthOrganizationNameSummary(a.credential) : {}),
+    ...(a.proxy ? { hasProxy: true, proxyLabel: redactUrlForLog(a.proxy) } : {}),
+    ...(a.hostPlatform ? { hostPlatform: a.hostPlatform } : {}),
   }));
 
   // Expired access tokens can still count as logged in with a usable refresh token.

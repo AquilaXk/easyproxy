@@ -1,4 +1,5 @@
 import { publicOAuthErrorPresentation } from "../../oauth";
+import { bindOAuthSnapshotToProvider } from "../../lib/provider-egress";
 import { observeProviderFailureEvent, projectLocalModelRefusalLog } from "../request-log-failure-detail";
 import { markProxyError } from "../../lib/client-error-body";
 import { formatClientRetryAfter } from "../../lib/client-retry-after";
@@ -573,16 +574,24 @@ export async function prepareResponsesTransport(
       options.accountLoad.lease = speculative;
     }
     snapshot = committed;
-    let rotatedProvider: EpxProviderConfig = { ...route.provider, apiKey: snapshot.accessToken };
+    const baseRouteProvider = route.provider;
+    let rotatedProvider: EpxProviderConfig = bindOAuthSnapshotToProvider(
+      { ...baseRouteProvider, apiKey: snapshot.accessToken },
+      snapshot,
+      { baseProvider: baseRouteProvider },
+    );
     if (route.providerName === "github-copilot") {
-      rotatedProvider = resolveProviderTransport(
-        route.providerName,
-        rotatedProvider,
-        parsed.options.promptCacheKey,
-        resolveCopilotApiBaseUrl(snapshot.apiBaseUrl),
-      ) as EpxProviderConfig;
+      rotatedProvider = bindOAuthSnapshotToProvider(
+        resolveProviderTransport(
+          route.providerName,
+          rotatedProvider,
+          parsed.options.promptCacheKey,
+          resolveCopilotApiBaseUrl(snapshot.apiBaseUrl),
+        ) as EpxProviderConfig,
+        snapshot,
+        { baseProvider: baseRouteProvider },
+      );
     }
-    if (snapshot.projectId) rotatedProvider = { ...rotatedProvider, project: snapshot.projectId };
     await resolveCopilotSelection(retryParsed, insideDispatch, rotatedProvider);
     // Negotiation itself may have recovered a 401 with a newer committed credential.
     if (route.providerName === "github-copilot" && servingOAuthSnapshot) snapshot = servingOAuthSnapshot;
@@ -1527,7 +1536,7 @@ export async function prepareResponsesTransport(
         }
         if (admitted.accountId !== resolved.accountId) usedPreferredAccount = true;
         resolved = admitted;
-        route.provider = { ...route.provider, apiKey: resolved.accessToken };
+        route.provider = bindOAuthSnapshotToProvider(route.provider, resolved, { setApiKey: true });
         // Copilot publishes accepted attribution after negotiation. Other providers retain
         // snapshot-based attribution independently of the failover predicate (#2699).
         if (route.providerName !== "github-copilot") {
@@ -1570,7 +1579,7 @@ export async function prepareResponsesTransport(
         // the request after a pool transition made that account the persisted active one.
         if (route.provider.googleMode === "cloud-code-assist") {
           if (!resolved.projectId) return markProxyError(formatErrorResponse(401, "authentication_error", publicOAuthAuthenticationErrorMessage(new Error("Cloud Code Assist account project is unavailable"))));
-          route.provider = { ...route.provider, project: resolved.projectId };
+          route.provider = { ...bindOAuthSnapshotToProvider(route.provider, resolved), project: resolved.projectId };
         }
       }
     } catch (err) {

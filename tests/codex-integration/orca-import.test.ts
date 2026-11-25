@@ -7,6 +7,7 @@ import { loadConfig, saveConfig, setPersistedConfigMutationBeforeCommitForTests 
 import { parseOrcaAuth, readBoundedLocalFile, assertPlainLocalPath } from "../../src/codex/orca-auth-source";
 import { importOrcaAccounts } from "../../src/codex/orca-import";
 import { capturePoolQuotaWriter, forceRefreshCodexPoolToken, getCodexAccountCredential, getValidCodexToken, isPoolQuotaWriterLive, markCodexAccountValidated, poolQuotaHistoryIdentity, readCodexAccountRecord } from "../../src/codex/account-store";
+import { unsealCodexStoreDocument } from "../../src/lib/credential-vault";
 import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
 import { flushConfigDirHardeningForTests } from "../../src/config/paths";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -82,7 +83,8 @@ describe("offline Orca import", () => {
       expect(importOrcaAccounts({ sourceDir: source, registryPath: registry, apply: true })).toMatchObject({ imported: 1, duplicates: 1 });
       expect(importOrcaAccounts({ sourceDir: source, registryPath: registry, apply: true })).toMatchObject({ imported: 0, duplicates: 2 });
       expect(readFileSync(join(target, "codex-accounts.json"), "utf8")).not.toContain("synthetic-refresh-never-copy");
-      expect(store()[importedId()]).toMatchObject({ codexValidationPending: true, credential: { refreshToken: "" } });
+      expect(store()[importedId()]).toMatchObject({ codexValidationPending: true, credential: { __vault: expect.any(Object) } });
+      expect(readCodexAccountRecord(importedId())).toMatchObject({ codexValidationPending: true, credential: { refreshToken: "" } });
       expect(readFileSync(path, "utf8")).toBe(originalAuth);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally { fetchSpy.mockRestore(); }
@@ -116,7 +118,7 @@ describe("offline Orca import", () => {
     importOrcaAccounts(options);
     const id = importedId();
     const config = loadConfig(); config.codexAccounts = []; saveConfig(config);
-    const records = store();
+    const records = unsealCodexStoreDocument(store()) as Record<string, any>;
     const record = records[id];
     if (scenario === "ordinary-id") { records.ordinary = record; delete records[id]; }
     if (scenario === "advanced") record.generation = 2;

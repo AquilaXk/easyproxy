@@ -37,8 +37,18 @@ export const ANTIGRAVITY_DISCOVERY_UA = ANTIGRAVITY_CLI_REQUEST_UA;
 const ANTIGRAVITY_CLI_ONLY_WIRE_MODEL = /^gemini-4-[a-z][a-z0-9]*(?:-(?:low|medium|high|xhigh))?$/;
 
 /** The User-Agent an Antigravity inference request for `wireModelId` must carry. */
-export function antigravityUserAgentForWireModel(wireModelId: string): string {
+export function antigravityUserAgentForWireModel(wireModelId: string, hostPlatform?: string): string {
+  if (hostPlatform !== undefined) {
+    return ANTIGRAVITY_CLI_ONLY_WIRE_MODEL.test(wireModelId)
+      ? antigravityCliUserAgent(undefined, undefined, hostPlatform)
+      : antigravityUserAgent(undefined, undefined, hostPlatform);
+  }
   return ANTIGRAVITY_CLI_ONLY_WIRE_MODEL.test(wireModelId) ? ANTIGRAVITY_CLI_REQUEST_UA : ANTIGRAVITY_REQUEST_UA;
+}
+
+/** Model discovery User-Agent for an optional account-pinned host platform. */
+export function antigravityDiscoveryUserAgent(hostPlatform?: string): string {
+  return hostPlatform !== undefined ? antigravityCliUserAgent(undefined, undefined, hostPlatform) : ANTIGRAVITY_DISCOVERY_UA;
 }
 
 /**

@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { loadConfig } from "../../config";
+import { getConfigPath } from "../../config/paths";
 import { antigravityCliUserAgent, antigravityUserAgent } from "../../adapters/client-fingerprint";
 import { DestinationDnsResolutionError } from "../../lib/destination-policy";
 import { PinnedHttpError, type PinnedHttpErrorCode } from "../../lib/pinned-http";
@@ -300,11 +303,42 @@ function antigravityUnavailableFailure(
   return fallbackFailure;
 }
 
-export async function probeAntigravityUsageQuota(accessToken: string, projectId: string, signal?: AbortSignal): Promise<AntigravityQuotaProbeResult> {
+export interface AntigravityQuotaRequestOptions {
+  config?: EpxProviderConfig;
+  accountProxy?: string;
+  hostPlatform?: string;
+}
+
+function antigravityQuotaEgressConfig(
+  options?: AntigravityQuotaRequestOptions,
+): Pick<EpxProviderConfig, "adapter" | "authMode" | "googleMode" | "baseUrl" | "proxy" | "noProxy" | "tlsProfile"> {
+  let config = options?.config;
+  if (!config && existsSync(getConfigPath())) {
+    try { config = loadConfig().providers?.["google-antigravity"]; } catch { config = undefined; }
+  }
+  const proxy = options?.accountProxy ?? config?.proxy;
+  return {
+    adapter: "google",
+    authMode: "oauth",
+    googleMode: "cloud-code-assist",
+    baseUrl: ANTIGRAVITY_ACCOUNT_QUOTA_BASE,
+    ...(proxy !== undefined ? { proxy } : {}),
+    ...(config?.noProxy !== undefined ? { noProxy: config.noProxy } : {}),
+    ...(config?.tlsProfile !== undefined ? { tlsProfile: config.tlsProfile } : {}),
+  };
+}
+
+export async function probeAntigravityUsageQuota(
+  accessToken: string,
+  projectId: string,
+  signal?: AbortSignal,
+  options?: AntigravityQuotaRequestOptions,
+): Promise<AntigravityQuotaProbeResult> {
   // An optional caller signal (account import) cancels every request of this probe, including the
-  // 403 retry and the models fallback, alongside the per-request deadline.
+  // models fallback, alongside the per-request deadline.
   const requestSignal = () => signal ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  const fetchQuota = (url: string, userAgent: string) => providerOutboundPost("google-antigravity", { baseUrl: ANTIGRAVITY_ACCOUNT_QUOTA_BASE }, url, {
+  const egressConfig = antigravityQuotaEgressConfig(options);
+  const fetchQuota = (url: string, userAgent: string) => providerOutboundPost("google-antigravity", egressConfig, url, {
     headers: {
       Accept: "application/json", "Content-Type": "application/json",
       "User-Agent": userAgent, Authorization: `Bearer ${accessToken}`,
@@ -315,12 +349,7 @@ export async function probeAntigravityUsageQuota(accessToken: string, projectId:
   try {
     // The summary includes the Gemini 4 Argon group only for the CLI client family; under the
     // IDE UA the same account reports just the Gemini and Claude groups, so Argon usage is lost.
-    let response = await fetchQuota(ANTIGRAVITY_QUOTA_SUMMARY_URL, antigravityCliUserAgent());
-    if (response.status === 403) {
-      // Some valid accounts reject the IDE fingerprint only for quota accounting.
-      try { await response.body?.cancel(); } catch { /* Best-effort release before retry. */ }
-      response = await fetchQuota(ANTIGRAVITY_QUOTA_SUMMARY_URL, "antigravity/1.0");
-    }
+    const response = await fetchQuota(ANTIGRAVITY_QUOTA_SUMMARY_URL, antigravityCliUserAgent(undefined, undefined, options?.hostPlatform));
     if (await providerRedirectError(response, ANTIGRAVITY_QUOTA_SUMMARY_URL)) return unavailableAntigravityQuota("redirect_blocked");
     if (response.status === 401 || response.status === 403) return unavailableAntigravityQuota("access_denied");
     if (response.ok) {
@@ -333,7 +362,7 @@ export async function probeAntigravityUsageQuota(accessToken: string, projectId:
   }
   if (signal?.aborted) return unavailableAntigravityQuota(summaryFailure ?? "transport_error");
   try {
-    const response = await fetchQuota(ANTIGRAVITY_QUOTA_MODELS_URL, antigravityUserAgent());
+    const response = await fetchQuota(ANTIGRAVITY_QUOTA_MODELS_URL, antigravityUserAgent(undefined, undefined, options?.hostPlatform));
     if (await providerRedirectError(response, ANTIGRAVITY_QUOTA_MODELS_URL)) {
       return unavailableAntigravityQuota(antigravityUnavailableFailure(summaryFailure, "redirect_blocked"));
     }
@@ -374,6 +403,7 @@ export async function fetchAntigravityQuotaSummaryOnce(
   projectId: string,
   parentSignal: AbortSignal | undefined,
   beforeSend: () => boolean,
+  options?: AntigravityQuotaRequestOptions,
 ): Promise<AntigravitySummaryOnceResult> {
   const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const signal = parentSignal ? AbortSignal.any([parentSignal, deadline]) : deadline;
@@ -382,10 +412,10 @@ export async function fetchAntigravityQuotaSummaryOnce(
   signal.addEventListener("abort", onAbort, { once: true });
   try {
     signal.throwIfAborted();
-    const request = providerOutboundPost("google-antigravity", { baseUrl: ANTIGRAVITY_ACCOUNT_QUOTA_BASE }, ANTIGRAVITY_QUOTA_SUMMARY_URL, {
+    const request = providerOutboundPost("google-antigravity", antigravityQuotaEgressConfig(options), ANTIGRAVITY_QUOTA_SUMMARY_URL, {
       headers: {
         Accept: "application/json", "Content-Type": "application/json",
-        "User-Agent": antigravityCliUserAgent(), Authorization: `Bearer ${accessToken}`,
+        "User-Agent": antigravityCliUserAgent(undefined, undefined, options?.hostPlatform), Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ project: projectId }),
       signal,
@@ -422,8 +452,12 @@ export async function fetchAntigravityQuotaSummaryOnce(
   }
 }
 
-export async function fetchAntigravityUsageQuota(accessToken: string, projectId: string): Promise<ProviderQuota | null> {
-  const result = await probeAntigravityUsageQuota(accessToken, projectId);
+export async function fetchAntigravityUsageQuota(
+  accessToken: string,
+  projectId: string,
+  options?: AntigravityQuotaRequestOptions,
+): Promise<ProviderQuota | null> {
+  const result = await probeAntigravityUsageQuota(accessToken, projectId, undefined, options);
   if (result.kind === "available") return result.quota;
   if (result.legacy.kind === "throw") throw result.legacy.error;
   return null;
@@ -435,11 +469,15 @@ export async function fetchAntigravityQuota(provider: string, config: EpxProvide
   if (!credential?.projectId) return null;
   let accessToken: string;
   try { accessToken = await getValidAccessToken(provider); } catch { return null; }
-  const set = decisionQuotaSinkActive() ? getAccountSet(provider) : undefined;
+  const set = getAccountSet(provider);
   const account = set?.accounts.find(row => row.id === set.activeAccountId);
-  const probed = account?.credential.access === accessToken && account.credential.projectId === credential.projectId ? account : undefined;
+  const probed = decisionQuotaSinkActive() && account?.credential.access === accessToken && account.credential.projectId === credential.projectId ? account : undefined;
   const receipt = probed ? captureAntigravityQuotaReceipt(provider, config, probed.id, antigravityQuotaCredentialGeneration(probed.credential)) : undefined;
-  const result = await probeAntigravityUsageQuota(accessToken, credential.projectId);
+  const result = await probeAntigravityUsageQuota(accessToken, credential.projectId, undefined, {
+    config,
+    accountProxy: account?.proxy,
+    hostPlatform: account?.hostPlatform,
+  });
   if (result.kind === "available") {
     const value = report(provider, result.source, result.quota);
     // Only the summary endpoint reports real family buckets. The models fallback labels one model's

@@ -57,7 +57,10 @@ export interface CodexAccountCredentialRecord {
    * `preservedValidationMetadata` — by every credential write. A refresh that succeeds
    * disproves "the grant was revoked", so the verdict must not outlive it.
    */
+  /** Whether the recorded failure is TERMINAL: grant revoked/expired. */
   lastCodexValidationTerminal?: boolean;
+  /** Optional per-account proxy URL pinning egress for this Codex pool slot. */
+  proxy?: string;
 }
 
 /** `codexAuthMethod`: "auto" keeps the caller's choice; "device-only" forces the device grant. */

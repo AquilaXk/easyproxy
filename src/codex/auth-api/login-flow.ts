@@ -50,7 +50,12 @@ export async function verifyCodexAccountWarmup(
   chatgptAccountId: string,
 ): Promise<{ ok: true; validatedAt: number } | { ok: false; response: Response }> {
   try {
-    await warmCodexAccount({ accessToken, chatgptAccountId });
+    const proxy = readCodexAccountRecord(accountId)?.proxy;
+    await warmCodexAccount({
+      accessToken,
+      chatgptAccountId,
+      ...(proxy ? { proxy } : {}),
+    });
     return { ok: true, validatedAt: Date.now() };
   } catch (err) {
     const reason = codexWarmupFailureReason(err);

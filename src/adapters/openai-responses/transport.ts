@@ -57,7 +57,7 @@ export function buildResponsesTransport(provider: EpxProviderConfig, incoming: P
     if (mayForwardCallerCredentials) {
       // Caller-existence gates also apply when provider defaults use mixed casing.
       for (const name of Object.keys(headers)) {
-        if (["x-codex-installation-id", "x-codex-turn-metadata", CODEX_ATTESTATION_HEADER].includes(name.toLowerCase())) delete headers[name];
+        if (["x-codex-installation-id", "x-codex-window-id", "x-codex-turn-metadata", CODEX_ATTESTATION_HEADER].includes(name.toLowerCase())) delete headers[name];
       }
       for (const name of FORWARD_HEADERS) {
         const value = incoming.headers.get(name);
