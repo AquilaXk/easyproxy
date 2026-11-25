@@ -39,6 +39,7 @@ import {
 } from "../../src/codex/forward-transport-headers";
 import { setCodexAccountProxy, saveCodexAccountCredential, readCodexAccountRecord } from "../../src/codex/account-store";
 import { consumeResetCredits, createResetCreditWhamClient, inspectResetCredits } from "../../src/codex/auth-api/reset-credit-service";
+import { fetchCodexLoginUsageProfile, verifyCodexAccountWarmup } from "../../src/codex/auth-api/login-flow";
 import { bindOAuthSnapshotToProvider, getProviderHostPlatform } from "../../src/lib/provider-egress";
 import { startServer } from "../../src/server";
 import type { EpxConfig, EpxProviderConfig } from "../../src/types";
@@ -524,6 +525,61 @@ describe("P0-1 Anti-Ban Egress & Identity Unification", () => {
         proxy: "socks5://127.0.0.1:9150",
         redirect: "manual",
       },
+    ]);
+  });
+
+  test("codex login-flow wham/usage profile fetch and warmup verification route through providerEgressFetch and account proxy pin", async () => {
+    const pinnedId = "acct-login-pinned";
+    saveCodexAccountCredential(pinnedId, {
+      accessToken: "at-login",
+      refreshToken: "rt-login",
+      expiresAt: Date.now() + 3_600_000,
+      chatgptAccountId: "cgpt-login",
+    });
+    expect(setCodexAccountProxy(pinnedId, "socks5://127.0.0.1:9155")).toBe(true);
+
+    const cfg: EpxConfig = {
+      port: 0,
+      defaultProvider: "openai",
+      codexAccounts: [
+        { id: pinnedId, email: "login@example.test", chatgptAccountId: "cgpt-login", isMain: false },
+      ],
+      providers: {
+        openai: {
+          adapter: "openai-responses",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          authMode: "forward",
+          codexAccountMode: "pool",
+          proxy: "http://127.0.0.1:18182",
+        },
+      },
+    };
+    saveConfig(cfg);
+
+    const seen: Array<{ url: string; proxy: unknown }> = [];
+    outboundSpy = spyOn(proxyEnv, "configuredOutboundFetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      seen.push({ url, proxy: (init as proxyEnv.ProxyCapableRequestInit | undefined)?.proxy });
+      if (url.endsWith("/wham/usage")) {
+        return Response.json({ email: "login@example.test", plan_type: "plus" });
+      }
+      return new Response('data: {"type":"response.completed"}\n\n', {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    });
+
+    const newLoginProfile = await fetchCodexLoginUsageProfile(cfg, "acct-brand-new", false, "at-new", "cgpt-new");
+    expect(newLoginProfile?.email).toBe("login@example.test");
+    const reauthProfile = await fetchCodexLoginUsageProfile(cfg, pinnedId, true, "at-login", "cgpt-login");
+    expect(reauthProfile?.plan_type).toBe("plus");
+    const warmup = await verifyCodexAccountWarmup(pinnedId, "at-login", "cgpt-login");
+    expect(warmup.ok).toBe(true);
+
+    expect(seen).toEqual([
+      { url: "https://chatgpt.com/backend-api/wham/usage", proxy: "http://127.0.0.1:18182/" },
+      { url: "https://chatgpt.com/backend-api/wham/usage", proxy: "socks5://127.0.0.1:9155" },
+      { url: "https://chatgpt.com/backend-api/codex/responses", proxy: "socks5://127.0.0.1:9155" },
     ]);
   });
 });

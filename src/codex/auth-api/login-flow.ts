@@ -13,6 +13,8 @@ import { clearCodexPoolRefreshFailure } from "../pool-refresh-backoff";
 import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
 import { emailMaskingEnabled, projectEmail } from "../../lib/privacy";
 import { CodexWarmupError, codexWarmupFailureReason, isCodexWarmupProvisioningFailure, warmCodexAccount } from "../warmup";
+import { providerEgressFetch } from "../../lib/provider-tls-profile";
+import { CODEX_FORWARD_BASE_URL, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers-destination";
 import type { CodexAccount, CodexAccountCredentials, EpxConfig } from "../../types";
 import type { OAuthCredentials } from "../../oauth/types";
 import type { CatalogDisposition } from "../convergence-types";
@@ -42,6 +44,35 @@ export function codexAccountPersistenceConflict(
     || Boolean(getCodexAccountCredential(accountId))
     ? `Account id already exists: ${accountId}`
     : undefined;
+}
+
+export async function fetchCodexLoginUsageProfile(
+  config: EpxConfig,
+  accountId: string,
+  reauth: boolean,
+  accessToken: string,
+  chatgptAccountId: string,
+): Promise<WhamUsageResponse | null> {
+  try {
+    const runtimeConfig = getRuntimeConfig(config);
+    const baseProvider = runtimeConfig.providers?.[OPENAI_CODEX_PROVIDER_ID];
+    const accountProxy = reauth ? readCodexAccountRecord(accountId)?.proxy : undefined;
+    const egressFetch = providerEgressFetch(OPENAI_CODEX_PROVIDER_ID, {
+      ...(baseProvider ?? {}),
+      adapter: "openai-responses",
+      authMode: "forward",
+      baseUrl: CODEX_FORWARD_BASE_URL,
+      ...(accountProxy ? { proxy: accountProxy } : {}),
+    });
+    const resp = await egressFetch("https://chatgpt.com/backend-api/wham/usage", {
+      headers: { Authorization: `Bearer ${accessToken}`, "ChatGPT-Account-Id": chatgptAccountId },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return null;
+    return (await resp.json()) as WhamUsageResponse;
+  } catch {
+    return null;
+  }
 }
 
 export async function verifyCodexAccountWarmup(
@@ -303,20 +334,13 @@ export async function handleCodexAuthLoginStart(req: Request, config: EpxConfig,
               let plan = extractChatgptPlanType(undefined, cred.access);
               let quota: Omit<StoredAccountQuota, "updatedAt"> | null = null;
               let policyQuota: Omit<StoredAccountQuota, "updatedAt"> | null = null;
-              try {
-                const tokens = { access_token: cred.access, account_id: oauthAccountId };
-                const resp = await fetch("https://chatgpt.com/backend-api/wham/usage", {
-                  headers: { Authorization: `Bearer ${tokens.access_token}`, "ChatGPT-Account-Id": tokens.account_id },
-                  signal: AbortSignal.timeout(8000),
-                });
-                if (resp.ok) {
-                  const data = (await resp.json()) as WhamUsageResponse;
-                  email = data.email?.trim() || email;
-                  plan = nonEmptyPlan(data.plan_type) ?? plan;
-                  quota = parseUsageQuota(data);
-                  policyQuota = poolWhamPolicyObservation(data, quota);
-                }
-              } catch { /* wham fetch is non-blocking */ }
+              const data = await fetchCodexLoginUsageProfile(config, accountId, reauth, cred.access, oauthAccountId);
+              if (data) {
+                email = data.email?.trim() || email;
+                plan = nonEmptyPlan(data.plan_type) ?? plan;
+                quota = parseUsageQuota(data);
+                policyQuota = poolWhamPolicyObservation(data, quota);
+              }
               if (!ownsPendingFlow()) return;
               // Reauth must refresh the same ChatGPT identity already bound to this pool slot.
               // Otherwise a different login would silently overwrite credentials under a trusted id.
