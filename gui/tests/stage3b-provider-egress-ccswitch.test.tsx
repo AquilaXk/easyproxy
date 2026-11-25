@@ -288,6 +288,7 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     expect(applyCall?.body?.storeInKeychain).toBe(true);
     expect(applyCall?.body?.selectedProviders).toEqual(["imported-claude"]);
     expect(changedCount).toBe(1);
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Imported 1 provider(s) (1 with API key).");
 
     // Journal became active -> Undo Last Import button appears and calls restore.
     const restoreBtn = [...host.querySelectorAll("button")].find(b => b.textContent?.includes("Undo Last Import"))!;
@@ -295,6 +296,7 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     await flushTicks();
     expect(calls.some(c => c.url.endsWith("/api/providers/cc-switch/restore"))).toBe(true);
     expect(changedCount).toBe(2);
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Rolled back import (1 change(s)).");
 
     // Verify sourcePath input edit also sends on Preview click.
     const pathInput = host.querySelector<HTMLInputElement>('input.input')!;

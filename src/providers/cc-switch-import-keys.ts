@@ -109,6 +109,9 @@ export function validateCcSwitchApiKeyBytes(raw: Uint8Array): { start: number; e
   if (!isValidUtf8Bytes(trimmed)) return null;
   // Refuse internal reference markers, env expansions, JSON blobs, and refusal sentinels.
   if (trimmed[0] === 0x24 /* '$' */ || trimmed[0] === 0x7b /* '{' */) return null;
+  for (let i = 0; i + 1 < len; i++) {
+    if (trimmed[i] === 0x24 && trimmed[i + 1] === 0x7b /* '${' */) return null;
+  }
   if (startsWithAsciiCaseInsensitive(trimmed, PREFIX_KEYCHAIN)) return null;
   if (startsWithAsciiCaseInsensitive(trimmed, PREFIX_GCP_SA)) return null;
   if (equalsAsciiBytes(trimmed, METADATA_REFUSED_SENTINEL) || equalsAsciiBytes(trimmed, URL_SYNTAX_REFUSED_SENTINEL)) {
@@ -125,10 +128,19 @@ type SecretSlotName =
   | "envGoogleApiKey"
   | "envApiKey"
   | "authOpenAiApiKey"
+  | "authAnthropicApiKey"
+  | "authAnthropicAuthToken"
+  | "authGeminiApiKey"
+  | "authGoogleApiKey"
   | "authApiKey"
   | "authToken"
   | "authBearer"
   | "optionsApiKey"
+  | "topOpenAiApiKey"
+  | "topAnthropicApiKey"
+  | "topAnthropicAuthToken"
+  | "topGeminiApiKey"
+  | "topGoogleApiKey"
   | "topApiKey"
   | "topAuthToken"
   | "topToken"
@@ -235,6 +247,21 @@ function tomlBareOrQuotedMatchesAscii(slice: Uint8Array, expected: string): bool
   return equalsAsciiBytes(slice, expected);
 }
 
+function encodeTrimmedAsciiHexKey(slice: Uint8Array): string | undefined {
+  let s = 0;
+  let e = slice.length;
+  while (s < e && (slice[s] === 0x20 || slice[s] === 0x09 || slice[s] === 0x0a || slice[s] === 0x0d)) s++;
+  while (e > s && (slice[e - 1] === 0x20 || slice[e - 1] === 0x09 || slice[e - 1] === 0x0a || slice[e - 1] === 0x0d)) e--;
+  if (s >= e) return undefined;
+  const sub = slice.subarray(s, e);
+  if (!isValidUtf8Bytes(sub)) return undefined;
+  let hex = "";
+  for (let i = 0; i < sub.length; i++) {
+    hex += sub[i]!.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
 function parseTomlHeaderSection(innerRaw: Uint8Array): { kind: "other" } | { kind: "model_provider"; id: string } {
   let s = 0;
   let e = innerRaw.length;
@@ -252,26 +279,21 @@ function parseTomlHeaderSection(innerRaw: Uint8Array): { kind: "other" } | { kin
   while (secStart < inner.length && (inner[secStart] === 0x20 || inner[secStart] === 0x09)) secStart++;
   const rest = inner.subarray(secStart);
   if (rest.length === 0) return { kind: "other" };
-  const decoder = new TextDecoder("utf-8", { fatal: true });
   if (rest[0] === 0x22 || rest[0] === 0x27) {
     const qEnd = findTomlQuotedEnd(rest, 0);
     if (qEnd !== rest.length - 1) return { kind: "other" };
     const unesc = unescapeTomlStringBytes(rest.subarray(1, qEnd), rest[0]!);
     if (!unesc) return { kind: "other" };
     try {
-      return { kind: "model_provider", id: decoder.decode(unesc) };
-    } catch {
-      return { kind: "other" };
+      const hexId = encodeTrimmedAsciiHexKey(unesc);
+      return hexId ? { kind: "model_provider", id: hexId } : { kind: "other" };
     } finally {
       unesc.fill(0);
     }
   }
   if (rest.includes(0x2e)) return { kind: "other" };
-  try {
-    return { kind: "model_provider", id: decoder.decode(rest) };
-  } catch {
-    return { kind: "other" };
-  }
+  const hexId = encodeTrimmedAsciiHexKey(rest);
+  return hexId ? { kind: "model_provider", id: hexId } : { kind: "other" };
 }
 
 export function inspectCodexTomlSecretBytes(
@@ -360,11 +382,7 @@ export function inspectCodexTomlSecretBytes(
       ownedBuffers.push(unesc);
 
       if (isModelProviderKey) {
-        try {
-          modelProvider = new TextDecoder("utf-8", { fatal: true }).decode(unesc).trim() || undefined;
-        } catch {
-          // Ignore invalid model_provider name here; metadata check handles validity.
-        }
+        modelProvider = encodeTrimmedAsciiHexKey(unesc);
         continue;
       }
 
@@ -442,6 +460,10 @@ function selectWinningSecretSlot(
       ? [
           { slot: "envAnthropicApiKey", placement: "anthropic-x-api-key" },
           { slot: "envAnthropicAuthToken", placement: "anthropic-bearer" },
+          { slot: "topAnthropicApiKey", placement: "anthropic-x-api-key" },
+          { slot: "topAnthropicAuthToken", placement: "anthropic-bearer" },
+          { slot: "authAnthropicApiKey", placement: "anthropic-x-api-key" },
+          { slot: "authAnthropicAuthToken", placement: "anthropic-bearer" },
           { slot: "topApiKey", placement: "anthropic-x-api-key" },
           { slot: "topAuthToken", placement: "anthropic-bearer" },
           { slot: "topToken", placement: "anthropic-x-api-key" },
@@ -456,6 +478,7 @@ function selectWinningSecretSlot(
         ? [
             { slot: "authOpenAiApiKey", placement: "key" },
             { slot: "envOpenAiApiKey", placement: "key" },
+            { slot: "topOpenAiApiKey", placement: "key" },
             { slot: "tomlKey", placement: "key" },
             { slot: "topApiKey", placement: "key" },
             { slot: "authApiKey", placement: "key" },
@@ -470,6 +493,10 @@ function selectWinningSecretSlot(
           ? [
               { slot: "envGeminiApiKey", placement: "key" },
               { slot: "envGoogleApiKey", placement: "key" },
+              { slot: "topGeminiApiKey", placement: "key" },
+              { slot: "topGoogleApiKey", placement: "key" },
+              { slot: "authGeminiApiKey", placement: "key" },
+              { slot: "authGoogleApiKey", placement: "key" },
               { slot: "topApiKey", placement: "key" },
               { slot: "envApiKey", placement: "key" },
               { slot: "authApiKey", placement: "key" },
@@ -480,6 +507,7 @@ function selectWinningSecretSlot(
             ]
           : [
               { slot: "envOpenAiApiKey", placement: "key" },
+              { slot: "topOpenAiApiKey", placement: "key" },
               { slot: "topApiKey", placement: "key" },
               { slot: "optionsApiKey", placement: "key" },
               { slot: "authOpenAiApiKey", placement: "key" },
@@ -593,7 +621,20 @@ export function inspectSettingsSecretFromJsonBytes(
       for (;;) {
         skipWs();
         const key = matchKnownJsonKeyBytes(bytes, scanStr(), [
-          "env", "auth", "options", "apiKey", "api_key", "authToken", "token", "key", "config",
+          "env",
+          "auth",
+          "options",
+          "OPENAI_API_KEY",
+          "ANTHROPIC_API_KEY",
+          "ANTHROPIC_AUTH_TOKEN",
+          "GEMINI_API_KEY",
+          "GOOGLE_API_KEY",
+          "apiKey",
+          "api_key",
+          "authToken",
+          "token",
+          "key",
+          "config",
         ]);
         skipWs();
         if (bytes[pos] !== 0x3a) return { hasApiKey: false };
@@ -636,12 +677,24 @@ export function inspectSettingsSecretFromJsonBytes(
             for (;;) {
               skipWs();
               const authKey = matchKnownJsonKeyBytes(bytes, scanStr(), [
-                "OPENAI_API_KEY", "apiKey", "api_key", "token", "bearer",
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "GEMINI_API_KEY",
+                "GOOGLE_API_KEY",
+                "apiKey",
+                "api_key",
+                "token",
+                "bearer",
               ]);
               skipWs();
               if (bytes[pos] !== 0x3a) return { hasApiKey: false };
               pos++;
               if (authKey === "OPENAI_API_KEY") captureStringSlot("authOpenAiApiKey");
+              else if (authKey === "ANTHROPIC_API_KEY") captureStringSlot("authAnthropicApiKey");
+              else if (authKey === "ANTHROPIC_AUTH_TOKEN") captureStringSlot("authAnthropicAuthToken");
+              else if (authKey === "GEMINI_API_KEY") captureStringSlot("authGeminiApiKey");
+              else if (authKey === "GOOGLE_API_KEY") captureStringSlot("authGoogleApiKey");
               else if (authKey === "apiKey" || authKey === "api_key") captureStringSlot("authApiKey");
               else if (authKey === "token") captureStringSlot("authToken");
               else if (authKey === "bearer") captureStringSlot("authBearer");
@@ -670,6 +723,16 @@ export function inspectSettingsSecretFromJsonBytes(
               return { hasApiKey: false };
             }
           }
+        } else if (key === "OPENAI_API_KEY") {
+          captureStringSlot("topOpenAiApiKey");
+        } else if (key === "ANTHROPIC_API_KEY") {
+          captureStringSlot("topAnthropicApiKey");
+        } else if (key === "ANTHROPIC_AUTH_TOKEN") {
+          captureStringSlot("topAnthropicAuthToken");
+        } else if (key === "GEMINI_API_KEY") {
+          captureStringSlot("topGeminiApiKey");
+        } else if (key === "GOOGLE_API_KEY") {
+          captureStringSlot("topGoogleApiKey");
         } else if (key === "apiKey" || key === "api_key") {
           captureStringSlot("topApiKey");
         } else if (key === "authToken") {

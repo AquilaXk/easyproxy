@@ -70,10 +70,14 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const runPreview = async (customSource?: string, customAllowPrivate?: boolean) => {
+  const runPreview = async (
+    customSource?: string,
+    customAllowPrivate?: boolean,
+    options?: { preserveNotice?: boolean },
+  ) => {
     setLoading(true);
     setError(null);
-    setNotice(null);
+    if (!options?.preserveNotice) setNotice(null);
     const activeSource = (customSource ?? sourcePath).trim();
     const privateNet = customAllowPrivate ?? allowPrivateNetwork;
     try {
@@ -168,7 +172,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
           : uxT(locale, "ccSwitch.importedSuccess", { count: imported }),
       );
       onChanged(first);
-      await runPreview();
+      await runPreview(undefined, undefined, { preserveNotice: true });
     } catch {
       setError(uxT(locale, "ccSwitch.applyFailed"));
     } finally {
@@ -193,7 +197,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
       }
       setNotice(uxT(locale, "ccSwitch.restoredSuccess", { count: body.restored ?? 0 }));
       onChanged();
-      await runPreview();
+      await runPreview(undefined, undefined, { preserveNotice: true });
     } catch {
       setError(uxT(locale, "ccSwitch.restoreFailed"));
     } finally {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, saveConfig } from "../../src/config";
@@ -317,7 +317,7 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
           "ccs-codex-toml": {
             id: "ccs-codex-toml",
             settingsConfig: {
-              config: `base_url = "https://codex-toml.example.com/v1"\nmodel = "gpt-5.2"\napi_key = "${KEY_CODEX_TOML}"`,
+              config: `model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://codex-toml.example.com/v1"\nmodel = "gpt-5.2"\napi_key = "${KEY_CODEX_TOML}"`,
             },
           },
         },
@@ -345,6 +345,14 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
               model: "gpt-4.1",
             },
           },
+          "ccs-oai-top-envkey": {
+            id: "ccs-oai-top-envkey",
+            settingsConfig: {
+              baseUrl: "https://oai-top.example.com/v1",
+              model: "gpt-4.1",
+              OPENAI_API_KEY: KEY_OPENAI,
+            },
+          },
         },
       },
     }), "utf8");
@@ -368,10 +376,10 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
       keychainAvailable: boolean;
       providers: Array<{ name: string; hasApiKey?: boolean; apiKey?: unknown }>;
     };
-    expect(previewJsonBody.eligible).toBe(5);
+    expect(previewJsonBody.eligible).toBe(6);
     expect(typeof previewJsonBody.keychainAvailable).toBe("boolean");
     const previewText = JSON.stringify(previewJsonResp.json);
-    for (const secret of [KEY_ANT_BEARER, KEY_ANT_APIKEY, KEY_CODEX_TOML, KEY_GEMINI]) {
+    for (const secret of [KEY_ANT_BEARER, KEY_ANT_APIKEY, KEY_CODEX_TOML, KEY_GEMINI, KEY_OPENAI]) {
       expect(previewText).not.toContain(secret);
       expect(decodedDuringPreview.join("\n")).not.toContain(secret);
     }
@@ -381,6 +389,7 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     expect(byName.get("ccs-codex-toml")?.hasApiKey).toBe(true);
     expect(byName.get("ccs-gem")?.hasApiKey).toBe(true);
     expect(byName.get("ccs-oai-keyless")?.hasApiKey).toBe(false);
+    expect(byName.get("ccs-oai-top-envkey")?.hasApiKey).toBe(true);
 
     // Service-level consent boundary blocks unconsented live apply directly.
     expect(() => runCcSwitchLiveProviderImport({
@@ -409,9 +418,9 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
       decodeSpyKeyless.mockRestore();
     }
     expect(keylessApply.status).toBe(200);
-    expect((keylessApply.json as { imported: number; importedWithApiKeys: number }).imported).toBe(5);
+    expect((keylessApply.json as { imported: number; importedWithApiKeys: number }).imported).toBe(6);
     expect((keylessApply.json as { importedWithApiKeys: number }).importedWithApiKeys).toBe(0);
-    for (const secret of [KEY_ANT_BEARER, KEY_ANT_APIKEY, KEY_CODEX_TOML, KEY_GEMINI]) {
+    for (const secret of [KEY_ANT_BEARER, KEY_ANT_APIKEY, KEY_CODEX_TOML, KEY_GEMINI, KEY_OPENAI]) {
       expect(decodedDuringKeyless.join("\n")).not.toContain(secret);
     }
     expect(cfg.providers["ccs-claude-auth"]?.apiKey).toBeUndefined();
@@ -426,12 +435,12 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     });
     expect(keyedApply.status).toBe(200);
     const keyedApplyText = JSON.stringify(keyedApply.json);
-    for (const secret of [KEY_ANT_BEARER, KEY_ANT_APIKEY, KEY_CODEX_TOML, KEY_GEMINI]) {
+    for (const secret of [KEY_ANT_BEARER, KEY_ANT_APIKEY, KEY_CODEX_TOML, KEY_GEMINI, KEY_OPENAI]) {
       expect(keyedApplyText).not.toContain(secret);
     }
     const keyedBody = keyedApply.json as { imported: number; importedWithApiKeys: number; storedInKeychain: number };
-    expect(keyedBody.imported).toBe(5);
-    expect(keyedBody.importedWithApiKeys).toBe(4);
+    expect(keyedBody.imported).toBe(6);
+    expect(keyedBody.importedWithApiKeys).toBe(5);
     expect(keyedBody.storedInKeychain).toBe(0);
 
     expect(cfg.providers["ccs-claude-auth"]?.authMode).toBe("key");
@@ -451,9 +460,12 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     expect(cfg.providers["ccs-oai-keyless"]?.authMode).toBeUndefined();
     expect(cfg.providers["ccs-oai-keyless"]?.apiKey).toBeUndefined();
 
+    expect(cfg.providers["ccs-oai-top-envkey"]?.authMode).toBe("key");
+    expect(cfg.providers["ccs-oai-top-envkey"]?.apiKey).toBe(KEY_OPENAI);
+
     // Journal never stores plaintext API keys.
     const journalText = readFileSync(join(home, CC_SWITCH_IMPORT_JOURNAL_FILENAME), "utf8");
-    for (const secret of [KEY_ANT_BEARER, KEY_ANT_APIKEY, KEY_CODEX_TOML, KEY_GEMINI]) {
+    for (const secret of [KEY_ANT_BEARER, KEY_ANT_APIKEY, KEY_CODEX_TOML, KEY_GEMINI, KEY_OPENAI]) {
       expect(journalText).not.toContain(secret);
     }
 
@@ -572,6 +584,13 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     };
     saveConfig(cfg);
 
+    writeFileSync(join(home, CC_SWITCH_IMPORT_JOURNAL_FILENAME), JSON.stringify({ openai: { providers: {} } }), "utf8");
+    writeFileSync(join(home, "auth.json"), JSON.stringify({}), "utf8");
+    writeFileSync(join(home, "codex-accounts.json"), JSON.stringify({}), "utf8");
+    writeFileSync(join(home, "local-credentials.json"), JSON.stringify({}), "utf8");
+    mkdirSync(join(home, "profiles"), { recursive: true });
+    writeFileSync(join(home, "profiles", "p.json"), JSON.stringify({ openai: { providers: {} } }), "utf8");
+
     // Relative paths, disallowed extensions, and EasyProxy runtime files are refused at the route boundary.
     for (const badPath of [
       "relative.json",
@@ -581,11 +600,21 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
       join(home, "secret.pem"),
       join(home, "cc-switch.db-wal"),
       join(home, "config.json"),
+      join(home, "CONFIG.JSON"),
+      join(home, CC_SWITCH_IMPORT_JOURNAL_FILENAME),
+      join(home, "auth.json"),
+      join(home, "codex-accounts.json"),
+      join(home, "local-credentials.json"),
+      join(home, "profiles", "p.json"),
     ]) {
       const resp = await callMgmt("POST", "/api/providers/cc-switch/preview", cfg, { sourcePath: badPath });
       expect(resp.status).toBe(400);
       expect((resp.json as { code: string }).code).toBe("invalid_source_path");
     }
+    unlinkSync(join(home, CC_SWITCH_IMPORT_JOURNAL_FILENAME));
+    unlinkSync(join(home, "auth.json"));
+    unlinkSync(join(home, "codex-accounts.json"));
+    unlinkSync(join(home, "local-credentials.json"));
 
     // Symlink and hardlink files are rejected.
     const realJson = join(home, "plain.json");
@@ -602,7 +631,7 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     const hardResp = await callMgmt("POST", "/api/providers/cc-switch/preview", cfg, { sourcePath: linkedJson });
     expect(hardResp.status).toBe(400);
 
-    // Uncheckpointed SQLite WAL is rejected.
+    // Uncheckpointed SQLite WAL is rejected; malformed settings_config JSON in SQLite fails safely.
     const walDbPath = join(home, "wal-active.db");
     const walDb = new Database(walDbPath, { create: true });
     walDb.run("PRAGMA journal_mode = WAL;");
@@ -615,6 +644,17 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
       walDb.close();
     }
 
+    const malformedDbPath = join(home, "malformed-row.db");
+    const malformedDb = new Database(malformedDbPath, { create: true });
+    malformedDb.run("CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, settings_config TEXT, sort_index INTEGER DEFAULT 0)");
+    malformedDb.run("INSERT INTO providers VALUES ('bad-json', 'openai', 'Bad', '{not-json', 1)");
+    malformedDb.run(`INSERT INTO providers VALUES ('ok-row', 'openai', 'Ok', '${JSON.stringify({ baseUrl: "https://ok.example.com/v1", apiKey: KEY_OPENAI })}', 2)`);
+    malformedDb.close();
+    const malformedResp = await callMgmt("POST", "/api/providers/cc-switch/preview", cfg, { sourcePath: malformedDbPath });
+    expect(malformedResp.status).toBe(200);
+    expect((malformedResp.json as { invalid: number; eligible: number }).invalid).toBe(1);
+    expect((malformedResp.json as { invalid: number; eligible: number }).eligible).toBe(1);
+
     // Adversarial/reference API-key placeholders never register as valid keys and are never stored.
     const advJson = join(home, "adversarial-keys.json");
     writeFileSync(advJson, JSON.stringify({
@@ -622,6 +662,7 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
         providers: {
           "adv-ref": { id: "adv-ref", settingsConfig: { baseUrl: "https://a.example.com/v1", apiKey: "keychain:other" } },
           "adv-env": { id: "adv-env", settingsConfig: { baseUrl: "https://b.example.com/v1", apiKey: "${OPENAI_API_KEY}" } },
+          "adv-interp": { id: "adv-interp", settingsConfig: { baseUrl: "https://e.example.com/v1", apiKey: "sk-${LEAKED_ENV}" } },
           "adv-nl": { id: "adv-nl", settingsConfig: { baseUrl: "https://c.example.com/v1", apiKey: "bad\nline" } },
           "adv-big": { id: "adv-big", settingsConfig: { baseUrl: "https://d.example.com/v1", apiKey: "k".repeat(4097) } },
         },
@@ -637,10 +678,10 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     });
     expect(advApply.status).toBe(200);
     expect((advApply.json as { imported: number; importedWithApiKeys: number })).toMatchObject({
-      imported: 4,
+      imported: 5,
       importedWithApiKeys: 0,
     });
-    for (const name of ["adv-ref", "adv-env", "adv-nl", "adv-big"]) {
+    for (const name of ["adv-ref", "adv-env", "adv-interp", "adv-nl", "adv-big"]) {
       expect(cfg.providers[name]?.apiKey).toBeUndefined();
       expect(cfg.providers[name]?.authMode).toBeUndefined();
     }

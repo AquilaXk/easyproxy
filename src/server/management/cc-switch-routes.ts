@@ -1,7 +1,7 @@
-import { lstatSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
-import { getConfigDir, saveConfigPreservingClaudeCode } from "../../config";
+import { isAbsolute, join, resolve, sep } from "node:path";
+import { expandUserPath, getConfigDir, saveConfigPreservingClaudeCode } from "../../config";
 import { assertPlainLocalPath } from "../../codex/orca-auth-source";
 import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
 import { probeProviderKeychain } from "../../providers/api-key-resolve";
@@ -12,6 +12,80 @@ import { isPlainRecord } from "./shared";
 
 const ALLOWED_CC_SWITCH_SOURCE_EXT_RE = /\.(?:db|sqlite|sqlite3|json)$/i;
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+const CASE_INSENSITIVE_FS = process.platform === "darwin" || process.platform === "win32";
+
+const EASYPROXY_SENSITIVE_FILENAMES = [
+  "config.json",
+  "auth.json",
+  "codex-accounts.json",
+  "cc-switch-provider-import-journal.json",
+  "local-credentials.json",
+  "responses-state.json",
+  "thought-signature-replay.json",
+  "service-state.json",
+  "runtime-port.json",
+  "tray-state.json",
+  "tray-heartbeat.json",
+  "codex-shim.json",
+  "codex-runtime.json",
+  "codex-runtime-clamp.json",
+  "catalog-backup.json",
+  "version.json",
+  "update-job.json",
+  ".easyproxy-owner.json",
+  ".easyproxy-uninstall.json",
+  "config-mutation.sqlite",
+  "codex-affinity.sqlite",
+  "local-credential-publication.sqlite",
+] as const;
+
+const EASYPROXY_SENSITIVE_SUBDIRS = [
+  "codex-accounts",
+  "profiles",
+  "backups",
+  "local-credential-observers",
+] as const;
+
+function fsCompareKey(path: string): string {
+  return CASE_INSENSITIVE_FS ? path.toLowerCase() : path;
+}
+
+function safeRealpathIfExists(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
+}
+
+function isSensitiveEasyProxyTarget(resolved: string): boolean {
+  const rawConfigDir = resolve(getConfigDir());
+  const configDirs = new Set([rawConfigDir, safeRealpathIfExists(rawConfigDir)]);
+  const codexHomeRaw = process.env.CODEX_HOME?.trim();
+  const codexHome = codexHomeRaw ? resolve(expandUserPath(codexHomeRaw)) : join(homedir(), ".codex");
+  const codexHomes = new Set([codexHome, safeRealpathIfExists(codexHome)]);
+
+  const candidateKeys = new Set([
+    fsCompareKey(resolved),
+    fsCompareKey(safeRealpathIfExists(resolved)),
+  ]);
+
+  for (const dir of configDirs) {
+    for (const file of EASYPROXY_SENSITIVE_FILENAMES) {
+      if (candidateKeys.has(fsCompareKey(join(dir, file)))) return true;
+    }
+    for (const sub of EASYPROXY_SENSITIVE_SUBDIRS) {
+      const prefix = fsCompareKey(join(dir, sub) + sep);
+      for (const candidate of candidateKeys) {
+        if (candidate.startsWith(prefix)) return true;
+      }
+    }
+  }
+  for (const dir of codexHomes) {
+    if (candidateKeys.has(fsCompareKey(join(dir, "auth.json")))) return true;
+  }
+  return false;
+}
 
 function validateCcSwitchRouteSourcePath(raw: string): string {
   const trimmed = raw.trim();
@@ -28,13 +102,7 @@ function validateCcSwitchRouteSourcePath(raw: string): string {
   if (!ALLOWED_CC_SWITCH_SOURCE_EXT_RE.test(resolved)) {
     throw new Error("sourcePath must reference a CC-Switch .db, .sqlite, .sqlite3, or .json file");
   }
-  const configDir = resolve(getConfigDir());
-  const selfSensitiveFiles = new Set([
-    join(configDir, "config.json"),
-    join(configDir, "auth.json"),
-    join(configDir, "codex-accounts.json"),
-  ]);
-  if (selfSensitiveFiles.has(resolved)) {
+  if (isSensitiveEasyProxyTarget(resolved)) {
     throw new Error("sourcePath cannot target EasyProxy runtime config or auth store files");
   }
   try {
