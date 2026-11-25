@@ -236,10 +236,14 @@ describe("cache diagnostic authenticated caller isolation", () => {
       });
     }
 
-    test(`${protocol}: loopback admission enforces verified x-easyproxy-api-key identity while ignoring unverified bearer/x-api-key headers`, async () => {
+    test(`${protocol}: loopback admission enforces verified credentials while ignoring unverified external bearer/x-api-key headers`, async () => {
       const cfg = { ...config(), hostname: "127.0.0.1" };
       for (const header of ["authorization", "x-api-key"] as const) {
-        expect(await send(protocol, cfg, CALLER_A, header)).toBeUndefined();
+        expect(await send(protocol, cfg, UNRELATED_BEARERS[0]!, header)).toBeUndefined();
+      }
+      for (const row of rows()) {
+        expect(row.continuation.inbound.status).toBe("uncomparable");
+        expect(row.continuation.outbound.status).toBe("uncomparable");
       }
       const unverifiedReq = new Request(`http://localhost/v1/${protocol === "chat" ? "chat/completions" : protocol}`, {
         method: "POST",
@@ -247,11 +251,19 @@ describe("cache diagnostic authenticated caller isolation", () => {
         body: "{}",
       });
       expect((protocol === "messages" ? resolveApiAuth : resolveResponsesApiAuth)(unverifiedReq, cfg)).toBeNull();
-      const callerA = await send(protocol, cfg, CALLER_A, "x-easyproxy-api-key");
-      const callerB = await send(protocol, cfg, CALLER_B, "x-easyproxy-api-key");
-      expect(callerA).toBeDefined();
-      expect(callerB).toBeDefined();
-      expect(callerA).not.toBe(callerB);
+      const unverifiedProxyReq = new Request(`http://localhost/v1/${protocol === "chat" ? "chat/completions" : protocol}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer epx_data_${"u".repeat(40)}` },
+        body: "{}",
+      });
+      expect((protocol === "messages" ? resolveApiAuth : resolveResponsesApiAuth)(unverifiedProxyReq, cfg)).toBeNull();
+      for (const header of acceptedHeaders) {
+        const callerA = await send(protocol, cfg, CALLER_A, header);
+        const callerB = await send(protocol, cfg, CALLER_B, header);
+        expect(callerA).toBeDefined();
+        expect(callerB).toBeDefined();
+        expect(callerA).not.toBe(callerB);
+      }
       expectPrivacy();
     });
   }

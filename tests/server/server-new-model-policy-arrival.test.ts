@@ -275,6 +275,9 @@ test.each(["desktop-warm", "desktop-cold", "desktop-registry-changed", "desktop-
   lifecycle.ownStop(() => upstream.stop(true));
   saveConfig({
     port: 0, hostname: "127.0.0.1", defaultProvider: provider,
+    ...(mode === "desktop-warm" || mode === "desktop-registry-changed" || mode === "desktop-model-hidden"
+      ? { apiKeys: [{ id: "desktop-key", name: "desktop", key: "desktop-fixture-key", createdAt: now }] }
+      : {}),
     providers: { [provider]: {
       adapter: "openai-chat", baseUrl: new URL("/v1", upstream.url).href,
       apiKey: "fixture-key", allowPrivateNetwork: true, liveModels: true, newModelPolicy: "on",

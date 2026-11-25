@@ -104,8 +104,13 @@ test.each([false, true])("bridge Combo retains bearer-only loopback principal th
         _reasoningReplayScope: { clientThreadId: THREAD, clientPrincipalId: ownerPrincipal } } : {}),
     }) });
     const admission = resolveResponsesApiAuth(req, { hostname: "127.0.0.1", apiKeys: config.apiKeys });
-    expect(admission).toEqual({ kind: "loopback", source: "loopback" });
+    expect(admission).toEqual(caller
+      ? { kind: "configured", keyId: caller, source: "bearer", contextPrincipalId: expect.any(String) }
+      : { kind: "loopback", source: "loopback" });
     const principal = resolveContextPrincipal(req, config, admission!);
+    if (caller) {
+      expect(resolveContextPrincipal(req, config, { kind: "loopback", source: "loopback" })).toBe(principal);
+    }
     if (seed) { expect(principal).toBeDefined(); ownerPrincipal = principal; }
     else if (caller === "owner") expect(principal).toBe(ownerPrincipal);
     else expect(principal).not.toBe(ownerPrincipal);
