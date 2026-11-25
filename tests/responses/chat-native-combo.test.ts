@@ -379,6 +379,10 @@ describe("native Chat candidates in a combo", () => {
       [{ provider: "a", model: "deepseek-v4.1-flash" }],
       NATIVE_ON,
     );
+    config.apiKeys = [
+      { id: "fixture-owner", name: "owner", key: "epx_data_" + "o".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "fixture-foreign", name: "foreign", key: "epx_data_" + "f".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
     const owner: DataPlaneAdmission = {
       kind: "configured", keyId: "fixture-owner", source: "dedicated", contextPrincipalId: "principal-owner",
     };

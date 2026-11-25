@@ -568,6 +568,9 @@ describe("manual compaction reuses existing handlers", () => {
       adapter: "openai-responses", authMode: "key", baseUrl: "https://api.openai.com/v1", apiKey: "fixture-key",
     };
     settings.compactionRouting = { model: "openai-apikey/gpt-5.6-luna" };
+    settings.apiKeys = [
+      { id: "compaction-override-client", name: "override", key: "epx_data_" + "c".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
     // The handoff route is keyed by (admission principal, lane): an admission-less caller is
     // deliberately ineligible, so the control half of this case needs a real principal to have
     // anything to borrow. See tests/responses/responses-compact-handoff-admission.test.ts.

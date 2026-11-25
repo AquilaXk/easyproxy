@@ -186,4 +186,18 @@ describe("per-key model and provider scope", () => {
     const roundTripped = decodeAdvisorAdmissionScope(encodeAdvisorAdmissionScope(scope!));
     expect(roundTripped).toEqual({ denied: true, providers: [], models: [] });
   });
+
+  test("a deleted or unknown configured keyId resolves to a fail-closed deny-all scope", () => {
+    const admission = { kind: "configured", keyId: "deleted-key", source: "bearer" } as const;
+    for (const cfg of [{ apiKeys: [] }, {}] as Array<Pick<EpxConfig, "apiKeys" | "hostname">>) {
+      const scope = resolveAdmissionModelScope(cfg, admission);
+      expect(scope).toEqual({ denied: true, providers: [], models: [] });
+      expect(routeAllowedByScope(scope, { providerName: "openai", modelId: "gpt-5.4" })).toBe(false);
+      expect(() => assertRouteAllowedByScope(scope, "openai/gpt-5.4", {
+        providerName: "openai",
+        modelId: "gpt-5.4",
+      })).toThrow(AdmissionModelDeniedError);
+      expect(admissionMayUseMeteredComboTargets(cfg, admission, { allowMeteredTargets: true })).toBe(false);
+    }
+  });
 });

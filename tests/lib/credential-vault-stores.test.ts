@@ -340,6 +340,22 @@ describe("credential vault storage for auth.json and codex-accounts.json", () =>
     expect(codexLocked?.status).toBe(503);
     expect(await codexLocked?.json()).toMatchObject({ code: "VAULT_KEY_UNAVAILABLE" });
 
+    const oauthAliasLocked = await callMgmt("/api/oauth/accounts/alias", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "anthropic", accountId: "anth-slot-1", alias: "work" }),
+    });
+    expect(oauthAliasLocked?.status).toBe(503);
+    expect(await oauthAliasLocked?.json()).toMatchObject({ code: "VAULT_KEY_UNAVAILABLE" });
+
+    const grokLocked = await callMgmt("/api/grok/reset-coupons");
+    expect(grokLocked?.status).toBe(503);
+    expect(await grokLocked?.json()).toMatchObject({ code: "VAULT_KEY_UNAVAILABLE" });
+
+    const anthropicGrantLocked = await callMgmt("/api/anthropic/reset-grants");
+    expect(anthropicGrantLocked?.status).toBe(503);
+    expect(await anthropicGrantLocked?.json()).toMatchObject({ code: "VAULT_KEY_UNAVAILABLE" });
+
     // 2. Restore keyfile and tamper ciphertext/digest -> 409 VAULT_TAMPERED (not 500)
     writeFileSync(keyfilePath, savedKeyfile, { mode: 0o600 });
     const authJson = JSON.parse(readFileSync(getAuthStorePath(), "utf8"));
@@ -365,5 +381,19 @@ describe("credential vault storage for auth.json and codex-accounts.json", () =>
     });
     expect(codexTampered?.status).toBe(409);
     expect(await codexTampered?.json()).toMatchObject({ code: "VAULT_TAMPERED" });
+
+    const oauthDeleteTampered = await callMgmt("/api/oauth/accounts?provider=anthropic&id=anth-slot-1", {
+      method: "DELETE",
+    });
+    expect(oauthDeleteTampered?.status).toBe(409);
+    expect(await oauthDeleteTampered?.json()).toMatchObject({ code: "VAULT_TAMPERED" });
+
+    const grokTampered = await callMgmt("/api/grok/reset-coupons");
+    expect(grokTampered?.status).toBe(409);
+    expect(await grokTampered?.json()).toMatchObject({ code: "VAULT_TAMPERED" });
+
+    const anthropicGrantTampered = await callMgmt("/api/anthropic/reset-grants");
+    expect(anthropicGrantTampered?.status).toBe(409);
+    expect(await anthropicGrantTampered?.json()).toMatchObject({ code: "VAULT_TAMPERED" });
   });
 });

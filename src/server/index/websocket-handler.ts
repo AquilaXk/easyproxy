@@ -251,6 +251,56 @@ export function createWebsocketHandler(
         } catch {
           return; // text-only contract; ignore unparseable frames
         }
+        if (frame.type === "response.processed") return; // ack — no-op
+        if (frame.type !== "response.inject" && frame.type !== "response.steer" && frame.type !== "response.create") return;
+
+        const wsAdmission = ws.data.admission;
+        const baseHeaders = ws.data.headers ?? new Headers();
+        const linkSocket = ws.data.link !== undefined;
+        const isLoopbackListener = !linkSocket && (ws.data.loopbackListener ?? !isApiAuthRequired(config));
+        const retainedPrincipal = ws.data.replayPrincipal;
+        let replayPrincipal = retainedPrincipal && (isContextPrincipalCurrent(retainedPrincipal.clientPrincipalId, config)
+          ? retainedPrincipal : { clientPrincipalId: undefined });
+        let effectiveAdmission = wsAdmission;
+        if (!linkSocket && wsAdmission?.kind === "configured") {
+          const configuredEntry = (config.apiKeys ?? []).find(key => key.id === wsAdmission.keyId);
+          const configuredActive = configuredEntry !== undefined
+            && !isApiKeyExpired(configuredEntry)
+            && (configuredEntry.loopbackOnly !== true || isLoopbackListener)
+            && (wsAdmission.contextPrincipalId === undefined
+              || isContextPrincipalCurrent(wsAdmission.contextPrincipalId, config));
+          if (!configuredActive) {
+            const bearerToken = wsAdmission.source === "bearer" ? authorizationCredential(baseHeaders) : null;
+            const resolvedBearer = bearerToken
+              ? resolveDataPlaneAdmissionSecret(bearerToken, config, "bearer", { allowLoopbackOnly: isLoopbackListener })
+              : null;
+            if (resolvedBearer && frame.type === "response.create") {
+              ws.data.cancel?.();
+              ws.data.cancel = undefined;
+              ws.data.nativeControl = undefined;
+              updateCodexWebSocketAuthContext(ws, undefined);
+              if (resolvedBearer.kind === "environment" && isLoopbackListener) {
+                effectiveAdmission = { kind: "loopback", source: "loopback", bearerCredential: true };
+                replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
+              } else {
+                effectiveAdmission = resolvedBearer;
+                replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
+              }
+            } else {
+              ws.data.cancel?.();
+              ws.data.cancel = undefined;
+              ws.data.nativeControl = undefined;
+              updateCodexWebSocketAuthContext(ws, undefined);
+              sendJsonFrame(ws, buildWsErrorFrame(401, {
+                type: "authentication_error",
+                code: "invalid_api_key",
+                message: "easyproxy API key is invalid, expired, or revoked",
+              }));
+              return;
+            }
+          }
+        }
+
         if (frame.type === "response.inject" || frame.type === "response.steer" || (frame.type === "response.create" && ws.data.nativeControl)) {
           try {
             // Remote Link sockets never carry native control (design T4 1.1); the link wrapper has
@@ -280,7 +330,6 @@ export function createWebsocketHandler(
             return;
           }
         }
-        if (frame.type === "response.processed") return; // ack — no-op
         if (frame.type !== "response.create") return;
         markActivity("ws response.create");
 
@@ -311,44 +360,6 @@ export function createWebsocketHandler(
         // account before resolving this frame so a failed Multi resolution cannot
         // leave stale invalidation ownership behind.
         updateCodexWebSocketAuthContext(ws, undefined);
-
-        const wsAdmission = ws.data.admission;
-        const baseHeaders = ws.data.headers ?? new Headers();
-        const linkSocket = ws.data.link !== undefined;
-        const isLoopbackListener = ws.data.loopbackListener ?? !isApiAuthRequired(config);
-        const retainedPrincipal = ws.data.replayPrincipal;
-        let replayPrincipal = retainedPrincipal && (isContextPrincipalCurrent(retainedPrincipal.clientPrincipalId, config)
-          ? retainedPrincipal : { clientPrincipalId: undefined });
-        let effectiveAdmission = wsAdmission;
-        if (!linkSocket && wsAdmission?.kind === "configured") {
-          const configuredEntry = (config.apiKeys ?? []).find(key => key.id === wsAdmission.keyId);
-          const configuredActive = configuredEntry !== undefined
-            && !isApiKeyExpired(configuredEntry)
-            && (configuredEntry.loopbackOnly !== true || isLoopbackListener)
-            && (wsAdmission.contextPrincipalId === undefined
-              || isContextPrincipalCurrent(wsAdmission.contextPrincipalId, config));
-          if (!configuredActive) {
-            const bearerToken = wsAdmission.source === "bearer" ? authorizationCredential(baseHeaders) : null;
-            const resolvedBearer = bearerToken
-              ? resolveDataPlaneAdmissionSecret(bearerToken, config, "bearer", { allowLoopbackOnly: isLoopbackListener })
-              : null;
-            if (resolvedBearer?.kind === "environment" && isLoopbackListener) {
-              effectiveAdmission = { kind: "loopback", source: "loopback", bearerCredential: true };
-              replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
-            } else if (resolvedBearer) {
-              effectiveAdmission = resolvedBearer;
-              replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
-            } else {
-              sendJsonFrame(ws, buildWsErrorFrame(401, {
-                type: "authentication_error",
-                code: "invalid_api_key",
-                message: "easyproxy API key is invalid, expired, or revoked",
-              }));
-              if (ws.data.cancel === cancelTurn) ws.data.cancel = undefined;
-              return;
-            }
-          }
-        }
 
         if (frame.generate === false) {
           for (const payload of buildWarmupCompletionFrames(frame)) {

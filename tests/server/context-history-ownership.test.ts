@@ -41,6 +41,7 @@ function install(id: string, owner: string, token = `${id}-token`): void {
 function config(): EpxConfig {
   return { port: 0, defaultProvider: "openai", activeCodexAccountId: "pool-b",
     autoSwitchThreshold: 95, accountPoolStrategy: "fill-first", emptyCompletionRetry: false,
+    apiKeys: [{ id: "k1", name: "k1", key: "epx_data_" + "k".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" }],
     codexAccountNamespaces: { side: "pool-a" },
     codexAccounts: [{ id: "pool-a", isMain: false }, { id: "pool-b", isMain: false }],
     providers: { openai: { adapter: "openai-responses", baseUrl: destination,

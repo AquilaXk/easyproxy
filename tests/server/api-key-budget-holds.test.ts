@@ -615,4 +615,69 @@ describe("virtual API key expiry, TPM window, and in-flight USD holds", () => {
       await settleServerAuthFixture(serverHome);
     }
   });
+
+  test("budget admission and pre-dispatch holds fail closed when configured key is deleted or expired", async () => {
+    const tpmKey = {
+      id: "revoked-budget-key",
+      name: "revoked-budget-key",
+      key: "epx_data_revokedbudget0001",
+      createdAt: "2026-11-22T00:00:00.000Z",
+      rpmLimit: 5,
+      tpmLimit: 1000,
+    };
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      hostname: "127.0.0.1",
+      apiKeys: [tpmKey],
+    };
+    saveConfig(cfg);
+    const runAdmitted = createAdmittedHttpTurn(
+      () => MAX_DECOMPRESSED_BODY_BYTES,
+      () => Response.json({ error: "busy" }, { status: 503 }),
+    );
+    const req = new Request("http://127.0.0.1/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-easyproxy-api-key": tpmKey.key },
+      body: JSON.stringify({ model: "p/m", input: "hello" }),
+    });
+
+    // 1. Deleted key at createAdmittedHttpTurn fails closed (401) rather than skipping budget.
+    let workCalled = false;
+    const deletedCfg: EpxConfig = { ...cfg, apiKeys: [] };
+    const deniedTurn = await runAdmitted(req, deletedCfg, async () => {
+      workCalled = true;
+      return Response.json({ ok: true });
+    }, {
+      requestId: "deleted-budget-turn",
+      start: Date.now(),
+      logCtx: { model: "p/m", provider: "p", admissionKind: "configured", apiKeyId: tpmKey.id },
+    });
+    expect(deniedTurn.status).toBe(401);
+    expect(workCalled).toBe(false);
+
+    // 2. Expired key at reservePreDispatchApiKeyHold releases the lease and returns 401.
+    const leaseDecision = acquireApiKeyBudgetLease(tpmKey);
+    expect(leaseDecision.allowed).toBe(true);
+    if (!leaseDecision.allowed) return;
+    const expiredCfg: EpxConfig = {
+      ...cfg,
+      apiKeys: [{ ...tpmKey, expiresAt: "2020-01-01T00:00:00.000Z" }],
+    };
+    const logCtx: any = {
+      model: "p/m",
+      provider: "p",
+      admissionKind: "configured",
+      apiKeyId: tpmKey.id,
+      apiKeyBudgetLease: leaseDecision.lease,
+    };
+    const holdRefusal = await reservePreDispatchApiKeyHold({
+      req,
+      config: expiredCfg,
+      logCtx,
+      providerName: "p",
+      modelId: "m",
+    });
+    expect(holdRefusal?.status).toBe(401);
+    expect(getApiKeyBudgetHoldSnapshot(tpmKey.id).rpmCurrent).toBe(0);
+  });
 });

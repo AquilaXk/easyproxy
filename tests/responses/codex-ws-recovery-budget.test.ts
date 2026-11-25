@@ -18,7 +18,9 @@ const proxyKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_p
 const message = (text: string) => ({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
 const answer = { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'fixture answer' }] };
 const missing = { type: 'error', status: 400, error: { type: 'invalid_request_error', code: 'previous_response_not_found', message: 'fixture cache miss' } };
-const config = { port: 0, defaultProvider: 'openai', providers: { openai: {
+const config = { port: 0, defaultProvider: 'openai',
+  apiKeys: [{ id: 'fixture-caller', name: 'fixture-caller', key: 'epx_data_' + 'c'.repeat(40), createdAt: '2026-01-01T00:00:00.000Z' }],
+  providers: { openai: {
   adapter: 'openai-responses', baseUrl: 'https://chatgpt.com/backend-api/codex', authMode: 'forward', codexAccountMode: 'direct',
 } } } as EpxConfig;
 const account = 'fixture-pool-account';

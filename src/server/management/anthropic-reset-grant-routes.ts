@@ -13,6 +13,7 @@ import { hasHumanDashboardSession } from "./consent-session";
  * management-api.ts so the core request path never imports it.
  */
 import { jsonResponse } from "../auth-cors";
+import { CredentialVaultError } from "../../lib/credential-vault";
 import { managementBodyTooLargeResponse, readManagementJsonBody } from "./body";
 import type { ManagementContext } from "./context";
 import { getValidAccessSnapshotForAccount } from "../../oauth";
@@ -154,7 +155,8 @@ function resolveAccountId(deps: AnthropicResetGrantRouteDeps, requested: unknown
 async function tokenFor(deps: AnthropicResetGrantRouteDeps, accountId: string): Promise<string | null> {
   try {
     return await deps.accessTokenFor(accountId);
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialVaultError) throw error;
     return null;
   }
 }

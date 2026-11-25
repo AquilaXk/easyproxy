@@ -30,6 +30,9 @@ describe("compact handoff route admission namespacing", () => {
     return {
       defaultProvider: "openai",
       activeCodexAccountId: "pool-a",
+      apiKeys: [
+        { id: "compact-client", name: "compact-client", key: "epx_data_" + "c".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+      ],
       providers: {
         openai: {
           adapter: "openai-responses",

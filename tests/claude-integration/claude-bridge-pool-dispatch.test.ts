@@ -56,6 +56,7 @@ beforeEach(() => {
   }
   cfg = { defaultProvider: "openai", activeCodexAccountId: "fixture-a", autoSwitchThreshold: 0,
     accountPoolStrategy: "round-robin", accountPoolStickyLimit: 1,
+    apiKeys: [{ id: "fixture", name: "fixture", key: "epx_data_" + "f".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" }],
     codexAccounts: [{ id: "fixture-a", label: "a" }, { id: "fixture-b", label: "b" }],
     providers: { openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", codexAccountMode: "pool", upstreamWebsocket: false } },
   } as unknown as EpxConfig;

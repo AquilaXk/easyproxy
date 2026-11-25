@@ -1,7 +1,7 @@
 import { anthropicErrorResponse } from "../claude/outbound";
 import { markProxyError } from "../lib/client-error-body";
 import { normalizeMessagesProxyRefusal } from "../lib/messages-error-body";
-import { resolveApiAuth, resolveResponsesApiAuth, withCors, type RequestPolicyView } from "./auth-cors";
+import { isApiKeyExpired, resolveApiAuth, resolveResponsesApiAuth, withCors, type RequestPolicyView } from "./auth-cors";
 import {
   acquireApiKeyBudgetLease,
   hasApiKeyBudgetLimits,
@@ -19,6 +19,41 @@ export interface AdmittedHttpTurnOptions {
   onAdmissionError?: (error: unknown) => Response;
 }
 
+async function buildAdmittedKeyRefusal(
+  req: Request,
+  policy: RequestPolicyView,
+  map: (response: Response) => Response,
+  status: number,
+  errorType: "authentication_error" | "rate_limit_error",
+  code: string,
+  message: string,
+  refusalLog?: WorkflowRefusalLog,
+  retryAfterSec?: number,
+): Promise<Response> {
+  if (refusalLog) {
+    markLocalRequestLogRefusal(refusalLog.logCtx, code);
+    refusalLog.logCtx.errorCode = code;
+    addFinalRequestLog(refusalLog.requestId, refusalLog.start, refusalLog.logCtx, status);
+    refusalLog.onLogged?.();
+  }
+  const pathname = (() => {
+    try { return new URL(req.url).pathname; } catch { return ""; }
+  })();
+  const isMessages = pathname === "/v1/messages" || pathname === "/v1/messages/count_tokens";
+  const rawRefusal = isMessages
+    ? anthropicErrorResponse(status, message, errorType, code)
+    : Response.json({
+      error: {
+        type: errorType,
+        code,
+        message,
+      },
+    }, { status });
+  if (retryAfterSec !== undefined) rawRefusal.headers.set("Retry-After", String(retryAfterSec));
+  const refusal = markProxyError(rawRefusal);
+  return withCors(await normalizeMessagesProxyRefusal(req, map(refusal)), req, policy);
+}
+
 export function createAdmittedHttpTurn(
   configuredLimit: () => number | undefined,
   serverBusyResponse: (req: Request, resource: string, policy: RequestPolicyView) => Response,
@@ -34,37 +69,39 @@ export function createAdmittedHttpTurn(
     // The row carries the size and encoding of the body this turn's handler reads from `req` (#3023).
     if (refusalLog) refusalLog.logCtx.requestBodyHolder ??= requestBodyFactsHolder(req);
     let budgetLease: ApiKeyBudgetLease | undefined;
-    if (policy.apiKeys?.length) {
-      const admittedKeyId = refusalLog?.logCtx.apiKeyId ?? (() => {
-        const adm = resolveApiAuth(req, policy) ?? resolveResponsesApiAuth(req, policy);
-        return adm?.kind === "configured" ? adm.keyId : undefined;
-      })();
-      const entry = admittedKeyId ? policy.apiKeys.find(k => k.id === admittedKeyId) : undefined;
-      if (entry && hasApiKeyBudgetLimits(entry)) {
+    const admittedKeyId = refusalLog?.logCtx.apiKeyId ?? (policy.apiKeys?.length ? (() => {
+      const adm = resolveApiAuth(req, policy) ?? resolveResponsesApiAuth(req, policy);
+      return adm?.kind === "configured" ? adm.keyId : undefined;
+    })() : undefined);
+    const configuredAdmissionWithoutKeyId = refusalLog?.logCtx.admissionKind === "configured" && !admittedKeyId;
+    if (admittedKeyId || configuredAdmissionWithoutKeyId) {
+      const entry = admittedKeyId ? policy.apiKeys?.find(k => k.id === admittedKeyId) : undefined;
+      if (!entry || isApiKeyExpired(entry)) {
+        return buildAdmittedKeyRefusal(
+          req,
+          policy,
+          map,
+          401,
+          "authentication_error",
+          "invalid_api_key",
+          "easyproxy API key is invalid, expired, or revoked",
+          refusalLog,
+        );
+      }
+      if (hasApiKeyBudgetLimits(entry)) {
         const budget = acquireApiKeyBudgetLease(entry);
         if (!budget.allowed) {
-          if (refusalLog) {
-            markLocalRequestLogRefusal(refusalLog.logCtx, budget.reason);
-            refusalLog.logCtx.errorCode = budget.reason;
-            addFinalRequestLog(refusalLog.requestId, refusalLog.start, refusalLog.logCtx, 429);
-            refusalLog.onLogged?.();
-          }
-          const pathname = (() => {
-            try { return new URL(req.url).pathname; } catch { return ""; }
-          })();
-          const isMessages = pathname === "/v1/messages" || pathname === "/v1/messages/count_tokens";
-          const rawRefusal = isMessages
-            ? anthropicErrorResponse(429, "API key request budget exceeded.", "rate_limit_error", budget.reason)
-            : Response.json({
-              error: {
-                type: "rate_limit_error",
-                code: budget.reason,
-                message: "API key request budget exceeded.",
-              },
-            }, { status: 429 });
-          rawRefusal.headers.set("Retry-After", String(budget.retryAfterSec));
-          const refusal = markProxyError(rawRefusal);
-          return withCors(await normalizeMessagesProxyRefusal(req, map(refusal)), req, policy);
+          return buildAdmittedKeyRefusal(
+            req,
+            policy,
+            map,
+            429,
+            "rate_limit_error",
+            budget.reason,
+            "API key request budget exceeded.",
+            refusalLog,
+            budget.retryAfterSec,
+          );
         }
         budgetLease = budget.lease;
       }

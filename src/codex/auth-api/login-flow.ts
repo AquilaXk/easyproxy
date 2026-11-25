@@ -1,4 +1,5 @@
 import { withCodexAccountLogLabel } from "../account-label";
+import { CredentialVaultError } from "../../lib/credential-vault";
 import { isCodexAccountPaused, setCodexAccountPaused } from "../account-pause";
 import { getCodexAccountCredential, markCodexAccountValidated, readCodexAccountRecord, saveCodexAccountCredential, CodexCredentialRefreshLockTimeoutError, CodexCredentialRefreshBusyError, CodexCredentialRefreshStaleError } from "../account-store";
 import { clearAccountQuota, isCodexQuotaExhausted, parseUsageQuota, poolWhamPolicyObservation, setAccountQuotaFromParsed } from "../quota";
@@ -575,6 +576,7 @@ export async function handleCodexAuthLoginStart(req: Request, config: EpxConfig,
     });
   } catch (e) {
     if (codexAuthLoginState.get(flowId) === loginOwner) codexAuthLoginState.delete(flowId);
+    if (e instanceof CredentialVaultError) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === "A login for chatgpt is already in progress") {
       return jsonResponse({ error: msg, status: "pending" }, 409);

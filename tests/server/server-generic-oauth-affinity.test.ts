@@ -222,6 +222,7 @@ test.each(["manual", "credential"])("%s change during a bound credential wait pr
 
 
 test("the same session marker is isolated by authenticated principal", async () => {
+  cfg.apiKeys = [{ id: "synthetic-scope", name: "synthetic-scope", key: "epx_data_" + "s".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" }];
   const admission = (principal: string) => ({ kind: "configured" as const, keyId: "synthetic-scope",
     source: "bearer" as const, contextPrincipalId: principal });
   await turn("same-marker", {}, { admission: admission("principal-a") });

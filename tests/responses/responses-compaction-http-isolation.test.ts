@@ -184,6 +184,9 @@ describe("HTTP compaction replay isolation", () => {
         apiKey: "openai-test-key",
         models: ["gpt-5.6-sol"],
       };
+      config.apiKeys = [
+        { id: "compact-client", name: "compact-client", key: "epx_data_" + "c".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+      ];
       const headers = { "x-codex-parent-thread-id": "compact-routed-handoff-thread" };
       // The remembered route is keyed by the admitted principal, so every call in
       // this scenario authenticates as the same configured client.

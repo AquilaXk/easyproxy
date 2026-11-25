@@ -55,6 +55,10 @@ describe("JEV session pin (#7525)", () => {
   test("requests without an explicit session, other sessions and other callers are decided afresh", async () => {
     const decisions: string[] = [];
     const config = makeConfig("sol/gpt-5.6-sol:high", decisions, true);
+    config.apiKeys = [
+      { id: "alice", name: "alice", key: "epx_data_" + "a".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "bob", name: "bob", key: "epx_data_" + "b".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
     const alice: DataPlaneAdmission = { kind: "configured", keyId: "alice", source: "bearer", contextPrincipalId: "p-alice" };
     const bob: DataPlaneAdmission = { kind: "configured", keyId: "bob", source: "bearer", contextPrincipalId: "p-bob" };
     await turn(config, { session: null });

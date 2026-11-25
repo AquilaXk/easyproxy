@@ -3,7 +3,7 @@ import { carryProxyError, markProxyError } from "../lib/client-error-body";
 import { normalizeMessagesProxyRefusal } from "../lib/messages-error-body";
 import { anthropicErrorResponse } from "../claude/outbound";
 import { resolveMatchedPrice, calculateCost } from "../usage/cost";
-import { withCors } from "./auth-cors";
+import { isApiKeyExpired, withCors } from "./auth-cors";
 import { markLocalRequestLogRefusal, type RequestLogContext } from "./request-log";
 
 const DEFAULT_FALLBACK_OUTPUT_TOKENS = 64;
@@ -61,6 +61,45 @@ function keyHasHoldSensitiveQuotas(entry: EpxApiKeyEntry): boolean {
     || entry.maxInFlightCostUsd !== undefined;
 }
 
+async function buildPreDispatchRefusal(
+  req: Request,
+  config: EpxConfig,
+  lease: NonNullable<RequestLogContext["apiKeyBudgetLease"]>,
+  logCtx: RequestLogContext | undefined,
+  upstreamAttempted: boolean | undefined,
+  anthropicSurface: boolean | undefined,
+  status: number,
+  errorType: "authentication_error" | "rate_limit_error",
+  code: string,
+  message: string,
+  retryAfterSec?: number,
+): Promise<Response> {
+  if (upstreamAttempted || (logCtx?.attempts?.length ?? 0) > 0) {
+    lease.releaseHoldOnly();
+  } else {
+    lease.releaseUnused();
+  }
+  if (logCtx) {
+    markLocalRequestLogRefusal(logCtx, code);
+    logCtx.errorCode = code;
+  }
+  const raw = anthropicSurface
+    ? anthropicErrorResponse(status, message, errorType, code)
+    : Response.json({
+      error: {
+        type: errorType,
+        code,
+        message,
+      },
+    }, { status });
+  if (retryAfterSec !== undefined) raw.headers.set("Retry-After", String(retryAfterSec));
+  const refusal = markProxyError(raw);
+  return carryProxyError(
+    refusal,
+    withCors(await normalizeMessagesProxyRefusal(req, refusal), req, config),
+  );
+}
+
 export async function reservePreDispatchApiKeyHold(params: {
   req: Request;
   config: EpxConfig;
@@ -77,7 +116,21 @@ export async function reservePreDispatchApiKeyHold(params: {
   const keyId = params.logCtx?.apiKeyId;
   if (!lease || !keyId) return null;
   const entry = params.config.apiKeys?.find((k) => k.id === keyId);
-  if (!entry || !keyHasHoldSensitiveQuotas(entry)) return null;
+  if (!entry || isApiKeyExpired(entry)) {
+    return buildPreDispatchRefusal(
+      params.req,
+      params.config,
+      lease,
+      params.logCtx,
+      params.upstreamAttempted,
+      params.anthropicSurface,
+      401,
+      "authentication_error",
+      "invalid_api_key",
+      "easyproxy API key is invalid, expired, or revoked",
+    );
+  }
+  if (!keyHasHoldSensitiveQuotas(entry)) return null;
 
   const decodedBytes = params.decodedBytes ?? params.logCtx?.requestBodyHolder?.facts?.decodedBytes;
   const estimate = estimateBudgetReservationForTurn({
@@ -94,35 +147,23 @@ export async function reservePreDispatchApiKeyHold(params: {
   });
   if (decision.allowed) return null;
 
-  if (params.upstreamAttempted || (params.logCtx?.attempts?.length ?? 0) > 0) {
-    lease.releaseHoldOnly();
-  } else {
-    lease.releaseUnused();
-  }
-
-  if (params.logCtx) {
-    markLocalRequestLogRefusal(params.logCtx, decision.reason);
-    params.logCtx.errorCode = decision.reason;
-  }
   const message =
     decision.reason === "tpm_limit_exceeded"
       ? "API key tokens-per-minute budget exceeded."
       : decision.reason === "in_flight_cost_limit_exceeded"
         ? "API key concurrent in-flight USD budget exceeded."
         : "API key request budget exceeded.";
-  const raw = params.anthropicSurface
-    ? anthropicErrorResponse(429, message, "rate_limit_error", decision.reason)
-    : Response.json({
-      error: {
-        type: "rate_limit_error",
-        code: decision.reason,
-        message,
-      },
-    }, { status: 429 });
-  raw.headers.set("Retry-After", String(decision.retryAfterSec));
-  const refusal = markProxyError(raw);
-  return carryProxyError(
-    refusal,
-    withCors(await normalizeMessagesProxyRefusal(params.req, refusal), params.req, params.config),
+  return buildPreDispatchRefusal(
+    params.req,
+    params.config,
+    lease,
+    params.logCtx,
+    params.upstreamAttempted,
+    params.anthropicSurface,
+    429,
+    "rate_limit_error",
+    decision.reason,
+    message,
+    decision.retryAfterSec,
   );
 }

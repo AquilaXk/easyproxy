@@ -47,6 +47,10 @@ const provider = (name: string) => ({
 function config(fallback: EpxFallbackConfig | undefined, second = { provider: "backup", model: "model-backup" }): EpxConfig {
   return {
     defaultProvider: "primary",
+    apiKeys: [
+      { id: "key_hub", name: "key_hub", key: "epx_data_" + "h".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "key_other", name: "key_other", key: "epx_data_" + "o".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" },
+    ],
     providers: { primary: provider("primary"), backup: provider("backup") },
     combos: {
       fan: {

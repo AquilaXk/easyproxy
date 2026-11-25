@@ -46,8 +46,8 @@ export interface ScopedRoute {
 
 const normalize = (value: string): string => value.trim().toLowerCase();
 
-/** Does this scope admit this provider on its own terms? */
-const EXPIRED_KEY_DENIED_SCOPE: AdmissionModelScope = Object.freeze({
+/** Fail-closed deny-all scope for missing, revoked, or expired configured keys. */
+const DENIED_KEY_SCOPE: AdmissionModelScope = Object.freeze({
   denied: true,
   providers: [],
   models: [],
@@ -92,16 +92,18 @@ export function resolveAdmissionModelScope(
   config: Pick<EpxConfig, "apiKeys">,
   admission: DataPlaneAdmission | undefined,
 ): AdmissionModelScope | undefined {
-  const entry = admission?.kind === "configured"
-    ? (config.apiKeys ?? []).find(key => key.id === admission.keyId) : undefined;
-  const entryScope = entry
-    ? (isApiKeyExpired(entry) ? EXPIRED_KEY_DENIED_SCOPE : admissionModelScopeOf(entry))
-    : undefined;
-  return intersectAdmissionModelScopes(entryScope, admission?.callerPolicy?.modelScope);
+  if (admission?.kind === "configured") {
+    const entry = (config.apiKeys ?? []).find(key => key.id === admission.keyId);
+    const entryScope = !entry || isApiKeyExpired(entry)
+      ? DENIED_KEY_SCOPE
+      : admissionModelScopeOf(entry);
+    return intersectAdmissionModelScopes(entryScope, admission.callerPolicy?.modelScope);
+  }
+  return admission?.callerPolicy?.modelScope;
 }
 
 export function intersectAdmissionModelScopes(a: AdmissionModelScope | undefined, b: AdmissionModelScope | undefined): AdmissionModelScope | undefined {
-  if (a?.denied || b?.denied) return EXPIRED_KEY_DENIED_SCOPE;
+  if (a?.denied || b?.denied) return DENIED_KEY_SCOPE;
   return a && b ? { providers: [], models: [], allOf: [a, b] } : a ?? b;
 }
 

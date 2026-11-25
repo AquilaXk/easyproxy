@@ -110,6 +110,7 @@ describe("Direct hard-lock fallback caller identity", () => {
     return config({
       defaultProvider: "openai",
       autoSwitchThreshold: 0,
+      apiKeys: [{ id: "fixture-admission", name: "fixture-admission", key: "epx_data_" + "f".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" }],
       providers: {
         openai: { adapter: "openai-responses", authMode: "forward", codexAccountMode: "direct",
           baseUrl: "https://chatgpt.com/backend-api/codex" },

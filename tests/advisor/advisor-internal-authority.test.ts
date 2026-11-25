@@ -64,7 +64,9 @@ describe("internal-call capability — server-owned authority", () => {
         config.apiKeys = change === "deleted" ? [] : [{
           ...config.apiKeys![0]!, allowedProviders: [], allowedModels: [],
         }];
-        expect(resolveAdmissionModelScope(config, admission)).toBeUndefined();
+        expect(resolveAdmissionModelScope(config, admission)).toEqual(
+          change === "deleted" ? { denied: true, providers: [], models: [] } : undefined,
+        );
         barrier.resolve();
         await expect(pending).rejects.toBe(reachedFactory);
         expect(observed).toBe(true);

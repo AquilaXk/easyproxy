@@ -610,3 +610,66 @@ test("re-resolved bearer key on open WS applies replacement budget, listener pol
     handler.close(ws, 1000, "done");
   }
 });
+
+test("revoked or expired configured key on open WS rejects active nativeControl continue, inject, and steer with 401", async () => {
+  const keySecret = "epx_data_nativecontrolrevoke0000000000000000000";
+  const cfg: EpxConfig = {
+    ...loadConfig(),
+    apiKeys: [
+      { id: "native-k1", key: keySecret, name: "native-k1", createdAt: "2026-10-01T00:00:00.000Z" },
+    ],
+  };
+  const admission = resolveDataPlaneAdmissionSecret(keySecret, cfg, "dedicated", { allowLoopbackOnly: true })!;
+  const handler = createWebsocketHandler({ config: cfg, deps: {} } as ServeOptionsContext);
+  const sent: Frame[] = [];
+  let nativeCalls = 0;
+  let cancelled = 0;
+  const nativeControl = {
+    inject() { nativeCalls++; },
+    steer() { nativeCalls++; },
+    continue() { nativeCalls++; return true; },
+    close() {},
+  } as unknown as NonNullable<WsData["nativeControl"]>;
+  const ws = {
+    readyState: 1,
+    data: {
+      headers: new Headers(),
+      admission,
+      loopbackListener: true,
+      nativeControl,
+      cancel() { cancelled++; },
+    } as WsData,
+    send(payload: string) {
+      sent.push(JSON.parse(payload));
+      return 1;
+    },
+    close() {
+      handler.close(ws, 1000, "closed");
+    },
+  } as unknown as ServerWebSocket<WsData>;
+  handler.open(ws);
+  try {
+    // Revoke key while nativeControl turn is active.
+    cfg.apiKeys = [];
+    for (const frame of [
+      { type: "response.create", model: MODEL, input: "continue after revoke" },
+      { type: "response.inject", response_id: "resp_1", input: [] },
+      { type: "response.steer", previous_response_id: "resp_1", input: "steer after revoke" },
+    ]) {
+      ws.data.nativeControl = nativeControl;
+      const beforeCount = sent.length;
+      handler.message(ws, JSON.stringify(frame));
+      await until(() => sent.length > beforeCount, `401 error for ${frame.type}`);
+      expect(sent.at(-1)).toMatchObject({
+        type: "error",
+        status: 401,
+        error: { type: "authentication_error", code: "invalid_api_key" },
+      });
+    }
+    expect(nativeCalls).toBe(0);
+    expect(cancelled).toBeGreaterThanOrEqual(1);
+    expect(ws.data.nativeControl).toBeUndefined();
+  } finally {
+    handler.close(ws, 1000, "done");
+  }
+});

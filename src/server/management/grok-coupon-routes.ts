@@ -10,6 +10,7 @@
  */
 
 import { jsonResponse } from "../auth-cors";
+import { CredentialVaultError } from "../../lib/credential-vault";
 import { managementBodyTooLargeResponse, readManagementJsonBody } from "./body";
 import type { ManagementContext } from "./context";
 import { ConfigMutationLockError } from "../../config/mutation-lock";
@@ -83,6 +84,7 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
     try {
       accountId = resolveTargetAccountId(queryAccountId);
     } catch (err) {
+      if (err instanceof CredentialVaultError) throw err;
       return jsonResponse(
         { error: { code: "no_account", message: err instanceof Error ? err.message : String(err) } },
         400,
@@ -95,6 +97,7 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
     try {
       tokenSnapshot = await getValidAccessSnapshotForAccount("xai", accountId, { requireUsableAccount: true });
     } catch (err) {
+      if (err instanceof CredentialVaultError) throw err;
       return jsonResponse(
         { error: { code: "auth_failed", message: "Failed to resolve valid xAI credentials for account" } },
         401,
@@ -213,6 +216,7 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
     try {
       accountId = resolveTargetAccountId(rawAccountId ?? recordedAccountId);
     } catch (err) {
+      if (err instanceof CredentialVaultError) throw err;
       return preOpenRefusal(jsonResponse(
         { error: { code: "no_account", message: err instanceof Error ? err.message : String(err) } },
         400,
@@ -225,6 +229,7 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
     try {
       tokenSnapshot = await getValidAccessSnapshotForAccount("xai", accountId, { requireUsableAccount: true });
     } catch (err) {
+      if (err instanceof CredentialVaultError) throw err;
       return preOpenRefusal(jsonResponse(
         { error: { code: "auth_failed", message: "Failed to resolve valid xAI credentials for account" } },
         401,

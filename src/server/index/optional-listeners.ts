@@ -1,7 +1,7 @@
 import { serviceApiTokenFingerprint } from "../../lib/service-secrets";
 import type { Server, WebSocketHandler } from "bun";
 import type { EpxConfig } from "../../types";
-import type { RequestPolicyView } from "../auth-cors";
+import { isApiKeyExpired, type RequestPolicyView } from "../auth-cors";
 import type { WsData } from "../ws-bridge";
 import { linkResponsesWebsocketEnabled } from "../../config/feature-flags";
 import {
@@ -208,7 +208,7 @@ export function createOptionalListenerSet<T>(linkDeps: LinkListenerDeps = {},
         } } : {}),
         keyFingerprints: apiKeyId => {
           const entry = activeConfig?.apiKeys?.find(candidate => candidate.id === apiKeyId);
-          if (!entry?.key) return [];
+          if (!entry?.key || isApiKeyExpired(entry)) return [];
           const fingerprints = [serviceApiTokenFingerprint(entry.key)];
           const pending = entry.pendingRotation;
           if (pending && Date.parse(pending.expiresAt) > Date.now()) fingerprints.push(serviceApiTokenFingerprint(pending.key));

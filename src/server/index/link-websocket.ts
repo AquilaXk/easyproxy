@@ -486,7 +486,7 @@ export function createLinkWebsocketGate(deps: LinkWebsocketGateDeps) {
           classifyUsageClient(req.headers),
         );
         // A Remote Link socket is never local, even though its tunnel arrives on a loopback socket.
-        Object.assign(data, { peerLocal: false });
+        Object.assign(data, { peerLocal: false, loopbackListener: false });
         binding = { linkId: grant.linkId, keyId: grant.keyId, fingerprint: grant.fingerprint, fenced: false, leases };
         data.nativeControlDisabled = true;
         data.link = binding;
