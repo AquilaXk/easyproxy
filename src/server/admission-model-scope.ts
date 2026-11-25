@@ -2,7 +2,7 @@ import { projectLocalModelRefusalLog } from "./request-log-failure-detail";
 import { clientFacingModelLabel, clientFacingModelText, type ClientFacingModelLabel } from "../lib/error-destination";
 import { markProxyError } from "../lib/client-error-body";
 import type { DataPlaneAdmission } from "./auth-cors";
-import { isApiAuthRequired } from "./auth-cors";
+import { isApiAuthRequired, isApiKeyExpired } from "./auth-cors";
 import type { EpxApiKeyEntry, EpxConfig } from "../types";
 import { markResponseNonReplayable } from "../lib/upstream-retry";
 
@@ -28,6 +28,8 @@ import { markResponseNonReplayable } from "../lib/upstream-retry";
  * the management credential.
  */
 export interface AdmissionModelScope {
+  /** Fail-closed deny-all marker (for example, an expired API key). */
+  readonly denied?: true;
   /** Every inherited scope must also admit the final destination. */
   readonly allOf?: readonly AdmissionModelScope[];
   /** Resolved provider names this key may reach. Empty means every provider. */
@@ -45,12 +47,19 @@ export interface ScopedRoute {
 const normalize = (value: string): string => value.trim().toLowerCase();
 
 /** Does this scope admit this provider on its own terms? */
+const EXPIRED_KEY_DENIED_SCOPE: AdmissionModelScope = Object.freeze({
+  denied: true,
+  providers: [],
+  models: [],
+});
+
 function providerAllowedByScope(scope: AdmissionModelScope, providerName: string): boolean {
+  if (scope.denied) return false;
   return scope.providers.length === 0 || scope.providers.includes(normalize(providerName));
 }
 
 function unnamedDestinationAllowedByScope(scope: AdmissionModelScope, providerName: string): boolean {
-  return providerAllowedByScope(scope, providerName) && scope.models.length === 0
+  return !scope.denied && providerAllowedByScope(scope, providerName) && scope.models.length === 0
     && (scope.allOf?.every(part => unnamedDestinationAllowedByScope(part, providerName)) ?? true);
 }
 
@@ -85,10 +94,14 @@ export function resolveAdmissionModelScope(
 ): AdmissionModelScope | undefined {
   const entry = admission?.kind === "configured"
     ? (config.apiKeys ?? []).find(key => key.id === admission.keyId) : undefined;
-  return intersectAdmissionModelScopes(entry ? admissionModelScopeOf(entry) : undefined, admission?.callerPolicy?.modelScope);
+  const entryScope = entry
+    ? (isApiKeyExpired(entry) ? EXPIRED_KEY_DENIED_SCOPE : admissionModelScopeOf(entry))
+    : undefined;
+  return intersectAdmissionModelScopes(entryScope, admission?.callerPolicy?.modelScope);
 }
 
 export function intersectAdmissionModelScopes(a: AdmissionModelScope | undefined, b: AdmissionModelScope | undefined): AdmissionModelScope | undefined {
+  if (a?.denied || b?.denied) return EXPIRED_KEY_DENIED_SCOPE;
   return a && b ? { providers: [], models: [], allOf: [a, b] } : a ?? b;
 }
 
@@ -102,7 +115,7 @@ export function admissionMayUseMeteredComboTargets(
   if (caller && (!caller.allowMeteredComboTargets || caller.meteredRequiresComboOptIn && combo?.allowMeteredTargets !== true)) return false;
   if (admission?.kind === "configured") {
     const entry = (config.apiKeys ?? []).find(key => key.id === admission.keyId);
-    return entry?.allowMeteredComboTargets === true;
+    return entry !== undefined && !isApiKeyExpired(entry) && entry.allowMeteredComboTargets === true;
   }
   // A loopback-admitted internal hop's captured policy already holds this branch's decision for
   // its listener, or the consent of the validated key it presented (#7894); it was checked above.
@@ -130,6 +143,7 @@ export function routeAllowedByScope(
   route: ScopedRoute,
 ): boolean {
   if (!scope) return true;
+  if (scope.denied) return false;
   if (scope.allOf?.some(part => !routeAllowedByScope(part, route))) return false;
   const model = normalize(route.modelId);
   if (!providerAllowedByScope(scope, route.providerName)) return false;

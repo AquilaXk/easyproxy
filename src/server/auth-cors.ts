@@ -604,8 +604,13 @@ function mintContextPrincipal(kind: string, keyId: string, credential: string): 
 export type DataPlaneAdmission = (
   | { kind: "configured"; keyId: string; source: DataPlaneAdmissionSource; contextPrincipalId?: string }
   | { kind: "environment"; source: DataPlaneAdmissionSource; contextPrincipalId?: string }
-  | { kind: "loopback"; source: "loopback" }
+  | { kind: "loopback"; source: "loopback"; bearerCredential?: true }
 ) & { readonly callerPolicy?: import("../types/admission-policy").CapturedAdmissionPolicy };
+
+/** True when admission validated an Authorization: Bearer proxy token (even if normalized to loopback). */
+export function isBearerDataPlaneAdmission(admission: DataPlaneAdmission | undefined): boolean {
+  return admission?.source === "bearer" || (admission?.kind === "loopback" && admission.bearerCredential === true);
+}
 
 /**
  * Which admission secret `token` is, or null when it is none of them.
@@ -958,7 +963,7 @@ export function resolveApiAuth(req: Request, config: RequestPolicyView): DataPla
     const outcome = resolveDataPlaneAdmissionOutcome(bearer, config, "bearer", options);
     if (outcome.status === "matched") {
       return loopback && outcome.admission.kind === "environment"
-        ? { kind: "loopback", source: "loopback" }
+        ? { kind: "loopback", source: "loopback", bearerCredential: true }
         : outcome.admission;
     }
     if (!loopback || isProxyShape || outcome.status === "expired") return null;
@@ -1022,7 +1027,7 @@ export function resolveResponsesApiAuth(req: Request, config: RequestPolicyView)
     const outcome = resolveDataPlaneAdmissionOutcome(bearer, config, "bearer", options);
     if (outcome.status === "matched") {
       return loopback && outcome.admission.kind === "environment"
-        ? { kind: "loopback", source: "loopback" }
+        ? { kind: "loopback", source: "loopback", bearerCredential: true }
         : outcome.admission;
     }
     if (!loopback || isProxyShape || outcome.status === "expired") return null;

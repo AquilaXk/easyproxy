@@ -1,4 +1,5 @@
 import { hasHumanDashboardSession } from "./consent-session";
+import { CredentialVaultError } from "../../lib/credential-vault";
 import { applyApiKeyBudgetPatch, projectApiKeyBudgetDto } from "./api-key-budget-dto";
 import { runPassiveReadSync } from "../../lib/passive-read";
 import { isAnthropicOAuthInstance, configuredAnthropicInstance, type AnthropicInstanceId } from "../../providers/anthropic-instance";
@@ -417,7 +418,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
         ...(codeMode ? { mode: "code", flowId, expiresAt } : flowId ? { flowId } : {}),
       });
     } catch (err) {
-      if (err instanceof OAuthMutationBusyError) throw err;
+      if (err instanceof OAuthMutationBusyError || err instanceof CredentialVaultError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       const duplicateLoginMessage = `A login for ${provider} is already in progress`;
       return jsonResponse({

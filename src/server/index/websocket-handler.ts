@@ -74,6 +74,7 @@ import {
   isAllowedRequestOrigin,
   isAllowedManagementOrigin,
   isApiAuthRequired,
+  isApiKeyExpired,
   jsonResponse,
   admissionFields,
   contextPrincipalIdOf,
@@ -311,6 +312,44 @@ export function createWebsocketHandler(
         // leave stale invalidation ownership behind.
         updateCodexWebSocketAuthContext(ws, undefined);
 
+        const wsAdmission = ws.data.admission;
+        const baseHeaders = ws.data.headers ?? new Headers();
+        const linkSocket = ws.data.link !== undefined;
+        const isLoopbackListener = ws.data.loopbackListener ?? !isApiAuthRequired(config);
+        const retainedPrincipal = ws.data.replayPrincipal;
+        let replayPrincipal = retainedPrincipal && (isContextPrincipalCurrent(retainedPrincipal.clientPrincipalId, config)
+          ? retainedPrincipal : { clientPrincipalId: undefined });
+        let effectiveAdmission = wsAdmission;
+        if (!linkSocket && wsAdmission?.kind === "configured") {
+          const configuredEntry = (config.apiKeys ?? []).find(key => key.id === wsAdmission.keyId);
+          const configuredActive = configuredEntry !== undefined
+            && !isApiKeyExpired(configuredEntry)
+            && (configuredEntry.loopbackOnly !== true || isLoopbackListener)
+            && (wsAdmission.contextPrincipalId === undefined
+              || isContextPrincipalCurrent(wsAdmission.contextPrincipalId, config));
+          if (!configuredActive) {
+            const bearerToken = wsAdmission.source === "bearer" ? authorizationCredential(baseHeaders) : null;
+            const resolvedBearer = bearerToken
+              ? resolveDataPlaneAdmissionSecret(bearerToken, config, "bearer", { allowLoopbackOnly: isLoopbackListener })
+              : null;
+            if (resolvedBearer?.kind === "environment" && isLoopbackListener) {
+              effectiveAdmission = { kind: "loopback", source: "loopback", bearerCredential: true };
+              replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
+            } else if (resolvedBearer) {
+              effectiveAdmission = resolvedBearer;
+              replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
+            } else {
+              sendJsonFrame(ws, buildWsErrorFrame(401, {
+                type: "authentication_error",
+                code: "invalid_api_key",
+                message: "easyproxy API key is invalid, expired, or revoked",
+              }));
+              if (ws.data.cancel === cancelTurn) ws.data.cancel = undefined;
+              return;
+            }
+          }
+        }
+
         if (frame.generate === false) {
           for (const payload of buildWarmupCompletionFrames(frame)) {
             if (!isCurrent()) return;
@@ -320,10 +359,18 @@ export function createWebsocketHandler(
           return;
         }
 
-        const wsAdmission = ws.data.admission;
         let budgetLease: ApiKeyBudgetLease | undefined;
-        if (wsAdmission?.kind === "configured" && config.apiKeys?.length) {
-          const entry = config.apiKeys.find(k => k.id === wsAdmission.keyId);
+        if (effectiveAdmission?.kind === "configured") {
+          const entry = (config.apiKeys ?? []).find(k => k.id === effectiveAdmission.keyId);
+          if (!linkSocket && (!entry || isApiKeyExpired(entry))) {
+            sendJsonFrame(ws, buildWsErrorFrame(401, {
+              type: "authentication_error",
+              code: "invalid_api_key",
+              message: "easyproxy API key is invalid, expired, or revoked",
+            }));
+            if (ws.data.cancel === cancelTurn) ws.data.cancel = undefined;
+            return;
+          }
           if (entry && hasApiKeyBudgetLimits(entry)) {
             const budget = acquireApiKeyBudgetLease(entry);
             if (!budget.allowed) {
@@ -333,7 +380,7 @@ export function createWebsocketHandler(
                 model: typeof frame.model === "string" && frame.model ? frame.model : "unknown",
                 provider: "unknown",
                 ...(requestMetricsRecorder ? { requestMetricsRecorder } : {}),
-                ...admissionFields(wsAdmission),
+                ...admissionFields(effectiveAdmission),
                 client: ws.data.client ?? "unknown",
                 inboundProtocol: "responses",
               };
@@ -366,7 +413,9 @@ export function createWebsocketHandler(
         }
 
         // Only a genuinely admitted turn may receive steering or continuations.
-        const advisorAdmissionPolicy = captureAdmissionPolicy(config, ws.data.admission);
+        const advisorAdmissionPolicy = captureAdmissionPolicy(config, effectiveAdmission, undefined, {
+          loopbackListener: isLoopbackListener,
+        });
         const finishActivity = ws.data.responsesActivity?.beginTurn(frame.input);
         const payload: Record<string, unknown> = { ...frame };
         delete payload.type;
@@ -375,15 +424,13 @@ export function createWebsocketHandler(
         void runWithRequestPeer(ws.data.peerLocal === true ? LOCAL_PEER : undefined, () => runTurnStateCallerScope(async () => {
           const start = Date.now();
           const requestId = nextRequestLogId(start);
-          // Resolved once at the handshake — a frame has no request headers left
-          // to re-resolve from. Optional on WsData like every other member, so
-          // narrow rather than assume: an unattributed frame is preferable to a
-          // fabricated attribution.
+          // Optional on WsData like every other member, so narrow rather than
+          // assume: an unattributed frame is preferable to a fabricated attribution.
           const logCtx: RequestLogContext = {
             model: "unknown",
             provider: "unknown",
             ...(requestMetricsRecorder ? { requestMetricsRecorder } : {}),
-            ...(wsAdmission ? admissionFields(wsAdmission) : {}),
+            ...(effectiveAdmission ? admissionFields(effectiveAdmission) : {}),
             ...(budgetLease ? { apiKeyBudgetLease: budgetLease } : {}),
             client: ws.data.client ?? "unknown",
             inboundProtocol: "responses",
@@ -397,7 +444,6 @@ export function createWebsocketHandler(
             logged = true;
             addFinalRequestLog(requestId, start, logCtx, status, meta);
           };
-          const baseHeaders = ws.data.headers ?? new Headers();
           const fwd = new Headers({ "content-type": "application/json" });
           baseHeaders.forEach((value, key) => fwd.set(key, value));
           // Attach the parsed body directly instead of serializing and re-parsing (#8600).
@@ -405,7 +451,6 @@ export function createWebsocketHandler(
           // preserve the frame.input array identity read by responsesActivity; local sockets
           // attach a structured clone so request mutation never alters frame.input.
           const turnBody = { ...payload, stream: true };
-          const linkSocket = ws.data.link !== undefined;
           const req = new Request("http://localhost/v1/responses", {
             method: "POST",
             headers: fwd,
@@ -426,30 +471,6 @@ export function createWebsocketHandler(
             if (workflow?.admitted) turnAdmissionLease.attach(workflow.lease);
             ws.data.nativeControl = nativeControl;
             let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;
-            const retainedPrincipal = ws.data.replayPrincipal;
-            let replayPrincipal = retainedPrincipal && (isContextPrincipalCurrent(retainedPrincipal.clientPrincipalId, config)
-              ? retainedPrincipal : { clientPrincipalId: undefined });
-            let effectiveAdmission = wsAdmission;
-            if (!replayPrincipal && !linkSocket && wsAdmission?.kind === "configured"
-              && !isContextPrincipalCurrent(wsAdmission.contextPrincipalId, config)) {
-              if (wsAdmission.source === "bearer") {
-                const bearerToken = authorizationCredential(fwd);
-                const resolvedBearer = bearerToken
-                  ? resolveDataPlaneAdmissionSecret(bearerToken, config, "bearer", { allowLoopbackOnly: !isApiAuthRequired(config) })
-                  : null;
-                if (resolvedBearer?.kind === "environment" && !isApiAuthRequired(config)) {
-                  effectiveAdmission = { kind: "loopback", source: "loopback" };
-                  replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
-                } else if (resolvedBearer) {
-                  effectiveAdmission = resolvedBearer;
-                  replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
-                } else {
-                  replayPrincipal = { clientPrincipalId: undefined };
-                }
-              } else {
-                replayPrincipal = { clientPrincipalId: undefined };
-              }
-            }
             // The connection scope is a live-socket capability, not a retained credential:
             // once closed or expired it stops backfilling the replay owner entirely.
             const retainedScope = ws.data.replayScope;

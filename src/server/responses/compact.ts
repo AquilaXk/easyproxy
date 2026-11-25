@@ -79,6 +79,7 @@ import {
 import {
   ForwardAdmissionCredentialError,
   hasForwardableCodexBearer,
+  isBearerDataPlaneAdmission,
   resolveContextPrincipal,
   validateForwardAdmissionCredential,
 } from "../auth-cors";
@@ -362,7 +363,7 @@ export async function handleResponsesCompact(
   const customReserveForward = selectedModelId === NATIVE_RESERVE_MODEL
     && isCodexReserveRequestEligible(config, admission)
     && isCanonicalOpenAiForwardProvider(route.provider);
-  const substituteMainCredential = admission?.source === "bearer"
+  const substituteMainCredential = isBearerDataPlaneAdmission(admission)
     && (route.codexAccountMode !== undefined || customReserveForward);
   const requestScopedMainCredential = route.codexAccountMode !== undefined
     && !substituteMainCredential

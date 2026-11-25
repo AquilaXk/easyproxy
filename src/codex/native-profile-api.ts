@@ -1,4 +1,5 @@
 import type { EpxConfig } from "../types";
+import { CredentialVaultError } from "../lib/credential-vault";
 import { jsonResponse } from "../server/auth-cors";
 import { acquireNativeMainProfileDrain, getNativeMainProfileRequestCount } from "../server/lifecycle";
 import {
@@ -267,6 +268,9 @@ export async function handleNativeProfileAPI(
         ...(error.cleanupRequired === true ? { cleanupRequired: true } : {}),
         ...(typeof error.plaintextMayRemain === "boolean" ? { plaintextMayRemain: error.plaintextMayRemain } : {}),
       }, error.status, req, config);
+    }
+    if (error instanceof CredentialVaultError) {
+      return jsonResponse({ error: error.message, code: error.code }, error.status, req, config);
     }
     return jsonResponse({ error: "Native-profile operation failed.", code: "INTERNAL_ERROR" }, 500, req, config);
   }

@@ -65,6 +65,8 @@ export interface WsData {
    * Fixed at the handshake; only `true` counts as local, so an absent value is denied.
    */
   readonly peerLocal?: boolean;
+  /** Whether the upgrade listener itself is loopback without required API auth. */
+  readonly loopbackListener?: boolean;
   /** Discriminator: Responses reframing vs transparent live/realtime sideband relay. */
   kind?: "responses" | "live-sideband" | "remote-workspace-agent";
   remoteWorkspaceConnection?: { receive(raw: string | Uint8Array): void };

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,6 +20,9 @@ import {
 import { containsConfiguredCredentialExcerpt } from "../../src/server/configured-credentials";
 import { flushConfigDirHardeningForTests } from "../../src/config/paths";
 import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
+import { getDefaultConfig, saveConfig } from "../../src/config";
+import { handleManagementAPI } from "../../src/server/management-api";
+import { ManagementRequest, managementHeaders } from "../helpers/management-auth";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const ICACLS_OK = { success: true, exitCode: 0, timedOut: false, stdout: "" };
@@ -276,5 +279,91 @@ describe("credential vault storage for auth.json and codex-accounts.json", () =>
     } finally {
       removeTreeWithRetry(clonedHome);
     }
+  });
+
+  test("management API surfaces CredentialVaultError as 503/409 instead of 500 across OAuth and Codex routes", async () => {
+    const cfg = {
+      ...getDefaultConfig(),
+      hostname: "127.0.0.1",
+      codexAccounts: [{ id: "codex-slot-1", email: "codex-slot@example.test", isMain: false }],
+    };
+    saveConfig(cfg);
+    await saveCredential("anthropic", {
+      access: "mgmt-anth-access",
+      refresh: "mgmt-anth-refresh",
+      expires: Date.now() + 3_600_000,
+      accountId: "anth-slot-1",
+    });
+    saveCodexAccountCredential("codex-slot-1", {
+      accessToken: "mgmt-codex-access",
+      refreshToken: "mgmt-codex-refresh",
+      expiresAt: Date.now() + 3_600_000,
+      chatgptAccountId: "cgpt-mgmt-1",
+    });
+
+    const keyfilePath = join(testDir, ".credential-vault-key");
+    const savedKeyfile = readFileSync(keyfilePath);
+
+    const callMgmt = async (path: string, init?: RequestInit) => {
+      const req = new ManagementRequest(`http://127.0.0.1${path}`, {
+        ...init,
+        headers: managementHeaders(init?.headers),
+      });
+      return handleManagementAPI(req, new URL(req.url), cfg, {}, undefined, undefined, { trustedLoopback: true });
+    };
+
+    // 1. Missing/locked vault keyfile -> 503 VAULT_KEY_UNAVAILABLE (not 500 / 409)
+    unlinkSync(keyfilePath);
+    clearCredentialVaultCacheForTests();
+
+    const oauthLocked = await callMgmt("/api/oauth/accounts?provider=anthropic");
+    expect(oauthLocked?.status).toBe(503);
+    expect(await oauthLocked?.json()).toMatchObject({ code: "VAULT_KEY_UNAVAILABLE" });
+
+    const loginLocked = await callMgmt("/api/oauth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "anthropic", accountId: "anth-slot-1" }),
+    });
+    expect(loginLocked?.status).toBe(503);
+    expect(await loginLocked?.json()).toMatchObject({ code: "VAULT_KEY_UNAVAILABLE" });
+
+    const logoutLocked = await callMgmt("/api/oauth/logout?provider=anthropic", { method: "POST" });
+    expect(logoutLocked?.status).toBe(503);
+    expect(await logoutLocked?.json()).toMatchObject({ code: "VAULT_KEY_UNAVAILABLE" });
+
+    const codexLocked = await callMgmt("/api/codex-auth/accounts/proxy", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "codex-slot-1", proxy: null }),
+    });
+    expect(codexLocked?.status).toBe(503);
+    expect(await codexLocked?.json()).toMatchObject({ code: "VAULT_KEY_UNAVAILABLE" });
+
+    // 2. Restore keyfile and tamper ciphertext/digest -> 409 VAULT_TAMPERED (not 500)
+    writeFileSync(keyfilePath, savedKeyfile, { mode: 0o600 });
+    const authJson = JSON.parse(readFileSync(getAuthStorePath(), "utf8"));
+    authJson.anthropic.accounts[0].credential.__vault.envelopeSha256 = "0".repeat(64);
+    writeFileSync(getAuthStorePath(), JSON.stringify(authJson, null, 2) + "\n   \n", "utf8");
+
+    const codexPath = join(testDir, "codex-accounts.json");
+    const codexJson = JSON.parse(readFileSync(codexPath, "utf8"));
+    const firstSlot = Object.keys(codexJson.accounts ?? codexJson)[0]!;
+    const targetRecord = codexJson.accounts ? codexJson.accounts[firstSlot] : codexJson[firstSlot];
+    targetRecord.credential.__vault.envelopeSha256 = "f".repeat(64);
+    writeFileSync(codexPath, JSON.stringify(codexJson, null, 2) + "\n   \n", "utf8");
+    clearCredentialVaultCacheForTests();
+
+    const oauthTampered = await callMgmt("/api/oauth/accounts?provider=anthropic");
+    expect(oauthTampered?.status).toBe(409);
+    expect(await oauthTampered?.json()).toMatchObject({ code: "VAULT_TAMPERED" });
+
+    const codexTampered = await callMgmt("/api/codex-auth/accounts/proxy", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "codex-slot-1", proxy: null }),
+    });
+    expect(codexTampered?.status).toBe(409);
+    expect(await codexTampered?.json()).toMatchObject({ code: "VAULT_TAMPERED" });
   });
 });

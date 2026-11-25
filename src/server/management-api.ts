@@ -22,6 +22,7 @@ import {
   upsertOAuthProvider,
 } from "../oauth";
 import { OAuthMutationBusyError, removeCredential } from "../oauth/store";
+import { CredentialVaultError } from "../lib/credential-vault";
 import { providerDestinationResolvedError } from "../lib/destination-policy";
 import { enrichProviderFromCatalog, listKeyLoginProviders } from "../oauth/key-providers";
 import { deriveProviderPresets } from "../providers/derive";
@@ -437,6 +438,9 @@ export async function handleManagementAPI(
     if (error instanceof JsonNestingDepthExceededError) {
       return jsonResponse({ error: error.message, code: error.code }, 400, req, config);
     }
+    if (error instanceof CredentialVaultError) {
+      return jsonResponse({ error: error.message, code: error.code }, error.status, req, config);
+    }
     if (error instanceof OAuthMutationBusyError) {
       return new Response(JSON.stringify({ error: { type: "server_error", code: "oauth_mutation_busy", message: error.message } }), {
         status: 503,
@@ -603,6 +607,9 @@ export async function handleManagementAPI(
       // Remembered sessions retain admin-token consent authority for account refresh.
       return await handleCodexAuthAPI(req, url, config, convergeCodexCatalog, ctx.guiSessionIssuance === "remembered-admin" ? "admin-token" : principal);
     } catch (error) {
+      if (error instanceof CredentialVaultError) {
+        return jsonResponse({ error: error.message, code: error.code }, error.status, req, config);
+      }
       // Credential writers remap ConfigMutationLockError to CodexCredentialRefreshLockTimeoutError;
       // treat both as the same retryable busy response.
       if (error instanceof ConfigMutationLockError || error instanceof CodexCredentialRefreshLockTimeoutError) {

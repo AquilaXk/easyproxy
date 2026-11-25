@@ -62,9 +62,10 @@ describe("Reserve eligibility trusts receiving-listener admission", () => {
             const result = await fixture.request("local", transport, model, headers(credential));
             const observed = delta(fixture.counters, before);
             const search = transport === "search";
-            // A bare Direct route's existing guard rejects our proxy secret before Reserve.
-            // Exact-account routes use stored Pool credentials and do reach compatibility.
-            const earlyBearerRefusal = credential === "bearer" && (search || model === "gpt-reserve");
+            // Search never substitutes stored main credentials, so its bearer guard still refuses 401.
+            // Conversation transports substitute stored main credentials for Bearer env tokens even on loopback,
+            // so bare gpt-reserve reaches Reserve eligibility just like main/gpt-reserve (wham=1, 429).
+            const earlyBearerRefusal = credential === "bearer" && search;
             expect(result.status).toBe(earlyBearerRefusal ? 401 : search ? 400 : 429);
             expect(observed.wham).toBe(search || earlyBearerRefusal ? 0 : 1);
             expect(observed.inference).toBe(0);

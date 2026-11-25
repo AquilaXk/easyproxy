@@ -8,6 +8,7 @@ import { routeConcreteModel } from "../../router";
 import type { HandleResponsesOptions } from "./core-options";
 import {
   hasForwardableCodexBearer,
+  isBearerDataPlaneAdmission,
   validateForwardAdmissionCredential,
   isProxyAdmissionSecret,
   ForwardAdmissionCredentialError,
@@ -166,7 +167,7 @@ function codexRouteCredentialDomainHeadersFor(
     || route.routeKind === "policy"
     || route.credentialDomainRewrite === true
     || credentialDomainWasRewritten;
-  if (routeMayChangeCredentialDomain && options.admission?.source !== "bearer") {
+  if (routeMayChangeCredentialDomain && !isBearerDataPlaneAdmission(options.admission)) {
     const scoped = new Headers(req.headers);
     scoped.delete("authorization");
     scoped.delete("chatgpt-account-id");
@@ -206,7 +207,7 @@ export function codexRouteCredentialOwnership(
   route: Pick<RouteResult, "provider" | "codexAccountMode">,
   options: CodexCredentialOwnershipOptions,
 ): { substituteMainCredential: boolean; requestScopedMainCredential: boolean } {
-  const substituteMainCredential = options.admission?.source === "bearer"
+  const substituteMainCredential = isBearerDataPlaneAdmission(options.admission)
     && (route.codexAccountMode !== undefined || isCanonicalOpenAiForwardProvider(route.provider));
   return {
     substituteMainCredential,
@@ -299,7 +300,7 @@ export async function resolveResponsesCodexAuth(
       route,
       options,
     );
-    const stripAuthorization = options.admission?.source === "bearer" && !substituteMainCredential;
+    const stripAuthorization = isBearerDataPlaneAdmission(options.admission) && !substituteMainCredential;
     if (route.codexAccountMode === "direct" && !substituteMainCredential) {
       validateForwardAdmissionCredential(authInputHeaders, config);
     }

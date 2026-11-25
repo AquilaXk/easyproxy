@@ -1,4 +1,5 @@
 import { handleCodexAccountPreservation } from "./account-preservation";
+import { CredentialVaultError } from "../../lib/credential-vault";
 import { persistCodexAccountSelection } from "./account-selection";
 import { CODEX_ACCOUNT_LOG_LABEL_RE, codexAccountLogLabel } from "../account-label";
 import { handleUseRemainingQuotaRoute } from "./use-remaining-route";
@@ -498,6 +499,7 @@ export async function handleCodexAuthAPI(
     try {
       return await inspectResetCredits(config, accountId, req.signal);
     } catch (e) {
+      if (e instanceof CredentialVaultError) throw e;
       return jsonResponse({ error: e instanceof Error ? e.message : "Reset credit lookup failed" }, 500);
     }
   }
@@ -521,6 +523,7 @@ export async function handleCodexAuthAPI(
     try {
       return await consumeResetCredits(config, accountId, requestedOperationId);
     } catch (e) {
+      if (e instanceof CredentialVaultError) throw e;
       if (e instanceof PoolQuotaProbeBusyError) {
         const response = jsonResponse({ error: "server_busy", code: "server_busy" }, 503);
         response.headers.set("Retry-After", "1");

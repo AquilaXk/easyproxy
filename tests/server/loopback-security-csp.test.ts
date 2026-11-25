@@ -273,7 +273,7 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
         }), config)).toEqual({ kind: "loopback", source: "loopback" });
         expect(resolveResponsesApiAuth(new Request("http://127.0.0.1:10100/v1/responses", {
           headers: { authorization: `Bearer ${process.env.EASYPROXY_API_AUTH_TOKEN}` },
-        }), config)).toEqual({ kind: "loopback", source: "loopback" });
+        }), config)).toEqual({ kind: "loopback", source: "loopback", bearerCredential: true });
         expect(resolveResponsesApiAuth(new Request("http://127.0.0.1:10100/v1/responses", {
           headers: { authorization: `Bearer ${process.env.EASYPROXY_API_AUTH_TOKEN}` },
         }), { ...config, hostname: "0.0.0.0" })).toMatchObject({ kind: "environment", source: "bearer" });
@@ -369,6 +369,121 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       expect(seenOutbound[0]!.get("authorization")).not.toContain(LOOPBACK_KEY);
     } finally {
       globalThis.fetch = originalFetch;
+      await server.stop(true);
+    }
+  });
+
+  test("local Codex Direct over loopback succeeds with Bearer environment token across POST /v1/responses, POST /v1/responses/compact, and WS /v1/responses", async () => {
+    const previousEnvToken = process.env.EASYPROXY_API_AUTH_TOKEN;
+    const envToken = "epx_data_" + "f".repeat(40);
+    process.env.EASYPROXY_API_AUTH_TOKEN = envToken;
+    const exp = Math.floor(Date.now() / 1000) + 86_400;
+    const payload = Buffer.from(JSON.stringify({ exp, chatgpt_account_id: "acct-loopback-direct-env" })).toString("base64url");
+    const storedCredential = `header.${payload}.signature`;
+    writeFileSync(join(home, "auth.json"), JSON.stringify({
+      tokens: { access_token: storedCredential, account_id: "acct-loopback-direct-env" },
+    }));
+    const config: EpxConfig = {
+      port: 0,
+      hostname: "127.0.0.1",
+      websockets: true,
+      defaultProvider: "openai",
+      providers: {
+        openai: {
+          adapter: "openai-responses",
+          baseUrl: CODEX_FORWARD_BASE_URL,
+          authMode: "forward",
+          codexAccountMode: "direct",
+          upstreamWebsocket: false,
+        },
+      },
+    };
+    saveConfig(config);
+
+    const seenOutbound: Array<{ url: string; headers: Headers }> = [];
+    const server = startServer(0);
+    const localFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith(CODEX_FORWARD_BASE_URL)) {
+        seenOutbound.push({
+          url,
+          headers: new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)),
+        });
+        if (url.includes("/compact")) {
+          return Response.json({ object: "response.compaction", output: [] });
+        }
+        return Response.json({ id: "resp_direct_env_bearer", object: "response", status: "completed", output: [] });
+      }
+      return localFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      const httpRes = await localFetch(new URL("/v1/responses", server.url), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${envToken}`,
+        },
+        body: JSON.stringify({ model: "openai/gpt-5.3-codex", input: "hi", stream: false }),
+      });
+      expect(httpRes.status).toBe(200);
+
+      const compactRes = await localFetch(new URL("/v1/responses/compact", server.url), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${envToken}`,
+        },
+        body: JSON.stringify({ model: "openai/gpt-5.3-codex", input: [{ role: "user", content: "hi" }] }),
+      });
+      expect(compactRes.status).toBe(200);
+
+      const wsUrl = new URL("/v1/responses", server.url);
+      wsUrl.protocol = "ws:";
+      const wsCompleted = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const socket = new WebSocket(wsUrl.toString(), {
+          headers: { authorization: `Bearer ${envToken}` },
+        } as unknown as string[]);
+        const timer = setTimeout(() => {
+          try { socket.close(); } catch { /* ignore */ }
+          reject(new Error("Timed out waiting for WS response.completed"));
+        }, 5_000);
+        socket.addEventListener("open", () => {
+          socket.send(JSON.stringify({
+            type: "response.create",
+            model: "openai/gpt-5.3-codex",
+            input: "hi over ws",
+          }));
+        });
+        socket.addEventListener("message", event => {
+          const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
+          if (frame.type === "error") {
+            clearTimeout(timer);
+            socket.close();
+            reject(new Error(`Unexpected WS error frame: ${JSON.stringify(frame)}`));
+          } else if (frame.type === "response.completed") {
+            clearTimeout(timer);
+            socket.close();
+            resolve(frame);
+          }
+        });
+        socket.addEventListener("error", () => {
+          clearTimeout(timer);
+          reject(new Error("WebSocket error"));
+        });
+      });
+      expect(wsCompleted.type).toBe("response.completed");
+
+      expect(seenOutbound).toHaveLength(3);
+      for (const call of seenOutbound) {
+        expect(call.headers.get("authorization")).toBe(`Bearer ${storedCredential}`);
+        expect(call.headers.get("authorization")).not.toContain(envToken);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousEnvToken === undefined) delete process.env.EASYPROXY_API_AUTH_TOKEN;
+      else process.env.EASYPROXY_API_AUTH_TOKEN = previousEnvToken;
       await server.stop(true);
     }
   });

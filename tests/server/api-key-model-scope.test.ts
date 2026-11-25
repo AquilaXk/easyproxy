@@ -8,15 +8,18 @@ import { join } from "node:path";
 // module cycle from the wrong end and throws a TDZ ReferenceError.
 import { loadConfig } from "../../src/config";
 import {
+  admissionMayUseMeteredComboTargets,
   admissionModelDeniedBody,
   AdmissionModelDeniedError,
   admissionModelDeniedResponse,
   admissionModelScopeOf,
   assertRouteAllowedByScope,
+  intersectAdmissionModelScopes,
   MODEL_NOT_ALLOWED_FOR_KEY,
   resolveAdmissionModelScope,
   routeAllowedByScope,
 } from "../../src/server/admission-model-scope";
+import { decodeAdvisorAdmissionScope, encodeAdvisorAdmissionScope } from "../../src/server/advisor-admission-scope";
 import { routeModel } from "../../src/router";
 import type { EpxConfig } from "../../src/types";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -156,5 +159,31 @@ describe("per-key model and provider scope", () => {
     // A degrading neighbour still degrades, so the fail-closed choice is scoped
     // to the permission fields rather than hardening the whole record.
     expect(loadKeysFrom([{ ...scoped, name: 7 }, open])).toHaveLength(2);
+  });
+
+  test("an expired configured key resolves to a fail-closed deny-all scope rather than unrestricted", () => {
+    const expiredCfg: EpxConfig = {
+      apiKeys: [{
+        id: "expired-key",
+        name: "expired",
+        key: KEY,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        expiresAt: "2020-01-01T00:00:00.000Z",
+        allowMeteredComboTargets: true,
+      }],
+    };
+    const admission = { kind: "configured", keyId: "expired-key", source: "bearer" } as const;
+    const scope = resolveAdmissionModelScope(expiredCfg, admission);
+    expect(scope).toEqual({ denied: true, providers: [], models: [] });
+    expect(routeAllowedByScope(scope, { providerName: "openai", modelId: "gpt-5.4" })).toBe(false);
+    expect(() => assertRouteAllowedByScope(scope, "openai/gpt-5.4", {
+      providerName: "openai",
+      modelId: "gpt-5.4",
+    })).toThrow(AdmissionModelDeniedError);
+    expect(admissionMayUseMeteredComboTargets(expiredCfg, admission)).toBe(false);
+    const intersected = intersectAdmissionModelScopes(scope, { providers: ["openai"], models: [] });
+    expect(intersected?.denied).toBe(true);
+    const roundTripped = decodeAdvisorAdmissionScope(encodeAdvisorAdmissionScope(scope!));
+    expect(roundTripped).toEqual({ denied: true, providers: [], models: [] });
   });
 });

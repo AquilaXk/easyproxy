@@ -600,7 +600,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             websocketLease,
             sessionLaneIdFromRequest(req.headers),
             classifyUsageClient(req.headers), replayPrincipal, replayScope,
-          ), peerLocal: classifyRequestPeer(ingress, requestServer.requestIP?.(req)?.address, config.dashboardTrustedProxy, req.headers).local },
+          ), peerLocal: classifyRequestPeer(ingress, requestServer.requestIP?.(req)?.address, config.dashboardTrustedProxy, req.headers).local, loopbackListener: !isApiAuthRequired(policy) },
         })) return undefined as unknown as Response;
         releaseConnectionReplayScope(replayScope);
         websocketLease.release();

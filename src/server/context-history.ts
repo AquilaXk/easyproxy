@@ -17,7 +17,7 @@ import { clearableDeadline, type ClearableDeadline } from "../lib/abort";
 import { readBoundedResponseBytes } from "../lib/bounded-body";
 import type { AdmissionLease } from "../lib/admission";
 import type { EpxConfig } from "../types";
-import { resolveContextPrincipal, ForwardAdmissionCredentialError, validateForwardAdmissionCredential, type DataPlaneAdmission } from "./auth-cors";
+import { isBearerDataPlaneAdmission, resolveContextPrincipal, ForwardAdmissionCredentialError, validateForwardAdmissionCredential, type DataPlaneAdmission } from "./auth-cors";
 import { readBoundedJsonRequestBody } from "./request-decompress";
 import { codexLogAccountId, decodeRequestErrorResponse } from "./responses";
 import { codexAccountSelectionForTurn } from "./lifecycle";
@@ -75,7 +75,7 @@ async function relayContextHistory(
     return formatErrorResponse(404, "not_found", "Unknown context endpoint");
   }
   // Only a trusted listener admission authorizes replacing a proxy bearer with Codex auth.
-  const substituteMainCredential = admission?.source === "bearer";
+  const substituteMainCredential = isBearerDataPlaneAdmission(admission);
   try { if (!substituteMainCredential) validateForwardAdmissionCredential(req.headers, config); }
   catch (err) {
     if (err instanceof ForwardAdmissionCredentialError) return formatErrorResponse(401, "authentication_error", err.message);

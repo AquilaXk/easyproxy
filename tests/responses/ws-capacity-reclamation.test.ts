@@ -13,7 +13,14 @@ import type { EpxConfig } from "../../src/types";
 import { OPENAI_PROVIDER_TIER_VERSION } from "../../src/types";
 import { DEFAULT_SUBAGENT_MODELS, SUBAGENT_MODELS_VERSION } from "../../src/config/subagent-models";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
+import { managementFetch } from "../helpers/management-auth";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { clearRequestLogsForTests, getRequestLogEntries } from "../../src/server/request-log";
+import { contextPrincipalIdOf, resolveDataPlaneAdmissionSecret } from "../../src/server/auth-cors";
+import { createWebsocketHandler } from "../../src/server/index/websocket-handler";
+import type { ServeOptionsContext } from "../../src/server/index/serve-options";
+import type { WsData } from "../../src/server/ws-bridge";
+import type { ServerWebSocket } from "bun";
 
 const originalFetch = globalThis.fetch;
 const previousHome = process.env.EASYPROXY_HOME;
@@ -439,5 +446,167 @@ test("a surviving bearer keeps per-turn identity resolution ahead of a dropped x
   } finally {
     if (previousToken === undefined) delete process.env.EASYPROXY_API_AUTH_TOKEN;
     else process.env.EASYPROXY_API_AUTH_TOKEN = previousToken;
+  }
+});
+
+test("revoked configured key on open WS rejects subsequent response.create and warmup frames with 401 before handleResponses or scope escalation", async () => {
+  const restrictedKey = "epx_data_restrictedwsrevoke00000000000000000000";
+  const bearerKey = "epx_data_bearerwsrevoke000000000000000000000000";
+  await proxy!.stop(true);
+  saveConfig({
+    ...loadConfig(),
+    apiKeys: [
+      { id: "revoked-dedicated", key: restrictedKey, name: "restricted", createdAt: "2026-10-01T00:00:00.000Z", allowedProviders: ["other"], rpmLimit: 2 },
+      { id: "revoked-bearer", key: bearerKey, name: "bearer-restricted", createdAt: "2026-10-01T00:00:00.000Z", allowedProviders: ["other"], rpmLimit: 2 },
+    ],
+  });
+  proxy = startServer(0);
+
+  const dedicatedWs = await connect({ "x-easyproxy-api-key": restrictedKey });
+  const bearerWs = await connect({ authorization: `Bearer ${bearerKey}` });
+
+  // While active, scope blocks "fixture" with 403 before upstream.
+  const deniedBefore = await exchange(dedicatedWs, { input: "before revoke" }, "error");
+  expect(deniedBefore.status).toBe(403);
+  expect(upstreamRequests).toBe(0);
+
+  // Revoke both keys via management API while sockets stay open.
+  const del1 = await managementFetch(new URL("/api/keys", proxy.url), {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "revoked-dedicated" }),
+  });
+  const del2 = await managementFetch(new URL("/api/keys", proxy.url), {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "revoked-bearer" }),
+  });
+  expect(del1.status).toBe(200);
+  expect(del2.status).toBe(200);
+
+  // Subsequent response.create frames must fail with 401 (never escalate to unrestricted loopback or 403/200).
+  const dedicatedAfter = await exchange(dedicatedWs, { input: "after revoke" }, "error");
+  expect(dedicatedAfter).toMatchObject({
+    type: "error",
+    status: 401,
+    error: { type: "authentication_error", code: "invalid_api_key" },
+  });
+  const bearerAfter = await exchange(bearerWs, { input: "after revoke" }, "error");
+  expect(bearerAfter).toMatchObject({
+    type: "error",
+    status: 401,
+    error: { type: "authentication_error", code: "invalid_api_key" },
+  });
+  const warmupAfter = await exchange(bearerWs, { generate: false, input: "warmup after revoke" }, "error");
+  expect(warmupAfter).toMatchObject({
+    type: "error",
+    status: 401,
+    error: { type: "authentication_error", code: "invalid_api_key" },
+  });
+  expect(upstreamRequests).toBe(0);
+});
+
+test("expired configured key on open WS rejects subsequent response.create frames with 401", async () => {
+  const expiringKey = "epx_data_expiringwskey0000000000000000000000000";
+  const expiresAtMs = Date.now() + 300;
+  await proxy!.stop(true);
+  saveConfig({
+    ...loadConfig(),
+    apiKeys: [
+      {
+        id: "expiring-ws-key",
+        key: expiringKey,
+        name: "expiring",
+        createdAt: "2026-10-01T00:00:00.000Z",
+        expiresAt: new Date(expiresAtMs).toISOString(),
+        allowedProviders: ["other"],
+      },
+    ],
+  });
+  proxy = startServer(0);
+
+  const client = await connect({ authorization: `Bearer ${expiringKey}` });
+  const beforeExpiry = await exchange(client, { input: "still active" }, "error");
+  expect(beforeExpiry.status).toBe(403);
+
+  await until(() => Date.now() > expiresAtMs + 40, "key past expiresAt");
+
+  const afterExpiry = await exchange(client, { input: "after expiry" }, "error");
+  expect(afterExpiry).toMatchObject({
+    type: "error",
+    status: 401,
+    error: { type: "authentication_error", code: "invalid_api_key" },
+  });
+  expect(upstreamRequests).toBe(0);
+});
+
+test("re-resolved bearer key on open WS applies replacement budget, listener policy, and request attribution before turn admission", async () => {
+  const sharedSecret = "epx_data_reresolvebearerws0000000000000000000";
+  const cfg: EpxConfig = {
+    ...loadConfig(),
+    apiKeys: [
+      { id: "old-k1", key: sharedSecret, name: "k1", createdAt: "2026-10-01T00:00:00.000Z", allowedProviders: ["other"] },
+    ],
+  };
+  const admissionK1 = resolveDataPlaneAdmissionSecret(sharedSecret, cfg, "bearer", { allowLoopbackOnly: true })!;
+  expect(admissionK1.kind).toBe("configured");
+  const principalK1 = contextPrincipalIdOf(admissionK1);
+  expect(principalK1).toBeTruthy();
+
+  const handler = createWebsocketHandler({ config: cfg, deps: {} } as ServeOptionsContext);
+  const sent: Frame[] = [];
+  const ws = {
+    readyState: 1,
+    data: {
+      headers: new Headers({ authorization: `Bearer ${sharedSecret}` }),
+      admission: admissionK1,
+      replayPrincipal: { clientPrincipalId: principalK1 },
+      loopbackListener: true,
+    } as WsData,
+    send(payload: string) {
+      sent.push(JSON.parse(payload));
+      return 1;
+    },
+    close() {
+      handler.close(ws, 1000, "closed");
+    },
+  } as unknown as ServerWebSocket<WsData>;
+  handler.open(ws);
+  try {
+    clearRequestLogsForTests();
+    // Frame 1: runs under k1 -> 403 model scope denial.
+    handler.message(ws, JSON.stringify({ type: "response.create", model: MODEL, input: "turn 1" }));
+    await until(() => sent.some(f => f.type === "error"), "turn 1 scope denial");
+    expect(sent.at(-1)?.status).toBe(403);
+    expect(upstreamRequests).toBe(0);
+
+    // Replace k1 with k2 sharing the same bearer secret (allowedProviders: ["fixture"], rpmLimit: 1).
+    cfg.apiKeys = [
+      { id: "new-k2", key: sharedSecret, name: "k2", createdAt: "2026-10-01T00:00:00.000Z", allowedProviders: ["fixture"], rpmLimit: 1 },
+    ];
+    const startIdx2 = sent.length;
+    handler.message(ws, JSON.stringify({ type: "response.create", model: MODEL, input: "turn 2", store: false }));
+    await until(() => sent.slice(startIdx2).some(f => f.type === "response.completed" || f.type === "error"), "turn 2 completion");
+    expect(sent.slice(startIdx2).some(f => f.type === "response.completed")).toBe(true);
+    expect(upstreamRequests).toBe(1);
+    const logs = getRequestLogEntries();
+    expect(logs.some(entry => entry.apiKeyId === "new-k2" && entry.status === 200)).toBe(true);
+
+    // Frame 3: k2's rpmLimit=1 must now trigger 429 (proving budget checked effectiveAdmission, not skipped old wsAdmission).
+    const startIdx3 = sent.length;
+    handler.message(ws, JSON.stringify({ type: "response.create", model: MODEL, input: "turn 3", store: false }));
+    await until(() => sent.slice(startIdx3).some(f => f.type === "error"), "turn 3 budget 429");
+    expect(sent.at(-1)).toMatchObject({ type: "error", status: 429, error: { type: "rate_limit_error" } });
+    expect(upstreamRequests).toBe(1);
+
+    // Frame 4: removing all keys rejects subsequent frames with 401 before handleResponses.
+    cfg.apiKeys = [];
+    const startIdx4 = sent.length;
+    handler.message(ws, JSON.stringify({ type: "response.create", model: MODEL, input: "turn 4", store: false }));
+    await until(() => sent.slice(startIdx4).some(f => f.type === "error"), "turn 4 revoked 401");
+    expect(sent.at(-1)).toMatchObject({ type: "error", status: 401, error: { type: "authentication_error", code: "invalid_api_key" } });
+    expect(upstreamRequests).toBe(1);
+  } finally {
+    handler.close(ws, 1000, "done");
   }
 });
