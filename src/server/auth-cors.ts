@@ -873,11 +873,13 @@ export function isManagementAdmissionSecret(token: string): boolean {
   return !!actual && secretEquals(actual, configuredAdminAuthToken());
 }
 
+const PROXY_CREDENTIAL_SHAPE_RE = /^epx_(?:data|admin|session|pair|catalog|device|proof|hub_relay)_|^epxrw_|^epx_[0-9a-f]{40}$/;
+
 /** Whether `token` is one of the proxy's own admission secrets and must never reach an upstream. */
 export function isProxyAdmissionSecret(token: string, config: EpxConfig): boolean {
   const actual = token.trim();
   if (!actual) return false;
-  if (/^epx_(?:data|admin|session)_/.test(actual) || /^epx_[0-9a-f]{40}$/.test(actual)) return true;
+  if (PROXY_CREDENTIAL_SHAPE_RE.test(actual)) return true;
   return isDataPlaneAdmissionSecret(actual, config) || isManagementAdmissionSecret(actual);
 }
 
@@ -905,7 +907,7 @@ const LOOPBACK_DSH_BEARER_PLACEHOLDER = "epx_data_dsh";
 
 function isProxyCredentialShape(token: string, source: DataPlaneAdmissionSource): boolean {
   if (source === "bearer" && token === LOOPBACK_DSH_BEARER_PLACEHOLDER) return false;
-  return /^epx_(?:data|admin|session)_/.test(token) || /^epx_[0-9a-f]{40}$/.test(token);
+  return PROXY_CREDENTIAL_SHAPE_RE.test(token);
 }
 
 function readLiveAdminFileToken(): string | undefined {
@@ -921,7 +923,8 @@ function readLiveAdminFileToken(): string | undefined {
 }
 
 function isLiveLoopbackAdminSecret(token: string): boolean {
-  if (isManagementAdmissionSecret(token)) return true;
+  const envAdmin = configuredAdminAuthToken();
+  if (envAdmin) return secretEquals(token, envAdmin);
   if (!token.startsWith("epx_admin_")) return false;
   const fileToken = readLiveAdminFileToken();
   return fileToken !== undefined && secretEquals(token, fileToken);
@@ -936,7 +939,6 @@ export function resolveApiAuth(req: Request, config: RequestPolicyView): DataPla
   const options: DataPlaneAdmissionOptions = loopback
     ? { linkIngress: config.linkIngress?.allowedKeyIds, allowLoopbackOnly: true }
     : { linkIngress: config.linkIngress?.allowedKeyIds };
-  const hasConfiguredKeys = (config.apiKeys?.length ?? 0) > 0;
   const dedicated = req.headers.get("x-easyproxy-api-key")?.trim();
   if (dedicated) {
     if (loopback && isLiveLoopbackAdminSecret(dedicated)) {
@@ -948,36 +950,30 @@ export function resolveApiAuth(req: Request, config: RequestPolicyView): DataPla
         ? { kind: "loopback", source: "loopback" }
         : outcome.admission;
     }
-    if (!loopback || isProxyCredentialShape(dedicated, "dedicated") || outcome.status === "expired" || hasConfiguredKeys) {
-      return null;
-    }
+    return null;
   }
   const bearer = authorizationCredential(req.headers);
   if (bearer) {
     const isProxyShape = isProxyCredentialShape(bearer, "bearer");
-    const outcome = !loopback || isProxyShape
-      ? resolveDataPlaneAdmissionOutcome(bearer, config, "bearer", options)
-      : null;
-    if (outcome?.status === "matched") {
+    const outcome = resolveDataPlaneAdmissionOutcome(bearer, config, "bearer", options);
+    if (outcome.status === "matched") {
       return loopback && outcome.admission.kind === "environment"
         ? { kind: "loopback", source: "loopback" }
         : outcome.admission;
     }
-    if (!loopback || isProxyShape || outcome?.status === "expired") return null;
+    if (!loopback || isProxyShape || outcome.status === "expired") return null;
   }
   // Anthropic-SDK clients (Claude Code with ANTHROPIC_API_KEY) authenticate via x-api-key.
   const apiKey = req.headers.get("x-api-key")?.trim();
   if (apiKey) {
     const isProxyShape = isProxyCredentialShape(apiKey, "x-api-key");
-    const outcome = !loopback || isProxyShape
-      ? resolveDataPlaneAdmissionOutcome(apiKey, config, "x-api-key", options)
-      : null;
-    if (outcome?.status === "matched") {
+    const outcome = resolveDataPlaneAdmissionOutcome(apiKey, config, "x-api-key", options);
+    if (outcome.status === "matched") {
       return loopback && outcome.admission.kind === "environment"
         ? { kind: "loopback", source: "loopback" }
         : outcome.admission;
     }
-    if (!loopback || isProxyShape || outcome?.status === "expired") return null;
+    if (!loopback || isProxyShape || outcome.status === "expired") return null;
   }
   return loopback ? { kind: "loopback", source: "loopback" } : null;
 }
@@ -1001,7 +997,6 @@ export function resolveResponsesApiAuth(req: Request, config: RequestPolicyView)
   const options: DataPlaneAdmissionOptions = loopback
     ? { linkIngress: config.linkIngress?.allowedKeyIds, allowLoopbackOnly: true }
     : { linkIngress: config.linkIngress?.allowedKeyIds };
-  const hasConfiguredKeys = (config.apiKeys?.length ?? 0) > 0;
   // The dedicated header still WINS, because it is unambiguous.
   const dedicated = req.headers.get("x-easyproxy-api-key")?.trim();
   if (dedicated) {
@@ -1014,9 +1009,7 @@ export function resolveResponsesApiAuth(req: Request, config: RequestPolicyView)
         ? { kind: "loopback", source: "loopback" }
         : outcome.admission;
     }
-    if (!loopback || isProxyCredentialShape(dedicated, "dedicated") || outcome.status === "expired" || hasConfiguredKeys) {
-      return null;
-    }
+    return null;
   }
   // #1686: a bearer may also be one of OUR admission secrets. Rejecting it outright meant a
   // Codex client configured with `env_key` could not reach Direct at all. Admitting it is only
@@ -1026,15 +1019,13 @@ export function resolveResponsesApiAuth(req: Request, config: RequestPolicyView)
   const bearer = authorizationCredential(req.headers);
   if (bearer) {
     const isProxyShape = isProxyCredentialShape(bearer, "bearer");
-    const outcome = !loopback || isProxyShape
-      ? resolveDataPlaneAdmissionOutcome(bearer, config, "bearer", options)
-      : null;
-    if (outcome?.status === "matched") {
+    const outcome = resolveDataPlaneAdmissionOutcome(bearer, config, "bearer", options);
+    if (outcome.status === "matched") {
       return loopback && outcome.admission.kind === "environment"
         ? { kind: "loopback", source: "loopback" }
         : outcome.admission;
     }
-    if (!loopback || isProxyShape || outcome?.status === "expired") return null;
+    if (!loopback || isProxyShape || outcome.status === "expired") return null;
   }
   // `x-api-key` is deliberately NOT accepted on this transport.
   return loopback ? { kind: "loopback", source: "loopback" } : null;

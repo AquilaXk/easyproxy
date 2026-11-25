@@ -183,7 +183,16 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       expect((await chat({ "x-easyproxy-api-key": "revoked-custom-key" }, "alpha/gpt-alpha")).status).toBe(401);
 
       // Revoked/unmatched proxy-shaped Bearer or x-api-key -> 401 (never escalate to loopback)
-      for (const badShape of [revokedKey, "epx_admin_" + "a".repeat(43), "epx_session_" + "b".repeat(32), "epx_" + "c".repeat(40)]) {
+      for (const badShape of [
+        revokedKey,
+        "epx_admin_" + "a".repeat(43),
+        "epx_session_" + "b".repeat(32),
+        "epx_pair_" + "p".repeat(43),
+        "epx_catalog_" + "k".repeat(43),
+        "epx_hub_relay_" + "h".repeat(43),
+        "epxrw_" + "r".repeat(43),
+        "epx_" + "c".repeat(40),
+      ]) {
         expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/models", {
           headers: { authorization: `Bearer ${badShape}` },
         }), config)).toBeNull();
@@ -194,6 +203,12 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
           headers: { "x-api-key": badShape },
         }), config)).toBeNull();
       }
+      expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/models", {
+        headers: { "x-easyproxy-api-key": "epx_data_dsh" },
+      }), config)).toBeNull();
+      expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/models", {
+        headers: { "x-api-key": "epx_data_dsh" },
+      }), config)).toBeNull();
       expect((await chat({ authorization: `Bearer ${revokedKey}` }, "alpha/gpt-alpha")).status).toBe(401);
       expect((await fetch(new URL("/v1/models", server.url), { headers: { "x-api-key": revokedKey } })).status).toBe(401);
 
@@ -210,11 +225,39 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       }), config)).toEqual({ kind: "loopback", source: "loopback" });
       expect((await chat({ authorization: "Bearer sk-test-002upstream" }, "alpha/gpt-alpha")).status).toBe(200);
 
+      // Custom non-epx_ virtual keys in Bearer/x-api-key on loopback also enforce scope and expiry.
+      const customScopedCfg: EpxConfig = {
+        ...config,
+        apiKeys: [
+          ...(config.apiKeys ?? []),
+          { id: "custom-scoped", name: "custom-scoped", key: "custom-scoped-secret", createdAt: "2026-10-01T00:00:00.000Z", allowedModels: ["alpha/gpt-alpha"] },
+          { id: "custom-expired", name: "custom-expired", key: "custom-expired-secret", createdAt: "2026-10-01T00:00:00.000Z", expiresAt: "2020-01-01T00:00:00.000Z" },
+        ],
+      };
+      expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/chat/completions", {
+        headers: { authorization: "Bearer custom-scoped-secret" },
+      }), customScopedCfg)).toMatchObject({ kind: "configured", keyId: "custom-scoped", source: "bearer" });
+      expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/messages", {
+        headers: { "x-api-key": "custom-scoped-secret" },
+      }), customScopedCfg)).toMatchObject({ kind: "configured", keyId: "custom-scoped", source: "x-api-key" });
+      expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/chat/completions", {
+        headers: { authorization: "Bearer custom-expired-secret" },
+      }), customScopedCfg)).toBeNull();
+      expect(resolveResponsesApiAuth(new Request("http://127.0.0.1:10100/v1/responses", {
+        headers: { authorization: "Bearer custom-expired-secret" },
+      }), customScopedCfg)).toBeNull();
+
       // Revoking the last virtual key leaves config.apiKeys empty, yet unmatched epx_* tokens
-      // MUST still fail closed (401) rather than escalating to loopback.
+      // AND any non-empty unmatched x-easyproxy-api-key MUST still fail closed (401).
       const emptyKeysConfig = { ...config, apiKeys: [] };
       expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/models", {
         headers: { "x-easyproxy-api-key": revokedKey },
+      }), emptyKeysConfig)).toBeNull();
+      expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/models", {
+        headers: { "x-easyproxy-api-key": "revoked-custom-key" },
+      }), emptyKeysConfig)).toBeNull();
+      expect(resolveResponsesApiAuth(new Request("http://127.0.0.1:10100/v1/responses", {
+        headers: { "x-easyproxy-api-key": "revoked-custom-key" },
       }), emptyKeysConfig)).toBeNull();
       expect(resolveResponsesApiAuth(new Request("http://127.0.0.1:10100/v1/responses", {
         headers: { authorization: `Bearer ${revokedKey}` },
@@ -240,13 +283,18 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       }
 
       // Live local management admin token via x-easyproxy-api-key keeps loopback admission,
-      // whereas arbitrary/unmatched epx_admin_* credentials remain rejected (401).
+      // whereas stale admin-api-token files (when env admin is active) and arbitrary epx_admin_* fail closed.
       const prevEnvAdminToken = process.env.EASYPROXY_ADMIN_AUTH_TOKEN;
+      const staleFileAdmin = "epx_admin_" + "s".repeat(43);
+      writeFileSync(join(home, "admin-api-token"), staleFileAdmin + "\n");
       process.env.EASYPROXY_ADMIN_AUTH_TOKEN = "epx_admin_" + "d".repeat(43);
       try {
         expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/models", {
           headers: { "x-easyproxy-api-key": process.env.EASYPROXY_ADMIN_AUTH_TOKEN },
         }), config)).toEqual({ kind: "loopback", source: "loopback" });
+        expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/models", {
+          headers: { "x-easyproxy-api-key": staleFileAdmin },
+        }), config)).toBeNull();
         expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/models", {
           headers: { "x-easyproxy-api-key": "epx_admin_" + "z".repeat(43) },
         }), config)).toBeNull();

@@ -76,13 +76,16 @@ import {
   isApiAuthRequired,
   jsonResponse,
   admissionFields,
+  contextPrincipalIdOf,
   resolveApiAuth,
+  resolveDataPlaneAdmissionSecret,
   resolveResponsesApiAuth,
   isContextPrincipalCurrent,
   type RequestPolicyView,
   withCors,
   withManagementCors,
 } from "../auth-cors";
+import { authorizationCredential } from "../../lib/authorization-scheme";
 import { connectionReplayScopeLive, releaseConnectionReplayScope } from "../../responses/state/connection-scope";
 import {
   disableResponsesRequestTimeout,
@@ -424,15 +427,36 @@ export function createWebsocketHandler(
             ws.data.nativeControl = nativeControl;
             let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;
             const retainedPrincipal = ws.data.replayPrincipal;
-            const replayPrincipal = retainedPrincipal && (isContextPrincipalCurrent(retainedPrincipal.clientPrincipalId, config)
+            let replayPrincipal = retainedPrincipal && (isContextPrincipalCurrent(retainedPrincipal.clientPrincipalId, config)
               ? retainedPrincipal : { clientPrincipalId: undefined });
+            let effectiveAdmission = wsAdmission;
+            if (!replayPrincipal && !linkSocket && wsAdmission?.kind === "configured"
+              && !isContextPrincipalCurrent(wsAdmission.contextPrincipalId, config)) {
+              if (wsAdmission.source === "bearer") {
+                const bearerToken = authorizationCredential(fwd);
+                const resolvedBearer = bearerToken
+                  ? resolveDataPlaneAdmissionSecret(bearerToken, config, "bearer", { allowLoopbackOnly: !isApiAuthRequired(config) })
+                  : null;
+                if (resolvedBearer?.kind === "environment" && !isApiAuthRequired(config)) {
+                  effectiveAdmission = { kind: "loopback", source: "loopback" };
+                  replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
+                } else if (resolvedBearer) {
+                  effectiveAdmission = resolvedBearer;
+                  replayPrincipal = { clientPrincipalId: contextPrincipalIdOf(resolvedBearer) };
+                } else {
+                  replayPrincipal = { clientPrincipalId: undefined };
+                }
+              } else {
+                replayPrincipal = { clientPrincipalId: undefined };
+              }
+            }
             // The connection scope is a live-socket capability, not a retained credential:
             // once closed or expired it stops backfilling the replay owner entirely.
             const retainedScope = ws.data.replayScope;
             const replayScope = retainedScope && connectionReplayScopeLive(retainedScope) ? retainedScope : undefined;
             const response = await handleResponses(req, config, logCtx, {
               advisorAdmissionPolicy,
-              ...(wsAdmission ? { admission: wsAdmission } : {}),
+              ...(effectiveAdmission ? { admission: effectiveAdmission } : {}),
               // Keep an empty holder after revocation: a different forwarded bearer
               // must not become this connection's retained replay owner.
               ...(replayPrincipal ? { replayPrincipal } : {}),
