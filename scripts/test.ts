@@ -49,6 +49,23 @@ export function liveInstallEnvNames(env: NodeJS.ProcessEnv): string[] {
   });
 }
 
+/**
+ * Forced-color overrides (`FORCE_COLOR`, `CLICOLOR_FORCE`) cause child processes — including Bun
+ * `--parallel` workers under a PTY — to inject ANSI escape sequences into piped stdout/stderr,
+ * overriding `NO_COLOR=1` and breaking strict CLI output assertions.
+ */
+export const TERMINAL_COLOR_OVERRIDE_ENV = [
+  "FORCE_COLOR",
+  "CLICOLOR_FORCE",
+] as const;
+
+export function terminalColorOverrideEnvNames(env: NodeJS.ProcessEnv): string[] {
+  return Object.keys(env).filter(name => {
+    const match = process.platform === "win32" ? name.toUpperCase() : name;
+    return TERMINAL_COLOR_OVERRIDE_ENV.some(colorName => colorName === match);
+  });
+}
+
 export function createIsolatedTestEnvironment(
   baseEnv: Record<string, string | undefined> = process.env,
 ): IsolatedTestEnvironment {
@@ -84,6 +101,7 @@ export function createIsolatedTestEnvironment(
   writeTestTempOwner(root, baseEnv[TEST_RUN_ID_ENV]);
   const inherited = { ...baseEnv };
   for (const name of liveInstallEnvNames(inherited)) delete inherited[name];
+  for (const name of terminalColorOverrideEnvNames(inherited)) delete inherited[name];
   // A GIT_DIR/GIT_WORK_TREE inherited from a hook or wrapper re-points every git command the suite
   // spawns, and fixture helpers then init, configure and commit into that repository. Starting the
   // children without them also covers Bun.spawn calls that pass no env (scripts/git-repository-env.ts).
@@ -659,6 +677,8 @@ export async function runTestLane(
     // (not its own test timeout) needs headroom for process startup on a busy machine.
     // See tests/helpers/ci-watchdog.ts `isolationBudgetMs`.
     EPX_TEST_FULL_SUITE: "1",
+    // Bun `--parallel` injects FORCE_COLOR=1 into every worker when stdout is a TTY unless NO_COLOR is set.
+    NO_COLOR: "1",
   });
   const startedAt = Date.now();
   let interrupted: NodeJS.Signals | null = null;

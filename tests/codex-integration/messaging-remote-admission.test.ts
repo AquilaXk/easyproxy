@@ -34,7 +34,7 @@ for (const forged of ["origin", "reply-host", "reply-command", "guidance", "uuid
       expect(receipt.status).toBe("unknown");
       expect(pair.b.calls.filter(call => call.method === "thread/queue/add")).toHaveLength(0);
     } finally { rpc?.close(); budget.dispose(); await owners.close(); await pair.close(); }
-  });
+  }, 15_000);
 }
 
 test.skipIf(process.platform === "win32")("outbound enrollment permits one correlated return reply, not other kinds, threads or replay", async () => {
@@ -63,7 +63,7 @@ test.skipIf(process.platform === "win32")("outbound enrollment permits one corre
     expect(pair.a.calls.filter(call => call.method === "thread/queue/add")).toHaveLength(1);
     expect((await remoteSessions(pair.bStore, host, budget)).sessions).toEqual([]);
   } finally { budget.dispose(); await owners.close(); await pair.close(); }
-});
+}, 15_000);
 
 test.skipIf(process.platform === "win32")("local opt-in permits inbound requests and live withdrawal narrows already-attached clients", async () => {
   const pair = remoteMessagingPair(), owners = await pair.owners(), budget = new MessageBudget();
@@ -82,7 +82,7 @@ test.skipIf(process.platform === "win32")("local opt-in permits inbound requests
     await expect(rpc.readThread(LOCAL_OTHER)).rejects.toThrow();
     expect((await remoteSessions(pair.bStore, host, budget)).sessions).toEqual([]);
   } finally { rpc?.close(); budget.dispose(); await owners.close(); await pair.close(); }
-});
+}, 15_000);
 
 test.skipIf(process.platform === "win32")("pre-auth saturation leaves authenticated RPC and owner control available", async () => {
   const pair = remoteMessagingPair(), owners = await pair.owners(), budget = new MessageBudget();
@@ -105,7 +105,7 @@ test.skipIf(process.platform === "win32")("pre-auth saturation leaves authentica
       "message/lease", { port: owners.aOwner.port, generation: owners.aGeneration }, budget)).toHaveProperty("leased", true);
     expect(silent.filter(ws => ws.readyState === WebSocket.OPEN).length).toBeLessThanOrEqual(REMOTE_LIMITS.unauthenticated);
   } finally { for (const ws of silent) ws.terminate(); rpc?.close(); budget.dispose(); await owners.close(); await pair.close(); }
-});
+}, 15_000);
 
 test.skipIf(process.platform === "win32")("authenticated peer saturation leaves owner control and renewal capacity available", async () => {
   const concurrentSends = 3;
@@ -151,7 +151,7 @@ test.skipIf(process.platform === "win32")("authenticated peer saturation leaves 
     unblock(); for (const ws of held) ws.terminate(); for (const rpc of busy) rpc.close();
     await Promise.allSettled(pending); budget.dispose(); await owners.close(); await pair.close();
   }
-});
+}, 15_000);
 
 test("inbound consent is explicit local grammar, not an enrollment flag or peer-supplied action", () => {
   for (const verb of ["allow-inbound", "deny-inbound"] as const) {

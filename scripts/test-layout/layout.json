@@ -583,7 +583,7 @@
     "system-restart.test.ts": "server", "system-routes.test.ts": "server", "systemd-install-cleanup-hardening.test.ts": "service", "tencent-siliconflow-providers.test.ts": "gui",
     "terminal-continuation-owner-rotation.test.ts": "adapters", "terminal-guard-server.test.ts": "server", "terminal-guard.test.ts": "server", "terminal-safe-text.test.ts": "lib",
     "test-home-guard.test.ts": "ci-workflows", "codex-home-sandbox.test.ts": "ci-workflows", "test-home-guard-unpreloaded.test.ts": "ci-workflows", "test-run-lock-generation.test.ts": "ci-workflows",
-    "test-runner.test.ts": "ci-workflows", "test-runner-bun.test.ts": "ci-workflows", "test-runner-spawnsync-finalizer.test.ts": "ci-workflows", "test-sandbox-cleanup.test.ts": "ci-workflows",
+    "test-runner.test.ts": "ci-workflows", "test-runner-bun.test.ts": "ci-workflows", "test-runner-color-isolation.test.ts": "ci-workflows", "test-runner-spawnsync-finalizer.test.ts": "ci-workflows", "test-sandbox-cleanup.test.ts": "ci-workflows",
     "test-temp-quarantine.test.ts": "ci-workflows", "thought-signature-credential-scope.test.ts": "responses", "token-estimate.test.ts": "lib", "token-guardian.test.ts": "codex-integration",
     "tool-argument-integers.test.ts": "adapters", "tool-catalog-nudge.test.ts": "adapters", "tool-choice-performance.test.ts": "adapters", "transient-budget-scope-source.test.ts": "lib",
     "translator-budget.test.ts": "adapters", "translator-budget-lifetime.test.ts": "adapters", "catalog-async-lifetime.test.ts": "codex-integration", "transport-null-body.test.ts": "lib",

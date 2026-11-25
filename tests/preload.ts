@@ -27,7 +27,7 @@
  */
 import { afterAll, afterEach } from "bun:test";
 import { isTestHomeGuardArmed, protectedHomeForTests } from "../src/lib/test-home-guard";
-import { createIsolatedTestEnvironment, liveInstallEnvNames } from "../scripts/test";
+import { createIsolatedTestEnvironment, liveInstallEnvNames, terminalColorOverrideEnvNames } from "../scripts/test";
 import { gitRepositoryEnvNames } from "../scripts/git-repository-env";
 import { createGitConfigGuard } from "./helpers/git-config-guard";
 import { installNetworkEgressGuard } from "./helpers/network-egress-guard";
@@ -66,6 +66,7 @@ for (const name of inheritedGitEnv) delete process.env[name];
 if (inheritedGitEnv.length > 0) {
   console.warn(`[test] removed inherited ${inheritedGitEnv.join(", ")}; Bun.spawn calls that pass no env still see them. Run through \`bun run test\` or unset them.`);
 }
+for (const name of terminalColorOverrideEnvNames(process.env)) delete process.env[name];
 
 // Arm the guard once the sandbox is in place, and BEFORE the run lock.
 //

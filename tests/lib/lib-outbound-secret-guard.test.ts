@@ -13,6 +13,8 @@ import { handleChatCompletions } from "../../src/server/chat-completions";
 import { handleClaudeMessages } from "../../src/server/claude-messages";
 import { handleResponsesCompact } from "../../src/server/responses/compact";
 import { handleManagementAPI } from "../../src/server/management-api";
+import { ANTHROPIC_ERROR_CODES, OPENAI_ERROR_CODES } from "../../src/lib/client-error-body";
+import { normalizeLogErrorCode } from "../../src/usage/error-detail";
 import {
   applyOutboundPayloadHygiene,
   getOutboundHygieneStats,
@@ -205,6 +207,11 @@ describe("outbound-secret-guard", () => {
         { model: "gpt-4o", provider: "openai-chat" },
       );
       expect(chatRes.status).toBe(400);
+      const chatText = await chatRes.text();
+      expect(chatText).not.toContain(secret);
+      expect(JSON.parse(chatText)).toMatchObject({
+        error: { type: "invalid_request_error", code: "outbound_secret_guard" },
+      });
 
       const msgRes = await handleClaudeMessages(
         new Request("http://127.0.0.1/v1/messages", {
@@ -216,6 +223,12 @@ describe("outbound-secret-guard", () => {
         { model: "claude-sonnet-4-5", provider: "anthropic" },
       );
       expect(msgRes.status).toBe(400);
+      const msgText = await msgRes.text();
+      expect(msgText).not.toContain(secret);
+      expect(JSON.parse(msgText)).toMatchObject({
+        type: "error",
+        error: { type: "invalid_request_error", code: "outbound_secret_guard" },
+      });
 
       const compactRes = await handleResponsesCompact(
         new Request("http://127.0.0.1/v1/responses/compact", {
@@ -227,6 +240,14 @@ describe("outbound-secret-guard", () => {
         { model: "gpt-5.3-codex", provider: "openai" },
       );
       expect(compactRes.status).toBe(400);
+      const compactText = await compactRes.text();
+      expect(compactText).not.toContain(secret);
+      expect(JSON.parse(compactText)).toMatchObject({
+        error: { type: "invalid_request_error" },
+      });
+      expect(OPENAI_ERROR_CODES.has("outbound_secret_guard")).toBe(true);
+      expect(ANTHROPIC_ERROR_CODES.has("outbound_secret_guard")).toBe(true);
+      expect(normalizeLogErrorCode("outbound_secret_guard", 400)).toBe("outbound_secret_guard");
       expect(fetchCalls).toBe(0);
     } finally {
       globalThis.fetch = origFetch;

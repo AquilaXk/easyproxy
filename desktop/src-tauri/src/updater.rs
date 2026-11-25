@@ -822,7 +822,11 @@ fn run_bounded_child_with_slot(
     };
     let mut outputs = Vec::with_capacity(2);
     for (rx, _) in &readers {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        // The child already exited within `deadline`; grant a brief pipe-drain grace window so a
+        // near-deadline completion does not race with the reader thread's final `tx.send(bytes)`.
+        let remaining = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .max(Duration::from_millis(50));
         match rx.recv_timeout(remaining) {
             Ok(bytes) => outputs.push(bytes),
             Err(_) => {
@@ -1524,6 +1528,94 @@ mod tests {
             assert!(busy_err.contains("busy"), "{busy_err}");
 
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while TEST_BUSY.load(Ordering::Acquire) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "abandoned child slot never cleared"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(!temp_slow_path.exists());
+        }
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            static TEST_BUSY: AtomicBool = AtomicBool::new(false);
+            let powershell = windows_powershell_path_from(std::env::var_os("SystemRoot"));
+
+            let temp_fast = TempMsiFile::create_with_bytes_limit(b"msi", 64).unwrap();
+            let temp_fast_path = temp_fast.path.clone();
+            let ps_fast = powershell.clone();
+            let ok_output = run_bounded_child_with_slot(
+                &TEST_BUSY,
+                || {
+                    let child = std::process::Command::new(&ps_fast)
+                        .args([
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-Command",
+                            "[Console]::Out.Write('ok'); [Console]::Error.Write('warn')",
+                        ])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    Ok((Some(temp_fast), child))
+                },
+                Duration::from_secs(10),
+                Duration::from_millis(5),
+            )
+            .unwrap();
+            assert!(ok_output.status.success());
+            assert_eq!(ok_output.stdout, b"ok");
+            assert_eq!(ok_output.stderr, b"warn");
+            assert!(!temp_fast_path.exists());
+            assert!(!TEST_BUSY.load(Ordering::Acquire));
+
+            let temp_slow = TempMsiFile::create_with_bytes_limit(b"msi", 64).unwrap();
+            let temp_slow_path = temp_slow.path.clone();
+            let started = std::time::Instant::now();
+            let err = run_bounded_child_with_slot(
+                &TEST_BUSY,
+                || {
+                    let child = std::process::Command::new(&powershell)
+                        .args([
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-Command",
+                            "Start-Sleep -Seconds 2",
+                        ])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    Ok((Some(temp_slow), child))
+                },
+                Duration::from_millis(40),
+                Duration::from_millis(5),
+            )
+            .err()
+            .unwrap();
+            assert!(err.contains("timed out"), "{err}");
+            assert!(started.elapsed() < Duration::from_millis(1500));
+            assert!(temp_slow_path.exists());
+            let busy_err = run_bounded_child_with_slot(
+                &TEST_BUSY,
+                || panic!("busy slot must reject before spawn"),
+                Duration::from_secs(1),
+                Duration::from_millis(5),
+            )
+            .err()
+            .unwrap();
+            assert!(busy_err.contains("busy"), "{busy_err}");
+
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
             while TEST_BUSY.load(Ordering::Acquire) {
                 assert!(
                     std::time::Instant::now() < deadline,
