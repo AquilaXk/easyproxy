@@ -273,10 +273,21 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     expect(modalDialog!.querySelector(".modal-backdrop-dismiss")).not.toBeNull();
     const modalCard = modalDialog!.querySelector<HTMLElement>(".modal-card");
     expect(modalCard).not.toBeNull();
-    expect(modalCard!.style.maxWidth).toBe("680px");
-    expect(modalCard!.querySelector(".modal-head")).not.toBeNull();
-    expect(modalCard!.querySelector(".modal-actions")).not.toBeNull();
+    expect(modalCard!.style.maxWidth).toBe("760px");
+    expect(modalCard!.classList.contains("flex")).toBe(true);
+    expect(modalCard!.classList.contains("flex-col")).toBe(true);
+    expect(modalCard!.classList.contains("overflow-hidden")).toBe(true);
+    const modalHead = modalCard!.querySelector<HTMLElement>(".modal-head");
+    const modalActions = modalCard!.querySelector<HTMLElement>(".modal-actions");
+    const scrollBody = modalCard!.querySelector<HTMLElement>(".overflow-y-auto.flex-1");
+    expect(modalHead).not.toBeNull();
+    expect(modalHead!.classList.contains("shrink-0")).toBe(true);
+    expect(modalActions).not.toBeNull();
+    expect(modalActions!.classList.contains("shrink-0")).toBe(true);
+    expect(scrollBody).not.toBeNull();
     expect(modalCard!.querySelector("table.tbl")).not.toBeNull();
+    expect(modalCard!.querySelector("table.tbl thead th.sticky")).not.toBeNull();
+    expect(modalCard!.querySelector("table.tbl td.break-all")?.textContent).toBe("https://relay.example.com/v1");
     expect(host.querySelector(".modal-backdrop")).toBeNull();
     expect(host.querySelector(".modal-body")).toBeNull();
     expect(host.querySelector(".modal-foot")).toBeNull();
@@ -373,13 +384,34 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     expect(dialog).not.toBeNull();
     expect(backdropBtn).not.toBeNull();
 
-    // Idle state: backdrop click & Escape dismiss the modal.
+    // Idle state: backdrop click, pointer-outside click (single invocation), & Escape dismiss the modal;
+    // drag starting inside .modal-card and releasing on backdrop must NOT dismiss.
     await act(async () => { backdropBtn.click(); });
     expect(closeCount).toBe(1);
+
+    const card = dialog.querySelector<HTMLElement>(".modal-card")!;
+    Object.defineProperty(card, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 260, top: 64, right: 1020, bottom: 700, width: 760, height: 636, x: 260, y: 64, toJSON() { return this; } }),
+    });
+    await act(async () => {
+      backdropBtn.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 20, clientY: 20 }));
+      backdropBtn.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: 20, clientY: 20 }));
+      backdropBtn.click();
+    });
+    expect(closeCount).toBe(2);
+
+    await act(async () => {
+      card.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 400, clientY: 200 }));
+      backdropBtn.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: 20, clientY: 20 }));
+      backdropBtn.click();
+    });
+    expect(closeCount).toBe(2);
+
     await act(async () => {
       dialog.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
-    expect(closeCount).toBe(2);
+    expect(closeCount).toBe(3);
 
     // Start apply (in flight): backdrop, Escape, and Close buttons must stay blocked.
     const checkboxes = [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
@@ -394,7 +426,7 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     await act(async () => {
       dialog.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
-    expect(closeCount).toBe(2);
+    expect(closeCount).toBe(3);
 
     resolveApply(new Response(JSON.stringify({
       imported: 1,
@@ -406,7 +438,7 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
 
     expect(backdropBtn.disabled).toBe(false);
     await act(async () => { backdropBtn.click(); });
-    expect(closeCount).toBe(3);
+    expect(closeCount).toBe(4);
   });
 
   test("Stage 3C default fallback port is 10100 across Home quickstart, log-export curl, and playground-client", async () => {

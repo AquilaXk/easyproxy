@@ -110,6 +110,40 @@ test("ModalDialog invokes showModal/fallback, respects dismissDisabled, closes o
     host.querySelector<HTMLButtonElement>(".modal-backdrop-dismiss")!.click();
   });
   expect(host.querySelector("dialog")).toBeNull();
+
+  // Real pointer interaction on backdrop calls onClose once, and drag from card out does not close.
+  let spyCloses = 0;
+  await act(async () => {
+    root!.render(
+      <LanguageProvider>
+        <ModalDialog aria-label="Pointer spy modal" onClose={() => { spyCloses += 1; }}>
+          <button type="button">Inside</button>
+        </ModalDialog>
+      </LanguageProvider>,
+    );
+  });
+  const spyDialog = host.querySelector<HTMLDialogElement>("dialog")!;
+  const spyCard = spyDialog.querySelector<HTMLElement>(".modal-card")!;
+  const spyBackdrop = spyDialog.querySelector<HTMLButtonElement>(".modal-backdrop-dismiss")!;
+  Object.defineProperty(spyCard, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ left: 200, top: 100, right: 600, bottom: 400, width: 400, height: 300, x: 200, y: 100, toJSON() { return this; } }),
+  });
+  await act(async () => {
+    spyBackdrop.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 10 }));
+    spyBackdrop.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: 10, clientY: 10 }));
+    spyBackdrop.click();
+  });
+  expect(spyCloses).toBe(1);
+  await act(async () => {
+    spyCard.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 250, clientY: 150 }));
+    spyBackdrop.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: 10, clientY: 10 }));
+    spyBackdrop.click();
+  });
+  expect(spyCloses).toBe(1);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await act(async () => { spyBackdrop.click(); });
+  expect(spyCloses).toBe(2);
 });
 
 test("ApiKeysListPanel renders inline quota bars scaled to peak budget usage and omits bars without limits", async () => {

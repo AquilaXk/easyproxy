@@ -210,11 +210,11 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
     <ModalDialog
       aria-labelledby="cc-switch-modal-title"
       dismissDisabled={applying}
-      cardClassName="overscroll-contain"
-      cardStyle={{ maxWidth: 680 }}
+      cardClassName="flex flex-col overflow-hidden overscroll-contain"
+      cardStyle={{ maxWidth: 760 }}
       onClose={onClose}
     >
-      <div className="modal-head items-start gap-3">
+      <div className="modal-head shrink-0 items-start gap-3 mb-3">
         <div className="min-w-0">
           <h3 id="cc-switch-modal-title">{uxT(locale, "ccSwitch.title")}</h3>
           <p className="muted mt-1 mb-0 text-xs">{uxT(locale, "ccSwitch.subtitle")}</p>
@@ -229,7 +229,7 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
         </button>
       </div>
 
-      <div className="flex flex-col gap-3">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 px-1 -mx-1 py-0.5 -my-0.5">
           <div className="rounded-card border border-solid border-line bg-inset p-3 text-xs text-fg-muted">
             {uxT(locale, "ccSwitch.consentNotice")}
           </div>
@@ -290,22 +290,22 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
           )}
 
           {preview && preview.providers.length > 0 && (
-            <div className="max-h-[240px] overflow-auto rounded-card border border-solid border-line">
-              <table className="tbl w-full text-xs">
+            <div className="max-h-[220px] shrink-0 overflow-auto overscroll-contain rounded-card border border-solid border-line">
+              <table className="tbl w-full text-xs border-separate border-spacing-0">
                 <thead>
                   <tr>
-                    <th style={{ width: 28 }} />
-                    <th>{uxT(locale, "ccSwitch.columnName")}</th>
-                    <th>{uxT(locale, "ccSwitch.columnAdapter")}</th>
-                    <th>{uxT(locale, "ccSwitch.columnBaseUrl")}</th>
-                    <th>{uxT(locale, "ccSwitch.columnModel")}</th>
-                    <th>{uxT(locale, "ccSwitch.columnApiKey")}</th>
+                    <th className="w-8 sticky top-0 z-[1] bg-inset px-2.5 py-2" />
+                    <th className="sticky top-0 z-[1] bg-inset px-2.5 py-2 whitespace-nowrap">{uxT(locale, "ccSwitch.columnName")}</th>
+                    <th className="sticky top-0 z-[1] bg-inset px-2.5 py-2 whitespace-nowrap">{uxT(locale, "ccSwitch.columnAdapter")}</th>
+                    <th className="sticky top-0 z-[1] bg-inset px-2.5 py-2 whitespace-nowrap">{uxT(locale, "ccSwitch.columnBaseUrl")}</th>
+                    <th className="sticky top-0 z-[1] bg-inset px-2.5 py-2 whitespace-nowrap">{uxT(locale, "ccSwitch.columnModel")}</th>
+                    <th className="sticky top-0 z-[1] bg-inset px-2.5 py-2 whitespace-nowrap">{uxT(locale, "ccSwitch.columnApiKey")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {preview.providers.map(candidate => (
                     <tr key={candidate.name}>
-                      <td>
+                      <td className="px-2.5 py-2 align-top">
                         <input
                           type="checkbox"
                           checked={selectedNames.has(candidate.name)}
@@ -314,12 +314,15 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
                           aria-label={candidate.name}
                         />
                       </td>
-                      <td><code>{candidate.name}</code> <span className="muted">({candidate.appType})</span></td>
-                      <td><code>{candidate.adapter}</code></td>
-                      <td className="font-mono">{candidate.baseUrl}</td>
-                      <td><code>{candidate.defaultModel ?? "—"}</code></td>
-                      <td>
-                        <span className={candidate.hasApiKey ? "badge badge-green" : "badge badge-muted"}>
+                      <td className="px-2.5 py-2 align-top break-words [overflow-wrap:anywhere]">
+                        <code>{candidate.name}</code>{" "}
+                        <span className="muted whitespace-nowrap">({candidate.appType})</span>
+                      </td>
+                      <td className="px-2.5 py-2 align-top whitespace-nowrap"><code>{candidate.adapter}</code></td>
+                      <td className="px-2.5 py-2 align-top font-mono break-all min-w-[160px]">{candidate.baseUrl}</td>
+                      <td className="px-2.5 py-2 align-top break-words [overflow-wrap:anywhere]"><code>{candidate.defaultModel ?? "—"}</code></td>
+                      <td className="px-2.5 py-2 align-top whitespace-nowrap">
+                        <span className={candidate.hasApiKey ? "badge badge-green whitespace-nowrap" : "badge badge-muted whitespace-nowrap"}>
                           {uxT(locale, candidate.hasApiKey ? "ccSwitch.keyDetected" : "ccSwitch.keyless")}
                         </span>
                       </td>
@@ -375,20 +378,21 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
           )}
       </div>
 
-      <div className="modal-actions flex-wrap items-center justify-between">
-        <div>
-          {preview?.journalActive && (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={applying || loading}
-              onClick={() => { void handleRestore(); }}
-            >
-              {uxT(locale, "ccSwitch.restoreBtn")}
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
+      <div
+        className="modal-actions shrink-0 flex-wrap items-center justify-between pt-3 mt-3"
+        style={{ borderTop: "1px solid var(--epx-line)" }}
+      >
+        {preview?.journalActive && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={applying || loading}
+            onClick={() => { void handleRestore(); }}
+          >
+            {uxT(locale, "ccSwitch.restoreBtn")}
+          </button>
+        )}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={applying}>{t("common.close")}</button>
           <button
             type="button"

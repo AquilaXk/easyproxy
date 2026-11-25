@@ -60,7 +60,26 @@ export function ModalDialog({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const surfaceRef = useRef<HTMLElement | null>(null);
   const pointerDownOutsideRef = useRef(false);
+  const pointerDownInsideRef = useRef(false);
+  const suppressBackdropClickRef = useRef(false);
+  const suppressTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  const clearSuppressTimer = useCallback(() => {
+    if (suppressTimerRef.current !== undefined) {
+      globalThis.clearTimeout(suppressTimerRef.current);
+      suppressTimerRef.current = undefined;
+    }
+  }, []);
+
+  const scheduleSuppressReset = useCallback(() => {
+    clearSuppressTimer();
+    suppressBackdropClickRef.current = true;
+    suppressTimerRef.current = globalThis.setTimeout(() => {
+      suppressBackdropClickRef.current = false;
+      suppressTimerRef.current = undefined;
+    }, 0);
+  }, [clearSuppressTimer]);
 
   const requestClose = useCallback(() => {
     if (!dismissDisabled) onClose();
@@ -90,6 +109,7 @@ export function ModalDialog({
     }
 
     return () => {
+      clearSuppressTimer();
       if (dialog?.open) {
         if (typeof dialog.close === "function") dialog.close();
         else dialog.removeAttribute("open");
@@ -99,7 +119,7 @@ export function ModalDialog({
         prev.focus();
       }
     };
-  }, [initialFocusRef, restoreFocus]);
+  }, [clearSuppressTimer, initialFocusRef, restoreFocus]);
 
   const handleCancel = useCallback((event: SyntheticEvent<HTMLDialogElement>) => {
     event.preventDefault();
@@ -135,22 +155,32 @@ export function ModalDialog({
       onCancel={handleCancel}
       onKeyDown={handleKeyDown}
       onPointerDown={(event) => {
+        clearSuppressTimer();
+        suppressBackdropClickRef.current = false;
         if (!backdropDismiss || dismissDisabled || !surfaceRef.current) {
           pointerDownOutsideRef.current = false;
+          pointerDownInsideRef.current = false;
           return;
         }
-        pointerDownOutsideRef.current = isPointOutsideRect(
+        const outside = isPointOutsideRect(
           surfaceRef.current.getBoundingClientRect(),
           event.clientX,
           event.clientY,
         );
+        pointerDownOutsideRef.current = outside;
+        pointerDownInsideRef.current = !outside;
       }}
       onPointerUp={(event) => {
         const downOutside = pointerDownOutsideRef.current;
+        const downInside = pointerDownInsideRef.current;
         pointerDownOutsideRef.current = false;
-        if (!downOutside || !backdropDismiss || dismissDisabled || !surfaceRef.current) return;
-        if (isPointOutsideRect(surfaceRef.current.getBoundingClientRect(), event.clientX, event.clientY)) {
+        pointerDownInsideRef.current = false;
+        if (!backdropDismiss || dismissDisabled || !surfaceRef.current) return;
+        if (downOutside && isPointOutsideRect(surfaceRef.current.getBoundingClientRect(), event.clientX, event.clientY)) {
+          scheduleSuppressReset();
           requestClose();
+        } else if (downInside) {
+          scheduleSuppressReset();
         }
       }}
     >
@@ -161,7 +191,14 @@ export function ModalDialog({
           aria-label={resolvedCloseLabel}
           tabIndex={-1}
           disabled={dismissDisabled}
-          onClick={requestClose}
+          onClick={() => {
+            if (suppressBackdropClickRef.current) {
+              suppressBackdropClickRef.current = false;
+              clearSuppressTimer();
+              return;
+            }
+            requestClose();
+          }}
         />
       )}
       {surfaceTag === "form" ? (
