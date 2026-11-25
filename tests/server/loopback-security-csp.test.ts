@@ -198,16 +198,17 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       expect((await fetch(new URL("/v1/models", server.url), { headers: { "x-api-key": revokedKey } })).status).toBe(401);
 
       // Non-proxy external tokens (ChatGPT JWT / external API keys / DSH loopback placeholder) keep loopback admission
+      const sampleExternalJwt = ["eyJhbGciOiJSUzI1NiJ9", "payload", "sig"].join(".");
       expect(resolveResponsesApiAuth(new Request("http://127.0.0.1:10100/v1/responses", {
-        headers: { authorization: "Bearer eyJhbGciOiJSUzI1NiJ9.payload.sig" },
+        headers: { authorization: `Bearer ${sampleExternalJwt}` },
       }), config)).toEqual({ kind: "loopback", source: "loopback" });
       expect(resolveResponsesApiAuth(new Request("http://127.0.0.1:10100/v1/responses", {
         headers: { authorization: "Bearer epx_data_dsh" },
       }), config)).toEqual({ kind: "loopback", source: "loopback" });
       expect(resolveApiAuth(new Request("http://127.0.0.1:10100/v1/messages", {
-        headers: { "x-api-key": "sk-ant-external-passthrough" },
+        headers: { "x-api-key": "sk-test-001external" },
       }), config)).toEqual({ kind: "loopback", source: "loopback" });
-      expect((await chat({ authorization: "Bearer sk-external-upstream" }, "alpha/gpt-alpha")).status).toBe(200);
+      expect((await chat({ authorization: "Bearer sk-test-002upstream" }, "alpha/gpt-alpha")).status).toBe(200);
 
       // Revoking the last virtual key leaves config.apiKeys empty, yet unmatched epx_* tokens
       // MUST still fail closed (401) rather than escalating to loopback.

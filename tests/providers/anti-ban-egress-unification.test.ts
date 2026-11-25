@@ -361,13 +361,13 @@ describe("P0-1 Anti-Ban Egress & Identity Unification", () => {
     const putOAuth = await fetch(new URL("/api/oauth/accounts/proxy", server.url), {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-      body: JSON.stringify({ provider: "google-antigravity", accountId: oauthId, proxy: "http://proxyuser:supersecret@proxy.example:8080" }),
+      body: JSON.stringify({ provider: "google-antigravity", accountId: oauthId, proxy: "http://proxyuser:supersecret@proxy.example.test:8080" }),
     });
     expect(putOAuth.status).toBe(200);
     const oauthJson = await putOAuth.json() as { ok: boolean; hasProxy: boolean; proxyLabel?: string };
     expect(oauthJson.ok).toBe(true);
     expect(oauthJson.hasProxy).toBe(true);
-    expect(oauthJson.proxyLabel).toBe("http://proxy.example:8080/");
+    expect(oauthJson.proxyLabel).toBe("http://proxy.example.test:8080/");
     expect(JSON.stringify(oauthJson)).not.toContain("supersecret");
 
     const listOAuth = await fetch(new URL("/api/oauth/accounts?provider=google-antigravity", server.url), {
@@ -375,7 +375,7 @@ describe("P0-1 Anti-Ban Egress & Identity Unification", () => {
     });
     const listOAuthJson = await listOAuth.json() as { accounts: Array<{ hasProxy?: boolean; proxyLabel?: string; hostPlatform?: string }> };
     expect(listOAuthJson.accounts[0]?.hasProxy).toBe(true);
-    expect(listOAuthJson.accounts[0]?.proxyLabel).toBe("http://proxy.example:8080/");
+    expect(listOAuthJson.accounts[0]?.proxyLabel).toBe("http://proxy.example.test:8080/");
     expect(JSON.stringify(listOAuthJson)).not.toContain("supersecret");
 
     const badProxy = await fetch(new URL("/api/oauth/accounts/proxy", server.url), {
