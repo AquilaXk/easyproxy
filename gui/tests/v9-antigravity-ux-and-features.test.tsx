@@ -17,6 +17,7 @@ import { SidebarNav } from "../src/components/sidebar-nav";
 import { LOCALES, type TFn } from "../src/i18n/shared";
 import { getLoadedDict } from "../src/i18n/runtime-catalogs";
 import { LanguageProvider } from "../src/i18n/provider";
+import * as koSlices from "../src/i18n/slices/ko";
 import { uxOverhaulCopyKo } from "../src/i18n/slices/ko";
 import { buildCommandPaletteEntries } from "../src/lib/command-palette";
 import { MAX_CURL_IMPORT_BYTES, parseCurlToPlaygroundRequest } from "../src/lib/curl-import";
@@ -737,7 +738,13 @@ describe("Antigravity v9 UX polish, session recovery, tray & gateway features", 
       }
     }
 
-    expect(uxOverhaulCopyKo["ux.playground.subtitle"]).toMatch(/다\.$/);
-    expect(uxOverhaulCopyKo["ux.auth.sessionRequiredBanner"]).toMatch(/다\.$/);
+    expect(uxOverhaulCopyKo["ux.playground.subtitle"]).toMatch(/니다\.$/);
+    expect(uxOverhaulCopyKo["ux.auth.sessionRequiredBanner"]).toMatch(/니다\.$/);
+    const slopPattern = /(?:해요|어요|아요|인가요|겠는가|(?<!니)다[.?!](?:\s|$))/;
+    for (const slice of Object.values(koSlices)) {
+      for (const value of Object.values(slice as Record<string, string>)) {
+        expect(value).not.toMatch(slopPattern);
+      }
+    }
   });
 });

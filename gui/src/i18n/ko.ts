@@ -775,7 +775,7 @@ export const ko: Record<TKey, string> = {
   "prov.login": "로그인",
   "prov.loginWith": "{provider} 로 로그인",
   "prov.waitingBrowser": "브라우저 대기 중…",
-  "prov.didntOpen": "열리지 않으면 여기를 클릭",
+  "prov.didntOpen": "열리지 않으면 여기를 클릭하세요",
   "prov.copyLink": "링크 복사",
   "prov.dontOpenBrowser": "프록시가 실행 중인 컴퓨터에서 브라우저를 열지 않기",
   "prov.dontOpenBrowserHint": "다른 브라우저 프로필로 로그인하거나, 대시보드를 프록시와 다른 컴퓨터에서 쓸 때 유용합니다.",
