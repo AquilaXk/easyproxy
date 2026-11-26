@@ -8,7 +8,8 @@
 import { loadConfig } from "../config";
 import {
   connectGatewayClient, disconnectGatewayClient, gatewayActionBody, gatewayClientsStatus, isGatewayClientId,
-  productionGatewayClientContext, resolveGatewayTarget, type GatewayClientContext, type GatewayClientId, type GatewayClientStatus, type GatewayNote,
+  productionGatewayClientContext, readAntigravityIssuedKeyId, resolveGatewayTarget, revokeGatewayIssuedKeyFromDisk,
+  type GatewayClientContext, type GatewayClientId, type GatewayClientStatus, type GatewayNote,
 } from "../integrations/gateway-clients";
 import { CliUsageError, RuntimeApiError, printData, rejectArgs, runCliAction, runtimeRequest, takeJsonFlag, takeOption, terminalSafeText, type RuntimeApiDeps } from "./runtime-api";
 
@@ -18,6 +19,7 @@ export interface GatewayClientCommandDeps extends RuntimeApiDeps {
   /** Local-fallback seams; production reads the real home and config. */
   context?: () => GatewayClientContext;
   loadConfig?: typeof loadConfig;
+  revokeIssuedKey?: (ctx: GatewayClientContext, issuedKeyId: string) => void;
 }
 
 const USAGE: Record<GatewayClientVerb, string> = {
@@ -79,9 +81,13 @@ async function runLocally(verb: GatewayClientVerb, id: GatewayClientId, model: s
     refuse({ ok: false, code: "no-fixed-port", message: "The configured port is 0, so the proxy has no fixed address to write. Start the proxy (epx start), then connect again." }, wantsJson);
     return 5;
   }
+  const issuedKeyId = verb === "disconnect" && id === "antigravity" ? readAntigravityIssuedKeyId(ctx) : undefined;
   const outcome = verb === "connect" ? connectGatewayClient(id, ctx, config, config.port, model) : disconnectGatewayClient(id, ctx, target);
   const body = gatewayActionBody(outcome) as Body;
   if (!outcome.ok) { refuse(body, wantsJson); return 5; }
+  if (issuedKeyId) {
+    (deps.revokeIssuedKey ?? revokeGatewayIssuedKeyFromDisk)(ctx, issuedKeyId);
+  }
   printData(body, wantsJson, actionLines(body, verb === "connect" ? config.port : null));
   return 0;
 }

@@ -1,10 +1,14 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { EpxConfig } from "../../types";
 import { assertClientLifecycleHeld, withClientLifecycleSync, type ClientLifecycleHeld } from "../../client/lifecycle-lock";
 import { getConfigDir } from "../../config/paths";
+import { mutatePersistedConfig } from "../../config/persisted-mutation";
 import { localInferenceDestination } from "../../lib/local-destinations";
+import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
 import { AGY_CONNECTOR } from "./agy";
-import { ANTIGRAVITY_CONNECTOR } from "./antigravity";
+import { ANTIGRAVITY_CONNECTOR, readAntigravityIssuedKeyId } from "./antigravity";
 import { GATEWAY_PLACEHOLDER_KEY, clientRefusal, hasStash, removeEmptyStashDirectory } from "./io";
 import type { GatewayClientConnector, GatewayClientContext, GatewayClientId, GatewayClientResult, GatewayClientStatus, GatewayTarget } from "./types";
 
@@ -60,13 +64,47 @@ function withGatewayLifecycle(ctx: GatewayClientContext, work: () => GatewayClie
   catch (error) { return clientRefusal((error as Error).message); }
 }
 
+/** Revokes an Antigravity loopback data-plane key from on-disk config.json when disconnecting offline or uninstalling. */
+export function revokeGatewayIssuedKeyFromDisk(ctx: GatewayClientContext, issuedKeyId: string): void {
+  if (!existsSync(join(ctx.stateDir, "config.json"))) return;
+  const prevHome = process.env.EASYPROXY_HOME;
+  const scopedToStateDir = resolve(ctx.stateDir) !== resolve(getConfigDir());
+  if (scopedToStateDir) {
+    process.env.EASYPROXY_HOME = ctx.stateDir;
+  }
+  try {
+    const outcome = mutatePersistedConfig(config => {
+      const existing = config.apiKeys;
+      if (!existing?.some(entry => entry.id === issuedKeyId)) {
+        return { changed: false, value: false };
+      }
+      const remaining = existing.filter(entry => entry.id !== issuedKeyId);
+      if (remaining.length > 0) config.apiKeys = remaining;
+      else delete config.apiKeys;
+      return { changed: true, value: true };
+    });
+    if (outcome.status === "committed" && outcome.value) {
+      reconcileLiveStateStores();
+    }
+  } finally {
+    if (scopedToStateDir) {
+      if (prevHome === undefined) delete process.env.EASYPROXY_HOME;
+      else process.env.EASYPROXY_HOME = prevHome;
+    }
+  }
+}
+
 /** Uninstall keeps the lifecycle lease through both restoration and config removal. */
 export function disconnectRecordedGatewayClients(ctx: GatewayClientContext, held: ClientLifecycleHeld): void {
   assertClientLifecycleHeld(held);
   for (const id of GATEWAY_CLIENT_IDS) {
     if (!hasStash(ctx, id)) continue;
+    const issuedKeyId = id === "antigravity" ? readAntigravityIssuedKeyId(ctx) : undefined;
     const result = GATEWAY_CLIENTS[id].disconnect(ctx);
     if (!result.ok) throw new Error(`Gateway client cleanup refused for ${id}: ${result.message}`);
+    if (issuedKeyId) {
+      revokeGatewayIssuedKeyFromDisk(ctx, issuedKeyId);
+    }
   }
   // Also finish cleanup if a prior version or interrupted restore left an empty directory.
   removeEmptyStashDirectory(ctx);

@@ -930,6 +930,127 @@ describe("uninstall restores recorded third-party integrations before deleting r
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   });
 
+  test("uninstall revokes Antigravity issuedKeyId from config.apiKeys before removing config", async () => {
+    const f = await fixture({ gatewayOnly: true });
+    const prevHome = process.env.EASYPROXY_HOME;
+    try {
+      process.env.EASYPROXY_HOME = f.configDir;
+      expect(initializeConfigOwnership(f.configDir)).toBe(true);
+      writeFileSync(join(f.configDir, "config.json"), JSON.stringify({
+        port: 10100,
+        hostname: "127.0.0.1",
+        defaultProvider: "fixture",
+        providers: { fixture: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+        apiKeys: [
+          {
+            id: "agy-uninstall-key",
+            name: "Antigravity Gateway (Loopback)",
+            key: "epx_data_0123456789abcdef0123456789abcdef01234567",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            loopbackOnly: true,
+          },
+          {
+            id: "unrelated-key",
+            name: "Unrelated Key",
+            key: "epx_data_fedcba9876543210fedcba9876543210fedcba98",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }));
+      const context = f.deps.gatewayContext();
+      const settings = join(f.home, ".antigravity", "settings.json");
+      mkdirSync(dirname(settings), { recursive: true });
+      writeFileSync(settings, '{"models":{}}');
+      expect(connectGatewayClient("antigravity", context, config, config.port, undefined, {
+        apiKey: "epx_data_0123456789abcdef0123456789abcdef01234567",
+        issuedKeyId: "agy-uninstall-key",
+      }).ok).toBe(true);
+
+      let seenKeysBeforeRemoval: string[] = [];
+      f.deps.remove = () => {
+        const persisted = JSON.parse(readFileSync(join(f.configDir, "config.json"), "utf8")) as EpxConfig;
+        seenKeysBeforeRemoval = (persisted.apiKeys ?? []).map(entry => entry.id);
+        return removeGatewayFixtureConfig(f.configDir);
+      };
+      expect(await removeOwnedConfigAfterDesktopCleanup(safeTeardown, f.deps))
+        .toEqual({ status: "removed", residualPaths: [] });
+      expect(seenKeysBeforeRemoval).toEqual(["unrelated-key"]);
+    } finally {
+      if (prevHome === undefined) delete process.env.EASYPROXY_HOME;
+      else process.env.EASYPROXY_HOME = prevHome;
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  test("uninstall revokes Antigravity issuedKeyId immediately even when agy cleanup later refuses", async () => {
+    const { revokeGatewayIssuedKeyFromDisk } = await import("../../src/integrations/gateway-clients");
+    const f = await fixture({ gatewayOnly: true });
+    const otherHome = mkdtempSync(join(tmpdir(), "epx-other-home-"));
+    const prevHome = process.env.EASYPROXY_HOME;
+    try {
+      process.env.EASYPROXY_HOME = otherHome;
+      writeFileSync(join(otherHome, "config.json"), JSON.stringify({
+        port: 10100,
+        hostname: "127.0.0.1",
+        defaultProvider: "fixture",
+        providers: { fixture: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+        apiKeys: [{ id: "agy-partial-key", name: "Should Stay", key: "epx_data_0123456789abcdef0123456789abcdef01234567", createdAt: "2026-01-01T00:00:00.000Z" }],
+      }));
+      // Calling revokeGatewayIssuedKeyFromDisk on a stateDir with no config.json must NEVER touch EASYPROXY_HOME.
+      const isolatedCtx = { ...f.deps.gatewayContext(), stateDir: join(f.root, "no-config-state") };
+      mkdirSync(isolatedCtx.stateDir, { recursive: true });
+      revokeGatewayIssuedKeyFromDisk(isolatedCtx, "agy-partial-key");
+      const untouched = JSON.parse(readFileSync(join(otherHome, "config.json"), "utf8")) as EpxConfig;
+      expect(untouched.apiKeys?.map(k => k.id)).toEqual(["agy-partial-key"]);
+
+      process.env.EASYPROXY_HOME = f.configDir;
+      expect(initializeConfigOwnership(f.configDir)).toBe(true);
+      writeFileSync(join(f.configDir, "config.json"), JSON.stringify({
+        port: 10100,
+        hostname: "127.0.0.1",
+        defaultProvider: "fixture",
+        providers: { fixture: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+        apiKeys: [
+          {
+            id: "agy-partial-key",
+            name: "Antigravity Gateway (Loopback)",
+            key: "epx_data_0123456789abcdef0123456789abcdef01234567",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            loopbackOnly: true,
+          },
+          {
+            id: "keep-key",
+            name: "Keep",
+            key: "epx_data_fedcba9876543210fedcba9876543210fedcba98",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }));
+      const context = f.deps.gatewayContext();
+      const settings = join(f.home, ".antigravity", "settings.json");
+      mkdirSync(dirname(settings), { recursive: true });
+      writeFileSync(settings, '{"models":{}}');
+      expect(connectGatewayClient("antigravity", context, config, config.port, undefined, {
+        apiKey: "epx_data_0123456789abcdef0123456789abcdef01234567",
+        issuedKeyId: "agy-partial-key",
+      }).ok).toBe(true);
+
+      const profile = join(f.home, ".bashrc");
+      writeFileSync(profile, "# user\n");
+      expect(connectGatewayClient("agy", context, config, config.port).ok).toBe(true);
+      writeFileSync(profile, "# user\nexport USER_EDITED=1\n");
+
+      await expect(removeOwnedConfigAfterDesktopCleanup(safeTeardown, f.deps)).rejects.toThrow("agy");
+      const afterAbort = JSON.parse(readFileSync(join(f.configDir, "config.json"), "utf8")) as EpxConfig;
+      expect(afterAbort.apiKeys?.map(k => k.id)).toEqual(["keep-key"]);
+    } finally {
+      if (prevHome === undefined) delete process.env.EASYPROXY_HOME;
+      else process.env.EASYPROXY_HOME = prevHome;
+      rmSync(otherHome, { recursive: true, force: true });
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
   test.skipIf(process.platform === "win32")("uninstall restores agy beside a dangling untracked profile", async () => {
     const f = await fixture({ gatewayOnly: true });
     try {

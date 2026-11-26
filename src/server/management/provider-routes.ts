@@ -152,7 +152,8 @@ import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, C
 import type { ManagementContext } from "./context";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import { anthropicInstancePublicationError, mergeProviderEditorRow, preserveAnthropicInstanceMarker } from "./provider-instance-ownership";
-import { providerTlsProfileDiagnostic } from "../../lib/provider-tls-profile";
+import { providerTlsProfileDiagnostic, resetProviderTlsProfileStatus } from "../../lib/provider-tls-profile";
+import { providerProxyDisplayFields } from "../../lib/provider-egress";
 import { handleProviderTestRoute } from "./provider-connection-test";
 import {
   adoptProviderEditorCandidate,
@@ -191,8 +192,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     return jsonResponse(Object.entries(config.providers).map(([name, p]) => ({
       name, adapter: p.adapter, baseUrl: publicProviderBaseUrl(p.baseUrl), defaultModel: p.defaultModel,
       hasApiKey: providerHasStoredApiKey(p),
-      hasProxy: Boolean(p.proxy),
-      ...(p.proxy ? { proxyLabel: redactUrlForLog(p.proxy) } : {}),
+      ...providerProxyDisplayFields(p.proxy, redactUrlForLog),
       ...(p.noProxy !== undefined ? { noProxy: p.noProxy } : {}),
       // Presence only (#959 review): header names and values never leave the process.
       hasHeaders: !!p.headers && Object.keys(p.headers).length > 0,
@@ -410,6 +410,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     cleanupRemovedGcpCredentials(removedCredentials);
     adoptProviderEditorCandidate(config, outcome.value.config);
     clearPassiveKeyLimits();
+    resetProviderTlsProfileStatus();
     reconcileLiveStateStores();
     refreshConfigDerivedRegistries(outcome.value.config);
     clearGatherRoutedModelsInflight();
@@ -683,6 +684,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     });
     if (validationError !== undefined) return jsonResponse({ error: validationError }, 400);
     clearPassiveKeyLimits(name);
+    resetProviderTlsProfileStatus(name);
     cleanupRemovedGcpCredentials(removedCredentials);
     reconcileLiveStateStores();
     if (prov.apiKey && prov.apiKeyPool) {
@@ -888,6 +890,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       }
     });
     if (replayError !== undefined) return jsonResponse({ error: replayError }, 409);
+    if (keys.some(k => k === "proxy" || k === "noProxy" || k === "tlsProfile" || k === "baseUrl" || k === "adapter" || k === "authMode" || k === "googleMode")) {
+      resetProviderTlsProfileStatus(name);
+    }
     reconcileLiveStateStores();
     if (applied.editorTouched && !pacingOnly) {
       const { clearModelCache } = await import("../../codex/model-cache");
@@ -948,6 +953,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const shadowDependency = shadowInterceptProviderDependency(config, name);
     const droppedCustomModels = removeProviderWithGcpCredentials(config, name, fallbackDefault, save);
     await releaseRemovedProviderCredentials(config, name);
+    resetProviderTlsProfileStatus(name);
     reconcileLiveStateStores();
     const { clearModelCache: clearCache } = await import("../../codex/model-cache");
     clearCache(name);
@@ -1240,13 +1246,13 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       }, deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode);
     });
     if (replayError !== undefined) return jsonResponse({ error: replayError }, 409);
+    resetProviderTlsProfileStatus(name);
     reconcileLiveStateStores();
     const updated = config.providers[name]!;
     return jsonResponse({
       success: true,
       name,
-      hasProxy: Boolean(updated.proxy),
-      ...(updated.proxy ? { proxyLabel: redactUrlForLog(updated.proxy) } : {}),
+      ...providerProxyDisplayFields(updated.proxy, redactUrlForLog),
       ...(updated.noProxy !== undefined ? { noProxy: updated.noProxy } : {}),
       ...providerTlsProfileDiagnostic(name, updated),
     });

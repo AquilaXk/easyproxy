@@ -538,7 +538,7 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
     }
   });
 
-  test("Antigravity one-click connect auto-issues a loopback-only restricted-scope token and revokes it on disconnect", async () => {
+  test("Antigravity one-click connect auto-issues an unrestricted loopback-only token and preserves operator scopes on reconnect", async () => {
     const gatewayRoot = mkdtempSync(join(tmpdir(), "epx-agy-gateway-"));
     mkdirSync(join(gatewayRoot, "home"));
     const gatewayCtx: GatewayClientContext = {
@@ -587,13 +587,15 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       };
       expect(writtenSettings.gateway.apiKey).toBe(issuedKey!.key);
 
-      // Reconnecting without model reuses the unrestricted loopback key cleanly without duplicates.
+      // Reconnecting preserves operator-configured scopes while reusing the loopback key without duplicates.
+      issuedKey!.allowedProviders = ["google-antigravity"];
+      issuedKey!.allowedModels = ["gemini-3"];
       const reconnected = await call("POST", "/api/gateway-clients/antigravity/connect", {});
       expect(reconnected.status).toBe(200);
       expect(reconnected.json.issuedApiKeyId).toBe(issuedKey!.id);
       expect(cfg.apiKeys).toHaveLength(1);
-      expect(cfg.apiKeys![0]!.allowedProviders).toBeUndefined();
-      expect(cfg.apiKeys![0]!.allowedModels).toBeUndefined();
+      expect(cfg.apiKeys![0]!.allowedProviders).toEqual(["google-antigravity"]);
+      expect(cfg.apiKeys![0]!.allowedModels).toEqual(["gemini-3"]);
 
       const disconnected = await call("POST", "/api/gateway-clients/antigravity/disconnect");
       expect(disconnected.status).toBe(200);

@@ -22,6 +22,7 @@ import type { CodexQuotaRefreshOutcome } from "../quota-refresh-outcome";
 import { getMainAccountHardLockStatus } from "../main-account-hard-lock";
 import type { MainAccountHardLockStatus } from "../main-account-hard-lock";
 import { emailMaskingEnabled, projectEmail } from "../../lib/privacy";
+import { hasConfiguredProxyUrl } from "../../lib/provider-egress";
 import { redactUrlForLog } from "../../lib/redact";
 import type { CodexAccount, EpxConfig } from "../../types";
 import type { CodexAccountCredentialRecord } from "../../types";
@@ -187,7 +188,7 @@ export function poolAccountDto(
     } : {}),
     hasCredential,
     ...(quotaResult.quotaProbeSkipped ? { quotaProbeSkipped: true as const } : {}),
-    ...(record?.proxy ? { hasProxy: true, proxyLabel: redactUrlForLog(record.proxy) } : {}),
+    ...(hasConfiguredProxyUrl(record?.proxy) ? { hasProxy: true, proxyLabel: redactUrlForLog(record.proxy) } : {}),
     ...oauthAccountHealthFields("codex", account.id, health),
   };
 }

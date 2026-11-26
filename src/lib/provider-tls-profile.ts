@@ -86,6 +86,11 @@ export function providerTlsProfileDiagnostic(
   return { tlsProfile: { profile: provider.tlsProfile, status: getProviderTlsProfileStatus(name, true) } };
 }
 
+export function resetProviderTlsProfileStatus(name?: string): void {
+  if (name === undefined) status.clear();
+  else status.delete(name);
+}
+
 export function resetProviderTlsProfileForTests(): void {
   status = new Map();
   runtime = undefined;

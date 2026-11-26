@@ -460,4 +460,11 @@ export const uxOverhaulCopyZh = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "选择音频文件",
+  "ux.providerEgress.tlsStatusDisabled": "已禁用",
+  "ux.providerEgress.tlsStatusPending": "待生效",
+  "ux.providerEgress.tlsStatusActive": "已启用",
+  "ux.providerEgress.tlsStatusFailed": "失败",
+  "ux.providerEgress.keychainStatusGcpSa": "GCP 服务账号",
+  "ux.storageBackup.restoreConfirm": "确认从此备份恢复配置与凭据？系统会先保存恢复前快照，再覆盖现有本地文件。",
+  "ux.storageBackup.invalidBackup": "无效备份",
 } as const;

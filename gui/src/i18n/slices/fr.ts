@@ -460,4 +460,11 @@ export const uxOverhaulCopyFr = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "Choisir un fichier audio",
+  "ux.providerEgress.tlsStatusDisabled": "Désactivé",
+  "ux.providerEgress.tlsStatusPending": "En attente",
+  "ux.providerEgress.tlsStatusActive": "Actif",
+  "ux.providerEgress.tlsStatusFailed": "Échec",
+  "ux.providerEgress.keychainStatusGcpSa": "Compte de service GCP",
+  "ux.storageBackup.restoreConfirm": "Restaurer la configuration et les identifiants depuis cette sauvegarde ? Les fichiers locaux existants seront remplacés après un instantané préalable.",
+  "ux.storageBackup.invalidBackup": "Sauvegarde invalide",
 } as const;

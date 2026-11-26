@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { confirmAction } from "../../action-dialogs";
 import { readJsonIfOk } from "../../fetch-json";
 import { navigateHash } from "../../hash-routing";
@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n/shared";
 import { uxT } from "../../i18n/ux-overhaul-copy";
 import { codexAccountModeState } from "../../codex-multi-state";
 import { ensureOpenAiProvider, openAiAccountProviderState, OpenAiEnableError } from "../../provider-payload";
+import { openProviderSettings } from "../../protocol-deep-links";
 import { Notice, Switch } from "../../ui";
 import { SegmentedControl } from "../../components/ui-v2/segmented-control";
 import ConsequenceDialog, { type ConsequenceCopy } from "./ConsequenceDialog";
@@ -65,6 +66,7 @@ async function fetchCodexIntegrationState(
       codexAccountPickerEnabled?: unknown;
     }>(settingsRes);
     const config = await readJsonIfOk<unknown>(configRes);
+    if (!settings || !config || typeof config !== "object") return null;
     const providerState = openAiAccountProviderState(readOpenAiEntry(config));
     const accountMode = providerState === "ready"
       ? codexAccountModeState(config)
@@ -73,9 +75,9 @@ async function fetchCodexIntegrationState(
       ? nativeList.clients.find(client => client.clientId === "codex") ?? null
       : null;
     return {
-      codexAutoStart: settings?.codexAutoStart !== false,
-      codexDesktopAuthless: settings?.codexDesktopAuthless === true,
-      codexAccountPickerEnabled: settings?.codexAccountPickerEnabled === true,
+      codexAutoStart: settings.codexAutoStart !== false,
+      codexDesktopAuthless: settings.codexDesktopAuthless === true,
+      codexAccountPickerEnabled: settings.codexAccountPickerEnabled === true,
       accountMode,
       nativeStatus,
     };
@@ -87,31 +89,71 @@ async function fetchCodexIntegrationState(
 export default function CodexIntegrationPage({ apiBase, active }: { apiBase: string; active: boolean }) {
   const { t, locale } = useI18n();
   const [state, setState] = useState<CodexIntegrationSettings | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const mountedRef = useRef(true);
+  const requestEpochRef = useRef(0);
+  const fetchAbortRef = useRef<AbortController | null>(null);
 
-  const reload = useCallback(async (signal?: AbortSignal) => {
-    const next = await fetchCodexIntegrationState(apiBase, signal);
-    if (!signal?.aborted && next) setState(next);
-  }, [apiBase]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      fetchAbortRef.current?.abort();
+    };
+  }, []);
+
+  const reload = async (): Promise<boolean> => {
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+    const epoch = ++requestEpochRef.current;
+    const next = await fetchCodexIntegrationState(apiBase, controller.signal);
+    if (!mountedRef.current || controller.signal.aborted || epoch !== requestEpochRef.current) return false;
+    if (next) {
+      setState(next);
+      setLoadError(false);
+      return true;
+    }
+    setLoadError(true);
+    return false;
+  };
 
   useEffect(() => {
     if (!active) return;
     const ac = new AbortController();
+    fetchAbortRef.current?.abort();
+    fetchAbortRef.current = ac;
+    const epoch = ++requestEpochRef.current;
     fetchCodexIntegrationState(apiBase, ac.signal)
       .then(next => {
-        if (!ac.signal.aborted && next) setState(next);
+        if (!mountedRef.current || ac.signal.aborted || epoch !== requestEpochRef.current) return;
+        if (next) {
+          setState(next);
+          setLoadError(false);
+        } else {
+          setLoadError(true);
+        }
       })
-      .catch(() => undefined);
-    return () => ac.abort();
+      .catch(() => {
+        if (mountedRef.current && !ac.signal.aborted && epoch === requestEpochRef.current) {
+          setLoadError(true);
+        }
+      });
+    return () => {
+      ac.abort();
+      fetchAbortRef.current?.abort();
+      requestEpochRef.current += 1;
+    };
   }, [active, apiBase]);
 
   const updateBooleanSetting = async (
     key: "codexAutoStart" | "codexDesktopAuthless" | "codexAccountPickerEnabled",
     nextValue: boolean,
   ) => {
-    if (busyKey) return;
+    if (busyKey || !state) return;
     setBusyKey(key);
     setFeedback(null);
     try {
@@ -120,25 +162,35 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [key]: nextValue }),
       });
+      if (!mountedRef.current) return;
       if (!res.ok) {
         const err = await res.json().catch(() => null) as { error?: string } | null;
+        if (!mountedRef.current) return;
         setFeedback({ tone: "err", text: err?.error ?? uxT(locale, "codexRoute.saveFailed") });
         return;
       }
       if (key === "codexDesktopAuthless") {
         await fetch(`${apiBase}/api/sync`, { method: "POST" }).catch(() => undefined);
       }
-      await reload();
-      setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
+      if (!mountedRef.current) return;
+      const refreshed = await reload();
+      if (!mountedRef.current) return;
+      if (refreshed) {
+        setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
+      } else {
+        setState(prev => (prev ? { ...prev, [key]: nextValue } : prev));
+      }
     } catch {
-      setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
+      if (mountedRef.current) {
+        setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
+      }
     } finally {
-      setBusyKey(null);
+      if (mountedRef.current) setBusyKey(null);
     }
   };
 
   const setAccountMode = async (mode: "pool" | "direct") => {
-    if (busyKey || state?.accountMode === mode) return;
+    if (busyKey || !state || state.accountMode === mode) return;
     setBusyKey("accountMode");
     setFeedback(null);
     try {
@@ -147,22 +199,31 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ codexAccountMode: mode }),
       });
+      if (!mountedRef.current) return;
       if (!res.ok) {
         const err = await res.json().catch(() => null) as { error?: string } | null;
+        if (!mountedRef.current) return;
         setFeedback({ tone: "err", text: err?.error ?? uxT(locale, "codexRoute.saveFailed") });
         return;
       }
-      await reload();
-      setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
+      const refreshed = await reload();
+      if (!mountedRef.current) return;
+      if (refreshed) {
+        setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
+      } else {
+        setState(prev => (prev ? { ...prev, accountMode: mode } : prev));
+      }
     } catch {
-      setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
+      if (mountedRef.current) {
+        setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
+      }
     } finally {
-      setBusyKey(null);
+      if (mountedRef.current) setBusyKey(null);
     }
   };
 
   const requestAccountMode = async (mode: "pool" | "direct") => {
-    if (busyKey || state?.accountMode === mode) return;
+    if (busyKey || !state || state.accountMode === mode) return;
     if (await confirmAction({ message: t("pws.accountModeConfirm") })) {
       await setAccountMode(mode);
     }
@@ -174,8 +235,10 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
     setFeedback(null);
     try {
       await ensureOpenAiProvider(apiBase, state.accountMode);
-      await reload();
-      setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
+      const refreshed = await reload();
+      if (refreshed) {
+        setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
+      }
     } catch (error) {
       if (error instanceof OpenAiEnableError) {
         setFeedback({ tone: "err", text: t(error.i18nKey) });
@@ -262,6 +325,22 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         </div>
       </div>
 
+      {loadError && (
+        <Notice tone="err">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{t("codexAuth.loadFailed")}</span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={busyKey !== null}
+              onClick={() => { void reload(); }}
+            >
+              {t("common.retry")}
+            </button>
+          </div>
+        </Notice>
+      )}
+
       {feedback && (
         <Notice tone={feedback.tone === "ok" ? "ok" : "err"}>{feedback.text}</Notice>
       )}
@@ -333,28 +412,48 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
               </button>
             </div>
           </div>
-        ) : (
+        ) : state?.accountMode === "invalid" ? (
+          <div className="flex flex-col gap-2">
+            <div>
+              <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.modeTitle")}</div>
+              <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.modeDesc")}</div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-solid border-line bg-inset p-3">
+              <span className="text-xs text-fg-muted">{t("codexAuth.openaiMissing")}</span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm shrink-0"
+                onClick={() => openProviderSettings("openai")}
+              >
+                {t("codexAuth.openProviders")}
+              </button>
+            </div>
+          </div>
+        ) : state ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.modeTitle")}</div>
               <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.modeDesc")}</div>
-              {(state?.accountMode === "pool" || state?.accountMode === "direct") && (
-                <div className="mt-0.5 text-xs text-fg-subtle">
-                  {uxT(locale, state.accountMode === "direct" ? "codexRoute.modeDirectHint" : "codexRoute.modePoolHint")}
-                </div>
-              )}
+              <div className="mt-0.5 text-xs text-fg-subtle">
+                {uxT(locale, state.accountMode === "direct" ? "codexRoute.modeDirectHint" : "codexRoute.modePoolHint")}
+              </div>
             </div>
             <SegmentedControl
               size="sm"
               aria-label={uxT(locale, "codexRoute.modeTitle")}
-              value={state?.accountMode === "direct" ? "direct" : "pool"}
-              disabled={busyKey !== null || state === null || state.accountMode === "invalid"}
+              value={state.accountMode === "direct" ? "direct" : "pool"}
+              disabled={busyKey !== null}
               onChange={mode => { void requestAccountMode(mode); }}
               items={[
                 { value: "pool", label: uxT(locale, "codexRoute.modePoolShort"), title: uxT(locale, "codexRoute.modePool") },
                 { value: "direct", label: uxT(locale, "codexRoute.modeDirectShort"), title: uxT(locale, "codexRoute.modeDirect") },
               ]}
             />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.modeTitle")}</div>
+            <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.modeDesc")}</div>
           </div>
         )}
 
@@ -364,10 +463,10 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
             <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.autoStartHint")}</div>
           </div>
           <Switch
-            on={state?.codexAutoStart ?? true}
+            on={state?.codexAutoStart ?? false}
             label={uxT(locale, "codexRoute.autoStart")}
             disabled={busyKey !== null || state === null}
-            onClick={() => { void updateBooleanSetting("codexAutoStart", !(state?.codexAutoStart ?? true)); }}
+            onClick={() => { void updateBooleanSetting("codexAutoStart", !(state?.codexAutoStart ?? false)); }}
           />
         </div>
 

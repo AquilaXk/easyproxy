@@ -460,4 +460,11 @@ export const uxOverhaulCopyZhTw = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "選擇音訊檔案",
+  "ux.providerEgress.tlsStatusDisabled": "已停用",
+  "ux.providerEgress.tlsStatusPending": "待生效",
+  "ux.providerEgress.tlsStatusActive": "已啟用",
+  "ux.providerEgress.tlsStatusFailed": "失敗",
+  "ux.providerEgress.keychainStatusGcpSa": "GCP 服務帳戶",
+  "ux.storageBackup.restoreConfirm": "確定要從此備份還原設定與憑證嗎？系統會先儲存還原前快照，再覆寫現有的本機檔案。",
+  "ux.storageBackup.invalidBackup": "無效備份",
 } as const;

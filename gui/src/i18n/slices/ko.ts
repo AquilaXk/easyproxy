@@ -460,4 +460,11 @@ export const uxOverhaulCopyKo = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "음성 파일 선택",
+  "ux.providerEgress.tlsStatusDisabled": "비활성",
+  "ux.providerEgress.tlsStatusPending": "대기 중",
+  "ux.providerEgress.tlsStatusActive": "활성",
+  "ux.providerEgress.tlsStatusFailed": "실패",
+  "ux.providerEgress.keychainStatusGcpSa": "GCP 서비스 계정",
+  "ux.storageBackup.restoreConfirm": "이 백업에서 설정과 인증 정보를 복원할까요? 복원 전 스냅샷을 저장한 뒤 기존 로컬 파일을 덮어씁니다.",
+  "ux.storageBackup.invalidBackup": "유효하지 않은 백업",
 } as const;

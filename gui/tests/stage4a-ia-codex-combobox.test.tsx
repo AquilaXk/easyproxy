@@ -699,4 +699,185 @@ describe("Stage 4A Accounts hub, Route -> Codex controls, and GatewayClients Com
     const alert = host.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("Last refresh failed; showing the previous reading");
   });
+
+  test("CodexIntegrationPage fails closed without synthetic defaults on API error and shows guidance for invalid mode", async () => {
+    let scenario: "error" | "invalid" = "error";
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (scenario === "error") {
+        if (url.endsWith("/api/settings") || url.endsWith("/api/config")) {
+          return Response.json({ error: "Upstream error" }, { status: 500 });
+        }
+        return Response.json({ clients: [] });
+      }
+      if (url.endsWith("/api/settings")) {
+        return Response.json({
+          codexAutoStart: false,
+          codexDesktopAuthless: false,
+          codexAccountPickerEnabled: false,
+        });
+      }
+      if (url.endsWith("/api/config")) {
+        return Response.json({
+          providers: {
+            openai: { adapter: "openai-chat", authMode: "key", hasApiKey: true },
+          },
+        });
+      }
+      return Response.json({ clients: [] });
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <CodexIntegrationPage apiBase="http://127.0.0.1:10100" active />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    expect(host.textContent).toContain("Codex account settings could not be loaded.");
+    expect(host.querySelector('[role="radiogroup"]')).toBeNull();
+    const switchesOnError = [...host.querySelectorAll<HTMLButtonElement>('button[role="switch"]')];
+    expect(switchesOnError.length).toBeGreaterThanOrEqual(3);
+    for (const sw of switchesOnError) {
+      expect(sw.disabled).toBe(true);
+      expect(sw.getAttribute("aria-checked")).toBe("false");
+    }
+
+    scenario = "invalid";
+    const retryBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Retry")!;
+    await act(async () => { retryBtn.click(); });
+    await flushTicks();
+
+    expect(host.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(host.textContent).toContain("The built-in OpenAI provider is not configured.");
+    const openProvidersBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Open Providers")!;
+    await act(async () => { openProvidersBtn.click(); });
+    expect(win.location.hash).toBe("#providers?provider=openai");
+
+    // If PUT /api/settings succeeds and the follow-up reload fails, the switch still reflects the saved value.
+    const autoStartSwitch = host.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="Auto-start proxy for Codex"]')!;
+    expect(autoStartSwitch.getAttribute("aria-checked")).toBe("false");
+    let putSettingsBody: unknown;
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/settings") && init?.method === "PUT") {
+        putSettingsBody = JSON.parse(String(init.body));
+        return Response.json({ ok: true });
+      }
+      if (url.endsWith("/api/settings") || url.endsWith("/api/config")) {
+        return Response.json({ error: "reload fail" }, { status: 503 });
+      }
+      return prevFetch(input, init);
+    }) as typeof fetch;
+    await act(async () => { autoStartSwitch.click(); });
+    await flushTicks();
+    expect(putSettingsBody).toEqual({ codexAutoStart: true });
+    expect(autoStartSwitch.getAttribute("aria-checked")).toBe("true");
+    expect(host.textContent).toContain("Codex account settings could not be loaded.");
+  });
+
+  test("AllProviderAccountsHub preserves prior accounts/quotas on partial errors and drops superseded fetches", async () => {
+    let phase: "initial" | "partial-fail" | "slow-stale" = "initial";
+    let releaseStaleConfig: ((res: Response) => void) | undefined;
+    let triggerReloadCount = 0;
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/config")) {
+        if (phase === "slow-stale" && triggerReloadCount === 1) {
+          return await new Promise<Response>(resolve => { releaseStaleConfig = resolve; });
+        }
+        return Response.json({
+          providers: {
+            openai: { adapter: "openai-responses", authMode: "forward", codexAccountMode: "pool" },
+            "google-antigravity": { adapter: "google", authMode: "oauth" },
+          },
+        });
+      }
+      if (url.includes("/api/provider-quotas")) {
+        if (phase === "partial-fail") return Response.json({ error: "quota 503" }, { status: 503 });
+        return Response.json([
+          { provider: "google-antigravity", source: "probe", updatedAt: Date.now(), quota: { fiveHourPercent: 88, updatedAt: Date.now() } },
+        ]);
+      }
+      if (url.endsWith("/api/codex-auth/accounts")) {
+        return Response.json({
+          activeCodexAccountId: "cdx-1",
+          accounts: [{ id: "cdx-1", alias: phase === "slow-stale" ? "Fresh Codex" : "Codex Primary", active: true }],
+        });
+      }
+      if (url.endsWith("/api/codex-auth/active")) {
+        return Response.json({ activeCodexAccountId: "cdx-1" });
+      }
+      if (url.includes("/api/oauth/accounts?provider=google-antigravity")) {
+        if (phase === "partial-fail") return Response.json({ error: "oauth 500" }, { status: 500 });
+        return Response.json({
+          activeAccountId: "agy-1",
+          accounts: [{ id: "agy-1", alias: phase === "slow-stale" ? "Fresh OAuth" : "OAuth Primary", active: true }],
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <AllProviderAccountsHub apiBase="http://127.0.0.1:10100" />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    expect(host.textContent).toContain("Codex Primary");
+    expect(host.textContent).toContain("OAuth Primary");
+
+    phase = "partial-fail";
+    const refreshBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Refresh quotas")!;
+    await act(async () => { refreshBtn.click(); });
+    await flushTicks();
+
+    // Prior accounts and quota reading survive partial failure and show alert.
+    expect(host.textContent).toContain("OAuth Primary");
+    expect(host.textContent).toContain("88%");
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Last refresh failed; showing the previous reading");
+
+    // Start a slow refresh, supersede it with a newer refresh, then settle the stale response last.
+    phase = "slow-stale";
+    triggerReloadCount = 1;
+    await act(async () => { refreshBtn.click(); });
+    await flushTicks(2);
+    expect(typeof releaseStaleConfig).toBe("function");
+
+    triggerReloadCount = 2;
+    await act(async () => {
+      // Force re-fetch while stale request is suspended via re-render with altered apiBase query.
+      root!.render(
+        <LanguageProvider>
+          <AllProviderAccountsHub apiBase="http://127.0.0.1:10100?" />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    expect(host.textContent).toContain("Fresh OAuth");
+
+    await act(async () => {
+      releaseStaleConfig!(Response.json({
+        providers: { alpha: { adapter: "openai-chat", authMode: "key", hasApiKey: true } },
+      }));
+    });
+    await flushTicks();
+    expect(host.textContent).toContain("Fresh OAuth");
+    expect(host.querySelector('[data-hub-provider="alpha"]')).toBeNull();
+  });
 });

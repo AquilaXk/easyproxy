@@ -125,13 +125,20 @@ export function ProviderEgressAndKeychainSection({
       && item.googleMode === "cloud-code-assist")
     || item.tlsProfile !== undefined;
 
+  const noProxyDirtyRef = useRef(false);
+  const tlsDirtyRef = useRef(false);
+
   const applySnapshot = useCallback((snapshot: LiveDetailsSnapshot) => {
     if (snapshot.providerMeta) {
       setHasProxy(snapshot.providerMeta.hasProxy === true);
       setProxyLabel(snapshot.providerMeta.proxyLabel ?? "");
-      setNoProxyInput(formatNoProxyValue(snapshot.providerMeta.noProxy));
-      setTlsEnabled(isTlsProfileEnabled(snapshot.providerMeta.tlsProfile));
-      setTlsStatus(snapshot.providerMeta.tlsProfile?.status ?? "disabled");
+      if (!noProxyDirtyRef.current) {
+        setNoProxyInput(formatNoProxyValue(snapshot.providerMeta.noProxy));
+      }
+      if (!tlsDirtyRef.current) {
+        setTlsEnabled(isTlsProfileEnabled(snapshot.providerMeta.tlsProfile));
+        setTlsStatus(snapshot.providerMeta.tlsProfile?.status ?? "disabled");
+      }
     }
     if (snapshot.keychain) setKeychainState(snapshot.keychain);
     if (snapshot.historySlim) setHistorySlim(snapshot.historySlim);
@@ -168,6 +175,8 @@ export function ProviderEgressAndKeychainSection({
     const providerKey = `${apiBase ?? ""}::${item.name}`;
     if (prevProviderKeyRef.current !== providerKey) {
       prevProviderKeyRef.current = providerKey;
+      noProxyDirtyRef.current = false;
+      tlsDirtyRef.current = false;
       const current = latestItemRef.current;
       setProxyInput("");
       setShowProxy(false);
@@ -186,7 +195,9 @@ export function ProviderEgressAndKeychainSection({
     const ac = new AbortController();
     fetchLiveDetailsSnapshot(apiBase, item.name, supportsKeychain, isCanonicalOpenAi, ac.signal)
       .then(snapshot => {
-        if (!ac.signal.aborted) applySnapshot(snapshot);
+        if (mountedRef.current && !ac.signal.aborted && prevProviderKeyRef.current === providerKey) {
+          applySnapshot(snapshot);
+        }
       })
       .catch(() => undefined);
     return () => ac.abort();
@@ -197,63 +208,79 @@ export function ProviderEgressAndKeychainSection({
     const startProviderKey = `${apiBase}::${item.name}`;
     setEgressSaving(true);
     setEgressMsg(null);
-    const nextTls = override?.tlsEnabled ?? tlsEnabled;
+    const isTlsToggle = override?.tlsEnabled !== undefined;
+    const isClearProxy = override?.proxy === null;
     const rollbackTlsIfOverridden = () => {
       if (override?.tlsEnabled !== undefined) {
         setTlsEnabled(!override.tlsEnabled);
+        tlsDirtyRef.current = false;
       }
     };
-    const body: Record<string, unknown> = {
-      noProxy: noProxyInput.trim() || null,
-      ...(supportsTlsProfile ? { tlsProfile: nextTls ? "antigravity-browser" : null } : {}),
-    };
-    if (override?.proxy === null) {
-      body.proxy = null;
-    } else if (proxyInput.trim()) {
-      body.proxy = proxyInput.trim();
-    }
+    const body: Record<string, unknown> = isTlsToggle
+      ? { tlsProfile: override.tlsEnabled ? "antigravity-browser" : null }
+      : isClearProxy
+        ? { proxy: null }
+        : {
+            noProxy: noProxyInput.trim() || null,
+            ...(supportsTlsProfile ? { tlsProfile: tlsEnabled ? "antigravity-browser" : null } : {}),
+            ...(proxyInput.trim() ? { proxy: proxyInput.trim() } : {}),
+          };
     try {
       const res = await fetch(`${apiBase}/api/providers/egress?name=${encodeURIComponent(item.name)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (prevProviderKeyRef.current !== startProviderKey) return;
-      const payload = await readJsonIfOk<LiveProviderEgressMeta & { error?: string }>(res);
-      if (!res.ok || !payload) {
+      if (!mountedRef.current || prevProviderKeyRef.current !== startProviderKey) return;
+      if (!res.ok) {
         rollbackTlsIfOverridden();
-        let errText = payload?.error;
-        if (!errText) {
-          try {
-            const errJson = await res.json() as { error?: string };
-            errText = errJson.error;
-          } catch {
-            errText = undefined;
-          }
-        }
-        setEgressMsg({ ok: false, text: errText ?? uxT(locale, "providerEgress.saveFailed") });
+        const errJson = await res.json().catch(() => null) as { error?: string } | null;
+        if (!mountedRef.current || prevProviderKeyRef.current !== startProviderKey) return;
+        setEgressMsg({ ok: false, text: errJson?.error ?? uxT(locale, "providerEgress.saveFailed") });
         return;
       }
-      setHasProxy(payload.hasProxy === true);
-      setProxyLabel(payload.proxyLabel ?? "");
-      setNoProxyInput(formatNoProxyValue(payload.noProxy));
-      setTlsEnabled(isTlsProfileEnabled(payload.tlsProfile));
-      setTlsStatus(payload.tlsProfile?.status ?? "disabled");
-      if (override?.proxy === null) setProxyInput("");
-      else if (proxyInput.trim()) setProxyInput("");
+      const payload = await res.json().catch(() => null) as LiveProviderEgressMeta | null;
+      if (!mountedRef.current || prevProviderKeyRef.current !== startProviderKey) return;
+      if (!payload || typeof payload !== "object") {
+        rollbackTlsIfOverridden();
+        setEgressMsg({ ok: false, text: uxT(locale, "providerEgress.saveFailed") });
+        return;
+      }
+      if (isTlsToggle) {
+        setTlsEnabled(isTlsProfileEnabled(payload.tlsProfile));
+        setTlsStatus(payload.tlsProfile?.status ?? "disabled");
+        tlsDirtyRef.current = false;
+      } else if (isClearProxy) {
+        setHasProxy(payload.hasProxy === true);
+        setProxyLabel(payload.proxyLabel ?? "");
+        setProxyInput("");
+        if (!tlsDirtyRef.current) {
+          setTlsEnabled(isTlsProfileEnabled(payload.tlsProfile));
+          setTlsStatus(payload.tlsProfile?.status ?? "disabled");
+        }
+      } else {
+        setHasProxy(payload.hasProxy === true);
+        setProxyLabel(payload.proxyLabel ?? "");
+        setNoProxyInput(formatNoProxyValue(payload.noProxy));
+        noProxyDirtyRef.current = false;
+        setTlsEnabled(isTlsProfileEnabled(payload.tlsProfile));
+        setTlsStatus(payload.tlsProfile?.status ?? "disabled");
+        tlsDirtyRef.current = false;
+        if (proxyInput.trim()) setProxyInput("");
+      }
       setEgressMsg({
         ok: true,
-        text: override?.proxy === null
+        text: isClearProxy
           ? uxT(locale, "providerEgress.proxyCleared")
           : uxT(locale, "providerEgress.saved"),
       });
       onRefreshConfig?.();
     } catch {
-      if (prevProviderKeyRef.current !== startProviderKey) return;
+      if (!mountedRef.current || prevProviderKeyRef.current !== startProviderKey) return;
       rollbackTlsIfOverridden();
       setEgressMsg({ ok: false, text: uxT(locale, "providerEgress.saveFailed") });
     } finally {
-      if (prevProviderKeyRef.current === startProviderKey) setEgressSaving(false);
+      if (mountedRef.current && prevProviderKeyRef.current === startProviderKey) setEgressSaving(false);
     }
   };
 
@@ -336,8 +363,17 @@ export function ProviderEgressAndKeychainSection({
       case "plaintext": return uxT(locale, "providerEgress.keychainStatusPlaintext");
       case "mixed": return uxT(locale, "providerEgress.keychainStatusMixed");
       case "env": return uxT(locale, "providerEgress.keychainStatusEnv");
-      case "gcp-sa": return "GCP Service Account";
+      case "gcp-sa": return uxT(locale, "providerEgress.keychainStatusGcpSa");
       default: return uxT(locale, "providerEgress.keychainStatusAbsent");
+    }
+  })();
+
+  const tlsStatusText = (() => {
+    switch (tlsStatus) {
+      case "pending": return uxT(locale, "providerEgress.tlsStatusPending");
+      case "active": return uxT(locale, "providerEgress.tlsStatusActive");
+      case "failed": return uxT(locale, "providerEgress.tlsStatusFailed");
+      default: return uxT(locale, "providerEgress.tlsStatusDisabled");
     }
   })();
 
@@ -384,7 +420,10 @@ export function ProviderEgressAndKeychainSection({
           <input
             className="input font-mono"
             value={noProxyInput}
-            onChange={e => setNoProxyInput(e.target.value)}
+            onChange={e => {
+              noProxyDirtyRef.current = true;
+              setNoProxyInput(e.target.value);
+            }}
             placeholder={uxT(locale, "providerEgress.noProxyPlaceholder")}
             disabled={egressSaving}
           />
@@ -399,6 +438,7 @@ export function ProviderEgressAndKeychainSection({
             disabled={egressSaving}
             onChange={e => {
               const checked = e.target.checked;
+              tlsDirtyRef.current = true;
               setTlsEnabled(checked);
               void saveEgress({ tlsEnabled: checked });
             }}
@@ -406,7 +446,7 @@ export function ProviderEgressAndKeychainSection({
           <span>
             <span className="pwi-settings-label">
               {uxT(locale, "providerEgress.tlsAntigravity")}{" "}
-              <span className="badge badge-muted">{tlsStatus}</span>
+              <span className="badge badge-muted">{tlsStatusText}</span>
             </span>
             <span className="muted text-label" style={{ display: "block", marginTop: 2 }}>
               {uxT(locale, "providerEgress.tlsDesc")}

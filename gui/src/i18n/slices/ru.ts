@@ -460,4 +460,11 @@ export const uxOverhaulCopyRu = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "Выбрать аудиофайл",
+  "ux.providerEgress.tlsStatusDisabled": "Отключено",
+  "ux.providerEgress.tlsStatusPending": "Ожидает",
+  "ux.providerEgress.tlsStatusActive": "Активно",
+  "ux.providerEgress.tlsStatusFailed": "Ошибка",
+  "ux.providerEgress.keychainStatusGcpSa": "Сервисный аккаунт GCP",
+  "ux.storageBackup.restoreConfirm": "Восстановить конфигурацию и учётные данные из этой резервной копии? Локальные файлы будут перезаписаны после сохранения снимка.",
+  "ux.storageBackup.invalidBackup": "Некорректная резервная копия",
 } as const;

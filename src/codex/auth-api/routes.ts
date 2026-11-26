@@ -4,7 +4,7 @@ import { persistCodexAccountSelection } from "./account-selection";
 import { CODEX_ACCOUNT_LOG_LABEL_RE, codexAccountLogLabel } from "../account-label";
 import { handleUseRemainingQuotaRoute } from "./use-remaining-route";
 import { poolQuotaHistoryIdentity, readCodexAccountRecord, setCodexAccountProxy } from "../account-store";
-import { providerEgressConfigError } from "../../lib/provider-egress";
+import { providerEgressConfigError, providerProxyDisplayFields } from "../../lib/provider-egress";
 import { redactUrlForLog } from "../../lib/redact";
 import { estimateCodexQuotaCapacity, insufficientCodexCapacity } from "../quota-capacity";
 import type { CodexCapacityResult } from "../quota-capacity";
@@ -122,8 +122,7 @@ export async function handleCodexAuthAPI(
     return jsonResponse({
       ok: true,
       id,
-      hasProxy: Boolean(rawProxy),
-      ...(rawProxy ? { proxyLabel: redactUrlForLog(rawProxy) } : {}),
+      ...providerProxyDisplayFields(rawProxy, redactUrlForLog),
     });
   }
 

@@ -1,7 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { confirmAction } from "../action-dialogs";
 import { readJsonOrThrow } from "../fetch-json";
 import { useI18n, type TFn } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
+import { triggerTextDownload } from "../lib/log-export";
 import { Notice } from "../ui";
 import "../styles/profile-backup.css";
 
@@ -44,31 +46,20 @@ export default function StorageProfileBackupCard({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const unmountAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    unmountAbortRef.current = controller;
+    return () => controller.abort();
+  }, []);
 
   const exportInvalidPass = exportMode === "encrypted" && exportPassphrase.length < 8;
-
-  const triggerDownload = (bundle: unknown, mode: "encrypted" | "redacted") => {
-    const json = JSON.stringify(bundle, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    link.href = url;
-    link.download = [`easyproxy-profile-${mode}-${stamp}`, "epxbackup", "json"].join(".");
-    document.body.appendChild(link);
-    try {
-      link.click();
-    } finally {
-      link.remove();
-      const timer = setTimeout(() => URL.revokeObjectURL(url), 1_000);
-      if (typeof timer === "object" && timer !== null && "unref" in timer && typeof (timer as { unref?: () => void }).unref === "function") {
-        (timer as { unref: () => void }).unref();
-      }
-    }
-  };
+  const busy = exportBusy || restoreBusy;
+  const restoreInvalid = inspected !== null && (!inspected.valid || !inspected.configValidation.ok);
 
   const handleExport = async () => {
-    if (exportInvalidPass) return;
+    if (exportInvalidPass || busy) return;
     setExportBusy(true);
     setError(null);
     setNotice(null);
@@ -83,7 +74,12 @@ export default function StorageProfileBackupCard({
       });
       const bundle = await readJsonOrThrow<unknown>(res);
       if (bundle) {
-        triggerDownload(bundle, exportMode);
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        triggerTextDownload(
+          [`easyproxy-profile-${exportMode}-${stamp}`, "epxbackup", "json"].join("."),
+          "application/json",
+          JSON.stringify(bundle, null, 2),
+        );
         setNotice(t("storageBackup.exportSuccess"));
       }
     } catch (err) {
@@ -120,7 +116,7 @@ export default function StorageProfileBackupCard({
   };
 
   const handleInspect = async () => {
-    if (!selectedBundle) return;
+    if (!selectedBundle || busy) return;
     setRestoreBusy(true);
     setError(null);
     setNotice(null);
@@ -144,11 +140,19 @@ export default function StorageProfileBackupCard({
   };
 
   const handleRestore = async () => {
-    if (!selectedBundle) return;
+    if (!selectedBundle || busy || restoreInvalid) return;
     setRestoreBusy(true);
     setError(null);
     setNotice(null);
     try {
+      const confirmed = await confirmAction({
+        message: uxT(locale, "storageBackup.restoreConfirm"),
+        confirmLabel: t("storageBackup.restoreBtn"),
+        tone: "danger",
+        locale,
+        signal: unmountAbortRef.current?.signal,
+      });
+      if (!confirmed) return;
       const res = await fetch(`${apiBase}/api/profile/backup/restore`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -187,7 +191,7 @@ export default function StorageProfileBackupCard({
               type="radio"
               name="backup-export-mode"
               checked={exportMode === "encrypted"}
-              disabled={exportBusy}
+              disabled={busy}
               onChange={() => setExportMode("encrypted")}
             />
             <span>{t("storageBackup.modeEncrypted")}</span>
@@ -197,7 +201,7 @@ export default function StorageProfileBackupCard({
               type="radio"
               name="backup-export-mode"
               checked={exportMode === "redacted"}
-              disabled={exportBusy}
+              disabled={busy}
               onChange={() => setExportMode("redacted")}
             />
             <span>{t("storageBackup.modeRedacted")}</span>
@@ -213,7 +217,7 @@ export default function StorageProfileBackupCard({
                 type="password"
                 className="input"
                 value={exportPassphrase}
-                disabled={exportBusy}
+                disabled={busy}
                 placeholder={t("storageBackup.passphrasePlaceholder")}
                 onChange={e => setExportPassphrase(e.target.value)}
               />
@@ -227,7 +231,7 @@ export default function StorageProfileBackupCard({
             <button
               type="button"
               className="btn btn-primary btn-sm"
-              disabled={exportBusy || exportInvalidPass}
+              disabled={busy || exportInvalidPass}
               onClick={() => void handleExport()}
             >
               {t("storageBackup.exportBtn")}
@@ -243,7 +247,7 @@ export default function StorageProfileBackupCard({
             className="sr-only"
             accept=".json,.epxbackup.json,application/json"
             aria-label={t("storageBackup.selectFile")}
-            disabled={restoreBusy}
+            disabled={busy}
             onChange={e => {
               const file = e.target.files?.[0] ?? null;
               e.currentTarget.value = "";
@@ -254,7 +258,7 @@ export default function StorageProfileBackupCard({
             <button
               type="button"
               className="btn btn-ghost btn-sm"
-              disabled={restoreBusy}
+              disabled={busy}
               onClick={() => fileInputRef.current?.click()}
             >
               {t("storageBackup.selectFile")}
@@ -271,9 +275,12 @@ export default function StorageProfileBackupCard({
               type="password"
               className="input"
               value={restorePassphrase}
-              disabled={restoreBusy}
+              disabled={busy}
               placeholder={t("storageBackup.passphrasePlaceholder")}
-              onChange={e => setRestorePassphrase(e.target.value)}
+              onChange={e => {
+                setRestorePassphrase(e.target.value);
+                setInspected(null);
+              }}
             />
           </div>
 
@@ -286,7 +293,9 @@ export default function StorageProfileBackupCard({
                   {uxT(locale, inspected.mode === "encrypted" ? "storageBackup.modeEncrypted" : "storageBackup.modeRedacted")}
                 </strong>
                 {" · "}
-                {inspected.configValidation.ok ? uxT(locale, "storageBackup.valid") : inspected.configValidation.error}
+                {!inspected.valid || !inspected.configValidation.ok
+                  ? (inspected.configValidation.error ?? uxT(locale, "storageBackup.invalidBackup"))
+                  : uxT(locale, "storageBackup.valid")}
               </div>
               <div className="text-fg-muted">
                 {t("storageBackup.inspectSummary", {
@@ -305,7 +314,7 @@ export default function StorageProfileBackupCard({
             <button
               type="button"
               className="btn btn-ghost btn-sm"
-              disabled={restoreBusy || !selectedBundle}
+              disabled={busy || !selectedBundle}
               onClick={() => void handleInspect()}
             >
               {t("storageBackup.inspectBtn")}
@@ -313,7 +322,7 @@ export default function StorageProfileBackupCard({
             <button
               type="button"
               className="btn btn-primary btn-sm"
-              disabled={restoreBusy || !selectedBundle}
+              disabled={busy || !selectedBundle || restoreInvalid}
               onClick={() => void handleRestore()}
             >
               {restoreBusy ? t("storageBackup.restoring") : t("storageBackup.restoreBtn")}

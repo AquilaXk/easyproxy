@@ -460,4 +460,11 @@ export const uxOverhaulCopyDe = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "Audiodatei auswählen",
+  "ux.providerEgress.tlsStatusDisabled": "Deaktiviert",
+  "ux.providerEgress.tlsStatusPending": "Ausstehend",
+  "ux.providerEgress.tlsStatusActive": "Aktiv",
+  "ux.providerEgress.tlsStatusFailed": "Fehlgeschlagen",
+  "ux.providerEgress.keychainStatusGcpSa": "GCP-Dienstkonto",
+  "ux.storageBackup.restoreConfirm": "Konfiguration und Zugangsdaten aus dieser Sicherung wiederherstellen? Vorhandene lokale Dateien werden nach einem Snapshot überschrieben.",
+  "ux.storageBackup.invalidBackup": "Ungültige Sicherung",
 } as const;

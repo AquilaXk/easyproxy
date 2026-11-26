@@ -52,7 +52,7 @@ import {
 import { cancelKiroDeviceLogin, kiroDeviceConfigBaseline, selectKiroDeviceProfile, startKiroDeviceLogin, statusKiroDeviceLogin, type KiroDeviceMethod } from "../../oauth/kiro-device-login";
 import { parseKiroIamOptions } from "../../oauth/kiro-iam-identity-center";
 import { providerDestinationResolvedError } from "../../lib/destination-policy";
-import { providerEgressConfigError } from "../../lib/provider-egress";
+import { providerEgressConfigError, providerProxyDisplayFields } from "../../lib/provider-egress";
 import { redactUrlForLog } from "../../lib/redact";
 import { accountDisplayLabel, emailMaskingEnabled, maskedAccountLabel } from "../../lib/privacy";
 import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
@@ -1252,12 +1252,12 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     }
     const { setAccountProxy } = await import("../../oauth/store");
     if (!(await setAccountProxy(provider, accountId, rawProxy || null))) return jsonResponse({ error: "account not found" }, 404);
+    clearQuotaCachesAfterAccountMutation(provider, true);
     return jsonResponse({
       ok: true,
       provider,
       accountId,
-      hasProxy: Boolean(rawProxy),
-      ...(rawProxy ? { proxyLabel: redactUrlForLog(rawProxy) } : {}),
+      ...providerProxyDisplayFields(rawProxy, redactUrlForLog),
     });
   }
   if (url.pathname === "/api/oauth/accounts" && req.method === "DELETE") {

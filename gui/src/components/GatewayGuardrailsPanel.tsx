@@ -39,6 +39,14 @@ export interface GuardrailsDryRunResult {
 
 const MAX_DRY_RUN_INPUT_CHARS = 65_536;
 
+function parseBoundedInt(raw: string, min: number, max: number): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) return null;
+  return parsed;
+}
+
 function parseDryRunResult(raw: unknown): GuardrailsDryRunResult | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
@@ -151,19 +159,16 @@ export default function GatewayGuardrailsPanel({
 
   const handleSave = async () => {
     if (readOnly || saving) return;
-    const parsedMin = Number(minChars.trim());
-    const parsedHead = Number(headChars.trim());
-    const parsedTail = Number(tailChars.trim());
-    const minValid = Number.isSafeInteger(parsedMin) && parsedMin >= 512 && parsedMin <= 500_000;
-    const headValid = Number.isSafeInteger(parsedHead) && parsedHead >= 0 && parsedHead <= 100_000;
-    const tailValid = Number.isSafeInteger(parsedTail) && parsedTail >= 0 && parsedTail <= 100_000;
-    if (compressionEnabled && (!minValid || !headValid || !tailValid)) {
+    const parsedMin = parseBoundedInt(minChars, 512, 500_000);
+    const parsedHead = parseBoundedInt(headChars, 0, 100_000);
+    const parsedTail = parseBoundedInt(tailChars, 0, 100_000);
+    if (compressionEnabled && (parsedMin === null || parsedHead === null || parsedTail === null)) {
       setStatus({ ok: false, text: uxT(locale, "guardrails.saveFailed") });
       return;
     }
-    const min = minValid ? parsedMin : (data?.toolOutputCompression.minChars ?? 12_000);
-    const head = headValid ? parsedHead : (data?.toolOutputCompression.headChars ?? 4_000);
-    const tail = tailValid ? parsedTail : (data?.toolOutputCompression.tailChars ?? 4_000);
+    const min = parsedMin ?? (data?.toolOutputCompression.minChars ?? 12_000);
+    const head = parsedHead ?? (data?.toolOutputCompression.headChars ?? 4_000);
+    const tail = parsedTail ?? (data?.toolOutputCompression.tailChars ?? 4_000);
     setSaving(true);
     setStatus(null);
     try {
@@ -207,9 +212,9 @@ export default function GatewayGuardrailsPanel({
     dryRunAbortRef.current = ac;
     setDryRunBusy(true);
     setDryRunError(null);
-    const min = Number(minChars.trim());
-    const head = Number(headChars.trim());
-    const tail = Number(tailChars.trim());
+    const min = parseBoundedInt(minChars, 512, 500_000);
+    const head = parseBoundedInt(headChars, 0, 100_000);
+    const tail = parseBoundedInt(tailChars, 0, 100_000);
     try {
       const res = await fetch(`${apiBase}/api/gateway-guardrails/dry-run`, {
         method: "POST",
@@ -219,15 +224,23 @@ export default function GatewayGuardrailsPanel({
           outboundSecretGuard: { mode },
           toolOutputCompression: {
             enabled: compressionEnabled,
-            ...(Number.isSafeInteger(min) && min >= 512 && min <= 500_000 ? { minChars: min } : {}),
-            ...(Number.isSafeInteger(head) && head >= 0 && head <= 100_000 ? { headChars: head } : {}),
-            ...(Number.isSafeInteger(tail) && tail >= 0 && tail <= 100_000 ? { tailChars: tail } : {}),
+            ...(min !== null ? { minChars: min } : {}),
+            ...(head !== null ? { headChars: head } : {}),
+            ...(tail !== null ? { tailChars: tail } : {}),
             stripAnsi,
           },
         }),
         signal: ac.signal,
       });
-      const raw = await readJsonIfOk<unknown>(res);
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null) as { error?: unknown } | null;
+        const msg = typeof errBody?.error === "string" && errBody.error.trim()
+          ? errBody.error
+          : uxT(locale, "guardrails.dryRunFailed");
+        setDryRunError(msg);
+        return;
+      }
+      const raw = await res.json().catch(() => null);
       const parsed = parseDryRunResult(raw);
       if (!parsed) {
         setDryRunError(uxT(locale, "guardrails.dryRunFailed"));

@@ -332,7 +332,14 @@ export type UxExtraKey =
   | "shell.uptimeHoursMinutes"
   | "codexRoute.modePoolShort"
   | "codexRoute.modeDirectShort"
-  | "audio.chooseFile";
+  | "audio.chooseFile"
+  | "providerEgress.tlsStatusDisabled"
+  | "providerEgress.tlsStatusPending"
+  | "providerEgress.tlsStatusActive"
+  | "providerEgress.tlsStatusFailed"
+  | "providerEgress.keychainStatusGcpSa"
+  | "storageBackup.restoreConfirm"
+  | "storageBackup.invalidBackup";
 
 export function uxT(locale: Locale, key: UxCopyKey, vars?: Record<string, string | number>): string {
   const sliceKey = `ux.${key}` as TKey;

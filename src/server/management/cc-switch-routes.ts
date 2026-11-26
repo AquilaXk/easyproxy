@@ -2,9 +2,16 @@ import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { expandUserPath, getConfigDir, saveConfigPreservingClaudeCode } from "../../config";
+import { refreshConfigDerivedRegistries } from "../../config/derived-registries";
+import { clearGatherRoutedModelsInflight } from "../../codex/catalog/provider-fetch";
+import { clearModelCache } from "../../codex/model-cache";
 import { assertPlainLocalPath } from "../../codex/orca-auth-source";
+import { resetProviderTlsProfileStatus } from "../../lib/provider-tls-profile";
 import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
 import { probeProviderKeychain } from "../../providers/api-key-resolve";
+import { clearKeyCooldowns, forgetApiKeyRotationCursor } from "../../providers/key-failover";
+import { clearPassiveKeyLimits } from "../../providers/passive-key-observation";
+import { clearAccountQuotaCache, clearProviderQuotaCache } from "../../providers/quota";
 import { jsonResponse } from "../auth-cors";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import type { ManagementContext } from "./context";
@@ -133,6 +140,25 @@ function validateCcSwitchRouteSourcePath(raw: string): string {
   return resolved;
 }
 
+function clearCachesAfterCcSwitchMutation(
+  ctx: ManagementContext,
+  affectedProviderNames: string[],
+): void {
+  const { config, deps } = ctx;
+  for (const name of affectedProviderNames) {
+    clearPassiveKeyLimits(name);
+    clearAccountQuotaCache(name);
+    clearKeyCooldowns(name);
+    forgetApiKeyRotationCursor(name);
+    clearModelCache(name);
+    resetProviderTlsProfileStatus(name);
+  }
+  reconcileLiveStateStores();
+  refreshConfigDerivedRegistries(config);
+  clearGatherRoutedModelsInflight();
+  (deps.clearProviderQuotaCache ?? clearProviderQuotaCache)();
+}
+
 export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config, deps, convergeCodexCatalog } = ctx;
   if (req.method !== "POST") return null;
@@ -172,7 +198,7 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
         config,
         saveConfig: deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode,
       });
-      reconcileLiveStateStores();
+      clearCachesAfterCcSwitchMutation(ctx, result.mode === "restore" ? result.restoredNames : []);
       const catalogRefresh = await convergeCodexCatalog();
       return jsonResponse({ ...result, journalActive: hasActiveCcSwitchImportJournal(), catalogRefresh }, 200, req, config);
     } catch (error) {
@@ -279,7 +305,7 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
       includeApiKeys,
       storeInKeychain,
     });
-    reconcileLiveStateStores();
+    clearCachesAfterCcSwitchMutation(ctx, applied.mode !== "restore" ? applied.providers.map(provider => provider.name) : []);
     const catalogRefresh = await convergeCodexCatalog();
     return jsonResponse({ ...applied, journalActive: hasActiveCcSwitchImportJournal(), catalogRefresh }, 200, req, config);
   } catch (error) {

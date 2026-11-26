@@ -7,6 +7,7 @@ import { initializeProviderModelSelection } from "../providers/initial-model-sel
 import type { EpxConfig, EpxProviderConfig, RefreshPolicy } from "../types";
 import { getDefaultConfig, initializePersistedConfigIfMissing, loadConfig, mutatePersistedConfig, observeInitialConfigState, saveConfig } from "../config";
 import { resolveProviderApiKey } from "../providers/key-store";
+import { hasConfiguredProxyUrl } from "../lib/provider-egress";
 import { projectEmail } from "../lib/privacy";
 import { KiroTokenRefreshError, environmentKiroRoutingMetadata, loginKiro, refreshKiroToken, settleKiroLoginTransaction } from "./kiro";
 import { KiroUserIdentityUnavailableError } from "./kiro-account-identity";
@@ -1829,7 +1830,7 @@ export function getLoginStatus(provider: string, maskEmails = true, flowId?: str
     ...((provider === "anthropic" || provider === "anthropic2") && anthropicSubscriptionLabel(a.credential.plan)
       ? { planLabel: anthropicSubscriptionLabel(a.credential.plan) } : {}),
     ...((provider === "anthropic" || provider === "anthropic2") ? oauthOrganizationNameSummary(a.credential) : {}),
-    ...(a.proxy ? { hasProxy: true, proxyLabel: redactUrlForLog(a.proxy) } : {}),
+    ...(hasConfiguredProxyUrl(a.proxy) ? { hasProxy: true, proxyLabel: redactUrlForLog(a.proxy) } : {}),
     ...(a.hostPlatform ? { hostPlatform: a.hostPlatform } : {}),
   }));
 

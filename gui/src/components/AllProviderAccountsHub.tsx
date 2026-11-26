@@ -46,9 +46,29 @@ interface HubProviderCard {
   codexAccountMode?: "pool" | "direct";
   quotaReport?: ProviderQuotaReportView;
   accounts: HubAccountRow[];
+  accountsFailed?: boolean;
 }
 
-type HubFetchResult = { ok: true; cards: HubProviderCard[] } | { ok: false };
+type HubFetchResult =
+  | { ok: true; cards: HubProviderCard[]; quotasFailed: boolean }
+  | { ok: false };
+
+function mergeHubCards(
+  prev: HubProviderCard[],
+  next: HubProviderCard[],
+  quotasFailed: boolean,
+): HubProviderCard[] {
+  const prevByName = new Map(prev.map(card => [card.name, card]));
+  return next.map(card => {
+    const prior = prevByName.get(card.name);
+    const { accountsFailed, ...cleanCard } = card;
+    return {
+      ...cleanCard,
+      quotaReport: cleanCard.quotaReport ?? (quotasFailed ? prior?.quotaReport : undefined),
+      accounts: accountsFailed && prior ? prior.accounts : cleanCard.accounts,
+    };
+  });
+}
 
 async function fetchAllProviderHubData(
   apiBase: string,
@@ -59,10 +79,11 @@ async function fetchAllProviderHubData(
   try {
     const [configRes, quotasRes] = await Promise.all([
       fetch(`${apiBase}/api/config`, signal ? { signal } : undefined),
-      fetch(`${apiBase}/api/provider-quotas${refreshQuotas ? "?refresh=1" : ""}`, signal ? { signal } : undefined),
+      fetch(`${apiBase}/api/provider-quotas${refreshQuotas ? "?refresh=1" : ""}`, signal ? { signal } : undefined).catch(() => null),
     ]);
     const configJson = await readJsonIfOk<{ providers?: Record<string, HubProviderConfig> }>(configRes);
-    const quotasJson = await readJsonIfOk<unknown>(quotasRes);
+    const quotasJson = quotasRes ? await readJsonIfOk<unknown>(quotasRes) : null;
+    const quotasFailed = !quotasRes || quotasJson === null;
     const rawReports = quotasJson && typeof quotasJson === "object" && !Array.isArray(quotasJson) && "reports" in quotasJson
       ? (quotasJson as { reports?: unknown }).reports
       : quotasJson;
@@ -82,6 +103,7 @@ async function fetchAllProviderHubData(
         ]);
         const body = accountsRes ? await readJsonIfOk<{ accounts?: Array<Record<string, unknown>>; activeCodexAccountId?: string | null }>(accountsRes) : null;
         const activeBody = activeRes ? await readJsonIfOk<{ activeCodexAccountId?: string | null }>(activeRes) : null;
+        const accountsFailed = !accountsRes || !body || !Array.isArray(body.accounts) || !activeRes || activeBody === null;
         const rows = Array.isArray(body?.accounts) ? body.accounts : [];
         const activeId = activeBody?.activeCodexAccountId !== undefined
           ? (activeBody.activeCodexAccountId ?? "__main__")
@@ -129,6 +151,7 @@ async function fetchAllProviderHubData(
           codexAccountMode: row.codexAccountMode === "direct" ? "direct" : "pool",
           quotaReport: quotaMap[name],
           accounts: displayedAccounts,
+          ...(accountsFailed ? { accountsFailed: true } : {}),
         };
       }
       if (row.authMode === "oauth") {
@@ -137,6 +160,7 @@ async function fetchAllProviderHubData(
           signal ? { signal } : undefined,
         ).catch(() => null);
         const body = res ? await readJsonIfOk<{ accounts?: Array<Record<string, unknown>>; activeAccountId?: string }>(res) : null;
+        const accountsFailed = !res || !body || !Array.isArray(body.accounts);
         const rows = Array.isArray(body?.accounts) ? body.accounts : [];
         const activeId = body?.activeAccountId;
         return {
@@ -144,6 +168,7 @@ async function fetchAllProviderHubData(
           kind: "oauth",
           slot,
           quotaReport: quotaMap[name] ?? quotaMap[slot],
+          ...(accountsFailed ? { accountsFailed: true } : {}),
           accounts: rows.map((acc, idx) => {
             const id = String(acc.id ?? idx);
             const active = activeId ? id === activeId : acc.active === true;
@@ -175,12 +200,14 @@ async function fetchAllProviderHubData(
           signal ? { signal } : undefined,
         ).catch(() => null);
         const body = res ? await readJsonIfOk<{ keys?: Array<Record<string, unknown>> }>(res) : null;
+        const accountsFailed = !res || !body || !Array.isArray(body.keys);
         const rows = Array.isArray(body?.keys) ? body.keys : [];
         return {
           name,
           kind: "keys",
           slot: name,
           quotaReport: quotaMap[name],
+          ...(accountsFailed ? { accountsFailed: true } : {}),
           accounts: rows.map((k, idx) => {
             const label = typeof k.label === "string" && k.label.trim() ? k.label.trim() : undefined;
             const masked = typeof k.masked === "string" && k.masked.trim() ? k.masked.trim() : undefined;
@@ -198,7 +225,11 @@ async function fetchAllProviderHubData(
       }
       return null;
     }));
-    return { ok: true, cards: cards.filter((card): card is HubProviderCard => card !== null) };
+    return {
+      ok: true,
+      cards: cards.filter((card): card is HubProviderCard => card !== null),
+      quotasFailed,
+    };
   } catch {
     return { ok: false };
   }
@@ -211,41 +242,71 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
   const [refreshing, setRefreshing] = useState(false);
   const [switchingKey, setSwitchingKey] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const mountedRef = useRef(true);
+  const requestEpochRef = useRef(0);
+  const fetchAbortRef = useRef<AbortController | null>(null);
   const codexAppLabel = t("codexAuth.codexApp");
+  const refreshFailedMsg = t("quotaSummary.refreshFailed");
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const reload = async (refreshQuotas = false, signal?: AbortSignal) => {
+  const reload = async (refreshQuotas = false) => {
+    fetchAbortRef.current?.abort();
+    const ac = new AbortController();
+    fetchAbortRef.current = ac;
+    const epoch = ++requestEpochRef.current;
     setRefreshing(refreshQuotas);
     setSwitchError(null);
     try {
-      const result = await fetchAllProviderHubData(apiBase, refreshQuotas, codexAppLabel, signal);
-      if (!mountedRef.current || signal?.aborted) return;
+      const result = await fetchAllProviderHubData(apiBase, refreshQuotas, codexAppLabel, ac.signal);
+      if (!mountedRef.current || ac.signal.aborted || epoch !== requestEpochRef.current) return;
       if (result.ok) {
-        setCards(result.cards);
-      } else if (refreshQuotas) {
-        setSwitchError(t("quotaSummary.refreshFailed"));
+        setLoadFailed(false);
+        setCards(prev => mergeHubCards(prev, result.cards, result.quotasFailed));
+        if (result.quotasFailed || result.cards.some(card => card.accountsFailed)) {
+          setSwitchError(refreshFailedMsg);
+        }
+      } else {
+        setLoadFailed(true);
+        setSwitchError(refreshFailedMsg);
       }
     } finally {
-      if (mountedRef.current && !signal?.aborted) setRefreshing(false);
+      if (mountedRef.current && epoch === requestEpochRef.current) setRefreshing(false);
     }
   };
 
   useEffect(() => {
+    mountedRef.current = true;
+    fetchAbortRef.current?.abort();
     const ac = new AbortController();
+    fetchAbortRef.current = ac;
+    const epoch = ++requestEpochRef.current;
     fetchAllProviderHubData(apiBase, false, codexAppLabel, ac.signal)
       .then(result => {
-        if (mountedRef.current && !ac.signal.aborted && result.ok) setCards(result.cards);
+        if (!mountedRef.current || ac.signal.aborted || epoch !== requestEpochRef.current) return;
+        if (result.ok) {
+          setLoadFailed(false);
+          setCards(prev => mergeHubCards(prev, result.cards, result.quotasFailed));
+          if (result.quotasFailed || result.cards.some(card => card.accountsFailed)) {
+            setSwitchError(refreshFailedMsg);
+          }
+        } else {
+          setLoadFailed(true);
+          setSwitchError(refreshFailedMsg);
+        }
       })
-      .catch(() => undefined);
-    return () => ac.abort();
-  }, [apiBase, codexAppLabel]);
+      .catch(() => {
+        if (mountedRef.current && !ac.signal.aborted && epoch === requestEpochRef.current) {
+          setLoadFailed(true);
+          setSwitchError(refreshFailedMsg);
+        }
+      });
+    return () => {
+      mountedRef.current = false;
+      ac.abort();
+      fetchAbortRef.current?.abort();
+      requestEpochRef.current += 1;
+    };
+  }, [apiBase, codexAppLabel, refreshFailedMsg]);
 
   const counts = useMemo(() => ({
     all: cards.length,
@@ -289,7 +350,35 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
     }
   };
 
-  if (cards.length === 0) return null;
+  if (cards.length === 0) {
+    if (!loadFailed || hideWhenCodexOnly) return null;
+    return (
+      <section
+        className="flex flex-col gap-3 rounded-card border border-solid border-line bg-surface p-4 mb-5"
+        aria-labelledby="accounts-hub-title"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 id="accounts-hub-title" className="m-0 text-base font-semibold text-fg">
+              {uxT(locale, "accountsHub.title")}
+            </h2>
+            <p className="m-0 mt-0.5 text-xs text-fg-muted">{uxT(locale, "accountsHub.subtitle")}</p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={refreshing}
+            onClick={() => { void reload(true); }}
+          >
+            {uxT(locale, "accountsHub.refresh")}
+          </button>
+        </div>
+        <div role="alert" className="text-xs text-danger">
+          {switchError ?? refreshFailedMsg}
+        </div>
+      </section>
+    );
+  }
   if (hideWhenCodexOnly && cards.every(c => c.kind === "codex")) return null;
 
   return (

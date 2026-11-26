@@ -460,4 +460,11 @@ export const uxOverhaulCopyJa = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "音声ファイルを選択",
+  "ux.providerEgress.tlsStatusDisabled": "無効",
+  "ux.providerEgress.tlsStatusPending": "保留中",
+  "ux.providerEgress.tlsStatusActive": "有効",
+  "ux.providerEgress.tlsStatusFailed": "失敗",
+  "ux.providerEgress.keychainStatusGcpSa": "GCP サービスアカウント",
+  "ux.storageBackup.restoreConfirm": "このバックアップから設定と認証情報を復元しますか？復元前スナップショットを保存したあと既存のローカルファイルを上書きします。",
+  "ux.storageBackup.invalidBackup": "無効なバックアップ",
 } as const;

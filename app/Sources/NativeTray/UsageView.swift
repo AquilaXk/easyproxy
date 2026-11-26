@@ -1,14 +1,62 @@
 import SwiftUI
 
 @MainActor
-final class NativeTrayStore: ObservableObject {
-    @Published var snapshot: NativeTraySnapshot?
+public final class NativeTrayStore: ObservableObject {
+    @Published public var snapshot: NativeTraySnapshot? {
+        didSet { syncDetectedClients() }
+    }
     @Published var decodeFailed = false
     /// The account row whose switch is in flight, until a settled snapshot arrives.
     @Published var pendingSwitch: String?
+    @Published public private(set) var fallbackDetectedClients: [NativeTrayDetectedClient] = []
     var action: (Int32) -> Void = { _ in }
     var switchAccount: (String, String) -> Void = { _, _ in }
     private var pendingToken = 0
+    private var clientScanToken = 0
+    private var clientScanTask: Task<Void, Never>?
+    private let detectLocalClients: @Sendable () -> [NativeTrayDetectedClient]
+
+    public init(
+        detectLocalClients: @escaping @Sendable () -> [NativeTrayDetectedClient] = {
+            NativeTrayLocalClientDetector.detect(snapshotClients: nil)
+        }
+    ) {
+        self.detectLocalClients = detectLocalClients
+    }
+
+    public func resolvedDetectedClients(for snapshot: NativeTraySnapshot) -> [NativeTrayDetectedClient] {
+        (snapshot.detectedClients ?? fallbackDetectedClients).filter { $0.installed || $0.connected }
+    }
+
+    private func syncDetectedClients() {
+        guard let snapshot else {
+            clientScanTask?.cancel()
+            clientScanTask = nil
+            clientScanToken += 1
+            fallbackDetectedClients = []
+            return
+        }
+        if snapshot.detectedClients != nil {
+            clientScanTask?.cancel()
+            clientScanTask = nil
+            clientScanToken += 1
+            fallbackDetectedClients = []
+            return
+        }
+        guard clientScanTask == nil else { return }
+        clientScanToken += 1
+        let token = clientScanToken
+        let detector = detectLocalClients
+        clientScanTask = Task.detached(priority: .utility) { [weak self] in
+            let detected = detector()
+            await MainActor.run { [weak self] in
+                guard let self, self.clientScanToken == token else { return }
+                self.clientScanTask = nil
+                guard self.snapshot?.detectedClients == nil else { return }
+                self.fallbackDetectedClients = detected
+            }
+        }
+    }
 
     func requestSwitch(provider: NativeTrayProvider, account: NativeTrayProvider.Account) {
         guard pendingSwitch == nil, let request = NativeTraySwitch.request(provider: provider, account: account) else { return }
@@ -31,6 +79,27 @@ final class NativeTrayStore: ObservableObject {
     }
 }
 
+public struct NativeTraySectionVisibility: Equatable {
+    public let showAccounts: Bool
+    public let showTotals: Bool
+    public let showChart: Bool
+    public let showModels: Bool
+    public let showClients: Bool
+
+    public init(snapshot: NativeTraySnapshot, detectedClients: [NativeTrayDetectedClient]) {
+        showAccounts = snapshot.settings.showAccounts && !snapshot.providers.isEmpty
+        showTotals = snapshot.settings.showToday || snapshot.settings.show30Days
+        showChart = snapshot.settings.showChart && snapshot.chart != nil
+        showModels = snapshot.settings.showModels && !snapshot.models.isEmpty
+        showClients = !detectedClients.isEmpty
+    }
+
+    public var dividerBeforeTotals: Bool { showTotals && showAccounts }
+    public var dividerBeforeChart: Bool { showChart && (showAccounts || showTotals) }
+    public var dividerBeforeModels: Bool { showModels && (showAccounts || showTotals || showChart) }
+    public var dividerBeforeClients: Bool { showClients && (showAccounts || showTotals || showChart || showModels) }
+}
+
 struct NativeTrayUsageView: View {
     @ObservedObject var store: NativeTrayStore
 
@@ -49,7 +118,9 @@ struct NativeTrayUsageView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if let snapshot = store.snapshot {
-                        if snapshot.settings.showAccounts && !snapshot.providers.isEmpty {
+                        let detectedClients = store.resolvedDetectedClients(for: snapshot)
+                        let sections = NativeTraySectionVisibility(snapshot: snapshot, detectedClients: detectedClients)
+                        if sections.showAccounts {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(NativeTrayL10n.text("tray.section.accounts"))
                                     .font(.subheadline.weight(.semibold))
@@ -63,11 +134,9 @@ struct NativeTrayUsageView: View {
                                     }
                                 }
                             }
-                            if snapshot.settings.showToday || snapshot.settings.show30Days || snapshot.settings.showChart || (snapshot.settings.showModels && !snapshot.models.isEmpty) {
-                                Divider()
-                            }
                         }
-                        if snapshot.settings.showToday || snapshot.settings.show30Days {
+                        if sections.dividerBeforeTotals { Divider() }
+                        if sections.showTotals {
                             HStack(alignment: .top, spacing: 16) {
                                 if snapshot.settings.showToday {
                                     NativeTrayTotalsView(title: NativeTrayL10n.text("tray.section.today"), totals: snapshot.today, showCost: snapshot.settings.showCost)
@@ -78,12 +147,12 @@ struct NativeTrayUsageView: View {
                                 }
                             }
                         }
-                        if snapshot.settings.showChart, let chart = snapshot.chart {
-                            Divider()
+                        if sections.dividerBeforeChart { Divider() }
+                        if sections.showChart, let chart = snapshot.chart {
                             NativeTrayChartView(chart: chart, style: snapshot.settings.chartStyle)
                         }
-                        if snapshot.settings.showModels && !snapshot.models.isEmpty {
-                            Divider()
+                        if sections.dividerBeforeModels { Divider() }
+                        if sections.showModels {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(NativeTrayL10n.text("tray.section.models")).font(.subheadline).foregroundStyle(.secondary)
                                 ForEach(snapshot.models) { row in
@@ -97,11 +166,8 @@ struct NativeTrayUsageView: View {
                                 }
                             }
                         }
-                        let detectedClients = NativeTrayLocalClientDetector
-                            .detect(snapshotClients: snapshot.detectedClients)
-                            .filter { $0.installed || $0.connected }
-                        if !detectedClients.isEmpty {
-                            Divider()
+                        if sections.dividerBeforeClients { Divider() }
+                        if sections.showClients {
                             NativeTrayDetectedClientsView(clients: detectedClients)
                         }
                         ForEach(Array(snapshot.errors.enumerated()), id: \.offset) { _, error in

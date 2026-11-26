@@ -226,4 +226,104 @@ let dynLocal = NativeTrayLocalClientDetector.detect(homeDirectory: dynHome)
 check(dynLocal[1].state == "connected" && dynLocal[2].state == "connected" && dynLocal[3].state == "connected",
       "Dynamic EasyProxy loopback ports with EasyProxy markers/keys report connected")
 
+// False-positive rejections: disabled Antigravity gateway and Cursor recent folder paths.
+let fpHome = FileManager.default.temporaryDirectory.appendingPathComponent("epx-tray-fp-\(UUID().uuidString)", isDirectory: true)
+try FileManager.default.createDirectory(at: fpHome.appendingPathComponent(".antigravity"), withIntermediateDirectories: true)
+try #"{"gateway":{"enabled":false,"url":"http://127.0.0.1:10100","apiKey":"epx_data_0123456789abcdef"}}"#
+    .write(to: fpHome.appendingPathComponent(".antigravity/settings.json"), atomically: true, encoding: .utf8)
+try FileManager.default.createDirectory(at: fpHome.appendingPathComponent(".cursor"), withIntermediateDirectories: true)
+try #"{"recentFolders":["/Volumes/MACSSD/Projects/GitProjects/easyproxy"],"mcpServers":{"local":{"url":"http://localhost:3000/v1"}}}"#
+    .write(to: fpHome.appendingPathComponent(".cursor/cli-config.json"), atomically: true, encoding: .utf8)
+defer { try? FileManager.default.removeItem(at: fpHome) }
+
+let fpLocal = NativeTrayLocalClientDetector.detect(homeDirectory: fpHome)
+check(fpLocal[1].id == "antigravity" && fpLocal[1].installed && !fpLocal[1].connected && fpLocal[1].state == "detected",
+      "Disabled Antigravity gateway stays detected, never connected")
+check(fpLocal[3].id == "cursor" && fpLocal[3].installed && !fpLocal[3].connected && fpLocal[3].state == "detected",
+      "Cursor config mentioning easyproxy in recentFolders stays detected, never connected")
+
+// Cursor JSONC settings with comments, trailing commas, and easyproxy-local placeholder key.
+let jsoncHome = FileManager.default.temporaryDirectory.appendingPathComponent("epx-tray-jsonc-\(UUID().uuidString)", isDirectory: true)
+let cursorUserDir = jsoncHome.appendingPathComponent("Library/Application Support/Cursor/User", isDirectory: true)
+try FileManager.default.createDirectory(at: cursorUserDir, withIntermediateDirectories: true)
+let cursorSettingsURL = cursorUserDir.appendingPathComponent("settings.json")
+try """
+{
+  // Cursor user settings comment
+  /* block comment */
+  "cursor.openAiBaseUrl": "http://127.0.0.1:24567/v1",
+  "cursor.openAiApiKey": "easyproxy-local",
+}
+""".write(to: cursorSettingsURL, atomically: true, encoding: .utf8)
+defer { try? FileManager.default.removeItem(at: jsoncHome) }
+let jsoncClients = NativeTrayLocalClientDetector.detect(homeDirectory: jsoncHome)
+check(jsoncClients[3].id == "cursor" && jsoncClients[3].connected && jsoncClients[3].state == "connected",
+      "Cursor JSONC User/settings.json with comments, trailing comma, and easyproxy-local detects connected")
+
+try #"{"overrideOpenAiBaseUrl":false,"openai.baseUrl":"http://127.0.0.1:10100/v1"}"#.write(to: cursorSettingsURL, atomically: true, encoding: .utf8)
+let disabledOverrideClients = NativeTrayLocalClientDetector.detect(homeDirectory: jsoncHome)
+check(!disabledOverrideClients[3].connected && disabledOverrideClients[3].state == "detected",
+      "Cursor settings with overrideOpenAiBaseUrl=false stays detected, never connected")
+
+try #"{"openai.baseUrl":"https://evil.example/v1?redirect=http://127.0.0.1:10100"}"#.write(to: cursorSettingsURL, atomically: true, encoding: .utf8)
+try FileManager.default.createDirectory(at: jsoncHome.appendingPathComponent(".antigravity"), withIntermediateDirectories: true)
+try #"{"gateway":{"enabled":true,"url":"https://evil.example/proxy?next=http://127.0.0.1:10100","apiKey":"epx_data_0123456789abcdef"}}"#
+    .write(to: jsoncHome.appendingPathComponent(".antigravity/settings.json"), atomically: true, encoding: .utf8)
+let spoofClients = NativeTrayLocalClientDetector.detect(homeDirectory: jsoncHome)
+check(!spoofClients[1].connected && spoofClients[1].state == "detected" && !spoofClients[3].connected && spoofClients[3].state == "detected",
+      "Query-string loopback URLs do not spoof Antigravity or Cursor connected state")
+
+// Divider visibility prevents double, leading, and empty-chart trailing dividers.
+let providerPayload: [String: Any] = ["id": "provider-a", "label": "Provider A", "unavailable": false, "accounts": [account]]
+let modelPayload: [String: Any] = ["id": "gpt-5", "label": "gpt-5", "requests": 1, "tokens": 10]
+let chartPayload: [String: Any] = ["start": 1_700_000_000, "bucketSeconds": 3600, "series": [], "incomplete": false]
+
+let accountsAndChartOnly = try decode([
+    "settings": ["showToday": false, "show30Days": false, "showChart": true, "showModels": false, "showAccounts": true, "showCost": false, "chartStyle": "line"],
+    "providers": [providerPayload],
+    "chart": chartPayload,
+])
+let visAccountsChart = NativeTraySectionVisibility(snapshot: accountsAndChartOnly, detectedClients: [])
+check(!visAccountsChart.dividerBeforeTotals && visAccountsChart.dividerBeforeChart && !visAccountsChart.dividerBeforeModels && !visAccountsChart.dividerBeforeClients,
+      "Accounts + Chart with Totals off emits only dividerBeforeChart")
+
+let missingChartOnly = try decode([
+    "settings": ["showToday": false, "show30Days": false, "showChart": true, "showModels": false, "showAccounts": true, "showCost": false, "chartStyle": "line"],
+    "providers": [providerPayload],
+])
+let visMissingChart = NativeTraySectionVisibility(snapshot: missingChartOnly, detectedClients: [])
+check(!visMissingChart.showChart && !visMissingChart.dividerBeforeTotals && !visMissingChart.dividerBeforeChart,
+      "showChart with nil chart suppresses chart divider")
+
+let modelsOnlyVis = NativeTraySectionVisibility(
+    snapshot: try decode([
+        "settings": ["showToday": false, "show30Days": false, "showChart": false, "showModels": true, "showAccounts": false, "showCost": false, "chartStyle": "line"],
+        "models": [modelPayload],
+    ]),
+    detectedClients: []
+)
+check(modelsOnlyVis.showModels && !modelsOnlyVis.dividerBeforeModels, "First visible Models section emits no leading divider")
+
+// NativeTrayStore resolves fallback local clients asynchronously off View.body.
+let asyncStore: NativeTrayStore = MainActor.assumeIsolated {
+    let store = NativeTrayStore {
+        [NativeTrayDetectedClient(id: "codex", label: "Codex", installed: true, connected: true, state: "connected")]
+    }
+    store.snapshot = empty
+    check(store.resolvedDetectedClients(for: empty).isEmpty, "Initial render does not block synchronously on disk detection")
+    return store
+}
+let deadline = Date().addingTimeInterval(2.0)
+while Date() < deadline {
+    let resolvedCount = MainActor.assumeIsolated { asyncStore.fallbackDetectedClients.count }
+    if resolvedCount > 0 { break }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+}
+MainActor.assumeIsolated {
+    check(asyncStore.resolvedDetectedClients(for: empty).count == 1, "Background detection populates fallbackDetectedClients when snapshot.detectedClients is nil")
+    asyncStore.snapshot = modeSnapshot
+    check(asyncStore.fallbackDetectedClients.isEmpty && asyncStore.resolvedDetectedClients(for: modeSnapshot).count == 2,
+          "Authoritative snapshot.detectedClients clears fallback cache")
+}
+
 print("PASS: \(assertions) native tray contract/formatting assertions")

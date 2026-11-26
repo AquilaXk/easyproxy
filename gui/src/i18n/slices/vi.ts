@@ -460,4 +460,11 @@ export const uxOverhaulCopyVi = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "Chọn tệp âm thanh",
+  "ux.providerEgress.tlsStatusDisabled": "Đã tắt",
+  "ux.providerEgress.tlsStatusPending": "Đang chờ",
+  "ux.providerEgress.tlsStatusActive": "Đang hoạt động",
+  "ux.providerEgress.tlsStatusFailed": "Thất bại",
+  "ux.providerEgress.keychainStatusGcpSa": "Tài khoản dịch vụ GCP",
+  "ux.storageBackup.restoreConfirm": "Khôi phục cấu hình và thông tin xác thực từ bản sao lưu này? Các tệp cục bộ hiện tại sẽ bị ghi đè sau khi lưu bản chụp trước khi khôi phục.",
+  "ux.storageBackup.invalidBackup": "Bản sao lưu không hợp lệ",
 } as const;

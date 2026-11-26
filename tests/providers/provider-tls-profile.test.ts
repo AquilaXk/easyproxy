@@ -371,4 +371,31 @@ describe("provider TLS profile", () => {
     await providerTlsFetch("google-antigravity", quotaCfg, fetch)("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels");
     expect(seenOs.at(-1)).toBe("linux");
   });
+
+  test("resetProviderTlsProfileStatus clears cached active or failed status back to pending", async () => {
+    const { resetProviderTlsProfileStatus } = await import("../../src/lib/provider-tls-profile");
+    captureRuntime({});
+    await providerFetch(canonical, undefined, { providerName: "google-antigravity" })(
+      "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
+    );
+    expect(getProviderTlsProfileStatus("google-antigravity", true)).toBe("active");
+
+    resetProviderTlsProfileStatus("google-antigravity");
+    expect(getProviderTlsProfileStatus("google-antigravity", true)).toBe("pending");
+    expect(getProviderTlsProfileStatus("google-antigravity", false)).toBe("disabled");
+
+    setProviderTlsRuntimeForTest({
+      env: {},
+      fetch: async () => { throw new Error("tls handshake error"); },
+    });
+    await expect(
+      providerFetch(canonical, undefined, { providerName: "google-antigravity" })(
+        "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
+      ),
+    ).rejects.toThrow("tls handshake error");
+    expect(getProviderTlsProfileStatus("google-antigravity", true)).toBe("failed");
+
+    resetProviderTlsProfileStatus("google-antigravity");
+    expect(getProviderTlsProfileStatus("google-antigravity", true)).toBe("pending");
+  });
 });

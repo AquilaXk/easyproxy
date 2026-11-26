@@ -140,4 +140,50 @@ describe("epx connect|disconnect antigravity|agy", () => {
       expect(await runGatewayClientCommand("connect", "antigravity", ["--model", "  "], offline())).toBe(2);
     } finally { io.restore(); }
   });
+
+  test("offline epx disconnect antigravity revokes issuedKeyId in config.json", async () => {
+    const { connectGatewayClient } = await import("../../src/integrations/gateway-clients");
+    const { loadConfig, saveConfig } = await import("../../src/config");
+    const prevHome = process.env.EASYPROXY_HOME;
+    mkdirSync(ctx.stateDir, { recursive: true });
+    process.env.EASYPROXY_HOME = ctx.stateDir;
+    const io = capture();
+    try {
+      const cfg: EpxConfig = {
+        port: 10100,
+        hostname: "127.0.0.1",
+        defaultProvider: "alpha",
+        providers: { alpha: { adapter: "openai-chat", baseUrl: "https://example.test/v1" } },
+        apiKeys: [
+          {
+            id: "agy-offline-key",
+            name: "Antigravity Gateway (Loopback)",
+            key: "epx_data_0123456789abcdef0123456789abcdef01234567",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            loopbackOnly: true,
+          },
+          {
+            id: "keep-other-key",
+            name: "Operator Key",
+            key: "epx_data_fedcba9876543210fedcba9876543210fedcba98",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      };
+      saveConfig(cfg);
+      const connected = connectGatewayClient("antigravity", ctx, cfg, cfg.port, undefined, {
+        apiKey: cfg.apiKeys![0]!.key,
+        issuedKeyId: "agy-offline-key",
+      });
+      expect(connected.ok).toBe(true);
+
+      expect(await runGatewayClientFromArgs("disconnect", ["antigravity"], offline())).toBe(0);
+      const reloaded = loadConfig();
+      expect(reloaded.apiKeys?.map(entry => entry.id)).toEqual(["keep-other-key"]);
+    } finally {
+      io.restore();
+      if (prevHome === undefined) delete process.env.EASYPROXY_HOME;
+      else process.env.EASYPROXY_HOME = prevHome;
+    }
+  });
 });

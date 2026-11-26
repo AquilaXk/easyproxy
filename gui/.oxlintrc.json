@@ -15,7 +15,6 @@
   },
   "ignorePatterns": [
     "dist",
-    "classic/**",
     "src/i18n/**",
     "**/*.test.ts",
     "**/*.test.tsx",

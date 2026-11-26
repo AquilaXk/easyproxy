@@ -6,7 +6,6 @@
  */
 import type { EpxConfig } from "../../types";
 import { saveConfigPreservingClaudeCode } from "../../config";
-import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
 import { GATEWAY_CLIENT_IDS, connectGatewayClient, gatewayActionBody, disconnectGatewayClient, gatewayClientsStatus, isGatewayClientId, productionGatewayClientContext, readAntigravityIssuedKeyId, resolveGatewayTarget, type GatewayClientContext, type GatewayClientId } from "../../integrations/gateway-clients";
 import { isApiKeyExpired, jsonResponse } from "../auth-cors";
 import { readOptionalManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
@@ -77,20 +76,8 @@ export async function handleGatewayClientRoutes(ctx: ManagementContext): Promise
       ? (config.apiKeys ?? []).find(entry => entry.id === existingKeyId && entry.loopbackOnly === true && !isApiKeyExpired(entry))
       : undefined;
     let mintedNewKeyId: string | undefined;
-    let previousScope: { allowedProviders?: string[]; allowedModels?: string[] } | undefined;
     let credential: { apiKey: string; issuedKeyId: string };
     if (existingEntry) {
-      const hadScope = existingEntry.allowedProviders !== undefined || existingEntry.allowedModels !== undefined;
-      if (hadScope) {
-        previousScope = {
-          allowedProviders: existingEntry.allowedProviders ? [...existingEntry.allowedProviders] : undefined,
-          allowedModels: existingEntry.allowedModels ? [...existingEntry.allowedModels] : undefined,
-        };
-        delete existingEntry.allowedProviders;
-        delete existingEntry.allowedModels;
-        persistConfig(config);
-        reconcileLiveStateStores();
-      }
       credential = { apiKey: existingEntry.key, issuedKeyId: existingEntry.id };
     } else {
       const minted = issueApiKeyInProcess(
@@ -109,13 +96,6 @@ export async function handleGatewayClientRoutes(ctx: ManagementContext): Promise
     if (!outcome.ok) {
       if (mintedNewKeyId) {
         revokeApiKeyInProcess(config, mintedNewKeyId, persistConfig);
-      } else if (existingEntry && previousScope) {
-        if (previousScope.allowedProviders) existingEntry.allowedProviders = previousScope.allowedProviders;
-        else delete existingEntry.allowedProviders;
-        if (previousScope.allowedModels) existingEntry.allowedModels = previousScope.allowedModels;
-        else delete existingEntry.allowedModels;
-        persistConfig(config);
-        reconcileLiveStateStores();
       }
       return jsonResponse(gatewayActionBody(outcome), 409, req, config);
     }

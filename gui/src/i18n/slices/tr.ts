@@ -460,4 +460,11 @@ export const uxOverhaulCopyTr = {
   "ux.codexRoute.modePoolShort": "Pool",
   "ux.codexRoute.modeDirectShort": "Direct",
   "ux.audio.chooseFile": "Ses dosyası seç",
+  "ux.providerEgress.tlsStatusDisabled": "Devre dışı",
+  "ux.providerEgress.tlsStatusPending": "Beklemede",
+  "ux.providerEgress.tlsStatusActive": "Etkin",
+  "ux.providerEgress.tlsStatusFailed": "Başarısız",
+  "ux.providerEgress.keychainStatusGcpSa": "GCP Hizmet Hesabı",
+  "ux.storageBackup.restoreConfirm": "Bu yedekten yapılandırma ve kimlik bilgileri geri yüklensin mi? Önce bir anlık görüntü alınıp mevcut yerel dosyaların üzerine yazılacaktır.",
+  "ux.storageBackup.invalidBackup": "Geçersiz yedek",
 } as const;

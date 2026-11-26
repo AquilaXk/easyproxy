@@ -593,4 +593,95 @@ describe("Antigravity v8 gateway UX & polish", () => {
     });
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("custom guardrail error");
   });
+
+  test("GatewayGuardrailsPanel refuses empty headChars/tailChars instead of saving 0 and surfaces dry-run server errors", async () => {
+    let putCalled = false;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/gateway-guardrails") && init?.method === "PUT") {
+        putCalled = true;
+        return Response.json({});
+      }
+      if (url.endsWith("/api/gateway-guardrails/dry-run") && init?.method === "POST") {
+        return Response.json({ error: "Payload exceeds dry-run quota" }, { status: 400 });
+      }
+      return Response.json({
+        outboundSecretGuard: { mode: "redact" },
+        toolOutputCompression: { enabled: true, minChars: 12000, headChars: 4000, tailChars: 4000, stripAnsi: false },
+        stats: { scannedRequests: 0, secretDetections: 0, secretBlocks: 0, compressedToolOutputs: 0, savedChars: 0 },
+      });
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<LanguageProvider><GatewayGuardrailsPanel apiBase="http://127.0.0.1:8787" /></LanguageProvider>);
+      await new Promise(r => setTimeout(r, 15));
+    });
+
+    const headInput = host.querySelector<HTMLInputElement>("#guardrails-head-chars")!;
+    await act(async () => { setInputValue(headInput, "   "); });
+    const saveBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Save guardrails")!;
+    await act(async () => {
+      saveBtn.click();
+      await new Promise(r => setTimeout(r, 15));
+    });
+    expect(putCalled).toBe(false);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Could not save gateway guardrails.");
+
+    const dryRunTextarea = host.querySelector<HTMLTextAreaElement>("#guardrails-dryrun-input")!;
+    await act(async () => { setInputValue(dryRunTextarea, "dry-run sample payload"); });
+    const dryRunBtn = host.querySelector<HTMLButtonElement>('section[aria-labelledby="guardrails-dryrun-title"] button')!;
+    await act(async () => {
+      dryRunBtn.click();
+      await new Promise(r => setTimeout(r, 15));
+    });
+    expect(host.querySelector('section[aria-labelledby="guardrails-dryrun-title"] [role="alert"]')?.textContent).toContain("Payload exceeds dry-run quota");
+  });
+
+  test("Combobox scrolls highlighted option into view on ArrowDown/ArrowUp keyboard navigation", async () => {
+    const scrolled: string[] = [];
+    const origScroll = win.HTMLElement.prototype.scrollIntoView;
+    win.HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+      scrolled.push(this.textContent ?? "");
+    };
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    try {
+      await act(async () => {
+        root!.render(
+          <LanguageProvider>
+            <Combobox
+              aria-label="Model"
+              value=""
+              onChange={() => {}}
+              options={[
+                { value: "m1", label: "Model One" },
+                { value: "m2", label: "Model Two" },
+                { value: "m3", label: "Model Three" },
+              ]}
+            />
+          </LanguageProvider>,
+        );
+      });
+      const input = host.querySelector<HTMLInputElement>('[role="combobox"]')!;
+      await act(async () => { input.focus(); });
+      await act(async () => {
+        input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }) as unknown as KeyboardEvent);
+      });
+      await act(async () => {
+        input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }) as unknown as KeyboardEvent);
+      });
+      await act(async () => {
+        input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }) as unknown as KeyboardEvent);
+      });
+      expect(scrolled).toEqual(["Model One", "Model Two", "Model One"]);
+    } finally {
+      win.HTMLElement.prototype.scrollIntoView = origScroll;
+    }
+  });
 });

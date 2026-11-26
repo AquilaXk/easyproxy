@@ -83,6 +83,10 @@ export default function ImportProviderLinkModal({
   const runPreview = (nextAllowPrivate = allowPrivateNetwork, nextOverwrite = overwrite) =>
     runPreviewWithTarget(url, nextAllowPrivate, nextOverwrite);
 
+  useEffect(() => () => {
+    previewAbortRef.current?.abort();
+  }, []);
+
   useEffect(() => {
     const trimmed = initialUrl.trim();
     if (!trimmed) return;
@@ -152,6 +156,12 @@ export default function ImportProviderLinkModal({
               disabled={busy}
               placeholder={t("deepLinkImport.urlPlaceholder")}
               onChange={e => { setUrl(e.target.value); setPreview(null); setError(null); }}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229 && !busy && url.trim()) {
+                  e.preventDefault();
+                  void runPreview();
+                }
+              }}
             />
             <button
               type="button"

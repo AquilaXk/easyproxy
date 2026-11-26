@@ -821,4 +821,182 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     expect(corsRes?.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:10100");
     expect(corsRes?.headers.get("vary")).toContain("Origin");
   });
+
+  test("PUT /api/providers/egress treats proxy='direct' as hasProxy:false and resets cached tlsProfile status to pending", async () => {
+    const {
+      getProviderTlsProfileStatus,
+      providerTlsFetch,
+      resetProviderTlsProfileForTests,
+      setProviderTlsRuntimeForTest,
+    } = await import("../../src/lib/provider-tls-profile");
+    resetProviderTlsProfileForTests();
+    try {
+      const cfg: EpxConfig = {
+        port: 10100,
+        hostname: "127.0.0.1",
+        defaultProvider: "google-antigravity",
+        providers: {
+          "google-antigravity": {
+            adapter: "google",
+            baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+            authMode: "oauth",
+            googleMode: "cloud-code-assist",
+            tlsProfile: "antigravity-browser",
+            models: ["gemini-2.5-pro"],
+          },
+        },
+      };
+      saveConfig(cfg);
+
+      setProviderTlsRuntimeForTest({
+        env: {},
+        fetch: async () => new Response("ok"),
+      });
+      await providerTlsFetch("google-antigravity", cfg.providers["google-antigravity"]!, fetch)(
+        "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+      );
+      expect(getProviderTlsProfileStatus("google-antigravity", true)).toBe("active");
+
+      const directRes = await callMgmt("PUT", "/api/providers/egress?name=google-antigravity", cfg, {
+        proxy: "direct",
+        tlsProfile: "antigravity-browser",
+      });
+      expect(directRes.status).toBe(200);
+      expect(directRes.json).toMatchObject({
+        success: true,
+        name: "google-antigravity",
+        hasProxy: false,
+        tlsProfile: { profile: "antigravity-browser", status: "pending" },
+      });
+      expect((directRes.json as Record<string, unknown>).proxyLabel).toBeUndefined();
+
+      const listed = await callMgmt("GET", "/api/providers", cfg);
+      const row = (listed.json as Array<Record<string, unknown>>).find(r => r.name === "google-antigravity")!;
+      expect(row.hasProxy).toBe(false);
+      expect(row.proxyLabel).toBeUndefined();
+      expect(row.tlsProfile).toEqual({ profile: "antigravity-browser", status: "pending" });
+
+      setProviderTlsRuntimeForTest({
+        env: {},
+        fetch: async () => { throw new Error("tls handshake error"); },
+      });
+      await expect(
+        providerTlsFetch("google-antigravity", cfg.providers["google-antigravity"]!, fetch)(
+          "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+        ),
+      ).rejects.toThrow("tls handshake error");
+      expect(getProviderTlsProfileStatus("google-antigravity", true)).toBe("failed");
+
+      const offRes = await callMgmt("PUT", "/api/providers/egress?name=google-antigravity", cfg, { tlsProfile: null });
+      expect(offRes.status).toBe(200);
+      expect((offRes.json as Record<string, unknown>).tlsProfile).toBeUndefined();
+
+      const onRes = await callMgmt("PUT", "/api/providers/egress?name=google-antigravity", cfg, { tlsProfile: "antigravity-browser" });
+      expect(onRes.status).toBe(200);
+      expect((onRes.json as Record<string, unknown>).tlsProfile).toEqual({
+        profile: "antigravity-browser",
+        status: "pending",
+      });
+
+      await expect(
+        providerTlsFetch("google-antigravity", cfg.providers["google-antigravity"]!, fetch)(
+          "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+        ),
+      ).rejects.toThrow("tls handshake error");
+      expect(getProviderTlsProfileStatus("google-antigravity", true)).toBe("failed");
+
+      const postRes = await callMgmt("POST", "/api/providers", cfg, {
+        name: "google-antigravity",
+        provider: {
+          adapter: "google",
+          baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+          authMode: "oauth",
+          googleMode: "cloud-code-assist",
+          tlsProfile: "antigravity-browser",
+          models: ["gemini-2.5-pro"],
+        },
+      });
+      expect(postRes.status).toBe(200);
+      expect(getProviderTlsProfileStatus("google-antigravity", true)).toBe("pending");
+    } finally {
+      resetProviderTlsProfileForTests();
+    }
+  });
+
+  test("POST /api/providers/cc-switch/apply and /restore invalidate runtime caches and refresh derived registries", async () => {
+    const { clearModelCache, getProviderDiscoveryStatus, markProviderDiscoveryOk } = await import("../../src/codex/model-cache");
+    const { isKeyInCooldown, setKeyCooldown } = await import("../../src/providers/api-key-cooldowns");
+    const { getCachedProviderAccountQuota, setCachedProviderAccountQuotaForTests } = await import("../../src/providers/quota");
+    const derivedRegistries = await import("../../src/config/derived-registries");
+    const refreshSpy = spyOn(derivedRegistries, "refreshConfigDerivedRegistries");
+
+    const cfg: EpxConfig = {
+      port: 10100,
+      hostname: "127.0.0.1",
+      defaultProvider: "alpha",
+      providers: {
+        alpha: {
+          adapter: "openai-chat",
+          baseUrl: "https://api.example.test/v1",
+          authMode: "key",
+          apiKey: "sk-alpha",
+          models: ["gpt-5"],
+        },
+      },
+    };
+    saveConfig(cfg);
+
+    const ccPath = join(home, "cc-switch-cache-test.json");
+    writeFileSync(ccPath, JSON.stringify({
+      claude: {
+        providers: {
+          "ccs-cache": {
+            id: "ccs-cache",
+            name: "Cache Check Relay",
+            settingsConfig: {
+              env: {
+                ANTHROPIC_BASE_URL: "https://relay-cache.example.com/v1",
+                ANTHROPIC_MODEL: "claude-sonnet-4-5",
+              },
+            },
+          },
+        },
+      },
+    }), "utf8");
+
+    try {
+      const preview = await callMgmt("POST", "/api/providers/cc-switch/preview", cfg, { sourcePath: ccPath });
+      const targetName = (preview.json as { providers: Array<{ name: string }> }).providers[0]!.name;
+
+      markProviderDiscoveryOk(targetName, 2);
+      setKeyCooldown(targetName, "k-1", Date.now() + 60_000);
+      setCachedProviderAccountQuotaForTests(targetName, "acct-1", { updatedAt: Date.now(), fiveHourPercent: 90 });
+
+      const applied = await callMgmt("POST", "/api/providers/cc-switch/apply", cfg, {
+        consent: true,
+        sourcePath: ccPath,
+        selectedProviders: [targetName],
+      });
+      expect(applied.status).toBe(200);
+      expect(refreshSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(getProviderDiscoveryStatus(targetName)).toBeUndefined();
+      expect(isKeyInCooldown(targetName, "k-1")).toBe(false);
+      expect(getCachedProviderAccountQuota(targetName, "acct-1")).toBeNull();
+
+      refreshSpy.mockClear();
+      markProviderDiscoveryOk(targetName, 3);
+      setKeyCooldown(targetName, "k-2", Date.now() + 60_000);
+      setCachedProviderAccountQuotaForTests(targetName, "acct-2", { updatedAt: Date.now(), fiveHourPercent: 50 });
+
+      const restored = await callMgmt("POST", "/api/providers/cc-switch/restore", cfg, {});
+      expect(restored.status).toBe(200);
+      expect(refreshSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(getProviderDiscoveryStatus(targetName)).toBeUndefined();
+      expect(isKeyInCooldown(targetName, "k-2")).toBe(false);
+      expect(getCachedProviderAccountQuota(targetName, "acct-2")).toBeNull();
+    } finally {
+      clearModelCache();
+      refreshSpy.mockRestore();
+    }
+  });
 });

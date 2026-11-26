@@ -582,4 +582,77 @@ describe("P0-1 Anti-Ban Egress & Identity Unification", () => {
       { url: "https://chatgpt.com/backend-api/codex/responses", proxy: "socks5://127.0.0.1:9155" },
     ]);
   });
+
+  test("PUT /api/oauth/accounts/proxy and /api/codex-auth/accounts/proxy classify proxy='direct' as hasProxy:false and clear OAuth quota cache", async () => {
+    const {
+      getCachedProviderAccountQuota,
+      setCachedProviderAccountQuotaForTests,
+    } = await import("../../src/providers/quota");
+    await oauthStore.saveCredential("google-antigravity", {
+      access: "tok-ag-direct",
+      refresh: "ref-ag-direct",
+      expires: Date.now() + 3600_000,
+      projectId: "proj-direct",
+      email: "ag-direct@example.com",
+      accountId: "sub-ag-direct",
+    });
+    const oauthId = oauthStore.getAccountSet("google-antigravity")!.activeAccountId;
+    const codexAcctId = "acct-direct-1";
+    saveCodexAccountCredential(codexAcctId, {
+      accessToken: "at-d1",
+      refreshToken: "rt-d1",
+      expiresAt: Date.now() + 3600_000,
+      chatgptAccountId: "cgpt-d1",
+    });
+
+    saveConfig({
+      port: 0,
+      hostname: "127.0.0.1",
+      codexAutoStart: false,
+      clientIntegrations: { codex: false },
+      codexAccounts: [
+        { id: codexAcctId, email: "codex-d@example.com", chatgptAccountId: "cgpt-d1", isMain: false },
+      ],
+      providers: {
+        openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", codexAccountMode: "pool" },
+        "google-antigravity": { adapter: "google", baseUrl: "https://daily-cloudcode-pa.googleapis.com", authMode: "oauth" },
+      },
+    } as EpxConfig);
+
+    setCachedProviderAccountQuotaForTests("google-antigravity", oauthId, {
+      updatedAt: Date.now(),
+      fiveHourPercent: 80,
+    });
+    expect(getCachedProviderAccountQuota("google-antigravity", oauthId)).toBeDefined();
+
+    server = startServer(0);
+    const adminToken = loadAdminTokenFromFile(testHome);
+    const putOAuth = await fetch(new URL("/api/oauth/accounts/proxy", server.url), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ provider: "google-antigravity", accountId: oauthId, proxy: "direct" }),
+    });
+    expect(putOAuth.status).toBe(200);
+    const oauthJson = await putOAuth.json() as { ok: boolean; hasProxy: boolean; proxyLabel?: string };
+    expect(oauthJson).toMatchObject({ ok: true, hasProxy: false });
+    expect(oauthJson.proxyLabel).toBeUndefined();
+    expect(getCachedProviderAccountQuota("google-antigravity", oauthId)).toBeNull();
+
+    const listOAuth = await fetch(new URL("/api/oauth/accounts?provider=google-antigravity", server.url), {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const listOAuthJson = await listOAuth.json() as { accounts: Array<{ hasProxy?: boolean; proxyLabel?: string }> };
+    expect(listOAuthJson.accounts[0]?.hasProxy).toBeUndefined();
+    expect(listOAuthJson.accounts[0]?.proxyLabel).toBeUndefined();
+
+    const putCodex = await fetch(new URL("/api/codex-auth/accounts/proxy", server.url), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ id: codexAcctId, proxy: "direct" }),
+    });
+    expect(putCodex.status).toBe(200);
+    const codexJson = await putCodex.json() as { ok: boolean; hasProxy: boolean; proxyLabel?: string };
+    expect(codexJson).toMatchObject({ ok: true, hasProxy: false });
+    expect(codexJson.proxyLabel).toBeUndefined();
+  });
 });

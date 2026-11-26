@@ -1,3 +1,4 @@
+import { hasConfiguredProxyUrl } from "../lib/provider-egress";
 import { isAnthropicOAuthInstance } from "../providers/anthropic-instance";
 import { loadConfig } from "../config";
 import { anthropicProviderIdentityError, cmdAnthropicAccountThreshold } from "./account-anthropic-threshold";
@@ -1238,7 +1239,7 @@ export async function cmdProxy(args: string[], deps: AccountDeps): Promise<numbe
   if (response.status === 0) return proxyUnreachable(response.transportError);
   if (response.status !== 200) return apiError(response.json, `failed to update proxy for ${requestedId}`, response.status);
   const proxyLabel = typeof response.json?.proxyLabel === "string" ? response.json.proxyLabel : undefined;
-  const result = { ok: true, provider: name, id, hasProxy: Boolean(proxy), ...(proxyLabel ? { proxyLabel } : {}) };
+  const result = { ok: true, provider: name, id, hasProxy: hasConfiguredProxyUrl(proxy), ...(proxyLabel ? { proxyLabel } : {}) };
   if (wantsJson) console.log(JSON.stringify(result, null, 2));
   else console.log(proxy ? `${name}: ${requestedId} proxy pinned${proxyLabel ? ` (${proxyLabel})` : ""}` : `${name}: cleared proxy pin for ${requestedId}`);
   return 0;

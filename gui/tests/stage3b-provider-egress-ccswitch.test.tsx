@@ -869,4 +869,118 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     expect(host.textContent).toContain("OS Keychain");
     expect(host.querySelector('[role="status"]')).toBeNull();
   });
+
+  test("ProviderEgressAndKeychainSection decouples TLS/Clear actions from drafts, protects dirty edits from mount snapshot, and localizes badges", async () => {
+    const putBodies: Array<Record<string, unknown>> = [];
+    let releaseMountSnapshot: ((res: Response) => void) | undefined;
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
+      if (url.endsWith("/api/providers") && method === "GET") {
+        return await new Promise<Response>(resolve => {
+          releaseMountSnapshot = resolve;
+        });
+      }
+      if (url.includes("/api/providers/egress") && method === "PUT") {
+        putBodies.push(body ?? {});
+        if (Object.hasOwn(body ?? {}, "proxy") && body?.proxy === null) {
+          return Response.json({
+            success: true,
+            hasProxy: false,
+            noProxy: "server.kept",
+            tlsProfile: { profile: "antigravity-browser", status: "pending" },
+          });
+        }
+        return Response.json({
+          success: true,
+          hasProxy: true,
+          proxyLabel: "http://127.0.0.1:7890",
+          noProxy: "server.kept",
+          tlsProfile: {
+            profile: "antigravity-browser",
+            status: body?.tlsProfile ? "active" : "disabled",
+          },
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    win.localStorage.setItem("epx-lang", "ko");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            isCanonicalOpenAi={false}
+            item={{
+              name: "google-antigravity",
+              adapter: "google",
+              baseUrl: "https://cloudcode-pa.googleapis.com",
+              authMode: "oauth",
+              googleMode: "cloud-code-assist",
+              hasProxy: true,
+              proxyLabel: "http://127.0.0.1:7890",
+              noProxy: "initial.local",
+              tlsProfile: { profile: "antigravity-browser", status: "disabled" },
+            }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks(2);
+
+    // Localized Korean badge for disabled tlsStatus rather than raw "disabled".
+    expect(host.textContent).toContain("비활성");
+    expect(host.textContent).not.toContain("disabled");
+
+    const inputs = [...host.querySelectorAll<HTMLInputElement>('input.input')];
+    const proxyInput = inputs[0]!;
+    const noProxyInput = inputs[1]!;
+
+    // Type invalid proxy draft + noProxy edit BEFORE slow mount snapshot arrives.
+    await act(async () => {
+      setInputValue(proxyInput, "not-a-valid-proxy");
+      setInputValue(noProxyInput, "*.edited.corp");
+    });
+
+    // Delayed mount snapshot resolves -> must NOT overwrite dirty noProxyInput.
+    await act(async () => {
+      releaseMountSnapshot!(Response.json([
+        {
+          name: "google-antigravity",
+          hasProxy: true,
+          proxyLabel: "http://127.0.0.1:7890",
+          noProxy: "server.stale",
+          tlsProfile: { profile: "antigravity-browser", status: "disabled" },
+        },
+      ]));
+    });
+    await flushTicks();
+    expect(noProxyInput.value).toBe("*.edited.corp");
+
+    // Toggle TLS checkbox -> must send ONLY { tlsProfile } and keep drafts intact.
+    const tlsCheckbox = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => { tlsCheckbox.click(); });
+    await flushTicks();
+    expect(putBodies[0]).toEqual({ tlsProfile: "antigravity-browser" });
+    expect(proxyInput.value).toBe("not-a-valid-proxy");
+    expect(noProxyInput.value).toBe("*.edited.corp");
+    expect(host.textContent).toContain("활성");
+
+    // Clear proxy -> must send ONLY { proxy: null }, keep unsaved noProxyInput, and sync reset tlsStatus ("pending").
+    const clearBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "프록시 지우기")!;
+    await act(async () => { clearBtn.click(); });
+    await flushTicks();
+    expect(putBodies[1]).toEqual({ proxy: null });
+    expect(proxyInput.value).toBe("");
+    expect(noProxyInput.value).toBe("*.edited.corp");
+    expect(host.textContent).toContain("대기 중");
+  });
 });

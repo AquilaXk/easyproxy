@@ -66,6 +66,8 @@ export function Combobox({
   const optionIdPrefix = useId();
   const inputId = id ?? defaultInputId;
   const rootRef = useRef<HTMLDivElement>(null);
+  const optionRefs = useRef<Array<HTMLLIElement | null>>([]);
+  const scrollOnNavRef = useRef(false);
 
   const [open, setOpen] = useState(false);
   const [filterActive, setFilterActive] = useState(false);
@@ -88,6 +90,19 @@ export function Combobox({
   }, [normalized, value, filterActive, maxOptions]);
 
   const showPopup = open && !disabled && (filtered.length > 0 || (filterActive && normalized.length > 0));
+
+  useEffect(() => {
+    optionRefs.current.length = filtered.length;
+  }, [filtered.length]);
+
+  useEffect(() => {
+    if (!showPopup || activeIndex < 0 || !scrollOnNavRef.current) return;
+    scrollOnNavRef.current = false;
+    const el = optionRefs.current[activeIndex];
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ block: "nearest" });
+    }
+  }, [showPopup, activeIndex]);
 
   useEffect(() => {
     if (!open) return;
@@ -163,6 +178,7 @@ export function Combobox({
           if (e.key === "ArrowDown") {
             if (normalized.length === 0) return;
             e.preventDefault();
+            scrollOnNavRef.current = true;
             if (!open) {
               setOpen(true);
               setActiveIndex(0);
@@ -176,6 +192,7 @@ export function Combobox({
           if (e.key === "ArrowUp") {
             if (normalized.length === 0) return;
             e.preventDefault();
+            scrollOnNavRef.current = true;
             if (!open) {
               setOpen(true);
               setActiveIndex(Math.max(0, filtered.length - 1));
@@ -252,6 +269,7 @@ export function Combobox({
               return (
                 <li
                   key={opt.value}
+                  ref={el => { optionRefs.current[idx] = el; }}
                   id={optionIdPrefix + String(idx)}
                   role="option"
                   aria-selected={selected}

@@ -311,4 +311,151 @@ describe("Unit 7 GUI integration, deep-link modal, and profile backup card", () 
       URL.revokeObjectURL = origRevokeObjectUrl;
     }
   });
+
+  test("StorageProfileBackupCard enforces confirmAction, invalid-inspect lock, passphrase reset, and busy mutual lock", async () => {
+    const calls: string[] = [];
+    let releaseRestore: ((res: Response) => void) | undefined;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(url);
+      if (url.endsWith("/api/profile/backup/preview")) {
+        return Response.json({
+          schema: "epx.profile.backup/1",
+          mode: "encrypted",
+          createdAt: new Date().toISOString(),
+          valid: false,
+          summary: { providerCount: 1, oauthAccountCount: 0, codexAccountCount: 0, hasLocalCredentials: false, integrationRecordCount: 0, includedFiles: ["config.json"] },
+          configValidation: { ok: false, error: "Invalid passphrase" },
+        });
+      }
+      if (url.endsWith("/api/profile/backup/restore")) {
+        return await new Promise<Response>(resolve => { releaseRestore = resolve; });
+      }
+      return Response.json({});
+    }) as unknown as typeof fetch;
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const { createRoot } = await import("react-dom/client");
+    let root!: Root;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<I18nWrapper><StorageProfileBackupCard apiBase="" t={tEn} onRestored={() => {}} /></I18nWrapper>);
+    });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const validFile = new File([JSON.stringify({ schema: "epx.profile.backup/1" })], "backup.json", { type: "application/json" });
+    Object.defineProperty(fileInput, "files", { configurable: true, value: [validFile] });
+    await act(async () => {
+      fileInput.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
+      await new Promise(r => setTimeout(r, 10));
+    });
+
+    const inspectBtn = [...container.querySelectorAll("button")].find(b => b.textContent === DICTS.en["storageBackup.inspectBtn"]) as HTMLButtonElement;
+    const restoreBtn = [...container.querySelectorAll("button")].find(b => b.textContent === DICTS.en["storageBackup.restoreBtn"]) as HTMLButtonElement;
+    const exportBtn = [...container.querySelectorAll("button")].find(b => b.textContent === DICTS.en["storageBackup.exportBtn"]) as HTMLButtonElement;
+    const exportRadios = [...container.querySelectorAll<HTMLInputElement>('input[name="backup-export-mode"]')];
+
+    // Inspect failing validation disables Restore.
+    await act(async () => {
+      inspectBtn.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+    expect(container.textContent).toContain("Invalid passphrase");
+    expect(restoreBtn.disabled).toBe(true);
+
+    // Changing restore passphrase clears inspected state.
+    const restorePassInput = container.querySelector("#backup-restore-passphrase") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(restorePassInput, "better-passphrase");
+      restorePassInput.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
+    });
+    expect(container.textContent).not.toContain("Invalid passphrase");
+    expect(restoreBtn.disabled).toBe(false);
+
+    // Clicking Restore opens confirmation dialog; canceling sends no POST.
+    await act(async () => {
+      restoreBtn.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+    const cancelBtn = document.body.querySelector<HTMLButtonElement>("dialog.modal-overlay .modal-actions button:not(.btn-danger)")!;
+    expect(cancelBtn).not.toBeNull();
+    await act(async () => {
+      cancelBtn.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+    expect(calls.some(u => u.endsWith("/api/profile/backup/restore"))).toBe(false);
+
+    // Confirming opens restore request and locks export panel while busy.
+    await act(async () => {
+      exportRadios[1]!.click();
+    });
+    await act(async () => {
+      restoreBtn.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+    const confirmBtn = document.body.querySelector<HTMLButtonElement>("dialog.modal-overlay button.btn-danger")!;
+    await act(async () => {
+      confirmBtn.click();
+      await new Promise(r => setTimeout(r, 10));
+    });
+    expect(calls.filter(u => u.endsWith("/api/profile/backup/restore"))).toHaveLength(1);
+    expect(exportBtn.disabled).toBe(true);
+
+    await act(async () => {
+      releaseRestore!(Response.json({ restoredFiles: ["config.json"] }));
+      await new Promise(r => setTimeout(r, 10));
+    });
+    expect(exportBtn.disabled).toBe(false);
+    await act(async () => { root.unmount(); });
+  });
+
+  test("ImportProviderLinkModal triggers preview on Enter key in URL input", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(typeof input === "string" ? input : input.toString());
+      return Response.json({
+        name: "enter-box",
+        adapter: "openai-chat",
+        baseUrl: "https://api.example.com/v1",
+        defaultModel: "gpt-5",
+        models: ["gpt-5"],
+        hasApiKey: false,
+        requiresPrivateNetworkOptIn: false,
+        privateNetworkOptInGranted: true,
+        conflict: false,
+        canImport: true,
+        warnings: [],
+      });
+    }) as unknown as typeof fetch;
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const { createRoot } = await import("react-dom/client");
+    let root!: Root;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <I18nWrapper>
+          <ImportProviderLinkModal apiBase="" initialUrl="" onClose={() => {}} onImported={() => {}} />
+        </I18nWrapper>,
+      );
+    });
+
+    const input = container.querySelector("#deep-link-url-input") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, "epx://provider?name=enter-box&adapter=openai-chat&baseUrl=https://api.example.com/v1");
+      input.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      input.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Enter", bubbles: true }) as unknown as KeyboardEvent);
+      await new Promise(r => setTimeout(r, 10));
+    });
+
+    expect(calls).toEqual(["/api/providers/import-url/preview"]);
+    expect(container.textContent).toContain("enter-box");
+    await act(async () => { root.unmount(); });
+  });
 });

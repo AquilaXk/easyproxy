@@ -44,6 +44,22 @@ export class InvalidProviderEgressError extends Error {
 /** The literal an operator writes to pin one provider to direct egress. */
 export const PROVIDER_EGRESS_DIRECT = "direct";
 
+export function isDirectProxyValue(proxy: string | null | undefined): boolean {
+  return typeof proxy === "string" && proxy.trim().toLowerCase() === PROVIDER_EGRESS_DIRECT;
+}
+
+export function hasConfiguredProxyUrl(proxy: string | null | undefined): proxy is string {
+  return typeof proxy === "string" && proxy.trim().length > 0 && !isDirectProxyValue(proxy);
+}
+
+export function providerProxyDisplayFields(
+  proxy: string | null | undefined,
+  redactProxyUrl: (url: string) => string = sanitizeProxyUrlForLog,
+): { hasProxy: boolean; proxyLabel?: string } {
+  if (!hasConfiguredProxyUrl(proxy)) return { hasProxy: false };
+  return { hasProxy: true, proxyLabel: redactProxyUrl(proxy.trim()) };
+}
+
 export type ProviderEgress =
   | { kind: "inherit" }
   | { kind: "direct"; reason: "configured" | "noProxy" }
