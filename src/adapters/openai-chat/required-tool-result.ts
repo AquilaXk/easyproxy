@@ -5,7 +5,7 @@ import type { AdapterTierMetadata } from "../../providers/fastwire";
 import { isTruncatedStopReason } from "../../responses/truncated-stop-reason";
 
 function requiresClientCall(parsed: EpxParsedRequest): boolean {
-  if (!requiresToolCall(parsed.options.toolChoice)) return false;
+  if (parsed._summaryProhibitsToolCalls === true || !requiresToolCall(parsed.options.toolChoice)) return false;
   // Sidecars own their own tool lifecycle; this boundary validates client-executed calls only.
   return !(parsed.context.tools ?? []).some(t => t.webSearch || t.imageGeneration || t.videoGeneration || t.advisor);
 }

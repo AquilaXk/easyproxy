@@ -361,6 +361,8 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       });
       expect(toolCallsFrom(noneHarmony)).toEqual([]);
       expect(visible(noneHarmony)).toBe(harmonyPing);
+      expect(noneHarmony.some(e => e.type === "error")).toBe(false);
+      expect(noneHarmony.at(-1)?.type).toBe("done");
 
       const noneXml = await runChat({
         mode,
@@ -371,6 +373,8 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       });
       expect(toolCallsFrom(noneXml)).toEqual([]);
       expect(visible(noneXml)).toBe(xmlWeather);
+      expect(noneXml.some(e => e.type === "error")).toBe(false);
+      expect(noneXml.at(-1)?.type).toBe("done");
 
       // Forced specific function permits only that function and refuses disallowed siblings.
       const forcedDisallowed = await runChat({
@@ -381,6 +385,7 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       });
       expect(toolCallsFrom(forcedDisallowed)).toEqual([]);
       expect(visible(forcedDisallowed)).toBe(harmonyWeather);
+      expect(forcedDisallowed.at(-1)).toMatchObject({ type: "error", status: 502, code: "required_tool_not_called" });
 
       const forcedMixed = await runChat({
         mode,
@@ -391,6 +396,8 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       });
       expect(toolCallsFrom(forcedMixed)).toEqual([{ id: "call_1", name: "ping", arguments: "{}" }]);
       expect(visible(forcedMixed)).toBe(xmlWeather);
+      expect(forcedMixed.some(e => e.type === "error")).toBe(false);
+      expect(forcedMixed.at(-1)?.type).toBe("done");
 
       // allowedTools restricts recovery to the allowed subset.
       const allowedOnlyPing = await runChat({
@@ -401,6 +408,7 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       });
       expect(toolCallsFrom(allowedOnlyPing)).toEqual([{ id: "call_1", name: "ping", arguments: "{}" }]);
       expect(visible(allowedOnlyPing)).toBe(harmonyWeather);
+      expect(allowedOnlyPing.at(-1)?.type).toBe("done");
 
       // Namespaced MCP tool selected by tool_choice permits only that tool.
       const nsRead: EpxTool = { name: "read", namespace: "mcp__fs", parameters: { type: "object", properties: {} } };
@@ -414,8 +422,9 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       });
       expect(toolCallsFrom(nsBlocked)).toEqual([{ id: "call_1", name: "mcp__fs__read", arguments: "{}" }]);
       expect(visible(nsBlocked)).toBe(`<|channel|>commentary to=functions.mcp__fs__write<|message|>{}<|call|>`);
+      expect(nsBlocked.at(-1)?.type).toBe("done");
 
-      // _summaryProhibitsToolCalls disables leaked recovery even with tools and permissive toolChoice.
+      // _summaryProhibitsToolCalls disables leaked recovery and mandatory tool-call errors, and sends tool_choice="none".
       const summaryBlockedHarmony = await runChat({
         mode,
         model: "openai/gpt-oss-120b",
@@ -425,6 +434,8 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       });
       expect(toolCallsFrom(summaryBlockedHarmony)).toEqual([]);
       expect(visible(summaryBlockedHarmony)).toBe(harmonyPing);
+      expect(summaryBlockedHarmony.some(e => e.type === "error")).toBe(false);
+      expect(summaryBlockedHarmony.at(-1)?.type).toBe("done");
 
       const summaryBlockedXml = await runChat({
         mode,
@@ -436,6 +447,33 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       });
       expect(toolCallsFrom(summaryBlockedXml)).toEqual([]);
       expect(visible(summaryBlockedXml)).toBe(xmlPing);
+      expect(summaryBlockedXml.some(e => e.type === "error")).toBe(false);
+      expect(summaryBlockedXml.at(-1)?.type).toBe("done");
+
+      // Freeform bare <tool_call> recovery on mimo-v2 also obeys toolChoice and _summaryProhibitsToolCalls.
+      const freeformExec: EpxTool = { name: "exec", freeform: true, parameters: { type: "object", properties: { input: { type: "string" } } } };
+      const mimoBareExec = `<tool_call>\n<function=exec>\necho hi\n</function>\n</tool_call>`;
+      const mimoBlocked = await runChat({
+        mode,
+        model: "mimo-v2-pro",
+        tools: [freeformExec, pingTool],
+        toolChoice: { name: "ping" },
+        chunks: [mimoBareExec],
+      });
+      expect(toolCallsFrom(mimoBlocked)).toEqual([]);
+      expect(mimoBlocked.at(-1)).toMatchObject({ type: "error", status: 502, code: "required_tool_not_called" });
+
+      const mimoSummaryBlocked = await runChat({
+        mode,
+        model: "mimo-v2-pro",
+        tools: [freeformExec, pingTool],
+        toolChoice: { name: "exec" },
+        summaryProhibitsToolCalls: true,
+        chunks: [mimoBareExec],
+      });
+      expect(toolCallsFrom(mimoSummaryBlocked)).toEqual([]);
+      expect(mimoSummaryBlocked.some(e => e.type === "error")).toBe(false);
+      expect(mimoSummaryBlocked.at(-1)?.type).toBe("done");
     });
 
     test(`${mode} rejects reserved XML parameter keys without prototype pollution`, async () => {
@@ -572,7 +610,7 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
     expect(visible(streamedEvents)).toBe(nestedBuffered);
     expect(performance.now() - startAdapter).toBeLessThan(1_000);
 
-    // Streaming repeated partial/complete openers across many small chunks also stays linear.
+    // Streaming repeated partial/complete openers across many small chunks also stays linear (no O(N^2) rope flattening).
     const budget = createTestTranslatorBudget();
     const streamBuf = createOpenAIChatToolContentBuffer(budget, "openai/gpt-oss-120b", new Map(), options);
     const streamStart = performance.now();
@@ -591,6 +629,47 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
     streamBuf.dispose();
     expect(partialOut.join("")).toBe("<|channel|".repeat(40_000));
     expect(performance.now() - streamStart).toBeLessThan(1_000);
+
+    for (const [label, chunk, count] of [
+      ["4.14 MiB streamed <function name=\"a\"> chunks", `<function name="a">`, 230_000],
+      ["4.32 MiB streamed <|channel|>to=functions.a<|message|> chunks", `<|channel|>to=functions.a<|message|>`, 120_000],
+    ] as const) {
+      const b = createTestTranslatorBudget();
+      const sb = createOpenAIChatToolContentBuffer(b, "qwen3-coder-30b", new Map(), options);
+      const t0 = performance.now();
+      let emittedChars = 0;
+      for (let i = 0; i < count; i += 1) {
+        for (const ev of sb.ingestStreaming(chunk)) {
+          if (ev.type === "text_delta") emittedChars += ev.text.length;
+        }
+      }
+      for (const ev of sb.recoverStandalone(true, () => "call_1", n => n)) {
+        if (ev.type === "text_delta") emittedChars += ev.text.length;
+      }
+      for (const ev of sb.drain([])) {
+        if (ev.type === "text_delta") emittedChars += ev.text.length;
+      }
+      sb.dispose();
+      const dt = performance.now() - t0;
+      expect(emittedChars, label).toBe(chunk.length * count);
+      expect(dt, `${label} took ${dt.toFixed(1)}ms`).toBeLessThan(1_000);
+    }
+
+    // Wire serialization sets tool_choice="none" when _summaryProhibitsToolCalls=true even with forced toolChoice.
+    const summaryAdapter = createOpenAIChatAdapter({
+      adapter: "openai-chat",
+      baseUrl: "https://gateway.example.test/v1",
+      apiKey: "test-key",
+      leakedToolCallModels: ["qwen3-coder-30b"],
+    });
+    const summaryReq = await summaryAdapter.buildRequest({
+      modelId: "qwen3-coder-30b",
+      stream: false,
+      options: { toolChoice: { name: "ping" } },
+      _summaryProhibitsToolCalls: true,
+      context: { messages: [{ role: "user", content: "hi", timestamp: 0 }], tools: [aTool, pingTool] },
+    });
+    expect(JSON.parse(summaryReq.body as string).tool_choice).toBe("none");
 
     // Failed wrapper backtracking still recovers valid leading calls without leaking nested parameter tags.
     const backtrackText =

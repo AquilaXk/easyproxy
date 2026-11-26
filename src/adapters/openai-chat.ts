@@ -106,9 +106,9 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
       }
 
       const messages = toolNames.messages(parsed, provider.baseUrl, messagesToChatFormat(parsed, provider));
-      freeformTools = freeformToolsByWireName(parsed.context.tools, tool => toolNames.registry().alias(tool));
-      leakedToolOptions = parsed._summaryProhibitsToolCalls === true ? undefined
-        : resolveLeakedToolCallOptions(provider, parsed.modelId, parsed.context.tools?.filter(toolChoiceToolPredicate(parsed.options.toolChoice, parsed.context.tools)), toolNames.registry());
+      const activeTools = parsed._summaryProhibitsToolCalls === true ? undefined : parsed.context.tools?.filter(toolChoiceToolPredicate(parsed.options.toolChoice, parsed.context.tools));
+      freeformTools = freeformToolsByWireName(activeTools, tool => toolNames.registry().alias(tool));
+      leakedToolOptions = resolveLeakedToolCallOptions(provider, parsed.modelId, activeTools, toolNames.registry());
       const finish = (): AdapterRequest => {
         const tools = toolsToChatFormatForProvider(parsed, provider, toolNames.registry());
         const toolChoice = toolChoiceToChatFormat(parsed.options.toolChoice, parsed.context.tools, provider, toolNames.registry());
@@ -139,10 +139,9 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
         const vercelRouting = resolveVercelGatewayRouting(provider, parsed.modelId);
         if (vercelRouting) body.provider = vercelGatewayProviderPayload(vercelRouting);
         if (tools) body.tools = tools;
-        if (tools && toolChoice !== undefined) {
-          body.tool_choice = modelInList(provider.autoToolChoiceOnlyModels, parsed.modelId)
-            ? (toolChoice === "none" ? "none" : "auto")
-            : toolChoice;
+        if (tools && (toolChoice !== undefined || parsed._summaryProhibitsToolCalls === true)) {
+          body.tool_choice = parsed._summaryProhibitsToolCalls === true ? "none" : modelInList(provider.autoToolChoiceOnlyModels, parsed.modelId)
+            ? (toolChoice === "none" ? "none" : "auto") : toolChoice;
         }
         if (maxTokens !== undefined) body.max_tokens = maxTokens;
         if (parsed.options.temperature !== undefined && !modelInList(provider.noTemperatureModels, parsed.modelId)) {
