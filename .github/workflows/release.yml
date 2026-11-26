@@ -92,6 +92,7 @@ jobs:
           role: runtime
 
       - name: Verify signing and updater credentials upfront
+        shell: bash
         env:
           GIT_REF: ${{ github.ref }}
           DRY_RUN_INPUT: ${{ inputs.dry-run }}
@@ -249,6 +250,7 @@ jobs:
           role: runtime
 
       - name: Verify signing and updater credentials upfront
+        shell: bash
         env:
           GIT_REF: ${{ github.ref }}
           DRY_RUN_INPUT: ${{ inputs.dry-run }}
@@ -616,6 +618,7 @@ jobs:
           role: runtime
 
       - name: Verify signing and updater credentials upfront
+        shell: bash
         env:
           GIT_REF: ${{ github.ref }}
           DRY_RUN_INPUT: ${{ inputs.dry-run }}
@@ -877,6 +880,7 @@ jobs:
       - name: Build desktop bundles
         if: runner.os != 'Linux'
         working-directory: desktop
+        shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -887,7 +891,12 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           MACOS_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: bunx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
+        run: |
+          set -euo pipefail
+          for v in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID MACOS_SIGN_IDENTITY; do
+            [ -n "${!v:-}" ] || unset "$v"
+          done
+          bunx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
 
       - name: Verify macOS app runtime and Mach-O signatures
         if: runner.os == 'macOS'
@@ -990,15 +999,16 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/easyproxy-appimage-target
           NO_STRIP: "true"
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          PATCHELF: ${{ github.workspace }}/desktop/scripts/appimage-patchelf.py
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          shim_dir="${RUNNER_TEMP}/patchelf-shim"
-          mkdir -p "$shim_dir"
+          for v in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            [ -n "${!v:-}" ] || unset "$v"
+          done
           chmod +x "${GITHUB_WORKSPACE}/desktop/scripts/appimage-patchelf.py"
-          ln -sf "${GITHUB_WORKSPACE}/desktop/scripts/appimage-patchelf.py" "$shim_dir/patchelf"
-          PATH="$shim_dir:$PATH" bunx tauri --verbose build --ci --target ${{ matrix.target }} --bundles appimage --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
+          bunx tauri --verbose build --ci --target ${{ matrix.target }} --bundles appimage --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
           mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/appimage
           cp -r "${CARGO_TARGET_DIR}/${{ matrix.target }}/release/bundle/appimage/." src-tauri/target/${{ matrix.target }}/release/bundle/appimage/
 
@@ -1011,6 +1021,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          for v in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            [ -n "${!v:-}" ] || unset "$v"
+          done
           bunx tauri build --ci --target ${{ matrix.target }} --bundles deb --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
           mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/deb
           cp -r "${CARGO_TARGET_DIR}/${{ matrix.target }}/release/bundle/deb/." src-tauri/target/${{ matrix.target }}/release/bundle/deb/
@@ -1039,6 +1052,8 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           DESKTOP_TARGET: ${{ matrix.target }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           set -euo pipefail
           bundle_root="desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle"

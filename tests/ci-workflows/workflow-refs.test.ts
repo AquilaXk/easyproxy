@@ -1,5 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repoPath } from "../helpers/repo-root";
 
@@ -158,5 +171,118 @@ describe("GitHub workflow and action reference integrity", () => {
     for (const rel of relativeEmbeds) {
       expect(pkgFiles.has(rel) || pkgFiles.has("assets"), `unpacked ${rel}`).toBe(true);
     }
+  });
+
+  const tempDirs: string[] = [];
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      rmSync(tempDirs.pop()!, { recursive: true, force: true });
+    }
+  });
+
+  test("Windows-capable release workflow steps with bash syntax declare shell: bash", () => {
+    interface WorkflowStep {
+      name?: string;
+      if?: string;
+      shell?: string;
+      run?: string;
+      env?: Record<string, string>;
+    }
+    interface WorkflowJob {
+      "runs-on"?: string;
+      strategy?: { matrix?: { include?: Array<{ os?: string }> } };
+      steps?: WorkflowStep[];
+    }
+    const parsed = Bun.YAML.parse(readText(".github/workflows/release.yml")) as {
+      jobs?: Record<string, WorkflowJob>;
+    };
+    const violations: string[] = [];
+    for (const [jobId, job] of Object.entries(parsed.jobs ?? {})) {
+      const matrixOs = (job.strategy?.matrix?.include ?? []).map(row => row.os);
+      const canRunOnWindows = job["runs-on"] === "windows-latest" || matrixOs.includes("windows-latest");
+      if (!canRunOnWindows) continue;
+      for (const step of job.steps ?? []) {
+        if (!step.run) continue;
+        const usesBash = step.run.includes("set -euo pipefail") || step.run.includes("[[ ");
+        const nonWindowsOnly =
+          typeof step.if === "string"
+          && (step.if.includes("runner.os == 'macOS'") || step.if.includes("runner.os == 'Linux'"));
+        if (usesBash && !nonWindowsOnly && step.shell !== "bash") {
+          violations.push(`${jobId}:${step.name ?? "(unnamed)"}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test("desktop release bundling unsets empty signing env vars and sets PATCHELF for AppImage", () => {
+    interface WorkflowStep {
+      name?: string;
+      shell?: string;
+      run?: string;
+      env?: Record<string, string>;
+    }
+    const parsed = Bun.YAML.parse(readText(".github/workflows/release.yml")) as {
+      jobs?: Record<string, { steps?: WorkflowStep[] }>;
+    };
+    const desktopSteps = parsed.jobs?.["package-desktop"]?.steps ?? [];
+    const buildDesktop = desktopSteps.find(step => step.name === "Build desktop bundles");
+    expect(buildDesktop?.shell).toBe("bash");
+    expect(buildDesktop?.run).toContain('unset "$v"');
+    for (const key of ["APPLE_CERTIFICATE", "APPLE_ID", "TAURI_SIGNING_PRIVATE_KEY"]) {
+      expect(buildDesktop?.run).toContain(key);
+    }
+
+    const appImage = desktopSteps.find(step => step.name === "Build Linux AppImage bundle");
+    expect(appImage?.env?.PATCHELF).toBe("${{ github.workspace }}/desktop/scripts/appimage-patchelf.py");
+    expect(appImage?.run).toContain('unset "$v"');
+    expect(appImage?.run).toContain("TAURI_SIGNING_PRIVATE_KEY");
+
+    const deb = desktopSteps.find(step => step.name === "Build Linux deb bundle");
+    expect(deb?.run).toContain('unset "$v"');
+    expect(deb?.run).toContain("TAURI_SIGNING_PRIVATE_KEY");
+  });
+
+  test.skipIf(process.platform === "win32")("appimage-patchelf preserves prepared epx sidecar bytes under CARGO_TARGET_DIR", () => {
+    const work = mkdtempSync(join(tmpdir(), "epx-patchelf-"));
+    tempDirs.push(work);
+    const fakeRepo = join(work, "repo");
+    const scriptDst = join(fakeRepo, "desktop", "scripts", "appimage-patchelf.py");
+    const binariesDir = join(fakeRepo, "desktop", "src-tauri", "binaries");
+    const preparedEpx = join(binariesDir, "epx-x86_64-unknown-linux-gnu");
+    const cargoTargetDir = join(work, "appimage-target");
+    const appDirBin = join(
+      cargoTargetDir,
+      "x86_64-unknown-linux-gnu",
+      "release",
+      "bundle",
+      "appimage",
+      "EasyProxy.AppDir",
+      "usr",
+      "bin",
+    );
+    const appDirEpx = join(appDirBin, "epx");
+
+    mkdirSync(join(fakeRepo, "desktop", "scripts"), { recursive: true });
+    mkdirSync(binariesDir, { recursive: true });
+    mkdirSync(appDirBin, { recursive: true });
+    copyFileSync(repoPath("desktop", "scripts", "appimage-patchelf.py"), scriptDst);
+    chmodSync(scriptDst, 0o755);
+
+    const payload = Buffer.from("\x7fELF-fake-bun-sidecar-and-js-trailer");
+    writeFileSync(preparedEpx, payload);
+    writeFileSync(appDirEpx, payload);
+
+    const res = spawnSync(
+      scriptDst,
+      ["--set-rpath", "$ORIGIN/../lib", appDirEpx],
+      {
+        env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
+        encoding: "utf8",
+      },
+    );
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("Preserving compiled epx bytes");
+    expect(readFileSync(appDirEpx)).toEqual(payload);
   });
 });
