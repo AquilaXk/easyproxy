@@ -505,7 +505,7 @@ jobs:
       matrix:
         include:
           - label: macos-arm64
-            os: macos-15
+            os: macos-26
             target: aarch64-apple-darwin
             bundles: dmg,app
           - label: macos-x64
@@ -666,6 +666,20 @@ jobs:
             printf '{"bundle":{"macOS":{"signingIdentity":"-"}}}\n' > "$cfg"
           fi
           echo "TAURI_BUNDLE_CONFIG_PATH=$cfg" >> "$GITHUB_ENV"
+
+      - name: Select Xcode 26+ on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode_app="$(ls -1d /Applications/Xcode_26*.app /Applications/Xcode_2[7-9]*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -z "$xcode_app" ]; then
+            echo "::error::Xcode 26+ is required on macOS desktop runners."
+            exit 1
+          fi
+          echo "Selecting $xcode_app"
+          sudo xcode-select -s "$xcode_app/Contents/Developer"
+          xcodebuild -version
 
       - name: Build WidgetKit extension
         if: runner.os == 'macOS'
@@ -895,6 +909,8 @@ jobs:
         working-directory: desktop
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/easyproxy-appimage-target
+          NO_STRIP: "true"
+          APPIMAGE_EXTRACT_AND_RUN: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
@@ -903,7 +919,7 @@ jobs:
           mkdir -p "$shim_dir"
           chmod +x "${GITHUB_WORKSPACE}/desktop/scripts/appimage-patchelf.py"
           ln -sf "${GITHUB_WORKSPACE}/desktop/scripts/appimage-patchelf.py" "$shim_dir/patchelf"
-          PATH="$shim_dir:$PATH" bunx tauri build --ci --target ${{ matrix.target }} --bundles appimage --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
+          PATH="$shim_dir:$PATH" bunx tauri --verbose build --ci --target ${{ matrix.target }} --bundles appimage --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
           mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/appimage
           cp -r "${CARGO_TARGET_DIR}/${{ matrix.target }}/release/bundle/appimage/." src-tauri/target/${{ matrix.target }}/release/bundle/appimage/
 
@@ -924,6 +940,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           DESKTOP_TARGET: ${{ matrix.target }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           set -euo pipefail
           shopt -s nullglob
