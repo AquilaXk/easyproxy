@@ -182,13 +182,13 @@ ssh -L 20100:localhost:10100 -L 1455:localhost:1455 you@remote
 
 | 키 | 형식 | 기본값 | 설명 |
 | --- | --- | --- | --- |
-| `claudeCode.bodyStallSec?` | `number` | `90` | 읽기가 대기 중일 때의 native-passthrough 본문 비활성 시간 한도입니다. 전체 지속 시간이 아니라는 점에 유의합니다. 최소 1이며, 정확히 `0`이면 비활성화됩니다. |
+| `claudeCode.bodyStallSec?` | `number` | `90` | 읽기가 대기 중일 때의 native-passthrough 본문 비활성 시간 한도입니다(전체 요청 지속 시간과는 다름). 최소 1이며, 정확히 `0`이면 비활성화됩니다. |
 | `claudeCode.bodyMaxBytes?` | `number` | `67108864` | 스트리밍 및 버퍼링된 응답에 대한 누적 native-passthrough 본문 상한입니다. 정확히 `0`이면 비활성화됩니다. |
 | `claudeCode.authMode?` | `"proxy" \| "subscription"` | auto | 실행 시 `ANTHROPIC_AUTH_TOKEN`을 어떻게 다룰지입니다. 자동은 매 실행마다 인증을 감지하며, 명시 값은 절대 덮어쓰지 않습니다. |
-| `claudeCode.authModeMigratedAt?` | `string` | unset | 내부적인 일회성 업그레이드 마커입니다. 수동으로 설정하지 마십시오. |
-| `claudeCode.subagentEffort?` | `"low" \| "medium" \| "high" \| "xhigh" \| "max"` | inherit | 생성된 `~/.claude/agents/epx-*.md`에 쓰이는 노력 수준입니다. Codex 지침과 프록시 상한과는 별개입니다. 다시 생성하려면 `epx claude`로 재시작합니다. |
+| `claudeCode.authModeMigratedAt?` | `string` | unset | 내부적인 일회성 업그레이드 마커입니다. 수동으로 설정하지 마세요. |
+| `claudeCode.subagentEffort?` | `"low" \| "medium" \| "high" \| "xhigh" \| "max"` | inherit | 생성된 `~/.claude/agents/epx-*.md`에 쓰이는 추론 강도입니다. Codex 지침과 프록시 상한과는 별개입니다. 다시 생성하려면 `epx claude`로 재시작합니다. |
 
-자동 인증은 저장된 Claude 인증이 있으면 subscription을, 없으면 proxy를 선택합니다. 감지가 불명확할 때는 경고와 함께 subscription을 선택합니다. [Claude Code 인증 모드](/guides/claude-code/#auth-mode)를 보십시오.
+자동 인증은 저장된 Claude 인증이 있으면 subscription을, 없으면 proxy를 선택합니다. 감지가 불명확할 때는 경고와 함께 subscription을 선택합니다. [Claude Code 인증 모드](/guides/claude-code/#auth-mode)를 보세요.
 
 ## Shadow calls
 
@@ -233,7 +233,7 @@ Codex는 제목과 커밋 메시지 같은 작업에 작은 보조 모델을 사
 | `model?` | `string` | backend-dependent | OpenAI는 `gpt-5.6-luna`, Anthropic은 `claude-sonnet-5`, xAI는 `grok-4.6`입니다. 레거시로 명시된 `gpt-5.4-mini`는 시작 시 마이그레이션됩니다. |
 | `exaApiKey?` | `string` | 없음 | `exa` 백엔드용 운영자 키입니다. 쓰기 전용이며 관리 API 조회에서는 저장된 값을 반환하지 않습니다. |
 | `xSearch?` | `object` | 생략 | xAI 전용 `x_search` opt-in입니다. `enabled`, 서로 배타적인 `allowedXHandles` / `excludedXHandles` 배열(최대 20개), ISO `fromDate` / `toDate`(`YYYY-MM-DD`)를 지원합니다. |
-| `reasoning?` | `string` | `low` | 사이드카 노력 수준입니다. `minimal`은 web search와 함께 거부됩니다. |
+| `reasoning?` | `string` | `low` | 사이드카 추론 강도입니다. `minimal`은 web search와 함께 거부됩니다. |
 | `maxSearchesPerTurn?` | `number` | `3` | 메인 모델 턴당 허용되는 실제 검색 수입니다. |
 | `routedModelStallTimeoutMs?` | `number` | `200000` | 설정 파일 전용 routed-model 원시 본문 비활성 기한입니다. 정수 1–2147483647이며, 비어 있지 않은 모든 청크가 이를 다시 시작합니다. |
 | `timeoutMs?` | `number` | `60000` | 한 번의 hosted search에 대한 기한입니다. |

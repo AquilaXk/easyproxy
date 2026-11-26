@@ -192,6 +192,64 @@ describe("API key rotation", () => {
 });
 
 describe("POST /api/keys", () => {
+  test("creates a key with trimmed, deduplicated allowedProviders and allowedModels", async () => {
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      const created = await keysRequest(server, "POST", {
+        name: "scoped",
+        allowedProviders: ["  test ", "test"],
+        allowedModels: [" gpt-test ", "gpt-test"],
+      });
+      expect(created.status).toBe(201);
+      expect(created.json.allowedProviders).toEqual(["test"]);
+      expect(created.json.allowedModels).toEqual(["gpt-test"]);
+      expect((loadConfig().apiKeys ?? [])[0]).toMatchObject({
+        name: "scoped",
+        allowedProviders: ["test"],
+        allowedModels: ["gpt-test"],
+      });
+
+      const listed = await keysRequest(server, "GET");
+      expect(listed.status).toBe(200);
+      expect((listed.json.keys as Array<Record<string, unknown>>)[0]).toMatchObject({
+        name: "scoped",
+        allowedProviders: ["test"],
+        allowedModels: ["gpt-test"],
+      });
+
+      const unrestricted = await keysRequest(server, "POST", {
+        name: "cleared",
+        allowedProviders: [],
+        allowedModels: null,
+      });
+      expect(unrestricted.status).toBe(201);
+      expect(unrestricted.json.allowedProviders).toBeUndefined();
+      expect(unrestricted.json.allowedModels).toBeUndefined();
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("rejects malformed allowedProviders or allowedModels on POST without minting an unrestricted key", async () => {
+    saveConfig(baseConfig());
+    const server = startServer(0);
+    try {
+      for (const badBody of [
+        { name: "bad-prov-str", allowedProviders: "test" },
+        { name: "bad-prov-empty", allowedProviders: ["  "] },
+        { name: "bad-model-type", allowedModels: [42] },
+        { name: "bad-model-toolong", allowedModels: ["x".repeat(257)] },
+      ]) {
+        const res = await keysRequest(server, "POST", badBody);
+        expect(res.status).toBe(400);
+      }
+      expect(loadConfig().apiKeys ?? []).toHaveLength(0);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("a raw pairing grant cannot authorize the key route", async () => {
     saveConfig({
       ...baseConfig(),

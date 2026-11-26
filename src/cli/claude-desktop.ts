@@ -810,7 +810,7 @@ export async function handleClaudeDesktopCommand(argv: string[], deps: ApplyProf
       // The write landed; only the bookkeeping marker did not. Saying nothing
       // would leave the saved-vs-applied display wrong with no explanation.
       if (result.warning) console.warn(`⚠️  ${result.warning}`);
-      console.log("Claude Desktop을 완전히 종료한 뒤 다시 열어 주세요.");
+      console.log("Claude Desktop을 완전히 종료한 뒤 다시 여세요.");
       return 0;
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));

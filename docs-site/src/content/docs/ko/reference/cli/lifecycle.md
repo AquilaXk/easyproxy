@@ -110,7 +110,7 @@ epx eject back
 ### `epx recover-history --legacy-openai --yes`
 
 역방향 복구 지원이 생기기 전, 초기 개발 빌드에서 Codex App 기록을 재매핑하던 오래된 빌드를 위한
-명시적 복구 명령입니다. 기록 데이터베이스가 잠겨 있으면 먼저 Codex를 종료해 주세요.
+명시적 복구 명령입니다. 기록 데이터베이스가 잠겨 있으면 먼저 Codex를 종료하세요.
 
 이 명령은 광범위하고 파괴적인 재태깅입니다. 사용자 메시지가 있고 현재 `easyproxy`로 표시된 모든
 thread를 `openai`로 바꾸고, `exec`를 `cli`로 정규화하며 event marker를 설정합니다. 정상적인
@@ -118,7 +118,7 @@ dedicated-provider history도 포함됩니다. 상태를 백업하고 이 전체
 
 ### `epx recover-history --epx-compaction <thread-id> --yes`
 
-라우팅된 provider를 통해 압축된 작업을 native Codex에서 다시 열기 전에 해당 기록을 복구합니다. 이 명령은 UUID로 정확히 하나의 작업을 선택하고 비공개 바이트 단위 백업을 저장한 뒤, easyproxy가 소유한 `epx1:`/`epx2:` 압축 상태만 native Codex가 재생할 수 있는 일반 요약으로 변환합니다. native 암호화 콘텐츠와 다른 작업은 변경하지 않습니다. 실행 전에 선택한 작업을 닫으십시오. 처리 중 rollout이 변경되면 파일을 교체하지 않고 복구를 중단합니다.
+라우팅된 provider를 통해 압축된 작업을 native Codex에서 다시 열기 전에 해당 기록을 복구합니다. 이 명령은 UUID로 정확히 하나의 작업을 선택하고 비공개 바이트 단위 백업을 저장한 뒤, easyproxy가 소유한 `epx1:`/`epx2:` 압축 상태만 native Codex가 재생할 수 있는 일반 요약으로 변환합니다. native 암호화 콘텐츠와 다른 작업은 변경하지 않습니다. 실행 전에 선택한 작업을 닫으세요. 처리 중 rollout이 변경되면 파일을 교체하지 않고 복구를 중단합니다.
 
 ### `epx uninstall` · `epx remove`
 
@@ -399,7 +399,7 @@ Windows에서 Task Scheduler 항목을 만들려면 권한 상승이 필요합�
 않은 토큰의 확인이 필요합니다. 그러면 대시보드의 Startup Safety 작업이 UAC를 자동으로 요청할 수
 있습니다. 그 대체 경로로도 토큰 상태를 판별할 수 없으면 원래 스케줄러 오류를 유지합니다. 외부
 작업이나 외부 연산은 자동 권한 상승 표시를 절대 내지 못합니다. 대시보드 UAC 프롬프트를 승인하거나
-상승된 PowerShell 창에서 `epx service install`을 다시 실행해 주세요.
+상승된 PowerShell 창에서 `epx service install`을 다시 실행하세요.
 
 시작할 때 `another process owns the runtime mutation lease`가 보고되거나 `epx service status`에 `Runtime mutation lease busy`가 표시되면, 프록시가 실행 중이 아니더라도 이 리스가 시작이나 서비스 변경을 막고 있는 것입니다. 메시지에는 잠금 경로, 기록된 PID, 그 PID가 현재 살아 있는지 여부, 확인할 수 있는 경우 실행 파일 이름, 리스 경과 시간이 들어 있습니다. 프로세스의 신원은 검증되지 않습니다. PID가 재사용되었을 수 있으므로, 생존 여부와 실행 파일 이름은 지금 그 PID를 쓰고 있는 프로세스에 대한 정보입니다. 작업이 끝날 때까지 기다린 뒤 다시 시도하세요. 이 PID만 보고 잠금을 삭제하거나 프로세스를 중지하지 마세요. 리스 경과 시간이 30초를 넘고 기록된 PID가 더 이상 살아 있지 않으면 이후의 변경 시도가 오래된 리스를 회수할 수 있습니다. `epx service status`는 리스를 확인만 합니다.
 

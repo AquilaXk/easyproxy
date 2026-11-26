@@ -1,6 +1,6 @@
 ---
 title: 에이전트 설정
-description: 멀티 에이전트 표면, 위임 안내, 선호 모델, 대체 체인, 기본값 동기화, 노력 상한을 다룹니다.
+description: 멀티 에이전트 표면, 위임 안내, 선호 모델, 대체 체인, 기본값 동기화, 추론 강도 상한을 다룹니다.
 ---
 
 `multiAgentMode: "v2-plaintext"`는 새 채팅에 V2를 선택하면서 전역 V2 강제를 끄고, 조건에 맞는 공식 ChatGPT Responses 경로에 실험적 평문 작업 전달을 적용하는 명시적 선택입니다. 대시보드 확인 또는 `epx v2 mode v2-plaintext --live --acknowledge-plaintext-agent-messages`로 진입합니다. 작업 텍스트는 이력·선택한 제공자의 요청·로컬 디버그 상태에 남을 수 있지만 HTTPS와 인증은 유지됩니다. 기존 암호문을 복호화하지 않으며 기존 채팅 기록도 변경하지 않습니다. 별도 `plaintextV2AgentMessages` 설정은 다른 모드로 돌아갈 때도 보존됩니다. 컴파일러는 현재 설정을 따르므로 기존 V2 세션의 후속 적격 요청도 적용 대상입니다. 비활성화해도 이력·제공자 요청·로컬 응답·디버그 상태에 이미 보존된 사본은 삭제되지 않습니다.
@@ -14,9 +14,9 @@ description: 멀티 에이전트 표면, 위임 안내, 선호 모델, 대체 �
 | `multiAgentMode?` | `"v1" \| "default" \| "v2" \| "v2-plaintext"` | `"default"` | `v1`은 카탈로그의 모든 모델에 v1을 표시하고, `v2`는 모든 모델에 v2를 표시합니다. `default`는 상위 고정값(Sol/Terra는 v2, Luna는 v1)을 복원하고, 그 외에는 네이티브 `multi_agent_v2` 플래그를 따릅니다. `v2-plaintext`는 실험적 평문 작업 전달을 함께 켜고 전역 강제는 끕니다. 카탈로그 고정값은 새 세션에 적용되며, 활성화된 컴파일러는 기존 V2 세션의 후속 적격 요청에도 적용됩니다. |
 | `subagentModels?` | `string[]` | `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-luna` | 최대 다섯 개의 bare native id, account-qualified `<selector>/<native-openai-model>` id 또는 routed `provider/model` id를 서브에이전트 선택기에 우선 표시합니다. 새 선택 항목으로는 bare native와 routed id를 제공합니다. 저장할 때는 현재 카탈로그에 없는 항목을 포함하여 이미 설정된 정확한 account-qualified id를 보존합니다. 새 정확한 account-qualified id를 추가하려면 `epx agent subagents set`을 사용하거나 설정을 편집하세요. [Astra 최초 업그레이드](/reference/configuration/agents/#astra-roster-upgrade) 이후에는 명시적으로 빈 목록도 보존됩니다. |
 | `injectionModel?` | `string` | — | 프록시가 작성한 v2 위임 안내에서 사용하는 선호 네이티브 또는 라우팅된 서브에이전트 모델입니다. |
-| `injectionEffort?` | `string` | — | 선호 노력(`low`부터 `ultra`까지)입니다. `injectionModel`이 있을 때만 의미가 있습니다. |
+| `injectionEffort?` | `string` | — | 선호 추론 강도(`low`부터 `ultra`까지)입니다. `injectionModel`이 있을 때만 의미가 있습니다. |
 | `injectionPrompt?` | `string` | — | 내장 v2 안내 본문을 대체합니다. `{{model}}`, `{{effort}}`, `{{roster}}`, `{{fallback}}`를 지원합니다. `injectionModel`만 설정되어 있어도 사용자 정의 프롬프트가 발동합니다. |
-| `multiAgentGuidanceEnabled?` | `boolean` | `true` | easyproxy가 작성하는 v1/v2 개발자 안내만 제어합니다. 네이티브 에이전트 기본값, 도구, 라우팅, 로스터, 노력 상한은 바꾸지 않습니다. |
+| `multiAgentGuidanceEnabled?` | `boolean` | `true` | easyproxy가 작성하는 v1/v2 개발자 안내만 제어합니다. 네이티브 에이전트 기본값, 도구, 라우팅, 로스터, 추론 강도 상한은 바꾸지 않습니다. |
 | `syncCodexSubagentDefaults?` | `boolean` | `false` | 동기화 또는 재시작 시 `injectionModel`과 선택적 `injectionEffort`를 Codex의 네이티브 기본값으로 기록하도록 선택합니다. `injectionModel`이 필요합니다. |
 | `subagentModelFallback?` | `string[]` | `[]` | 생성된 하위 턴에 적용되는 전역 대체 모델 우선순위 목록입니다. |
 | `subagentModelFallbackByModel?` | `Record<string, string[]>` | `{}` | 요청한 기본 모델 id를 키로 하는 모델별 대체 체인입니다. 역할별 대체 메타데이터의 지원 위치입니다. Codex agent TOML에 `model_fallback`을 쓰면 Codex 0.146+가 역할을 건너뜁니다 (#1190). |
@@ -35,7 +35,7 @@ description: 멀티 에이전트 표면, 위임 안내, 선호 모델, 대체 �
 
 ## 항상 능동 위임
 
-서브에이전트 → 고급의 **항상 능동 위임**(이전 이름: **울트라 모드**)은 추론 노력을 바꾸지 않고 위임을 시작하는 조건만 변경합니다. 권장 프리셋에서도 사용자 지침, 권한 경계, 작업 범위, 도구 규칙은 유지됩니다.
+서브에이전트 → 고급의 **항상 능동 위임**(이전 이름: **울트라 모드**)은 추론 강도를 바꾸지 않고 위임을 시작하는 조건만 변경합니다. 권장 프리셋에서도 사용자 지침, 권한 경계, 작업 범위, 도구 규칙은 유지됩니다.
 
 대시보드 스위치를 켜려면 네이티브 기능이 활성화된 명시적 `multiAgentMode: "v2"` 또는 전역 강제를 끄고 카탈로그 pin을 사용하는 `multiAgentMode: "v2-plaintext"`가 필요합니다. `epx v2 on`만으로는 조건을 충족하지 않습니다.
 
@@ -90,11 +90,11 @@ easyproxy는 비활성, 라우팅 불가, 비정상, 쿨다운 중, 또는 할�
 }
 ```
 
-## 노력 상한
+## 추론 강도 상한
 
 상한은 v2 협업 기능에만 적용됩니다. 메인 턴은 도구가 v2를 노출할 때 적격이 되고, 하위 턴은 leaf 도구가 더 이상 협업을 노출하지 않더라도 `x-codex-turn-metadata` 안에 codex-rs의 정확한 `x-openai-subagent: collab_spawn` 또는 `"subagent_kind": "thread_spawn"` 표시가 있으면 적격이 됩니다. V1 메인 턴, `multiAgentMode: "v1"`, compaction, review, memory-consolidation 턴은 상한을 적용받지 않습니다.
 
-상한은 노력만 낮춥니다. 모델이 광고한 단계 중 상한 이하에서 가장 높은 단계로 맞춥니다. 모델에 노력 제어가 없거나 맞는 지원 단계가 없으면, easyproxy는 노력을 제거하고 제공자 기본값을 적용합니다. `max`와 `ultra`는 허용되며, 대시보드는 `low`부터 `xhigh`까지 제공합니다.
+상한은 추론 강도만 낮춥니다. 모델이 광고한 단계 중 상한 이하에서 가장 높은 단계로 맞춥니다. 모델에 추론 강도 제어가 없거나 맞는 지원 단계가 없으면, easyproxy는 추론 강도 지정을 제거하고 프로바이더 기본값을 적용합니다. `max`와 `ultra`는 허용되며, 대시보드는 `low`부터 `xhigh`까지 제공합니다.
 
 모델 effort pin이 없어도 적용 대상 native Chat Completions 요청에는 설정된 상한이 적용됩니다. pin을 적용하거나 상한이 값을 바꾼 경우에 제공자 전송 값으로 매핑하며, 둘 다 없으면 호출자 값은 원래 표기를 유지합니다.
 

@@ -61,8 +61,8 @@ Codex `multi_agent_v2` 기능 플래그와 네 상태 멀티 에이전트 surfac
 | `mode v2-plaintext --acknowledge-plaintext-agent-messages` | V2를 새 세션에 선택하고 전역 강제를 끈 채 적격 작업을 평문으로 전달합니다. 진입하려면 `--acknowledge-plaintext-agent-messages`가 필요합니다. |
 | `keep-native-v1 on\|off` | `mode v2`에서 ChatGPT 네이티브 모델을 v1로, 라우팅된 모델을 v2로 유지합니다. 켜면 catalog 동기화 전에 전역 V2 강제를 끕니다. |
 | `threads <n>` | 활성 v1/v2 thread 한도를 1 이상의 정수로 설정합니다. |
-| `mode-hint <text>` | 모든 모델과 추론 노력에 능동 위임 힌트(Ultra 모드)를 설정합니다. |
-| `mode-hint --clear` | 힌트를 제거해 추론 노력에 따른 정책을 복원합니다. |
+| `mode-hint <text>` | 모든 모델과 추론 강도에 능동 위임 힌트(Ultra 모드)를 설정합니다. |
+| `mode-hint --clear` | 힌트를 제거해 추론 강도에 따른 정책을 복원합니다. |
 
 ```bash
 epx v2 status

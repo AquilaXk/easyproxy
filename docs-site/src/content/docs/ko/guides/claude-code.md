@@ -208,7 +208,7 @@ EasyProxy 소유의 선택된 게이트웨이 항목, 저장된 게이트웨이 
 목록 업데이트는 1P 설치 위에 게이트웨이 프로필을 쓰지 않습니다.
 `claudeCode.intercept.enabled: false`라면 기존 1P 설치의 apply는 `intercept_disabled`로
 거절되고 새 설치는 게이트웨이를 적용합니다. 회사 프록시 같은 외부 설정은 덮어쓰지 않습니다.
-모드 전환 후에는 Desktop을 완전히 종료하고 다시 열어 주세요.
+모드 전환 후에는 Desktop을 완전히 종료하고 다시 여세요.
 
 ### Claude Code CLI 1P
 

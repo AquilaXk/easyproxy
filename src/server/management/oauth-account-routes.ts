@@ -191,6 +191,32 @@ function validateKeyName(
   return { value };
 }
 
+function applyApiKeyScopePatch(
+  entry: Pick<EpxApiKeyEntry, "allowedProviders" | "allowedModels">,
+  body: Record<string, unknown>,
+): { ok: true; touched: boolean } | { ok: false; error: string } {
+  let touched = false;
+  for (const field of ["allowedProviders", "allowedModels"] as const) {
+    if (body[field] === undefined) continue;
+    touched = true;
+    const value = body[field];
+    // `null` and `[]` both clear the list back to unrestricted; anything else
+    // must be a list of non-empty strings, because a silently ignored malformed
+    // scope would read as "allowed everything" to whoever set it.
+    if (value === null) {
+      delete entry[field];
+      continue;
+    }
+    if (!Array.isArray(value) || value.some(item => typeof item !== "string" || !item.trim() || item.length > 256)) {
+      return { ok: false, error: `${field} must be a list of non-empty names` };
+    }
+    const normalized = [...new Set((value as string[]).map(item => item.trim()))];
+    if (normalized.length === 0) delete entry[field];
+    else entry[field] = normalized;
+  }
+  return { ok: true, touched };
+}
+
 export type IssuedApiKey = Pick<EpxApiKeyEntry, "id" | "name" | "key" | "createdAt" | "loopbackOnly" | "allowedProviders" | "allowedModels">;
 
 /** Shared one-time data-key issuance used by the dashboard and link transactions. */
@@ -1548,17 +1574,28 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     if (!budgetCheck.ok) {
       return jsonResponse({ error: budgetCheck.error }, 400, req, config);
     }
+    const scopeCheck = applyApiKeyScopePatch(probe, body);
+    if (!scopeCheck.ok) {
+      return jsonResponse({ error: scopeCheck.error }, 400, req, config);
+    }
     const entry = issueApiKeyInProcess( // shared helper uses randomBytes(20)
       config,
       name,
       undefined,
-      budgetCheck.touched ? (created) => { applyApiKeyBudgetPatch(created, body); } : undefined,
+      (budgetCheck.touched || scopeCheck.touched)
+        ? (created) => {
+          if (budgetCheck.touched) applyApiKeyBudgetPatch(created, body);
+          if (scopeCheck.touched) applyApiKeyScopePatch(created, body);
+        }
+        : undefined,
     );
     return jsonResponse({
       id: entry.id,
       name: entry.name,
       key: entry.key,
       createdAt: entry.createdAt,
+      ...(entry.allowedProviders ? { allowedProviders: [...entry.allowedProviders] } : {}),
+      ...(entry.allowedModels ? { allowedModels: [...entry.allowedModels] } : {}),
       ...(budgetCheck.touched ? projectApiKeyBudgetDto(entry) : {}),
     }, 201, req, config);
   }
@@ -1588,19 +1625,9 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       if ("error" in nameField) return jsonResponse({ error: nameField.error }, 400, req, config);
       entry.name = nameField.value;
     }
-    for (const [field, sent] of [["allowedProviders", scopingProviders], ["allowedModels", scopingModels]] as const) {
-      if (!sent) continue;
-      const value = body[field];
-      // `null` and `[]` both clear the list back to unrestricted; anything else
-      // must be a list of non-empty strings, because a silently ignored malformed
-      // scope would read as "allowed everything" to whoever set it.
-      if (value === null) { delete entry[field]; continue; }
-      if (!Array.isArray(value) || value.some(item => typeof item !== "string" || !item.trim() || item.length > 256)) {
-        return jsonResponse({ error: `${field} must be a list of non-empty names` }, 400, req, config);
-      }
-      const normalized = [...new Set((value as string[]).map(item => item.trim()))];
-      if (normalized.length === 0) delete entry[field];
-      else entry[field] = normalized;
+    const scopePatch = applyApiKeyScopePatch(entry, body);
+    if (!scopePatch.ok) {
+      return jsonResponse({ error: scopePatch.error }, 400, req, config);
     }
     // Publish the validated replacement only after every field is accepted.
     config.apiKeys = config.apiKeys!.map(key => key === existing ? entry : key);

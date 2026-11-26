@@ -381,7 +381,7 @@ services:
 - `hub-too-new` 또는 `hub-too-old`가 나오면 메시지가 가리키는 오래된 쪽을 업그레이드하세요. 불일치는 로컬 파일을 쓰기 전에 차단됩니다.
 - pairing 코드를 잃었거나 소진했다면 `epx hub invite`를 다시 실행하세요. grant는 일회용이고 반복 실패는 코드 존재 여부를 드러내지 않는 방식으로 제한됩니다.
 - `epx hub invite`가 `No loopback browser origin is admitted for pairing`이라고 하면 허브가 허용하는 루프백 브라우저 Origin이 없다는 뜻이며 아무것도 발급되지 않았습니다. 오류가 출력한 `epx config set corsAllowOrigins` 줄을 참가할 컴퓨터의 프록시 포트로 실행하세요.
-- `epx hub invite`가 광고할 데이터 Origin이 이 컴퓨터의 루프백이 된다고 하면, 바인드가 루프백 전용이거나 와일드카드이고 `hub.dataPublicOrigin`이 설정되지 않은 상태입니다. 광고할 주소가 없고 tailnet/LAN 주소를 추측하지도 않습니다. 아무것도 발급되지 않았습니다. `hub.dataPublicOrigin`을 설정하거나 이번 초대에만 `--data-url`을 주세요.
+- `epx hub invite`가 광고할 데이터 Origin이 이 컴퓨터의 루프백이 된다고 하면, 바인드가 루프백 전용이거나 와일드카드이고 `hub.dataPublicOrigin`이 설정되지 않은 상태입니다. 광고할 주소가 없고 tailnet/LAN 주소를 추측하지도 않습니다. 아무것도 발급되지 않았습니다. `hub.dataPublicOrigin`을 설정하거나 이번 초대에만 `--data-url`을 지정하세요.
 - 참가하는 컴퓨터의 교환이 거부되고 코드가 소모되면, grant가 그 컴퓨터가 보내지 않는 Origin에 묶였던 것입니다. 초대 출력의 `Bound browser origin:` 줄을 다시 보세요. 상대 컴퓨터가 실행해야 하는 포트를 알려 주거나, 허브에서 `http://localhost:10100`을 허용하는 방법을 제시합니다.
 - `epx hub invite`가 `--management-url`을 거부하면, 허브에서 그 플래그는 `hub.managementPublicOrigin`을 덮어쓰는 것이 아니라 확인하는 것입니다. 설정을 바꾸거나 플래그를 빼세요.
 - 허브에서 `epx claude`가 native로 실행되거나 허브가 자기 클라이언트 설정을 쓰지 않으면 `unauthenticatedLoopbackListener`가 꺼져 있습니다. 건너뛴 메시지가 게이트를 지목합니다. 리스너를 켜고 프록시를 재시작하세요. 서비스 설치라면 `epx service restart`입니다.

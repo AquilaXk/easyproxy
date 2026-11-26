@@ -38,7 +38,7 @@ Windows에서는 easyproxy가 #32111 충돌을 피하기 위해 스트리밍 응
 
 3. **`streamMode: "eager-relay"`로 bounded relay를 opt-in합니다.** 방법은 두 가지입니다. `config.json`을 수정해 `"streamMode": "eager-relay"`를 추가하거나, 관리 API에 `PUT /api/settings`와 `{"streamMode":"eager-relay"}`를 보내 새 턴에 재시작 없이 적용합니다. **충돌 위험 경고:** Bun 1.3.14에서는 이 방식이 #32111의 영향을 받는 스트림 형태를 사용하므로, 어떤 OS에서든 스트림 중간에 프로세스가 충돌할 수 있습니다. 서비스 관리자가 다시 시작하겠지만, 진행 중이던 요청은 실패합니다. `"legacy-tee"`는 현재 기본값을 고정합니다. Windows에서는 `"auto"`(기본값)가 런타임 게이트 판단을 따르게 합니다. macOS에서는 `"auto"`가 항상 tee를 유지하고, 명시적 `"eager-relay"`만 opt-in입니다.
 
-이 중 어떤 방법이든 실제 Windows 워크로드에 적용해 보셨다면, 변경 전후의 `epx doctor` 메모리 섹션을 [#314](https://github.com/AquilaXk/easyproxy/issues/314)에 남겨 주세요. 이것이 바로 이 완화책이 기다리고 있는 검증입니다.
+실제 Windows 워크로드에 위 방법 중 하나를 적용해 보셨다면, 변경 전후의 `epx doctor` 메모리 섹션을 [#314](https://github.com/AquilaXk/easyproxy/issues/314)에 공유하세요. 이 완화책의 효과는 실제 환경 검증을 통해 확인하고 있습니다.
 
 ## Windows 선택 런타임 쓰기 검사 실패
 
