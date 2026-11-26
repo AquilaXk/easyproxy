@@ -200,8 +200,12 @@ export function ApiKeyBudgetCard({
     const tokens = picked.split(",").map(item => item.trim()).filter(Boolean);
     if (tokens.length === 0) return;
     const next = [...parsedModelsDraft];
+    const seen = new Set(next);
     for (const token of tokens) {
-      if (!next.includes(token)) next.push(token);
+      if (!seen.has(token)) {
+        seen.add(token);
+        next.push(token);
+      }
     }
     setModelsTextEdit(next.join(", "));
     setModelQuickPick("");

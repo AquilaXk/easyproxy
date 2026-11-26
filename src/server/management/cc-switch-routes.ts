@@ -114,10 +114,17 @@ function validateCcSwitchRouteSourcePath(raw: string): string {
     if (stat.nlink > 1n) {
       throw new Error("sourcePath cannot be a hard-linked file");
     }
+    if (typeof process.getuid === "function") {
+      const uid = process.getuid();
+      if (uid !== 0 && Number(stat.uid) !== uid) {
+        throw new Error("sourcePath must be owned by the current user");
+      }
+    }
   } catch (error) {
     if (error instanceof Error && (
       error.message === "sourcePath must point to a regular local file"
       || error.message === "sourcePath cannot be a hard-linked file"
+      || error.message === "sourcePath must be owned by the current user"
     )) {
       throw error;
     }

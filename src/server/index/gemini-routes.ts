@@ -34,10 +34,16 @@ export type GeminiRouteDeps = OllamaRouteDeps;
 /** Move a recognized proxy credential from Gemini headers/query onto the dedicated header and strip vendor auth. */
 function withProxyCredential(req: Request, url: URL, policy: RequestPolicyView): Request {
   const headers = new Headers(req.headers);
-  const key = headers.get("x-goog-api-key")?.trim() || url.searchParams.get("key")?.trim();
+  const headerKey = headers.get("x-goog-api-key")?.trim();
+  const queryKey = url.searchParams.get("key")?.trim();
+  const promotedKey = headerKey && shouldPromoteGeminiCredential(headerKey, policy)
+    ? headerKey
+    : queryKey && shouldPromoteGeminiCredential(queryKey, policy)
+      ? queryKey
+      : undefined;
   headers.delete("x-goog-api-key");
-  if (key && !headers.get("x-easyproxy-api-key")?.trim() && shouldPromoteGeminiCredential(key, policy)) {
-    headers.set("x-easyproxy-api-key", key);
+  if (promotedKey && !headers.get("x-easyproxy-api-key")?.trim()) {
+    headers.set("x-easyproxy-api-key", promotedKey);
   }
   const clean = new URL(url);
   clean.searchParams.delete("key");

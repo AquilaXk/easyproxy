@@ -536,6 +536,11 @@ describe("Stage 4A Accounts hub, Route -> Codex controls, and GatewayClients Com
     expect(switchButtons[0]!.disabled).toBe(true);
     expect(switchButtons[1]!.disabled).toBe(true);
     expect(switchButtons[2]!.disabled).toBe(false);
+
+    const refreshBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Refresh quotas")!;
+    await act(async () => { refreshBtn.click(); });
+    await flushTicks();
+    expect(requestedUrls.some(u => u.endsWith("/api/providers/keys?name=openai&quota=1&refresh=1"))).toBe(true);
   });
 
   test("CodexIntegrationPage mode switch confirmation cancel leaves accountMode unchanged", async () => {

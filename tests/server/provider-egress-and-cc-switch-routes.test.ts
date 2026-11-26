@@ -475,7 +475,7 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     const keychainMap = new Map<string, string>();
     let failSecondReadback = false;
     setProviderKeychainEntryFactoryForTests((_service, account): ProviderKeychainEntry => ({
-      getPassword: () => (failSecondReadback && account === "sql-openai" ? "corrupted" : (keychainMap.get(account) ?? null)),
+      getPassword: () => (failSecondReadback && account === "sql-openai" && keychainMap.has(account) ? "corrupted" : (keychainMap.get(account) ?? null)),
       setPassword: (pw: string) => { keychainMap.set(account, pw); },
       deletePassword: () => keychainMap.delete(account),
     }));
@@ -697,11 +697,17 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
     saveConfig(cfg);
 
     const keychainMap = new Map<string, string>([
-      ["ccswitch-ccs-existing", "prior-super-secret"],
+      ["ccs-existing", "prior-super-secret"],
     ]);
+    const writtenAccounts: Array<{ account: string; secret: string }> = [];
     setProviderKeychainEntryFactoryForTests((_service, account) => ({
       getPassword: () => keychainMap.get(account) ?? null,
-      setPassword: (secret: string) => { keychainMap.set(account, secret); },
+      setPassword: (secret: string) => {
+        if (account === "ccs-existing") {
+          writtenAccounts.push({ account, secret });
+        }
+        keychainMap.set(account, secret);
+      },
       deletePassword: () => keychainMap.delete(account),
     }));
 
@@ -726,8 +732,79 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
       includeApiKeys: true,
       storeInKeychain: true,
     })).toThrow(CcSwitchImportError);
-    // Prior secret must survive rollback untouched rather than being deleted.
-    expect(keychainMap.get("ccswitch-ccs-existing")).toBe("prior-super-secret");
+    // Prior secret must have been overwritten then restored on rollback rather than deleted.
+    expect(writtenAccounts).toEqual([
+      { account: "ccs-existing", secret: KEY_OPENAI },
+      { account: "ccs-existing", secret: "prior-super-secret" },
+    ]);
+    expect(keychainMap.get("ccs-existing")).toBe("prior-super-secret");
+
+    // Multi-provider keychain write where second entry fails verification must restore first entry's prior secret and delete second.
+    const multiJsonPath = join(home, "cc-rollback-kc-multi.json");
+    writeFileSync(multiJsonPath, JSON.stringify({
+      openai: {
+        providers: {
+          "ccs-existing": {
+            id: "ccs-existing",
+            settingsConfig: { baseUrl: "https://rb1.example.com/v1", apiKey: KEY_OPENAI },
+          },
+          "ccs-fail": {
+            id: "ccs-fail",
+            settingsConfig: { baseUrl: "https://rb2.example.com/v1", apiKey: KEY_OPENAI },
+          },
+        },
+      },
+    }), "utf8");
+    setProviderKeychainEntryFactoryForTests((_service, account) => ({
+      getPassword: () => (account === "ccs-fail" && keychainMap.has(account) ? "corrupted-readback" : (keychainMap.get(account) ?? null)),
+      setPassword: (secret: string) => { keychainMap.set(account, secret); },
+      deletePassword: () => keychainMap.delete(account),
+    }));
+    expect(() => runCcSwitchLiveProviderImport({
+      mode: "apply",
+      config: cfg,
+      saveConfig,
+      sourcePath: multiJsonPath,
+      consent: true,
+      includeApiKeys: true,
+      storeInKeychain: true,
+    })).toThrow(CcSwitchImportError);
+    expect(keychainMap.get("ccs-existing")).toBe("prior-super-secret");
+    expect(keychainMap.has("ccs-fail")).toBe(false);
+
+    // Silent setPassword failure on an account that already has a secret must keep the prior secret instead of deleting it.
+    keychainMap.set("ccs-fail", "existing-fail-secret");
+    setProviderKeychainEntryFactoryForTests((_service, account) => ({
+      getPassword: () => keychainMap.get(account) ?? null,
+      setPassword: (secret: string) => {
+        if (account === "ccs-fail" && secret === KEY_OPENAI) return; // silent drop
+        keychainMap.set(account, secret);
+      },
+      deletePassword: () => keychainMap.delete(account),
+    }));
+    expect(() => runCcSwitchLiveProviderImport({
+      mode: "apply",
+      config: cfg,
+      saveConfig,
+      sourcePath: multiJsonPath,
+      consent: true,
+      includeApiKeys: true,
+      storeInKeychain: true,
+    })).toThrow(CcSwitchImportError);
+    expect(keychainMap.get("ccs-existing")).toBe("prior-super-secret");
+    expect(keychainMap.get("ccs-fail")).toBe("existing-fail-secret");
+
+    // Non-matching file uid owner is rejected at the CC-Switch route boundary.
+    if (typeof process.getuid === "function") {
+      const uidSpy = spyOn(process, "getuid").mockReturnValue(999_999);
+      try {
+        const foreignResp = await callMgmt("POST", "/api/providers/cc-switch/preview", cfg, { sourcePath: ccJsonPath });
+        expect(foreignResp.status).toBe(400);
+        expect((foreignResp.json as { code: string }).code).toBe("invalid_source_path");
+      } finally {
+        uidSpy.mockRestore();
+      }
+    }
 
     // Management CC-Switch routes include Vary: Origin / Access-Control-Allow-Origin headers on responses.
     const corsReq = new Request("http://127.0.0.1:10100/api/providers/cc-switch/preview", {

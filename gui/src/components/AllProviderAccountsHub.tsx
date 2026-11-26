@@ -131,7 +131,7 @@ async function fetchAllProviderHubData(
       }
       if (row.authMode === "oauth") {
         const res = await fetch(
-          `${apiBase}/api/oauth/accounts?provider=${encodeURIComponent(slot)}&quota=1`,
+          `${apiBase}/api/oauth/accounts?provider=${encodeURIComponent(slot)}&quota=1${refreshQuotas ? "&refresh=1" : ""}`,
           signal ? { signal } : undefined,
         ).catch(() => null);
         const body = res ? await readJsonIfOk<{ accounts?: Array<Record<string, unknown>>; activeAccountId?: string }>(res) : null;
@@ -169,7 +169,7 @@ async function fetchAllProviderHubData(
       }
       if (row.hasApiKey === true && row.authMode !== "forward") {
         const res = await fetch(
-          `${apiBase}/api/providers/keys?name=${encodeURIComponent(name)}&quota=1`,
+          `${apiBase}/api/providers/keys?name=${encodeURIComponent(name)}&quota=1${refreshQuotas ? "&refresh=1" : ""}`,
           signal ? { signal } : undefined,
         ).catch(() => null);
         const body = res ? await readJsonIfOk<{ keys?: Array<Record<string, unknown>> }>(res) : null;

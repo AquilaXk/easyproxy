@@ -18,8 +18,8 @@
 "tray.tokens" = "토큰";
 "tray.cached" = "캐시됨";
 "tray.openDashboard" = "대시보드 열기";
-"tray.empty" = "사용량 데이터를 읽지 못했다. 새로고침하라.";
-"tray.error.unreadable" = "사용량 응답을 읽지 못했다. 새로고침하거나 대시보드를 열라.";
+"tray.empty" = "사용량 데이터를 읽지 못했다. 새로고침해 본다.";
+"tray.error.unreadable" = "사용량 응답을 읽지 못했다. 새로고침하거나 대시보드를 연다.";
 "tray.loading" = "사용량 불러오는 중…";
 "tray.account.active" = "사용 중";
 "tray.account.use" = "전환";

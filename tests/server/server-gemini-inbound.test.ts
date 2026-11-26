@@ -374,12 +374,15 @@ describe("Gemini-compatible inbound routes", () => {
         expect(allowed.status).toBe(200);
         await allowed.text();
 
-        // Expired or revoked/unrecognized epx_* proxy keys fail closed (401) even on loopback.
+        // Expired or revoked/unrecognized epx_* proxy keys fail closed (401) even on loopback
+        // and even if paired with an opaque vendor header.
         for (const badToken of [expiredKey, revokedKey]) {
           const refusedHdr = await post(base, "/v1beta/models/fx/m1:generateContent", request(), { "x-goog-api-key": badToken });
           expect(refusedHdr.status).toBe(401);
           const refusedQuery = await post(base, `/v1beta/models/fx/m1:generateContent?key=${badToken}`, request(), {});
           expect(refusedQuery.status).toBe(401);
+          const refusedMixed = await post(base, `/v1beta/models/fx/m1:generateContent?key=${badToken}`, request(), { "x-goog-api-key": "easyproxy-local" });
+          expect(refusedMixed.status).toBe(401);
         }
       });
 

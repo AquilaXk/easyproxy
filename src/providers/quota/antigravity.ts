@@ -4,6 +4,7 @@ import { getConfigPath } from "../../config/paths";
 import { antigravityCliUserAgent, antigravityUserAgent } from "../../adapters/client-fingerprint";
 import { DestinationDnsResolutionError } from "../../lib/destination-policy";
 import { PinnedHttpError, type PinnedHttpErrorCode } from "../../lib/pinned-http";
+import { bindOAuthSnapshotToProvider } from "../../lib/provider-egress";
 import { ProviderOutboundPolicyError, providerOutboundPost, providerRedirectError, type ProviderOutboundDependencies } from "../../lib/provider-outbound";
 import { readBoundedResponseBytes } from "../../lib/bounded-body";
 import { getValidAccessToken } from "../../oauth";
@@ -309,23 +310,25 @@ export interface AntigravityQuotaRequestOptions {
   hostPlatform?: string;
 }
 
-function antigravityQuotaEgressConfig(
+export function antigravityQuotaEgressConfig(
   options?: AntigravityQuotaRequestOptions,
-): Pick<EpxProviderConfig, "adapter" | "authMode" | "googleMode" | "baseUrl" | "proxy" | "noProxy" | "tlsProfile"> {
+): EpxProviderConfig {
   let config = options?.config;
   if (!config && existsSync(getConfigPath())) {
     try { config = loadConfig().providers?.["google-antigravity"]; } catch { config = undefined; }
   }
-  const proxy = options?.accountProxy ?? config?.proxy;
-  return {
-    adapter: "google",
-    authMode: "oauth",
-    googleMode: "cloud-code-assist",
-    baseUrl: ANTIGRAVITY_ACCOUNT_QUOTA_BASE,
-    ...(proxy !== undefined ? { proxy } : {}),
-    ...(config?.noProxy !== undefined ? { noProxy: config.noProxy } : {}),
-    ...(config?.tlsProfile !== undefined ? { tlsProfile: config.tlsProfile } : {}),
-  };
+  return bindOAuthSnapshotToProvider(
+    {
+      adapter: "google",
+      authMode: "oauth",
+      googleMode: "cloud-code-assist",
+      baseUrl: ANTIGRAVITY_ACCOUNT_QUOTA_BASE,
+      ...(config?.proxy !== undefined ? { proxy: config.proxy } : {}),
+      ...(config?.noProxy !== undefined ? { noProxy: config.noProxy } : {}),
+      ...(config?.tlsProfile !== undefined ? { tlsProfile: config.tlsProfile } : {}),
+    },
+    { proxy: options?.accountProxy, hostPlatform: options?.hostPlatform },
+  );
 }
 
 export async function probeAntigravityUsageQuota(

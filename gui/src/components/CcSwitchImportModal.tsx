@@ -54,8 +54,12 @@ async function fetchCcSwitchPreview(
     }),
     ...(signal ? { signal } : {}),
   });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null) as PreviewResponse | null;
+    return { ok: false, body: errBody };
+  }
   const body = await res.json().catch(() => null) as PreviewResponse | null;
-  return { ok: res.ok && body !== null, body };
+  return { ok: body !== null, body };
 }
 
 export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
@@ -184,9 +188,14 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
           ...(includeApiKeys && preview?.keychainAvailable ? { storeInKeychain } : {}),
         }),
       });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null) as { error?: string } | null;
+        setError(errBody?.error ?? uxT(locale, "ccSwitch.applyFailed"));
+        return;
+      }
       const body = await res.json().catch(() => null) as (PreviewResponse & { imported?: number }) | null;
-      if (!res.ok || !body) {
-        setError(body?.error ?? uxT(locale, "ccSwitch.applyFailed"));
+      if (!body) {
+        setError(uxT(locale, "ccSwitch.applyFailed"));
         return;
       }
       const imported = body.imported ?? 0;
@@ -216,9 +225,14 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null) as { error?: string } | null;
+        setError(errBody?.error ?? uxT(locale, "ccSwitch.restoreFailed"));
+        return;
+      }
       const body = await res.json().catch(() => null) as { restored?: number; error?: string } | null;
-      if (!res.ok || !body) {
-        setError(body?.error ?? uxT(locale, "ccSwitch.restoreFailed"));
+      if (!body) {
+        setError(uxT(locale, "ccSwitch.restoreFailed"));
         return;
       }
       setNotice(uxT(locale, "ccSwitch.restoredSuccess", { count: body.restored ?? 0 }));

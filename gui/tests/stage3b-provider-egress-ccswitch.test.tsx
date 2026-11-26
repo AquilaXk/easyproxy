@@ -524,8 +524,28 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     });
     await flushTicks();
     const proxyInput = host.querySelector<HTMLInputElement>('input[type="password"]')!;
-    await act(async () => { setInputValue(proxyInput, "http://127.0.0.1:9999"); });
+    const noProxyInput = host.querySelectorAll<HTMLInputElement>('input.input')[1]!;
+    await act(async () => {
+      setInputValue(proxyInput, "http://127.0.0.1:9999");
+      setInputValue(noProxyInput, "localhost, .corp.internal");
+    });
     expect(proxyInput.value).toBe("http://127.0.0.1:9999");
+    expect(noProxyInput.value).toBe("localhost, .corp.internal");
+
+    // Re-rendering the same provider with fresh object references must not overwrite unsaved drafts.
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            isCanonicalOpenAi={false}
+            item={{ name: "alpha", adapter: "openai-chat", baseUrl: "https://api.example.test/v1", authMode: "key", hasApiKey: true, hasProxy: true, proxyLabel: "http://127.0.0.1:8888", noProxy: ["localhost"] }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    expect(noProxyInput.value).toBe("localhost, .corp.internal");
 
     // Switching to another provider must clear stale draft proxy/noProxy state even without unmounting.
     await act(async () => {

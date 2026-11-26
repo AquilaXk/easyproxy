@@ -1180,13 +1180,18 @@ export function runCcSwitchLiveProviderImport(options: {
                 priorSecret = null;
               }
               kcEntry.setPassword(entry.secret.apiKey);
-              const readback = kcEntry.getPassword();
+              let readback: string | null = null;
+              try {
+                readback = kcEntry.getPassword();
+              } catch {
+                readback = null;
+              }
               const verified = readback === entry.secret.apiKey;
               writtenKeychainEntries.push({
                 name: entry.candidate.name,
                 account: entry.keychainAccountName,
                 note: entry.journalEntry.note,
-                priorSecret: !verified && readback === priorSecret ? null : priorSecret,
+                priorSecret,
               });
               if (!verified) {
                 throw new CcSwitchImportError(

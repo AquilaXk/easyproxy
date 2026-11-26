@@ -365,5 +365,10 @@ describe("provider TLS profile", () => {
     const fallbackExpected = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
     await providerTlsFetch("google-antigravity", canonical, fetch)("https://cloudcode-pa.googleapis.com/v1");
     expect(seenOs.at(-1)).toBe(fallbackExpected);
+
+    const { antigravityQuotaEgressConfig } = await import("../../src/providers/quota/antigravity");
+    const quotaCfg = antigravityQuotaEgressConfig({ config: canonical as unknown as EpxProviderConfig, hostPlatform: "linux/amd64" });
+    await providerTlsFetch("google-antigravity", quotaCfg, fetch)("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels");
+    expect(seenOs.at(-1)).toBe("linux");
   });
 });

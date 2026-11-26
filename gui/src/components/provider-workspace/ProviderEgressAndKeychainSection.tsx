@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { readJsonIfOk } from "../../fetch-json";
 import { confirmAction } from "../../action-dialogs";
 import { useI18n } from "../../i18n/shared";
@@ -98,6 +98,7 @@ export function ProviderEgressAndKeychainSection({
   onRefreshConfig,
 }: Props) {
   const { locale } = useI18n();
+  const proxyInputId = useId();
   const [proxyInput, setProxyInput] = useState("");
   const [showProxy, setShowProxy] = useState(false);
   const [noProxyInput, setNoProxyInput] = useState(() => formatNoProxyValue(item.noProxy));
@@ -149,18 +150,23 @@ export function ProviderEgressAndKeychainSection({
   }, [apiBase, applySnapshot, isCanonicalOpenAi, item.name, supportsKeychain]);
 
   const prevProviderKeyRef = useRef(`${apiBase ?? ""}::${item.name}`);
+  const latestItemRef = useRef(item);
+  useEffect(() => {
+    latestItemRef.current = item;
+  });
 
   useEffect(() => {
     const providerKey = `${apiBase ?? ""}::${item.name}`;
     if (prevProviderKeyRef.current !== providerKey) {
       prevProviderKeyRef.current = providerKey;
+      const current = latestItemRef.current;
       setProxyInput("");
       setShowProxy(false);
-      setNoProxyInput(formatNoProxyValue(item.noProxy));
-      setHasProxy(item.hasProxy === true);
-      setProxyLabel(item.proxyLabel ?? "");
-      setTlsEnabled(isTlsProfileEnabled(item.tlsProfile));
-      setTlsStatus(item.tlsProfile?.status ?? "disabled");
+      setNoProxyInput(formatNoProxyValue(current.noProxy));
+      setHasProxy(current.hasProxy === true);
+      setProxyLabel(current.proxyLabel ?? "");
+      setTlsEnabled(isTlsProfileEnabled(current.tlsProfile));
+      setTlsStatus(current.tlsProfile?.status ?? "disabled");
       setEgressMsg(null);
       setKeychainState(null);
       setKeychainMsg(null);
@@ -175,10 +181,11 @@ export function ProviderEgressAndKeychainSection({
       })
       .catch(() => undefined);
     return () => ac.abort();
-  }, [apiBase, applySnapshot, isCanonicalOpenAi, item.hasProxy, item.name, item.noProxy, item.proxyLabel, item.tlsProfile, supportsKeychain]);
+  }, [apiBase, applySnapshot, isCanonicalOpenAi, item.name, supportsKeychain]);
 
   const saveEgress = async (override?: { proxy?: string | null; tlsEnabled?: boolean }) => {
     if (apiBase === undefined || egressSaving) return;
+    const startProviderKey = `${apiBase}::${item.name}`;
     setEgressSaving(true);
     setEgressMsg(null);
     const nextTls = override?.tlsEnabled ?? tlsEnabled;
@@ -202,6 +209,7 @@ export function ProviderEgressAndKeychainSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (prevProviderKeyRef.current !== startProviderKey) return;
       const payload = await readJsonIfOk<LiveProviderEgressMeta & { error?: string }>(res);
       if (!res.ok || !payload) {
         rollbackTlsIfOverridden();
@@ -232,10 +240,11 @@ export function ProviderEgressAndKeychainSection({
       });
       onRefreshConfig?.();
     } catch {
+      if (prevProviderKeyRef.current !== startProviderKey) return;
       rollbackTlsIfOverridden();
       setEgressMsg({ ok: false, text: uxT(locale, "providerEgress.saveFailed") });
     } finally {
-      setEgressSaving(false);
+      if (prevProviderKeyRef.current === startProviderKey) setEgressSaving(false);
     }
   };
 
@@ -256,8 +265,8 @@ export function ProviderEgressAndKeychainSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: item.name, action }),
       });
-      const data = await res.json().catch(() => null) as { error?: string } | null;
       if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
         setKeychainMsg({ ok: false, text: data?.error ?? uxT(locale, "providerEgress.saveFailed") });
         return;
       }
@@ -327,10 +336,11 @@ export function ProviderEgressAndKeychainSection({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="pwi-settings-field">
-          <span className="pwi-settings-label">{uxT(locale, "providerEgress.proxyLabel")}</span>
+        <div className="pwi-settings-field">
+          <label htmlFor={proxyInputId} className="pwi-settings-label">{uxT(locale, "providerEgress.proxyLabel")}</label>
           <div className="relative flex items-center">
             <input
+              id={proxyInputId}
               className="input w-full pr-9 font-mono"
               type={showProxy ? "text" : "password"}
               autoComplete="off"
@@ -350,7 +360,7 @@ export function ProviderEgressAndKeychainSection({
               {showProxy ? <IconEyeOff size={15} aria-hidden="true" /> : <IconEye size={15} aria-hidden="true" />}
             </button>
           </div>
-        </label>
+        </div>
         <label className="pwi-settings-field">
           <span className="pwi-settings-label">{uxT(locale, "providerEgress.noProxyLabel")}</span>
           <input
