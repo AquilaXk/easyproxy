@@ -16,6 +16,9 @@ const MAX_XML_OPENER_CHARS = 256;
 const MAX_CALL_BYTES = 2 * 1024 * 1024;
 const MAX_TURN_RECOVERY_BYTES = 4 * 1024 * 1024;
 const MAX_XML_PARAMETERS_PER_CALL = 128;
+const RESERVED_XML_PARAM_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const XML_FUNCTION_PREFIX = "<function";
+const XML_WS_RE = /\s/;
 
 const GPT_OSS_MODEL_RE = /(?:^|[/-])gpt-oss(?=$|[-.:/])/i;
 const HARMONY_TO_RE = /\bto=functions\.([A-Za-z0-9_.:-]+)(?:\s*(?:<\|constrain\|>[A-Za-z0-9_-]*\s*)?)?$/;
@@ -110,14 +113,168 @@ interface ParsedMatch {
   readonly bytes: number;
 }
 
+interface ScanRun {
+  s: number;
+  m: number;
+}
+
+/**
+ * Forward-progress token scanner that caches `(from, firstMatch)` runs so repeated
+ * unclosed or nested openers never re-scan already inspected text.
+ */
+class ForwardTokenMatcher {
+  private runs: ScanRun[] = [];
+  private head = 0;
+
+  constructor(private readonly findNext: (from: number, stopAt: number | undefined) => number) {}
+
+  nextAtOrAfter(from: number, floor: number): number {
+    while (this.head < this.runs.length) {
+      const first = this.runs[this.head]!;
+      if (first.m !== -1 && first.m < floor) {
+        this.head += 1;
+      } else {
+        break;
+      }
+    }
+    if (this.head > 1024 && this.head * 2 >= this.runs.length) {
+      this.runs = this.runs.slice(this.head);
+      this.head = 0;
+    }
+
+    const len = this.runs.length;
+    if (this.head < len) {
+      const last = this.runs[len - 1]!;
+      if (from >= last.s) {
+        if (last.m === -1 || from <= last.m) return last.m;
+        const m = this.findNext(from, undefined);
+        if (this.head === len - 1 && last.m < floor) {
+          last.s = from;
+          last.m = m;
+        } else {
+          this.runs.push({ s: from, m });
+        }
+        return m;
+      }
+      let lo = this.head;
+      let hi = len - 1;
+      let prevIdx = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >>> 1;
+        if (this.runs[mid]!.s <= from) {
+          prevIdx = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      if (prevIdx !== -1) {
+        const prev = this.runs[prevIdx]!;
+        if (prev.m === -1 || from <= prev.m) return prev.m;
+      }
+      const nextIdx = prevIdx === -1 ? this.head : prevIdx + 1;
+      const nextRun = nextIdx < len ? this.runs[nextIdx] : undefined;
+      if (nextRun) {
+        const foundBeforeNext = this.findNext(from, nextRun.s);
+        if (foundBeforeNext === -1) {
+          nextRun.s = from;
+          return nextRun.m;
+        }
+        this.runs.splice(nextIdx, 0, { s: from, m: foundBeforeNext });
+        return foundBeforeNext;
+      }
+    }
+
+    const m = this.findNext(from, undefined);
+    this.runs.push({ s: from, m });
+    return m;
+  }
+
+  isExhaustedAfter(floor: number): boolean {
+    const last = this.runs[this.runs.length - 1];
+    return last !== undefined && last.m === -1 && last.s <= floor;
+  }
+}
+
+function isXmlWhitespaceChar(text: string, index: number): boolean {
+  const code = text.charCodeAt(index);
+  if (code === 32 || code === 9 || code === 10 || code === 13) return true;
+  if (code < 128) return code === 11 || code === 12;
+  return XML_WS_RE.test(text[index]!);
+}
+
+function findXmlFunctionNameOpener(text: string, from: number, stopAt: number | undefined): number {
+  let cursor = from;
+  const limit = stopAt ?? text.length;
+  const sliceEnd = stopAt === undefined ? text.length : Math.min(text.length, stopAt + XML_FUNCTION_PREFIX.length - 1);
+  while (cursor < limit) {
+    let idx: number;
+    if (stopAt === undefined) {
+      idx = text.indexOf(XML_FUNCTION_PREFIX, cursor);
+    } else if (cursor >= sliceEnd) {
+      idx = -1;
+    } else {
+      const rel = text.slice(cursor, sliceEnd).indexOf(XML_FUNCTION_PREFIX);
+      idx = rel === -1 ? -1 : cursor + rel;
+    }
+    if (idx === -1 || idx >= limit) return -1;
+    let i = idx + XML_FUNCTION_PREFIX.length;
+    const wsStart = i;
+    while (i < text.length && isXmlWhitespaceChar(text, i)) i += 1;
+    if (i > wsStart && text.startsWith("name=", i)) return idx;
+    cursor = i > wsStart ? i : idx + XML_FUNCTION_PREFIX.length;
+  }
+  return -1;
+}
+
+class LeakedScanCursor {
+  private readonly matchers = new Map<string, ForwardTokenMatcher>();
+  private xmlFunctionOpenerMatcher: ForwardTokenMatcher | undefined;
+
+  constructor(private readonly text: string) {}
+
+  nextLiteral(token: string, from: number, floor: number): number {
+    let matcher = this.matchers.get(token);
+    if (!matcher) {
+      const text = this.text;
+      matcher = new ForwardTokenMatcher((start, stopAt) => {
+        if (stopAt === undefined) return text.indexOf(token, start);
+        const end = Math.min(text.length, stopAt + token.length - 1);
+        if (start >= end) return -1;
+        const rel = text.slice(start, end).indexOf(token);
+        return rel === -1 ? -1 : start + rel;
+      });
+      this.matchers.set(token, matcher);
+    }
+    return matcher.nextAtOrAfter(from, floor);
+  }
+
+  nextXmlFunctionOpener(from: number, floor: number): number {
+    if (!this.xmlFunctionOpenerMatcher) {
+      const text = this.text;
+      this.xmlFunctionOpenerMatcher = new ForwardTokenMatcher((start, stopAt) => findXmlFunctionNameOpener(text, start, stopAt));
+    }
+    return this.xmlFunctionOpenerMatcher.nextAtOrAfter(from, floor);
+  }
+
+  isExhausted(token: string, floor: number): boolean {
+    const matcher = this.matchers.get(token);
+    return matcher ? matcher.isExhaustedAfter(floor) : false;
+  }
+}
+
 function parseHarmonyCallAt(
   text: string,
   channelStart: number,
   spanStart: number,
   declaredTools: ReadonlyMap<string, DeclaredLeakedTool>,
+  scanner: LeakedScanCursor,
 ): ParsedMatch | undefined {
   const headerStart = channelStart + "<|channel|>".length;
-  const msgIdx = text.indexOf("<|message|>", headerStart);
+  if (scanner.isExhausted("<|message|>", headerStart) || scanner.isExhausted("<|call|>", headerStart)) {
+    return undefined;
+  }
+  const msgIdx = scanner.nextLiteral("<|message|>", headerStart, spanStart);
   if (msgIdx === -1 || msgIdx - headerStart > MAX_HARMONY_HEADER_CHARS) return undefined;
 
   const header = text.slice(headerStart, msgIdx);
@@ -131,14 +288,18 @@ function parseHarmonyCallAt(
   if (!spec) return undefined;
 
   const argsStart = msgIdx + "<|message|>".length;
-  const callIdx = text.indexOf("<|call|>", argsStart);
-  if (callIdx === -1) return undefined;
+  const callIdx = scanner.nextLiteral("<|call|>", argsStart, spanStart);
+  if (callIdx === -1 || callIdx - argsStart > MAX_CALL_BYTES) return undefined;
+  const nextChannel = scanner.nextLiteral("<|channel|>", argsStart, spanStart);
+  if (nextChannel !== -1 && nextChannel < callIdx) return undefined;
+  const nextMsg = scanner.nextLiteral("<|message|>", argsStart, spanStart);
+  if (nextMsg !== -1 && nextMsg < callIdx) return undefined;
+  const nextStart = scanner.nextLiteral("<|start|>", argsStart, spanStart);
+  if (nextStart !== -1 && nextStart < callIdx) return undefined;
+
   const rawSlice = text.slice(argsStart, callIdx);
   const bytes = Buffer.byteLength(rawSlice, "utf8");
   if (bytes > MAX_CALL_BYTES) return undefined;
-  if (rawSlice.includes("<|channel|>") || rawSlice.includes("<|message|>") || rawSlice.includes("<|start|>")) {
-    return undefined;
-  }
 
   const trimmedArgs = rawSlice.trim();
   if (!trimmedArgs.startsWith("{")) return undefined;
@@ -167,7 +328,7 @@ function coerceXmlParamValue(
   const props = parameters && isPlainJsonObject(parameters.properties)
     ? parameters.properties
     : undefined;
-  const propSchema = props && isPlainJsonObject(props[paramName])
+  const propSchema = props && Object.hasOwn(props, paramName) && isPlainJsonObject(props[paramName])
     ? props[paramName]
     : undefined;
   const schemaType = typeof propSchema?.type === "string"
@@ -215,17 +376,21 @@ function parseXmlCallAt(
   text: string,
   pos: number,
   declaredTools: ReadonlyMap<string, DeclaredLeakedTool>,
+  scanner: LeakedScanCursor,
+  floor: number,
+  limit = text.length,
 ): ParsedMatch | undefined {
-  const openerSlice = text.slice(pos, pos + MAX_XML_OPENER_CHARS);
-  let tagClose: "</antml:invoke>" | "</function>";
-  let match = ANTML_INVOKE_OPEN_RE.exec(openerSlice);
-  if (match) {
-    tagClose = "</antml:invoke>";
-  } else {
-    match = XML_FUNCTION_OPEN_RE.exec(openerSlice);
-    if (!match) return undefined;
-    tagClose = "</function>";
+  const isAntml = text.startsWith("<antml:invoke", pos);
+  const tagClose: "</antml:invoke>" | "</function>" = isAntml ? "</antml:invoke>" : "</function>";
+  if (scanner.isExhausted(tagClose, pos)) {
+    const gt = scanner.nextLiteral(">", pos + (isAntml ? "<antml:invoke".length : XML_FUNCTION_PREFIX.length), floor);
+    if (gt === -1 || gt >= limit || gt - pos >= MAX_XML_OPENER_CHARS || text[gt - 1] !== "/") {
+      return undefined;
+    }
   }
+  const openerSlice = text.slice(pos, Math.min(limit, pos + MAX_XML_OPENER_CHARS));
+  const match = isAntml ? ANTML_INVOKE_OPEN_RE.exec(openerSlice) : XML_FUNCTION_OPEN_RE.exec(openerSlice);
+  if (!match) return undefined;
 
   const toolName = (match[1] ?? match[2] ?? "").trim();
   const selfClosing = match[3] === "/";
@@ -243,15 +408,19 @@ function parseXmlCallAt(
     };
   }
 
-  const closeIdx = text.indexOf(tagClose, bodyStart);
-  if (closeIdx === -1) return undefined;
-  const body = text.slice(bodyStart, closeIdx);
-  if (Buffer.byteLength(body, "utf8") > MAX_CALL_BYTES) return undefined;
-  if (body.includes("<antml:invoke") || /<function\s+name=/.test(body)) {
+  const closeIdx = scanner.nextLiteral(tagClose, bodyStart, floor);
+  if (closeIdx === -1 || closeIdx + tagClose.length > limit || closeIdx - bodyStart > MAX_CALL_BYTES) {
     return undefined;
   }
+  const nextAntml = scanner.nextLiteral("<antml:invoke", bodyStart, floor);
+  if (nextAntml !== -1 && nextAntml < closeIdx) return undefined;
+  const nextXmlFn = scanner.nextXmlFunctionOpener(bodyStart, floor);
+  if (nextXmlFn !== -1 && nextXmlFn < closeIdx) return undefined;
 
-  const args: Record<string, unknown> = {};
+  const body = text.slice(bodyStart, closeIdx);
+  if (Buffer.byteLength(body, "utf8") > MAX_CALL_BYTES) return undefined;
+
+  const args: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   let cursor = 0;
   let paramCount = 0;
   while (cursor < body.length) {
@@ -264,6 +433,7 @@ function parseXmlCallAt(
 
     const isAntmlParam = paramOpen[1] === "antml:";
     const paramName = paramOpen[2] ?? paramOpen[3] ?? "";
+    if (!paramName || RESERVED_XML_PARAM_KEYS.has(paramName)) return undefined;
     const paramCloseTag = isAntmlParam ? "</antml:parameter>" : "</parameter>";
     const valueStart = cursor + paramOpen[0].length;
     const paramCloseIdx = body.indexOf(paramCloseTag, valueStart);
@@ -271,7 +441,12 @@ function parseXmlCallAt(
 
     const paramRaw = body.slice(valueStart, paramCloseIdx);
     if ((isAntmlParam ? /<antml:parameter\s/ : /<parameter\s/).test(paramRaw)) return undefined;
-    args[paramName] = coerceXmlParamValue(paramRaw, paramName, spec.parameters);
+    Object.defineProperty(args, paramName, {
+      value: coerceXmlParamValue(paramRaw, paramName, spec.parameters),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
     cursor = paramCloseIdx + paramCloseTag.length;
   }
 
@@ -310,22 +485,21 @@ function parseXmlWrapperAt(
   text: string,
   pos: number,
   declaredTools: ReadonlyMap<string, DeclaredLeakedTool>,
+  scanner: LeakedScanCursor,
 ): { end: number; calls: ParsedMatch[] } | undefined {
   const wrapper = WRAPPER_TAG_PAIRS.find(pair => text.startsWith(pair.open, pos));
   if (!wrapper) return undefined;
   const innerStart = pos + wrapper.open.length;
-  const closeIdx = text.indexOf(wrapper.close, innerStart);
-  if (closeIdx === -1) return undefined;
-  const body = text.slice(innerStart, closeIdx);
-  if (Buffer.byteLength(body, "utf8") > MAX_TURN_RECOVERY_BYTES) return undefined;
+  const closeIdx = scanner.nextLiteral(wrapper.close, innerStart, pos);
+  if (closeIdx === -1 || closeIdx - innerStart > MAX_TURN_RECOVERY_BYTES) return undefined;
 
   const calls: ParsedMatch[] = [];
-  let cursor = 0;
+  let cursor = innerStart;
   let totalBytes = 0;
-  while (cursor < body.length) {
-    while (cursor < body.length && /\s/.test(body[cursor]!)) cursor += 1;
-    if (cursor >= body.length) break;
-    const match = parseXmlCallAt(body, cursor, declaredTools);
+  while (cursor < closeIdx) {
+    while (cursor < closeIdx && /\s/.test(text[cursor]!)) cursor += 1;
+    if (cursor >= closeIdx) break;
+    const match = parseXmlCallAt(text, cursor, declaredTools, scanner, pos, closeIdx);
     if (!match) return undefined;
     totalBytes += match.bytes;
     if (calls.length >= MAX_STANDALONE_CANDIDATES || totalBytes > MAX_TURN_RECOVERY_BYTES) return undefined;
@@ -336,7 +510,12 @@ function parseXmlWrapperAt(
     });
     cursor = match.end;
   }
-  return calls.length > 0 ? { end: closeIdx + wrapper.close.length, calls } : undefined;
+  if (calls.length === 0) return undefined;
+  if (closeIdx - innerStart > Math.floor(MAX_TURN_RECOVERY_BYTES / 3)
+    && Buffer.byteLength(text.slice(innerStart, closeIdx), "utf8") > MAX_TURN_RECOVERY_BYTES) {
+    return undefined;
+  }
+  return { end: closeIdx + wrapper.close.length, calls };
 }
 
 /**
@@ -354,6 +533,7 @@ export function recoverLeakedToolCallsFromText(
   }
   const matches: ParsedMatch[] = [];
   const removedRanges: Array<{ start: number; end: number }> = [];
+  const scanner = new LeakedScanCursor(text);
   let ctx = initialContext;
   let ctxOffset = 0;
   let cursor = 0;
@@ -362,8 +542,39 @@ export function recoverLeakedToolCallsFromText(
   while (cursor < text.length) {
     const pos = text.indexOf("<", cursor);
     if (pos === -1) break;
+    const isCandidateOpener =
+      (options.enableXml && (
+        text.startsWith("<antml:", pos)
+        || text.startsWith(XML_FUNCTION_PREFIX, pos)
+        || text.startsWith("<tool_calls>", pos)
+      ))
+      || (options.enableHarmony && (
+        text.startsWith("<|channel|>", pos)
+        || text.startsWith("<|start|>assistant<|channel|>", pos)
+      ));
+    if (!isCandidateOpener) {
+      cursor = pos + 1;
+      continue;
+    }
     if (pos > ctxOffset) {
-      ctx = contextAfter(text.slice(ctxOffset, pos), ctx);
+      const needsContextScan = ctx.lineStart
+        || ctx.fence !== null
+        || (ctx.inlineTicks ?? 0) > 0
+        || ctx.literalLine === true
+        || (() => {
+          const nl = scanner.nextLiteral("\n", ctxOffset, ctxOffset);
+          if (nl !== -1 && nl < pos) return true;
+          const bt = scanner.nextLiteral("`", ctxOffset, ctxOffset);
+          if (bt !== -1 && bt < pos) return true;
+          if (pos - ctxOffset >= "<tool_call>".length) {
+            const tc = scanner.nextLiteral("<tool_call", ctxOffset, ctxOffset);
+            if (tc !== -1 && tc < pos) return true;
+          }
+          return false;
+        })();
+      if (needsContextScan) {
+        ctx = contextAfter(text.slice(ctxOffset, pos), ctx);
+      }
       ctxOffset = pos;
     }
     if (isLiteralTextContext(ctx)) {
@@ -372,7 +583,7 @@ export function recoverLeakedToolCallsFromText(
     }
 
     if (options.enableXml) {
-      const wrapped = parseXmlWrapperAt(text, pos, options.declaredTools);
+      const wrapped = parseXmlWrapperAt(text, pos, options.declaredTools, scanner);
       if (wrapped) {
         const wrapperBytes = wrapped.calls.reduce((sum, c) => sum + c.bytes, 0);
         totalRecoveredBytes += wrapperBytes;
@@ -390,14 +601,14 @@ export function recoverLeakedToolCallsFromText(
     let matched: ParsedMatch | undefined;
     if (options.enableHarmony) {
       if (text.startsWith("<|start|>assistant<|channel|>", pos)) {
-        matched = parseHarmonyCallAt(text, pos + "<|start|>assistant".length, pos, options.declaredTools);
+        matched = parseHarmonyCallAt(text, pos + "<|start|>assistant".length, pos, options.declaredTools, scanner);
       } else if (text.startsWith("<|channel|>", pos)) {
-        matched = parseHarmonyCallAt(text, pos, pos, options.declaredTools);
+        matched = parseHarmonyCallAt(text, pos, pos, options.declaredTools, scanner);
       }
     }
     if (!matched && options.enableXml) {
-      if (text.startsWith("<antml:invoke", pos) || text.startsWith("<function", pos)) {
-        matched = parseXmlCallAt(text, pos, options.declaredTools);
+      if (text.startsWith("<antml:invoke", pos) || text.startsWith(XML_FUNCTION_PREFIX, pos)) {
+        matched = parseXmlCallAt(text, pos, options.declaredTools, scanner, pos);
       }
     }
     if (!matched) {
@@ -503,8 +714,6 @@ export function reconcileLeakedToolCallEvents(
   events.splice(contentStart, contentEnd - contentStart, ...replacement);
 }
 
-const XML_FUNCTION_PREFIX = "<function";
-
 const STREAM_OPENERS = [
   "<|start|>assistant<|channel|>",
   "<|channel|>",
@@ -581,6 +790,19 @@ export interface OpenAIChatToolContentBuffer {
   dispose(): void;
 }
 
+function appendedByteLength(existing: string, delta: string): number {
+  let bytes = Buffer.byteLength(delta, "utf8");
+  if (existing.length === 0 || delta.length === 0) return bytes;
+  const tailCode = existing.charCodeAt(existing.length - 1);
+  const headCode = delta.charCodeAt(0);
+  if (tailCode >= 0xd800 && tailCode <= 0xdbff && headCode >= 0xdc00 && headCode <= 0xdfff) {
+    bytes += Buffer.byteLength(existing[existing.length - 1]! + delta[0]!, "utf8")
+      - Buffer.byteLength(existing[existing.length - 1]!, "utf8")
+      - Buffer.byteLength(delta[0]!, "utf8");
+  }
+  return bytes;
+}
+
 /**
  * Composes `StandaloneBareToolCallBuffer` with bounded streaming hold for Harmony/XML leaked calls
  * when enabled for `gpt-oss` or `leakedToolCallModels`.
@@ -593,6 +815,7 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
   private startCtx: TextContext = { fence: null, lineStart: true };
   private streamCtx: TextContext = { fence: null, lineStart: true };
   private holding = false;
+  private confirmedOpener = false;
   private disabled = false;
 
   constructor(
@@ -609,13 +832,35 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
   }
 
   private replaceHeld(next: string): void {
-    const nextBytes = Buffer.byteLength(next, "utf8");
+    const nextBytes = next.length === 0 ? 0 : Buffer.byteLength(next, "utf8");
+    if (nextBytes === this.heldBytes) {
+      this.heldText = next;
+      return;
+    }
+    if (nextBytes === 0) {
+      this.budget.releaseRetained(this.heldBytes, { kind: "live_transient" });
+      this.heldText = "";
+      this.heldBytes = 0;
+      return;
+    }
     const reservation = this.budget.reserveTransient(nextBytes, { kind: "live_transient" });
     try {
       reservation.commitRetained();
       this.budget.releaseRetained(this.heldBytes, { kind: "live_transient" });
       this.heldText = next;
       this.heldBytes = nextBytes;
+    } catch (err) {
+      reservation.release();
+      throw err;
+    }
+  }
+
+  private appendHeld(delta: string, deltaBytes: number): void {
+    const reservation = this.budget.reserveTransient(deltaBytes, { kind: "live_transient" });
+    try {
+      this.heldText += delta;
+      reservation.commitRetained();
+      this.heldBytes += deltaBytes;
     } catch (err) {
       reservation.release();
       throw err;
@@ -639,6 +884,38 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
     this.queued.length = 0;
     this.replaceHeld("");
     this.holding = false;
+    this.confirmedOpener = false;
+    return out;
+  }
+
+  private releaseHeldPrefix(tailIdx: number): AdapterEvent[] {
+    const out: AdapterEvent[] = [];
+    let cursor = 0;
+    let remainingStart = 0;
+    for (let i = 0; i < this.queued.length; i += 1) {
+      const item = this.queued[i]!;
+      if (item.offset > tailIdx) break;
+      if (item.offset > cursor) {
+        const piece = this.heldText.slice(cursor, item.offset);
+        if (piece) out.push(...this.inner.ingestStreaming(piece));
+        cursor = item.offset;
+      }
+      out.push(...this.inner.hold(item.event));
+      remainingStart = i + 1;
+    }
+    if (cursor < tailIdx) {
+      const piece = this.heldText.slice(cursor, tailIdx);
+      if (piece) out.push(...this.inner.ingestStreaming(piece));
+    }
+    if (remainingStart > 0) this.queued.splice(0, remainingStart);
+    for (const item of this.queued) item.offset -= tailIdx;
+    const prefix = this.heldText.slice(0, tailIdx);
+    const tail = this.heldText.slice(tailIdx);
+    this.startCtx = contextAfter(prefix, this.startCtx);
+    this.replaceHeld(tail);
+    if (isLiteralTextContext(this.startCtx)) {
+      return [...out, ...this.releaseAllHeldEvents()];
+    }
     return out;
   }
 
@@ -668,9 +945,15 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
         const prefix = delta.slice(0, opener.index);
         const rest = delta.slice(opener.index);
         const out = prefix ? this.inner.ingestStreaming(prefix) : [];
+        if (Buffer.byteLength(rest, "utf8") > MAX_TURN_RECOVERY_BYTES) {
+          this.streamCtx = contextAfter(rest, opener.ctxBefore);
+          this.disabled = true;
+          return [...out, ...this.inner.ingestStreaming(rest)];
+        }
         this.startCtx = opener.ctxBefore;
         this.streamCtx = contextAfter(rest, opener.ctxBefore);
         this.holding = true;
+        this.confirmedOpener = true;
         this.replaceHeld(rest);
         return out;
       }
@@ -684,6 +967,7 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
           this.startCtx = prefixCtx;
           this.streamCtx = contextAfter(tail, prefixCtx);
           this.holding = true;
+          this.confirmedOpener = false;
           this.replaceHeld(tail);
           return out;
         }
@@ -692,20 +976,41 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
       return this.inner.ingestStreaming(delta);
     }
 
-    const nextText = this.heldText + delta;
+    const deltaBytes = appendedByteLength(this.heldText, delta);
     this.streamCtx = contextAfter(delta, this.streamCtx);
-    const nextBytes = Buffer.byteLength(nextText, "utf8");
-    if (nextBytes > MAX_TURN_RECOVERY_BYTES) {
-      this.replaceHeld(nextText);
+    if (this.heldBytes + deltaBytes > MAX_TURN_RECOVERY_BYTES) {
       this.disabled = true;
-      return this.releaseAllHeldEvents();
+      const released = this.releaseAllHeldEvents();
+      return [...released, ...this.inner.ingestStreaming(delta)];
     }
-    this.replaceHeld(nextText);
-    // If only a partial `<...` tail was held and failed to complete any opener, flush promptly.
-    if (!findFirstLeakedOpener(this.heldText, this.startCtx, this.options.enableHarmony, this.options.enableXml)
-      && partialOpenerStart(this.heldText, this.options.enableXml) === -1) {
-      return this.releaseAllHeldEvents();
+    if (this.confirmedOpener) {
+      this.appendHeld(delta, deltaBytes);
+      return [];
     }
+    const candidate = this.heldText + delta;
+    if (findFirstLeakedOpener(candidate, this.startCtx, this.options.enableHarmony, this.options.enableXml)) {
+      this.appendHeld(delta, deltaBytes);
+      this.confirmedOpener = true;
+      return [];
+    }
+    const tailIdx = partialOpenerStart(candidate, this.options.enableXml);
+    if (tailIdx === -1) {
+      const released = this.releaseAllHeldEvents();
+      return [...released, ...this.inner.ingestStreaming(delta)];
+    }
+    if (tailIdx === this.heldText.length && this.queued.length === 0) {
+      const prefix = this.heldText;
+      this.startCtx = contextAfter(prefix, this.startCtx);
+      if (isLiteralTextContext(this.startCtx)) {
+        const released = this.releaseAllHeldEvents();
+        return [...released, ...this.inner.ingestStreaming(delta)];
+      }
+      const out = prefix ? this.inner.ingestStreaming(prefix) : [];
+      this.replaceHeld(delta);
+      return out;
+    }
+    this.appendHeld(delta, deltaBytes);
+    if (tailIdx > 0) return this.releaseHeldPrefix(tailIdx);
     return [];
   }
 
@@ -764,6 +1069,7 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
     this.queued.length = 0;
     this.replaceHeld("");
     this.holding = false;
+    this.confirmedOpener = false;
     return out;
   }
 
@@ -787,6 +1093,7 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
     this.queued.length = 0;
     this.replaceHeld("");
     this.holding = false;
+    this.confirmedOpener = false;
     return [...out, ...this.inner.drain(structuredCalls)];
   }
 
@@ -796,6 +1103,7 @@ export class LeakedToolCallStreamBuffer implements OpenAIChatToolContentBuffer {
     this.heldText = "";
     this.queued.length = 0;
     this.holding = false;
+    this.confirmedOpener = false;
     this.inner.dispose();
   }
 }

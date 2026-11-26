@@ -77,9 +77,12 @@ export function splitAtPossibleSerializedToolCall(
  * the scan runs through the whole text instead of stopping at the first opening tag; a block ends
  * mid-line, which is exactly what the neutral spelling reports too.
  */
+const NEUTRALIZE_TOOL_CALL_RE = new RegExp(`<tool_call${TAG_SUFFIX}>`, "g");
+
 export function contextAfter(text: string, context: TextContext): TextContext {
   if (text.length === 0) return context;
-  return splitAtPossibleSerializedToolCall(text.replace(new RegExp(`<tool_call${TAG_SUFFIX}>`, "g"), "<tool-call>"), context, true).context;
+  const normalized = text.includes("<tool_call") ? text.replace(NEUTRALIZE_TOOL_CALL_RE, "<tool-call>") : text;
+  return splitAtPossibleSerializedToolCall(normalized, context, true).context;
 }
 
 /**

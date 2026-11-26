@@ -1826,6 +1826,7 @@ export async function executeComboResponses(
     // A bare status made a revoked credential read as a provider outage. Log the classified
     // condition (a closed member), never upstream-authored code or message text.
     const failureNow = Date.now();
+    const classificationNow = failure.classificationNow ?? failureNow;
     const failureReason = localDeadline ? undefined : classifyUpstreamCondition({
       status: failure.response.status,
       code: failure.upstreamCode ?? failure.upstreamRootCode,
@@ -1833,7 +1834,7 @@ export async function executeComboResponses(
       type: failure.upstreamType,
       message: failure.upstreamMessage,
       retryAfter: failure.retryAfter,
-      now: failureNow,
+      now: classificationNow,
     });
     console.warn(
       `[combo] ${comboLogLabel(config, comboId)}: ${comboTargetLogLabel(config, comboId, pick.target)} failed with ${failure.response.status}`
@@ -1845,7 +1846,7 @@ export async function executeComboResponses(
       code: failure.upstreamCode ?? failure.upstreamRootCode,
       rootCode: failure.upstreamRootCode,
       type: failure.upstreamType,
-      retryAfter: failure.retryAfter,
+      retryAfter: failure.retryAfter, now: classificationNow, transientRateLimit402: failure.transientRateLimit402,
       malformedResponseFormat: failure.malformedResponseFormat,
       openRouterOpaque400: failure.openRouterOpaque400,
       unofferedToolCallRefusal: failure.unofferedToolCallRefusal,

@@ -15,6 +15,7 @@ import { classifyUpstreamCondition, isShortOpenRouterInFlightBudget402 } from ".
 import { deriveRequestFailureAttribution } from "../../src/lib/request-failure-attribution";
 import { causeForRecoveryKind } from "../../src/lib/request-failure-model";
 import { clearComboSelectionState, clearComboTargetCooldowns, comboFailureCooldownScope, isComboTargetInCooldown } from "../../src/combos";
+import * as comboFailureModule from "../../src/server/responses/core-combo-failure";
 import { hasOutboundFlexServiceTier, isFlexUnavailableRefusal } from "../../src/server/responses/adapter-terminal-recovery";
 import { createResponsesSendBudget } from "../../src/server/responses/request-send-budget";
 
@@ -572,5 +573,105 @@ describe("Phase 1-C short OpenRouter openrouter_in_flight_budget 402 separation"
     expect(response.status).toBe(503);
     expect(body).toContain("Flex pool exhausted upstream");
     expect(body).not.toContain("request_send_budget_exhausted");
+  });
+
+  test("HTTP-date Retry-After crossing a second boundary between consumeComboFailure and core-combo keeps target cooldown scope", async () => {
+    const boundaryMs = 1_700_000_001_000;
+    const retryAfterDate = new Date(boundaryMs).toUTCString();
+
+    // Direct unit check: consumeComboFailure captures classificationNow and preserves target scope after wall-clock advances past Retry-After.
+    const unitResp = Response.json({
+      error: {
+        code: "openrouter_in_flight_budget",
+        message: "Temporary in-flight spend limit exceeded",
+      },
+    }, { status: 402, headers: { "retry-after": retryAfterDate } });
+    const consumed = await comboFailureModule.consumeComboFailure(unitResp, undefined, boundaryMs - 10);
+    expect(consumed.transientRateLimit402).toBe(true);
+    expect(consumed.classificationNow).toBe(boundaryMs - 10);
+    expect(comboFailureCooldownScope(402, consumed.classificationText, {
+      code: consumed.upstreamCode,
+      retryAfter: consumed.retryAfter,
+      now: consumed.classificationNow,
+      transientRateLimit402: consumed.transientRateLimit402,
+    })).toBe("target");
+
+    // End-to-end combo check: Date.now() is t1 (10ms before Retry-After) during consumeComboFailure,
+    // then crosses the second boundary to t2 (50ms after Retry-After) before core-combo records cooldown.
+    let currentNow = boundaryMs - 10;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => currentNow);
+    const origConsume = comboFailureModule.consumeComboFailure;
+    const consumeSpy = spyOn(comboFailureModule, "consumeComboFailure").mockImplementation(async (...args) => {
+      const result = await origConsume(...args);
+      currentNow = boundaryMs + 50;
+      return result;
+    });
+    try {
+      const sends = captureUpstream((_index, _url, body) => {
+        if (body.model === "openai/gpt-5.4") {
+          return Response.json({
+            error: {
+              code: "openrouter_in_flight_budget",
+              message: "Temporary in-flight spend limit exceeded",
+            },
+          }, { status: 402, headers: { "retry-after": retryAfterDate } });
+        }
+        return responsesOk("resp-after-date-boundary");
+      });
+
+      const logCtx: RequestLogContext = { model: "", provider: "" };
+      const response = await handleResponses(
+        responsesReq("combo/or-short-402"),
+        passthroughConfig(),
+        logCtx,
+      );
+      await response.text();
+
+      expect(response.status).toBe(200);
+      expect(sends.map(s => s.body.model)).toEqual(["openai/gpt-5.4", "anthropic/claude-sonnet-4.6"]);
+      expect(isComboTargetInCooldown("or-short-402", { provider: "openrouter", model: "openai/gpt-5.4" }, boundaryMs + 50)).toBe(true);
+      expect(isComboTargetInCooldown("or-short-402", { provider: "openrouter", model: "anthropic/claude-sonnet-4.6" }, boundaryMs + 50)).toBe(false);
+    } finally {
+      consumeSpy.mockRestore();
+      nowSpy.mockRestore();
+    }
+  });
+
+  test("HTTP-date Retry-After crossing 60s boundary downward keeps non-transient 402 provider cooldown consistent", async () => {
+    const targetMs = 1_700_000_061_000;
+    const retryAfterDate = new Date(targetMs).toUTCString();
+    // At t1 = 1_700_000_000_995, targetMs - t1 = 60_005ms (> 60s => non-transient 402).
+    // Even if Date.now() advances to t2 = 1_700_000_001_010 (59_990ms <= 60s) right after consumeComboFailure,
+    // classificationNow keeps provider cooldown scope consistent with consumeComboFailure.
+    let currentNow = 1_700_000_000_995;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => currentNow);
+    const origConsume = comboFailureModule.consumeComboFailure;
+    const consumeSpy = spyOn(comboFailureModule, "consumeComboFailure").mockImplementation(async (...args) => {
+      const result = await origConsume(...args);
+      currentNow = 1_700_000_001_010;
+      return result;
+    });
+    try {
+      const sends = captureUpstream(() => Response.json({
+        error: {
+          code: "openrouter_in_flight_budget",
+          message: "Longer than 60s budget window at receipt time",
+        },
+      }, { status: 402, headers: { "retry-after": retryAfterDate } }));
+
+      const response = await handleResponses(
+        responsesReq("combo/or-short-402"),
+        passthroughConfig(),
+        { model: "", provider: "" },
+      );
+      await response.text();
+      expect(response.status).toBe(402);
+      expect(sends.map(s => s.body.model)).toEqual(["openai/gpt-5.4"]);
+      expect(isComboTargetInCooldown("or-short-402", { provider: "openrouter", model: "openai/gpt-5.4" }, 1_700_000_001_010)).toBe(true);
+      expect(isComboTargetInCooldown("or-short-402", { provider: "openrouter", model: "anthropic/claude-sonnet-4.6" }, 1_700_000_001_010)).toBe(true);
+    } finally {
+      consumeSpy.mockRestore();
+      nowSpy.mockRestore();
+    }
   });
 });

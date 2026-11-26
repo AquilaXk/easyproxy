@@ -6,7 +6,7 @@ import { protectGlmSummaryBudget, resolveMaxTokens } from "./openai-chat/summary
 import { chatParallelToolCallsWireValue } from "./openai-chat/parallel-tool-calls";
 import { applyExplicitChatReasoningWirePolicy, declaresIndependentChatReasoningEffort } from "./openai-chat/reasoning-wire";
 import type { AdapterRequest, IncomingMeta, ProviderAdapter } from "./base";
-import { modelInList, type AdapterEvent, type EpxParsedRequest, type EpxProviderConfig, type EpxUsage } from "../types";
+import { modelInList, toolChoiceToolPredicate, type AdapterEvent, type EpxParsedRequest, type EpxProviderConfig, type EpxUsage } from "../types";
 import { mapReasoningEffort } from "../reasoning-effort";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { sseFieldValue } from "../lib/sse-decoder";
@@ -107,7 +107,8 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
 
       const messages = toolNames.messages(parsed, provider.baseUrl, messagesToChatFormat(parsed, provider));
       freeformTools = freeformToolsByWireName(parsed.context.tools, tool => toolNames.registry().alias(tool));
-      leakedToolOptions = resolveLeakedToolCallOptions(provider, parsed.modelId, parsed.context.tools, toolNames.registry());
+      leakedToolOptions = parsed._summaryProhibitsToolCalls === true ? undefined
+        : resolveLeakedToolCallOptions(provider, parsed.modelId, parsed.context.tools?.filter(toolChoiceToolPredicate(parsed.options.toolChoice, parsed.context.tools)), toolNames.registry());
       const finish = (): AdapterRequest => {
         const tools = toolsToChatFormatForProvider(parsed, provider, toolNames.registry());
         const toolChoice = toolChoiceToChatFormat(parsed.options.toolChoice, parsed.context.tools, provider, toolNames.registry());

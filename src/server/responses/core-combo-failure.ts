@@ -238,6 +238,7 @@ export async function consumeComboFailure(
     ...(upstreamMessage !== undefined ? { upstreamMessage } : {}),
     ...(upstreamType !== undefined ? { upstreamType } : {}),
     ...(!cyberFailure && cooldownRetryAfter !== undefined ? { retryAfter: cooldownRetryAfter } : {}),
+    classificationNow: now,
     // The EFFECTIVE classification decides, not the raw status. An upstream that wraps a quota
     // refusal in a 5xx still carries `x-codex-*-reset-at`, and gating on 402/429 alone threw
     // those away, so the combo target came back up immediately instead of waiting for the

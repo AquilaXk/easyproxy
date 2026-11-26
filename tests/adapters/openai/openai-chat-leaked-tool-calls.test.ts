@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { createOpenAIChatAdapter } from "../../../src/adapters/openai-chat";
+import {
+  createOpenAIChatToolContentBuffer,
+  recoverLeakedToolCallsFromText,
+  resolveLeakedToolCallOptions,
+} from "../../../src/adapters/openai-chat/leaked-tool-calls";
+import { createOpenAIChatToolNameRegistry } from "../../../src/adapters/openai-chat/tool-name-registry";
 import { configSchema } from "../../../src/config/schema/config-schema";
 import { routedProviderConfig } from "../../../src/providers/routed-config";
-import type { AdapterEvent, EpxProviderConfig, EpxTool } from "../../../src/types";
+import type { AdapterEvent, EpxProviderConfig, EpxTool, EpxToolChoice } from "../../../src/types";
 import { createTestTranslatorBudget, withTestTranslatorBudget } from "../../helpers/translator-budget";
 
 const weatherTool: EpxTool = {
@@ -46,6 +52,8 @@ async function runChat(options: {
   chunks: string[];
   provider?: Partial<EpxProviderConfig>;
   tools?: EpxTool[];
+  toolChoice?: EpxToolChoice;
+  summaryProhibitsToolCalls?: boolean;
   finishReason?: string | null;
   structured?: boolean;
   omitStreamFinish?: boolean;
@@ -60,7 +68,12 @@ async function runChat(options: {
   adapter.buildRequest({
     modelId: options.model,
     stream: options.mode === "streamed",
-    options: {},
+    options: {
+      ...(options.toolChoice !== undefined ? { toolChoice: options.toolChoice } : {}),
+    },
+    ...(options.summaryProhibitsToolCalls !== undefined
+      ? { _summaryProhibitsToolCalls: options.summaryProhibitsToolCalls }
+      : {}),
     context: {
       messages: [{ role: "user", content: "Check weather", timestamp: 0 }],
       tools: options.tools ?? [weatherTool, pingTool],
@@ -330,5 +343,260 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       expect(toolCallsFrom(events)).toEqual([]);
       expect(visible(events)).toBe(content);
     }
+  });
+
+  for (const mode of ["buffered", "streamed"] as const) {
+    test(`${mode} honors toolChoice='none', forced tool_choice, allowedTools, and _summaryProhibitsToolCalls`, async () => {
+      const harmonyWeather = `<|channel|>commentary to=functions.get_weather<|message|>{"city":"Seoul"}<|call|>`;
+      const harmonyPing = `<|channel|>commentary to=functions.ping<|message|>{}<|call|>`;
+      const xmlWeather = `<antml:invoke name="get_weather"><antml:parameter name="city">Seoul</antml:parameter></antml:invoke>`;
+      const xmlPing = `<function name="ping"/>`;
+
+      // toolChoice: "none" disables recovery for both Harmony and opted-in XML.
+      const noneHarmony = await runChat({
+        mode,
+        model: "openai/gpt-oss-120b",
+        chunks: mode === "streamed" ? [...harmonyPing] : [harmonyPing],
+        toolChoice: "none",
+      });
+      expect(toolCallsFrom(noneHarmony)).toEqual([]);
+      expect(visible(noneHarmony)).toBe(harmonyPing);
+
+      const noneXml = await runChat({
+        mode,
+        model: "qwen3-coder-30b",
+        chunks: [xmlWeather],
+        provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+        toolChoice: "none",
+      });
+      expect(toolCallsFrom(noneXml)).toEqual([]);
+      expect(visible(noneXml)).toBe(xmlWeather);
+
+      // Forced specific function permits only that function and refuses disallowed siblings.
+      const forcedDisallowed = await runChat({
+        mode,
+        model: "openai/gpt-oss-120b",
+        chunks: [harmonyWeather],
+        toolChoice: { name: "ping" },
+      });
+      expect(toolCallsFrom(forcedDisallowed)).toEqual([]);
+      expect(visible(forcedDisallowed)).toBe(harmonyWeather);
+
+      const forcedMixed = await runChat({
+        mode,
+        model: "qwen3-coder-30b",
+        chunks: [xmlWeather + xmlPing],
+        provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+        toolChoice: { name: "ping" },
+      });
+      expect(toolCallsFrom(forcedMixed)).toEqual([{ id: "call_1", name: "ping", arguments: "{}" }]);
+      expect(visible(forcedMixed)).toBe(xmlWeather);
+
+      // allowedTools restricts recovery to the allowed subset.
+      const allowedOnlyPing = await runChat({
+        mode,
+        model: "openai/gpt-oss-120b",
+        chunks: [harmonyWeather + harmonyPing],
+        toolChoice: { allowedTools: ["ping"], mode: "required" },
+      });
+      expect(toolCallsFrom(allowedOnlyPing)).toEqual([{ id: "call_1", name: "ping", arguments: "{}" }]);
+      expect(visible(allowedOnlyPing)).toBe(harmonyWeather);
+
+      // Namespaced MCP tool selected by tool_choice permits only that tool.
+      const nsRead: EpxTool = { name: "read", namespace: "mcp__fs", parameters: { type: "object", properties: {} } };
+      const nsWrite: EpxTool = { name: "write", namespace: "mcp__fs", parameters: { type: "object", properties: {} } };
+      const nsBlocked = await runChat({
+        mode,
+        model: "openai/gpt-oss-120b",
+        tools: [nsRead, nsWrite],
+        toolChoice: { name: "read" },
+        chunks: [`<|channel|>commentary to=functions.mcp__fs__write<|message|>{}<|call|><|channel|>commentary to=functions.mcp__fs__read<|message|>{}<|call|>`],
+      });
+      expect(toolCallsFrom(nsBlocked)).toEqual([{ id: "call_1", name: "mcp__fs__read", arguments: "{}" }]);
+      expect(visible(nsBlocked)).toBe(`<|channel|>commentary to=functions.mcp__fs__write<|message|>{}<|call|>`);
+
+      // _summaryProhibitsToolCalls disables leaked recovery even with tools and permissive toolChoice.
+      const summaryBlockedHarmony = await runChat({
+        mode,
+        model: "openai/gpt-oss-120b",
+        chunks: [harmonyPing],
+        toolChoice: "auto",
+        summaryProhibitsToolCalls: true,
+      });
+      expect(toolCallsFrom(summaryBlockedHarmony)).toEqual([]);
+      expect(visible(summaryBlockedHarmony)).toBe(harmonyPing);
+
+      const summaryBlockedXml = await runChat({
+        mode,
+        model: "qwen3-coder-30b",
+        chunks: [xmlPing],
+        provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+        toolChoice: { name: "ping" },
+        summaryProhibitsToolCalls: true,
+      });
+      expect(toolCallsFrom(summaryBlockedXml)).toEqual([]);
+      expect(visible(summaryBlockedXml)).toBe(xmlPing);
+    });
+
+    test(`${mode} rejects reserved XML parameter keys without prototype pollution`, async () => {
+      const payloads = [
+        `<function name="get_weather"><parameter name="__proto__">{"polluted":true}</parameter><parameter name="city">Seoul</parameter></function>`,
+        `<antml:invoke name="get_weather"><antml:parameter name="constructor">{"polluted":true}</antml:parameter><antml:parameter name="city">Seoul</antml:parameter></antml:invoke>`,
+        `<function name="get_weather"><parameter name="prototype">{"polluted":true}</parameter><parameter name="city">Seoul</parameter></function>`,
+      ];
+      for (const payload of payloads) {
+        const events = await runChat({
+          mode,
+          model: "qwen3-coder-30b",
+          chunks: mode === "streamed" ? [payload.slice(0, 27), payload.slice(27)] : [payload],
+          provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+        });
+        expect(toolCallsFrom(events)).toEqual([]);
+        expect(visible(events)).toBe(payload);
+        expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+      }
+
+      // Non-reserved Object.prototype property names still serialize cleanly via null-prototype accumulation.
+      const protoMethodTool: EpxTool = {
+        name: "meta",
+        parameters: { type: "object", properties: { toString: { type: "string" } } },
+      };
+      const safeEvents = await runChat({
+        mode,
+        model: "qwen3-coder-30b",
+        tools: [protoMethodTool],
+        chunks: [`<function name="meta"><parameter name="toString">value</parameter></function>`],
+        provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+      });
+      expect(toolCallsFrom(safeEvents)).toEqual([
+        { id: "call_1", name: "meta", arguments: JSON.stringify({ toString: "value" }) },
+      ]);
+    });
+  }
+
+  test("handles 4 MiB repeated and 950 KiB nested Harmony/XML openers in linear time (fail-closed)", async () => {
+    const aTool: EpxTool = { name: "a", parameters: { type: "object", properties: { x: { type: "string" } } } };
+    const registry = createOpenAIChatToolNameRegistry([aTool, pingTool]);
+    const options = resolveLeakedToolCallOptions(
+      { leakedToolCallModels: ["qwen3-coder-30b"] },
+      "qwen3-coder-30b",
+      [aTool, pingTool],
+      registry,
+    )!;
+    expect(options).toBeDefined();
+
+    const fourMiB = 4 * 1024 * 1024;
+    const inputs: Array<{ label: string; text: string }> = [
+      {
+        label: "4 MiB unclosed <function name=\"a\">",
+        text: `<function name="a">`.repeat(Math.ceil(fourMiB / `<function name="a">`.length)),
+      },
+      {
+        label: "4 MiB unclosed <antml:invoke name=\"a\">",
+        text: `<antml:invoke name="a">`.repeat(Math.ceil(fourMiB / `<antml:invoke name="a">`.length)),
+      },
+      {
+        label: "4 MiB unclosed <function_calls>",
+        text: `<function_calls>`.repeat(Math.ceil(fourMiB / `<function_calls>`.length)),
+      },
+      {
+        label: "3.9 MiB nested <function_calls> with trailing </function_calls>",
+        text: `<function_calls>`.repeat(240_000) + `</function_calls>`,
+      },
+      {
+        label: "1.8 MiB repeated <|channel|>to=functions.a<|message|>",
+        text: `<|channel|>to=functions.a<|message|>`.repeat(52_000),
+      },
+      {
+        label: "4 MiB repeated <|channel|>to=functions.a without <|message|>",
+        text: `<|channel|>to=functions.a`.repeat(170_000),
+      },
+      {
+        label: "950 KiB nested <function name=\"a\"> + single invalid </function>",
+        text: `<function name="a">`.repeat(51_000) + `invalid</function>`,
+      },
+      {
+        label: "960 KiB nested <antml:invoke name=\"a\"> + single invalid </antml:invoke>",
+        text: `<antml:invoke name="a">`.repeat(41_000) + `invalid</antml:invoke>`,
+      },
+      {
+        label: "1.0 MiB nested <|channel|>...<|message|> + single invalid <|call|>",
+        text: `<|channel|>to=functions.a<|message|>`.repeat(28_000) + `invalid<|call|>`,
+      },
+      {
+        label: "1.0 MiB nested <function_calls><function name=\"a\"> + trailing invalid closers",
+        text: `<function_calls><function name="a">`.repeat(30_000) + `invalid</function></function_calls>`,
+      },
+    ];
+
+    for (const { label, text } of inputs) {
+      let seq = 0;
+      const start = performance.now();
+      const res = recoverLeakedToolCallsFromText(text, options, () => `call_${++seq}`);
+      const elapsed = performance.now() - start;
+      expect(res.calls, label).toEqual([]);
+      expect(res.remainingText.length, label).toBe(text.length);
+      expect(elapsed, `${label} took ${elapsed.toFixed(1)}ms`).toBeLessThan(500);
+    }
+
+    // 950 KiB nested openers with a single empty </function> only matches the final innermost call in linear time.
+    const nestedInnermost = `<function name="a">`.repeat(51_000) + `</function>`;
+    const nestedStart = performance.now();
+    let nestedSeq = 0;
+    const nestedRes = recoverLeakedToolCallsFromText(nestedInnermost, options, () => `call_${++nestedSeq}`);
+    expect(nestedRes.calls).toHaveLength(1);
+    expect(nestedRes.calls[0]!.name).toBe("a");
+    expect(performance.now() - nestedStart).toBeLessThan(500);
+
+    // Also verify end-to-end buffered and streamed adapter execution near the 4 MiB recovery cap.
+    const nestedBuffered = `<function name="a">`.repeat(51_000) + `invalid</function>`;
+    const startAdapter = performance.now();
+    const bufferedEvents = await runChat({
+      mode: "buffered",
+      model: "qwen3-coder-30b",
+      tools: [aTool],
+      provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+      chunks: [nestedBuffered],
+    });
+    expect(toolCallsFrom(bufferedEvents)).toEqual([]);
+    expect(visible(bufferedEvents)).toBe(nestedBuffered);
+
+    const streamedEvents = await runChat({
+      mode: "streamed",
+      model: "qwen3-coder-30b",
+      tools: [aTool],
+      provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+      chunks: [nestedBuffered.slice(0, 500_000), nestedBuffered.slice(500_000)],
+    });
+    expect(toolCallsFrom(streamedEvents)).toEqual([]);
+    expect(visible(streamedEvents)).toBe(nestedBuffered);
+    expect(performance.now() - startAdapter).toBeLessThan(1_000);
+
+    // Streaming repeated partial/complete openers across many small chunks also stays linear.
+    const budget = createTestTranslatorBudget();
+    const streamBuf = createOpenAIChatToolContentBuffer(budget, "openai/gpt-oss-120b", new Map(), options);
+    const streamStart = performance.now();
+    const partialOut: string[] = [];
+    for (let i = 0; i < 40_000; i += 1) {
+      for (const ev of streamBuf.ingestStreaming("<|channel|")) {
+        if (ev.type === "text_delta") partialOut.push(ev.text);
+      }
+    }
+    for (const ev of streamBuf.recoverStandalone(true, () => "call_1", n => n)) {
+      if (ev.type === "text_delta") partialOut.push(ev.text);
+    }
+    for (const ev of streamBuf.drain([])) {
+      if (ev.type === "text_delta") partialOut.push(ev.text);
+    }
+    streamBuf.dispose();
+    expect(partialOut.join("")).toBe("<|channel|".repeat(40_000));
+    expect(performance.now() - streamStart).toBeLessThan(1_000);
+
+    // Failed wrapper backtracking still recovers valid leading calls without leaking nested parameter tags.
+    const backtrackText =
+      `<function_calls><antml:invoke name="a"><antml:parameter name="x">ok</antml:parameter></antml:invoke><function name="ping"/><function name="undeclared"/></function_calls>`;
+    let seq = 0;
+    const backtrackRes = recoverLeakedToolCallsFromText(backtrackText, options, () => `call_${++seq}`);
+    expect(backtrackRes.calls.map(c => c.name)).toEqual(["a", "ping"]);
   });
 });

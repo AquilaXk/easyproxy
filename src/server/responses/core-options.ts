@@ -65,6 +65,8 @@ export interface ConsumedComboFailure {
   upstreamType?: string;
   /** Valid numeric/date value used only for cooldown calculation. */
   retryAfter?: string;
+  /** Timestamp (`Date.now()` reference) at which `retryAfter` and `transientRateLimit402` were evaluated. */
+  classificationNow?: number;
   /** Upstream Codex quota-window reset timestamps used for combo cooldowns. */
   resetAt?: string[];
   /** Reserved for 040 usage attribution without adding another body read. */

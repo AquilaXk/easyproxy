@@ -1527,6 +1527,8 @@ export function comboFailureCooldownScope(
     rootCode?: string | null;
     type?: string | null;
     retryAfter?: string | null;
+    now?: number;
+    transientRateLimit402?: boolean;
     malformedResponseFormat?: boolean;
     openRouterOpaque400?: boolean;
     unofferedToolCallRefusal?: boolean;
@@ -1536,13 +1538,14 @@ export function comboFailureCooldownScope(
 ): ComboFailureCooldownScope {
   const rawCode = typeof options?.code === "number" ? String(options.code) : options?.code;
   const code = normalizedFailureCode(rawCode);
-  if (isShortOpenRouterInFlightBudget402({
+  if (options?.transientRateLimit402 === true || (options?.transientRateLimit402 !== false && isShortOpenRouterInFlightBudget402({
     status,
     code: rawCode ?? undefined,
     rootCode: options?.rootCode ?? undefined,
     type: options?.type ?? undefined,
     retryAfter: options?.retryAfter,
-  })) {
+    now: options?.now,
+  }))) {
     return "target";
   }
   if (isAnthropicBillingFailure(status, message, rawCode)) return "provider";
