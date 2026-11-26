@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="статус CI"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?include_prereleases&label=release" alt="последний релиз"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?label=release" alt="последний релиз"></a>
   <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="лицензия: MIT"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node >= 18">
 </p>
@@ -19,13 +19,13 @@ epx start
 ```
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Скачать для Windows (.msi)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Скачать для Windows (.msi)" height="48"></a>
   &nbsp;
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="Скачать для macOS Apple Silicon (.dmg)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="Скачать для macOS Apple Silicon (.dmg)" height="48"></a>
   &nbsp;
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Скачать для Linux (.AppImage)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Скачать для Linux (.AppImage)" height="48"></a>
   <br>
-  <sub><a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">Все файлы и контрольные суммы</a></sub>
+  <sub>Кнопка macOS предназначена для Apple Silicon (arm64). <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">Все файлы и контрольные суммы</a></sub>
 </p>
 
 <table>

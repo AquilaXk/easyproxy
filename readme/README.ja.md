@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI ステータス"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?include_prereleases&label=release" alt="最新リリース"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?label=release" alt="最新リリース"></a>
   <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="ライセンス: MIT"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node 18 以上">
 </p>
@@ -19,13 +19,13 @@ epx start
 ```
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Windows 版をダウンロード (.msi)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Windows 版をダウンロード (.msi)" height="48"></a>
   &nbsp;
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="macOS Apple Silicon 版をダウンロード (.dmg)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="macOS Apple Silicon 版をダウンロード (.dmg)" height="48"></a>
   &nbsp;
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Linux 版をダウンロード (.AppImage)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Linux 版をダウンロード (.AppImage)" height="48"></a>
   <br>
-  <sub><a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">すべてのリリースファイルとチェックサム</a></sub>
+  <sub>macOS ボタンは Apple Silicon (arm64) 向けです。<a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">すべてのリリースファイルとチェックサム</a></sub>
 </p>
 
 <table>

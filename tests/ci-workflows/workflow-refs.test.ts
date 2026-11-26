@@ -138,4 +138,25 @@ describe("GitHub workflow and action reference integrity", () => {
     }
     expect(violations).toEqual([]);
   });
+
+  test("README assets/ targets exist on disk and relative embeds are included in package.json files", () => {
+    const pkg = JSON.parse(readText("package.json")) as { files?: string[] };
+    const pkgFiles = new Set(pkg.files ?? []);
+    const readme = readText("README.md");
+    const allAssetRefs = new Set<string>();
+    const relativeEmbeds = new Set<string>();
+    for (const match of readme.matchAll(/assets\/[\w.-]+\.(?:png|gif|svg|jpe?g|webp)/g)) {
+      allAssetRefs.add(match[0]);
+    }
+    for (const match of readme.matchAll(/(?:src=["']|\]\()(assets\/[\w.-]+\.(?:png|gif|svg|jpe?g|webp))/g)) {
+      relativeEmbeds.add(match[1]!);
+    }
+    expect(relativeEmbeds.size).toBeGreaterThanOrEqual(4);
+    for (const rel of allAssetRefs) {
+      expect(existsSync(join(ROOT, rel)), `missing ${rel}`).toBe(true);
+    }
+    for (const rel of relativeEmbeds) {
+      expect(pkgFiles.has(rel) || pkgFiles.has("assets"), `unpacked ${rel}`).toBe(true);
+    }
+  });
 });

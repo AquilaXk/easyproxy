@@ -7,6 +7,7 @@ export interface GitHubReleaseAssetSummary {
   name: string;
   size: number;
   state: string;
+  digest?: string | null;
   browser_download_url?: string;
 }
 

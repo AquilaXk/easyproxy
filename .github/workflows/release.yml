@@ -91,6 +91,30 @@ jobs:
         with:
           role: runtime
 
+      - name: Verify signing and updater credentials upfront
+        env:
+          GIT_REF: ${{ github.ref }}
+          DRY_RUN_INPUT: ${{ inputs.dry-run }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        run: |
+          set -euo pipefail
+          if [[ "$GIT_REF" == refs/tags/v* ]]; then
+            export DRY_RUN="false"
+          else
+            export DRY_RUN="${DRY_RUN_INPUT:-true}"
+          fi
+          bun scripts/ci/verify-release-credentials.ts
+
       - name: Cache Bun packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -159,22 +183,6 @@ jobs:
             echo "is_tag_push=${is_tag_push}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Verify signing and updater credentials
-        env:
-          DRY_RUN: ${{ steps.meta.outputs.dry_run }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
-          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-        run: bun scripts/ci/verify-release-credentials.ts
-
   package-standalone:
     name: standalone (${{ matrix.label }})
     needs: verify
@@ -239,6 +247,30 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: runtime
+
+      - name: Verify signing and updater credentials upfront
+        env:
+          GIT_REF: ${{ github.ref }}
+          DRY_RUN_INPUT: ${{ inputs.dry-run }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        run: |
+          set -euo pipefail
+          if [[ "$GIT_REF" == refs/tags/v* ]]; then
+            export DRY_RUN="false"
+          else
+            export DRY_RUN="${DRY_RUN_INPUT:-true}"
+          fi
+          bun scripts/ci/verify-release-credentials.ts
 
       - name: Cache Bun packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -582,6 +614,30 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: runtime
+
+      - name: Verify signing and updater credentials upfront
+        env:
+          GIT_REF: ${{ github.ref }}
+          DRY_RUN_INPUT: ${{ inputs.dry-run }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        run: |
+          set -euo pipefail
+          if [[ "$GIT_REF" == refs/tags/v* ]]; then
+            export DRY_RUN="false"
+          else
+            export DRY_RUN="${DRY_RUN_INPUT:-true}"
+          fi
+          bun scripts/ci/verify-release-credentials.ts
 
       - name: Cache Bun packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -991,8 +1047,25 @@ jobs:
             openbox >/dev/null 2>&1 &
             OB_PID=$!
             trap "kill $OB_PID 2>/dev/null || true" EXIT
+            i=0
+            while [ "$i" -lt 50 ]; do
+              if wmctrl -m >/dev/null 2>&1; then
+                break
+              fi
+              sleep 0.1
+              i=$((i + 1))
+            done
             bun desktop/scripts/linux-packaged-e2e.ts --bundle-root "$1" --report "$2" --version "$3"
           ' sh "$bundle_root" "$report_path" "$VERSION"
+
+      - name: Upload Linux packaged desktop E2E report
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: linux-packaged-e2e-${{ matrix.label }}
+          path: ${{ runner.temp }}/linux-packaged-e2e.json
+          if-no-files-found: ignore
+          retention-days: 5
 
       - name: Collect desktop release assets
         shell: bash
@@ -1212,6 +1285,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.verify.outputs.version }}
           TAG: ${{ needs.verify.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          IS_TAG_PUSH: ${{ needs.verify.outputs.is_tag_push }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
           REQUIRE_MANIFEST: ${{ needs.verify.outputs.dry_run != 'true' || secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: bun scripts/ci/post-release-check.ts

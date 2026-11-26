@@ -13,7 +13,7 @@ import {
   type GhRunner,
 } from "../../scripts/ci/release-guard";
 import { checkLatestPointer } from "../../scripts/ci/latest-guard";
-import { validateReleaseCredentials } from "../../scripts/ci/verify-release-credentials";
+import { collectReleaseCredentialErrors, validateReleaseCredentials } from "../../scripts/ci/verify-release-credentials";
 import {
   loadVerifiedLocalBundle,
   publishGitHubRelease,
@@ -123,37 +123,59 @@ describe("fail-fast release credential validation", () => {
     expect(() => validateReleaseCredentials(validEnv)).not.toThrow();
   });
 
-  test("rejects missing keys, malformed team ID, or non-release SignPath policy", () => {
+  test("rejects missing keys, malformed team ID, dots in SignPath IDs, or non-release SignPath policy", () => {
     expect(() => validateReleaseCredentials({ ...validEnv, TAURI_SIGNING_PRIVATE_KEY: "" })).toThrow("1 issue");
     expect(() => validateReleaseCredentials({ ...validEnv, APPLE_TEAM_ID: "bad-id" })).toThrow("1 issue");
+    expect(collectReleaseCredentialErrors({ ...validEnv, SIGNPATH_ORGANIZATION_ID: "org.name" })).toEqual([
+      "SIGNPATH_ORGANIZATION_ID contains invalid characters.",
+    ]);
+    expect(collectReleaseCredentialErrors({ ...validEnv, SIGNPATH_PROJECT_SLUG: "proj.slug" })).toEqual([
+      "SIGNPATH_PROJECT_SLUG contains invalid characters.",
+    ]);
+    expect(() => validateReleaseCredentials({ ...validEnv, SIGNPATH_ORGANIZATION_ID: "org.name" })).toThrow("1 issue");
+    expect(() => validateReleaseCredentials({ ...validEnv, SIGNPATH_PROJECT_SLUG: "proj.slug" })).toThrow("1 issue");
     expect(() => validateReleaseCredentials({ ...validEnv, SIGNPATH_SIGNING_POLICY_SLUG: "test-signing" })).toThrow("1 issue");
   });
 });
 
 describe("atomic release publishing and post-release verification", () => {
-  test("loadVerifiedLocalBundle enforces receipt digest match and non-empty files", () => {
+  test("loadVerifiedLocalBundle enforces receipt digest match, sidecars, latest.json, and non-empty files", () => {
     const dir = createTempDir("epx-pub-local-");
     const bundleDir = join(dir, "bundle");
     const receiptPath = join(dir, "receipt.json");
     const notesPath = join(dir, "notes.md");
     writeFileSync(notesPath, "Release notes\n");
     const payload = Buffer.from("installer-bytes");
-    writeFileSync(join(dir, "unused"), "");
-
+    const updaterPayload = Buffer.from("updater-bytes");
     const { mkdirSync } = require("node:fs");
     mkdirSync(bundleDir);
     writeFileSync(join(bundleDir, "EasyProxy-0.1.0-windows-x64.msi"), payload);
+    writeFileSync(join(bundleDir, "EasyProxy-0.1.0-windows-x64.msi.sha256"), `${sha256(payload)}  EasyProxy-0.1.0-windows-x64.msi\n`);
+    writeFileSync(join(bundleDir, "EasyProxy-0.1.0-linux-amd64.AppImage.tar.gz"), updaterPayload);
+    writeFileSync(join(bundleDir, "EasyProxy-0.1.0-linux-amd64.AppImage.tar.gz.sig"), "sig-bytes");
+    writeFileSync(
+      join(bundleDir, "latest.json"),
+      JSON.stringify({
+        version: "0.1.0",
+        notes: "notes",
+        pub_date: "2026-01-01T00:00:00Z",
+        platforms: { "linux-x86_64": { url: "https://example.invalid/app.tar.gz", signature: "sig-bytes" } },
+      }),
+    );
     writeFileSync(
       receiptPath,
       JSON.stringify({
         version: "0.1.0",
         repo: "AquilaXk/easyproxy",
         sha: "a".repeat(40),
-        expectedFiles: 1,
-        checksumsVerified: 0,
-        signaturesVerified: 0,
-        manifestPlatforms: [],
-        assets: { "EasyProxy-0.1.0-windows-x64.msi": sha256(payload) },
+        expectedFiles: 2,
+        checksumsVerified: 1,
+        signaturesVerified: 1,
+        manifestPlatforms: ["linux-x86_64"],
+        assets: {
+          "EasyProxy-0.1.0-windows-x64.msi": sha256(payload),
+          "EasyProxy-0.1.0-linux-amd64.AppImage.tar.gz": sha256(updaterPayload),
+        },
       }),
     );
 
@@ -163,7 +185,27 @@ describe("atomic release publishing and post-release verification", () => {
       version: "0.1.0",
       sourceSha: "a".repeat(40),
     });
-    expect(assets).toHaveLength(1);
+    expect(assets).toHaveLength(5);
+
+    writeFileSync(join(bundleDir, "EasyProxy-0.1.0-windows-x64.msi.sha256"), `${"f".repeat(64)}  EasyProxy-0.1.0-windows-x64.msi\n`);
+    expect(() =>
+      loadVerifiedLocalBundle({ bundleDir, receiptPath, version: "0.1.0", sourceSha: "a".repeat(40) }),
+    ).toThrow("Checksum sidecar");
+    writeFileSync(join(bundleDir, "EasyProxy-0.1.0-windows-x64.msi.sha256"), `${sha256(payload)}  EasyProxy-0.1.0-windows-x64.msi\n`);
+
+    writeFileSync(join(bundleDir, "orphan.app.tar.gz.sig"), "stray");
+    expect(() =>
+      loadVerifiedLocalBundle({ bundleDir, receiptPath, version: "0.1.0", sourceSha: "a".repeat(40) }),
+    ).toThrow("Signature sidecar");
+    rmSync(join(bundleDir, "orphan.app.tar.gz.sig"));
+
+    writeFileSync(
+      join(bundleDir, "latest.json"),
+      JSON.stringify({ version: "9.9.9", platforms: { "linux-x86_64": { url: "u", signature: "s" } } }),
+    );
+    expect(() =>
+      loadVerifiedLocalBundle({ bundleDir, receiptPath, version: "0.1.0", sourceSha: "a".repeat(40) }),
+    ).toThrow("latest.json version");
 
     writeFileSync(join(bundleDir, "EasyProxy-0.1.0-windows-x64.msi"), "tampered");
     expect(() =>
@@ -176,7 +218,7 @@ describe("atomic release publishing and post-release verification", () => {
     ).toThrow("receipt version");
   });
 
-  test("publishGitHubRelease stages draft, verifies remote uploaded sizes, and edits to public", () => {
+  test("publishGitHubRelease stages draft, verifies remote uploaded state/digest, cleans stale assets, and guards make_latest", () => {
     const dir = createTempDir("epx-pub-remote-");
     const bundleDir = join(dir, "bundle");
     const receiptPath = join(dir, "receipt.json");
@@ -184,6 +226,7 @@ describe("atomic release publishing and post-release verification", () => {
     const { mkdirSync } = require("node:fs");
     mkdirSync(bundleDir);
     const payload = Buffer.from("verified-msi-payload");
+    const payloadDigest = sha256(payload);
     writeFileSync(join(bundleDir, "EasyProxy-0.1.0-windows-x64.msi"), payload);
     writeFileSync(notesPath, "## Notes\n");
     writeFileSync(
@@ -196,28 +239,53 @@ describe("atomic release publishing and post-release verification", () => {
         checksumsVerified: 0,
         signaturesVerified: 0,
         manifestPlatforms: [],
-        assets: { "EasyProxy-0.1.0-windows-x64.msi": sha256(payload) },
+        assets: { "EasyProxy-0.1.0-windows-x64.msi": payloadDigest },
       }),
     );
 
     const calls: string[][] = [];
     let draftCreated = false;
+    let pollAfterCreate = 0;
+    let uploaded = false;
     const mockGh: GhRunner = args => {
       calls.push(args);
       if (args[0] === "api" && args[1]?.includes("/releases/tags/")) {
-        if (!draftCreated) throw Object.assign(new Error("HTTP 404"), { stderr: "HTTP 404" });
-        return JSON.stringify({ id: 77, tag_name: "v0.1.0", draft: true, prerelease: false });
+        if (!draftCreated || pollAfterCreate++ === 0) {
+          throw Object.assign(new Error("HTTP 404"), { stderr: "HTTP 404" });
+        }
+        return JSON.stringify({
+          id: 77,
+          tag_name: "v0.1.0",
+          draft: true,
+          prerelease: false,
+          target_commitish: "b".repeat(40),
+        });
       }
       if (args[0] === "api" && args[1] === "--paginate" && args[3]?.includes("/releases?per_page=100")) {
-        return draftCreated ? JSON.stringify([[{ id: 77, tag_name: "v0.1.0", draft: true, prerelease: false }]]) : "[]";
+        if (!draftCreated) return "[]";
+        if (pollAfterCreate <= 1) return "[]";
+        return JSON.stringify([[{ id: 77, tag_name: "v0.1.0", draft: true, prerelease: false, target_commitish: "b".repeat(40) }]]);
       }
       if (args[0] === "release" && args[1] === "create") {
         expect(args).toContain("--draft");
         draftCreated = true;
         return "";
       }
-      if (args[0] === "api" && args[3]?.includes("/releases/77/assets")) {
-        return JSON.stringify([[{ name: "EasyProxy-0.1.0-windows-x64.msi", state: "uploaded", size: payload.length }]]);
+      if (args[0] === "api" && args[1] === "--paginate" && args[3]?.includes("/releases/77/assets")) {
+        if (!uploaded) {
+          return JSON.stringify([[{ id: 901, name: "stale-old.msi", state: "uploaded", size: 12 }]]);
+        }
+        return JSON.stringify([[{
+          id: 902,
+          name: "EasyProxy-0.1.0-windows-x64.msi",
+          state: "uploaded",
+          size: payload.length,
+          digest: `sha256:${payloadDigest}`,
+        }]]);
+      }
+      if (args[0] === "release" && args[1] === "upload") {
+        uploaded = true;
+        return "";
       }
       return "";
     };
@@ -233,18 +301,107 @@ describe("atomic release publishing and post-release verification", () => {
       receiptPath,
       notesPath,
       gh: mockGh,
+      sleep: () => {},
     });
     expect(result).toEqual({ releaseId: 77, uploaded: 1 });
-    const editCall = calls.find(call => call[0] === "release" && call[1] === "edit");
-    expect(editCall).toContain("--draft=false");
-    expect(editCall).toContain("--latest=true");
+    expect(calls.some(c => c[0] === "api" && c[2] === "DELETE" && c[3] === "repos/AquilaXk/easyproxy/releases/assets/901")).toBe(true);
+    const patchCall = calls.find(c => c[0] === "api" && c[2] === "PATCH" && c[3] === "repos/AquilaXk/easyproxy/releases/77");
+    expect(patchCall).toContain("draft=false");
+    expect(patchCall).toContain("make_latest=true");
+
+    // Hotfix older than existing latest stable release must not steal releases/latest
+    const hotfixCalls: string[][] = [];
+    let hotfixUploaded = false;
+    publishGitHubRelease({
+      repo: "AquilaXk/easyproxy",
+      version: "0.1.0",
+      tag: "v0.1.0",
+      sourceSha: "b".repeat(40),
+      prerelease: false,
+      isTagPush: false,
+      bundleDir,
+      receiptPath,
+      notesPath,
+      sleep: () => {},
+      gh: args => {
+        hotfixCalls.push(args);
+        if (args[0] === "api" && args[1]?.includes("/releases/tags/")) {
+          return JSON.stringify({ id: 88, tag_name: "v0.1.0", draft: true, prerelease: false, target_commitish: "b".repeat(40) });
+        }
+        if (args[0] === "api" && args[1] === "--paginate" && args[3]?.includes("/releases?per_page=100")) {
+          return JSON.stringify([[{ id: 10, tag_name: "v1.0.0", draft: false, prerelease: false }]]);
+        }
+        if (args[0] === "api" && args[1] === "--paginate" && args[3]?.includes("/releases/88/assets")) {
+          return hotfixUploaded
+            ? JSON.stringify([[{ id: 801, name: "EasyProxy-0.1.0-windows-x64.msi", state: "uploaded", size: payload.length, digest: `sha256:${payloadDigest}` }]])
+            : "[]";
+        }
+        if (args[0] === "release" && args[1] === "upload") {
+          hotfixUploaded = true;
+          return "";
+        }
+        return "";
+      },
+    });
+    const hotfixPatch = hotfixCalls.find(c => c[0] === "api" && c[2] === "PATCH" && c[3] === "repos/AquilaXk/easyproxy/releases/88");
+    expect(hotfixPatch).toContain("make_latest=false");
+
+    // Refuse overwriting an already-published non-draft release or wrong-commit draft
+    expect(() =>
+      publishGitHubRelease({
+        repo: "AquilaXk/easyproxy",
+        version: "0.1.0",
+        tag: "v0.1.0",
+        sourceSha: "b".repeat(40),
+        prerelease: false,
+        isTagPush: false,
+        bundleDir,
+        receiptPath,
+        notesPath,
+        sleep: () => {},
+        gh: () => JSON.stringify({ id: 99, tag_name: "v0.1.0", draft: false, prerelease: false }),
+      }),
+    ).toThrow("already published");
+
+    expect(() =>
+      publishGitHubRelease({
+        repo: "AquilaXk/easyproxy",
+        version: "0.1.0",
+        tag: "v0.1.0",
+        sourceSha: "b".repeat(40),
+        prerelease: false,
+        isTagPush: false,
+        bundleDir,
+        receiptPath,
+        notesPath,
+        sleep: () => {},
+        gh: () => JSON.stringify({ id: 99, tag_name: "v0.1.0", draft: true, prerelease: false, target_commitish: "c".repeat(40) }),
+      }),
+    ).toThrow("targets");
 
     expect(() =>
       verifyRemoteReleaseAssets(
         [{ name: "EasyProxy-0.1.0-windows-x64.msi", state: "starter", size: 0 }],
-        [{ name: "EasyProxy-0.1.0-windows-x64.msi", path: "x", size: payload.length, sha256: "x" }],
+        [{ name: "EasyProxy-0.1.0-windows-x64.msi", path: "x", size: payload.length, sha256: payloadDigest }],
       ),
     ).toThrow("failed verification");
+
+    expect(() =>
+      verifyRemoteReleaseAssets(
+        [
+          { name: "EasyProxy-0.1.0-windows-x64.msi", state: "uploaded", size: payload.length, digest: `sha256:${payloadDigest}` },
+          { name: "extra-stale.msi", state: "uploaded", size: 10 },
+        ],
+        [{ name: "EasyProxy-0.1.0-windows-x64.msi", path: "x", size: payload.length, sha256: payloadDigest }],
+      ),
+    ).toThrow("unexpected asset");
+
+    expect(() =>
+      verifyRemoteReleaseAssets(
+        [{ name: "EasyProxy-0.1.0-windows-x64.msi", state: "uploaded", size: payload.length, digest: `sha256:${"0".repeat(64)}` }],
+        [{ name: "EasyProxy-0.1.0-windows-x64.msi", path: "x", size: payload.length, sha256: payloadDigest }],
+      ),
+    ).toThrow("digest mismatch");
   });
 
   test("post-release-check validates complete published assets, latest pointer, and updater manifest", async () => {
@@ -258,6 +415,7 @@ describe("atomic release publishing and post-release verification", () => {
       name,
       state: "uploaded",
       size: 1234,
+      digest: `sha256:${"a".repeat(64)}`,
     }));
     const manifest = {
       version,
@@ -275,6 +433,12 @@ describe("atomic release publishing and post-release verification", () => {
     };
 
     expect(verifyPublishedReleaseAssets({ assets: remoteAssets, expectedNames: expected })).toEqual([]);
+    expect(
+      verifyPublishedReleaseAssets({
+        assets: remoteAssets.map((a, i) => (i === 0 ? { ...a, digest: "sha256:bad" } : a)),
+        expectedNames: expected,
+      }),
+    ).toHaveLength(1);
     expect(verifyPublishedManifest({
       manifest,
       repo: "AquilaXk/easyproxy",
@@ -288,13 +452,17 @@ describe("atomic release publishing and post-release verification", () => {
       repo: "AquilaXk/easyproxy",
       version,
       tag,
+      sourceSha: "d".repeat(40),
       prerelease: false,
       requireManifest: true,
       summaryPath,
       sleep: async () => {},
       gh: args => {
         if (args[1] === `repos/AquilaXk/easyproxy/releases/tags/${encodeURIComponent(tag)}`) {
-          return JSON.stringify({ id: 55, tag_name: tag, draft: false, prerelease: false });
+          return JSON.stringify({ id: 55, tag_name: tag, draft: false, prerelease: false, target_commitish: "d".repeat(40) });
+        }
+        if (args[1] === "--paginate" && args[3]?.includes("/releases?per_page=100")) {
+          return JSON.stringify([[{ id: 55, tag_name: tag, draft: false, prerelease: false }]]);
         }
         if (args[1] === "repos/AquilaXk/easyproxy/releases/latest") {
           return `${tag}\n`;
@@ -309,6 +477,39 @@ describe("atomic release publishing and post-release verification", () => {
       },
     });
     expect(okProblems).toEqual([]);
+
+    const hotfixTagPushProblems = await runPostReleaseCheck({
+      repo: "AquilaXk/easyproxy",
+      version,
+      tag,
+      sourceSha: "d".repeat(40),
+      isTagPush: true,
+      prerelease: false,
+      requireManifest: true,
+      sleep: async () => {},
+      gh: args => {
+        if (args[1] === `repos/AquilaXk/easyproxy/releases/tags/${encodeURIComponent(tag)}`) {
+          return JSON.stringify({ id: 55, tag_name: tag, draft: false, prerelease: false, target_commitish: "main" });
+        }
+        if (args[1] === "--paginate" && args[3]?.includes("/releases?per_page=100")) {
+          return JSON.stringify([[
+            { id: 54, tag_name: "v0.2.0", draft: false, prerelease: false },
+            { id: 55, tag_name: tag, draft: false, prerelease: false },
+          ]]);
+        }
+        if (args[1] === "repos/AquilaXk/easyproxy/releases/latest") {
+          return "v0.2.0\n";
+        }
+        if (args[3]?.includes("/releases/55/assets")) {
+          return JSON.stringify([remoteAssets]);
+        }
+        if (args[1]?.includes("/releases/assets/")) {
+          return JSON.stringify(manifest);
+        }
+        throw new Error(`Unexpected gh invocation: ${args.join(" ")}`);
+      },
+    });
+    expect(hotfixTagPushProblems).toEqual([]);
 
     const brokenManifestProblems = verifyPublishedManifest({
       manifest: {

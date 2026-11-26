@@ -22,10 +22,9 @@ const REQUIRED_SIGNPATH_VARS = [
   "SIGNPATH_SIGNING_POLICY_SLUG",
 ] as const;
 
-export function validateReleaseCredentials(env: Record<string, string | undefined>): void {
+export function collectReleaseCredentialErrors(env: Record<string, string | undefined>): string[] {
   if (env.DRY_RUN === "true") {
-    console.log("[release-verify] dry-run=true; skipping signing credential enforcement.");
-    return;
+    return [];
   }
 
   const errors: string[] = [];
@@ -50,11 +49,11 @@ export function validateReleaseCredentials(env: Record<string, string | undefine
     }
   }
   const orgId = (env.SIGNPATH_ORGANIZATION_ID ?? "").trim();
-  if (orgId && !/^[A-Za-z0-9._-]+$/.test(orgId)) {
+  if (orgId && !/^[A-Za-z0-9_-]+$/.test(orgId)) {
     errors.push("SIGNPATH_ORGANIZATION_ID contains invalid characters.");
   }
   const projectSlug = (env.SIGNPATH_PROJECT_SLUG ?? "").trim();
-  if (projectSlug && !/^[A-Za-z0-9._-]+$/.test(projectSlug)) {
+  if (projectSlug && !/^[A-Za-z0-9_-]+$/.test(projectSlug)) {
     errors.push("SIGNPATH_PROJECT_SLUG contains invalid characters.");
   }
   const policySlug = (env.SIGNPATH_SIGNING_POLICY_SLUG ?? "").trim();
@@ -63,7 +62,15 @@ export function validateReleaseCredentials(env: Record<string, string | undefine
       `SIGNPATH_SIGNING_POLICY_SLUG must be 'release-signing' for real releases (got '${policySlug}').`,
     );
   }
+  return errors;
+}
 
+export function validateReleaseCredentials(env: Record<string, string | undefined>): void {
+  if (env.DRY_RUN === "true") {
+    console.log("[release-verify] dry-run=true; skipping signing credential enforcement.");
+    return;
+  }
+  const errors = collectReleaseCredentialErrors(env);
   if (errors.length > 0) {
     for (const message of errors) {
       console.error(`::error::${message}`);

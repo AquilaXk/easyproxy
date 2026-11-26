@@ -12,8 +12,10 @@ import { platformFiles, type UpdaterManifest } from "../../desktop/scripts/updat
 import { expectedReleaseAssets, releaseMatrixTargets } from "../../desktop/scripts/verify-release-assets";
 import {
   currentLatestTag,
+  listReleases,
   runGh,
   runGhJson,
+  selectLatestStableRelease,
   type GhRunner,
   type GitHubReleaseAssetSummary,
   type GitHubReleaseSummary,
@@ -23,6 +25,8 @@ export interface PostReleaseCheckOptions {
   repo: string;
   version: string;
   tag: string;
+  sourceSha?: string;
+  isTagPush?: boolean;
   prerelease: boolean;
   requireManifest: boolean;
   workflowPath?: string;
@@ -56,6 +60,9 @@ export function verifyPublishedReleaseAssets(options: {
   for (const asset of options.assets) {
     if (asset.state !== "uploaded" || !(asset.size > 0)) {
       problems.push(`incomplete published release asset: ${asset.name} (state=${asset.state}, size=${asset.size})`);
+    }
+    if (typeof asset.digest === "string" && asset.digest.length > 0 && !/^sha256:[0-9a-f]{64}$/.test(asset.digest)) {
+      problems.push(`malformed digest on published release asset ${asset.name}: ${asset.digest}`);
     }
   }
   return problems;
@@ -124,16 +131,26 @@ export async function runPostReleaseCheck(options: PostReleaseCheckOptions): Pro
   if (release.prerelease !== options.prerelease) {
     problems.push(`Release ${options.tag} prerelease=${release.prerelease}, expected ${options.prerelease}`);
   }
+  if (
+    options.sourceSha &&
+    release.target_commitish &&
+    (!options.isTagPush || /^[0-9a-f]{40}$/.test(release.target_commitish)) &&
+    release.target_commitish !== options.sourceSha
+  ) {
+    problems.push(`Release ${options.tag} target_commitish=${release.target_commitish}, expected ${options.sourceSha}`);
+  }
 
   if (!options.prerelease) {
+    const newestStable = selectLatestStableRelease(listReleases(options.repo, gh));
+    const expectedLatestTag = newestStable?.tag_name ?? options.tag;
     let latestTag: string | null = null;
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       latestTag = currentLatestTag(options.repo, gh);
-      if (latestTag === options.tag) break;
+      if (latestTag === expectedLatestTag) break;
       if (attempt < 5) await sleep(3_000);
     }
-    if (latestTag !== options.tag) {
-      problems.push(`GitHub releases/latest is ${latestTag ?? "none"}, expected ${options.tag}`);
+    if (latestTag !== expectedLatestTag) {
+      problems.push(`GitHub releases/latest is ${latestTag ?? "none"}, expected ${expectedLatestTag}`);
     }
   }
 
@@ -187,6 +204,8 @@ if (import.meta.main) {
   const repo = arg("--repo") ?? process.env.GITHUB_REPOSITORY;
   const version = arg("--version") ?? process.env.VERSION;
   const tag = arg("--tag") ?? process.env.TAG;
+  const sourceSha = arg("--sha") ?? process.env.SOURCE_SHA;
+  const isTagPush = (arg("--tag-push") ?? process.env.IS_TAG_PUSH) === "true";
   const prerelease = (arg("--prerelease") ?? process.env.PRERELEASE) === "true";
   const requireManifest = (arg("--require-manifest") ?? process.env.REQUIRE_MANIFEST) === "true";
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
@@ -198,6 +217,8 @@ if (import.meta.main) {
     repo,
     version,
     tag,
+    ...(sourceSha ? { sourceSha } : {}),
+    isTagPush,
     prerelease,
     requireManifest,
     ...(summaryPath ? { summaryPath } : {}),

@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI 상태"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?include_prereleases&label=release" alt="최신 릴리스"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?label=release" alt="최신 릴리스"></a>
   <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="라이선스: MIT"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node 18 이상">
 </p>
@@ -19,13 +19,13 @@ epx start
 ```
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Windows용 다운로드 (.msi)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Windows용 다운로드 (.msi)" height="48"></a>
   &nbsp;
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="macOS Apple Silicon용 다운로드 (.dmg)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="macOS Apple Silicon용 다운로드 (.dmg)" height="48"></a>
   &nbsp;
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Linux용 다운로드 (.AppImage)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Linux용 다운로드 (.AppImage)" height="48"></a>
   <br>
-  <sub><a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">전체 릴리스 파일 및 체크섬</a></sub>
+  <sub>macOS 버튼은 Apple Silicon (arm64)용입니다. <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">전체 릴리스 파일 및 체크섬</a></sub>
 </p>
 
 <table>
@@ -126,7 +126,7 @@ epx start                         # 프록시 + 대시보드: localhost:10100
 |---|---|---|
 | macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Apple Developer ID 인증서 설정 시 서명·공증해 배포합니다. 미서명 빌드라면 macOS Gatekeeper에서 **우클릭 → 열기**로 여세요 |
 | macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | 별도 Intel x64 빌드입니다. 미서명 빌드의 경우 Gatekeeper 안내가 같습니다 |
-| Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation을 통한 코드 서명 도입 중 ([코드 서명 정책](https://easyproxy.me/ko/reference/code-signing/)). 서명되기 전 릴리스는 SmartScreen이 한 번 물으면 **추가 정보 → 실행**을 선택하세요 |
+| Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation을 통해 코드 서명을 도입하고 있습니다 ([코드 서명 정책](https://easyproxy.me/ko/reference/code-signing/)). 서명되기 전 릴리스는 SmartScreen이 한 번 물으면 **추가 정보 → 실행**을 선택하세요 |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` 또는 `-linux-amd64.deb` | 트레이는 AppIndicator를 지원하는 데스크톱이 필요합니다 |
 
 릴리스 페이지에서 모든 파일 옆에 `.sha256` 체크섬이 함께 올라가며, 버전 번호 없는 파일 이름(`EasyProxy-macos-arm64.dmg`, `EasyProxy-macos-x64.dmg`, `EasyProxy-windows-x64.msi`, `EasyProxy-linux-x86_64.AppImage`, `EasyProxy-linux-amd64.deb`)도 `/releases/latest`에서 같은 빌드를 바로 내려받을 수 있습니다. macOS 14 이상에서는 프록시 상태,
@@ -341,7 +341,7 @@ epx service [install|repair|restart|start|stop|status|uninstall|remove]  # 백�
 epx codex-shim install         # `codex`가 뜰 때마다 프록시를 필요 시 시작
 epx health [--json]            # 프록시가 지금 살아 있는지 확인
 epx ready [--json] [--wait [--timeout <seconds>]]  # 동기화 후 준비 상태 확인
-epx status                     # 프록시가 실행 중인가?
+epx status                     # 프록시가 실행 중인지 확인합니다
 epx gui                        # 웹 대시보드 열기
 epx provider <...>             # 프로바이더 관리 (list/add/edit/test/remove)
 epx account <...>              # ChatGPT 계정 및 API-key 풀 관리
