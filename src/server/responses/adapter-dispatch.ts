@@ -117,9 +117,12 @@ import {
 import {
   buildAdapterLocalTerminalResponse,
   formatAdapterTerminalUpstreamErrorResponse,
+  hasOutboundFlexServiceTier,
+  isFlexUnavailableRefusal,
   retryAdapterImageTier,
   retryConsoleGoUploadRejection,
   retryReasoningEffortDowngrade,
+  stripFlexServiceTierForStandardRetry,
 } from "./adapter-terminal-recovery";
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function prepareAdapterExchange(
@@ -488,6 +491,7 @@ export async function prepareAdapterExchange(
           label: safeHostLabel(builtInitialRequest.url), destination: errorDestinationLabel(builtInitialRequest.url),
           claimAmbiguousResend: claimPreHeaderResend,
           reserveRetrySpend: reserveCompactRetrySpend,
+          flexTierSent: hasOutboundFlexServiceTier(builtInitialRequest.body, parsed),
           offlineWait: options.comboAttempt ? undefined : createProviderOfflineResendWait(route.providerName, route.provider, builtInitialRequest.url, config.offlineResendWaitSec),
           ...(sendBudgetState.workflowRootId || sendBudgetState.adapterSendBudget?.spendEnforced || options.comboDispatchPermit || transientPolicy || resetPolicy || compactPrepaid || options.comboAttempt
             || anthropicInstance || billingPoolRequest || autoPauseEnabled || imageRecovery
@@ -584,8 +588,12 @@ export async function prepareAdapterExchange(
     // Direct requests get one reasoning-effort downgrade. Combo candidates may walk down the
     // published ladder one refused rung at a time; the request send budget bounds those retries.
     const reasoningEffortDowngradeGuard: { attempted: boolean } = { attempted: false };
+    // At most one pre-output per-message-effort repair resend per request (#6895 fallback).
+    const perMessageEffortRepairGuard: { attempted: boolean } = { attempted: false };
     // At most one Anthropic fast-mode downgrade per request, for the same reason.
     const anthropicFastDowngradeGuard: { attempted: boolean } = { attempted: false };
+    // At most one pre-output flex->standard tier downgrade resend per request.
+    const flexTierDowngradeGuard: { attempted: boolean } = { attempted: false };
     const rebuildAndRefetch = async (
       recovery: AttemptRecoveryKind,
       // A caller holding a reserved hop confirms it after the rebuilt send is admitted.
@@ -599,7 +607,7 @@ export async function prepareAdapterExchange(
       // Only budgets without a physical observer need this legacy workflow report.
       let fastDowngradeWorkflowCharged = false;
       const chargeFastDowngradeWorkflowSend = (): void => {
-        if (recovery !== "anthropic-fast-downgrade" || fastDowngradeWorkflowCharged) return;
+        if ((recovery !== "anthropic-fast-downgrade" && recovery !== "flex-tier-downgrade") || fastDowngradeWorkflowCharged) return;
         fastDowngradeWorkflowCharged = true;
         if (!sendBudgetState.adapterSendBudget || !hasWorkflowSendObserver(sendBudgetState.adapterSendBudget))
           chargeWorkflowSends(sendBudgetState.workflowRootId, 1);
@@ -769,6 +777,7 @@ export async function prepareAdapterExchange(
                 label: safeHostLabel(retryRequest.url), destination: errorDestinationLabel(retryRequest.url),
                 claimAmbiguousResend: claimPreHeaderResend,
                 reserveRetrySpend: reserveCompactRetrySpend,
+                flexTierSent: hasOutboundFlexServiceTier(retryRequest.body, parsed),
                 ...(refetchAllowance
                   ? {
                     attempts: refetchAllowance.attempts,
@@ -925,7 +934,37 @@ export async function prepareAdapterExchange(
 
       // Preserve the terminal verdict through adapter and combo error formatting.
       // This also covers a reset reached by a 401/429/413 recovery refetch.
-      await rejectAnthropicPerMessageEffort(parsed, upstreamResponse, upstream.signal);
+      const perMessageEffortRejection = await rejectAnthropicPerMessageEffort(parsed, upstreamResponse, upstream.signal);
+      if (perMessageEffortRejection.unsupported
+        && !perMessageEffortRepairGuard.attempted
+        && !isNonReplayableResponse(upstreamResponse)) {
+        const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
+        const hop = reserveCredentialHop(
+          "repair",
+          `${route.providerName}|${route.modelId}|reasoning-effort-downgrade`,
+          !adapterOwnsDispatch && genericRefetchCountsSends(),
+        );
+        if (hop.allowed) {
+          perMessageEffortRepairGuard.attempted = true;
+          invalidateSameTargetRequest();
+          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+          sendBudgetState.pendingHopPermit = hop.permit;
+          let result: Response | { failed: Response };
+          try {
+            result = await rebuildAndRefetch("reasoning-effort-downgrade", () => {
+              if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError();
+            });
+          } finally {
+            sendBudgetState.pendingHopPermit = undefined;
+          }
+          if ("failed" in result) {
+            hop.permit?.release();
+            return result.failed;
+          }
+          upstreamResponse = result;
+          continue recovery;
+        }
+      }
       if (isNonReplayableResponse(upstreamResponse)) {
         try {
           return await sanitizeNonReplayableUpstreamError(upstreamResponse, upstream.signal,
@@ -1020,6 +1059,46 @@ export async function prepareAdapterExchange(
           let result: Response | { failed: Response };
           try {
             result = await rebuildAndRefetch("anthropic-fast-downgrade", () => {
+              if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError();
+            });
+          } finally {
+            sendBudgetState.pendingHopPermit = undefined;
+          }
+          if ("failed" in result) {
+            hop.permit?.release();
+            return result.failed;
+          }
+          upstreamResponse = result;
+          continue recovery;
+        }
+      }
+
+      if (
+        !flexTierDowngradeGuard.attempted
+        && !isNonReplayableResponse(upstreamResponse)
+        && await isFlexUnavailableRefusal(
+          upstreamResponse,
+          transportState.sameTargetRequest?.body,
+          parsed,
+          flexTierDowngradeGuard.attempted,
+          upstream.signal,
+        )
+      ) {
+        const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
+        const hop = reserveCredentialHop(
+          "transient",
+          `${route.providerName}|${route.modelId}|flex-tier-downgrade`,
+          !adapterOwnsDispatch && genericRefetchCountsSends(),
+        );
+        if (hop.allowed) {
+          flexTierDowngradeGuard.attempted = true;
+          stripFlexServiceTierForStandardRetry(parsed);
+          invalidateSameTargetRequest();
+          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+          sendBudgetState.pendingHopPermit = hop.permit;
+          let result: Response | { failed: Response };
+          try {
+            result = await rebuildAndRefetch("flex-tier-downgrade", () => {
               if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError();
             });
           } finally {

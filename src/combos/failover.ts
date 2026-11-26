@@ -3,6 +3,7 @@ import { CYBER_POLICY_FALLBACK_MESSAGE, TERMINAL_REFUSAL_FALLBACK_MESSAGE, class
 import { isHardPolicyOrOriginRefusal } from "../lib/hard-refusal";
 import { parseHttpDate } from "../lib/http-date";
 import { isNonReplayableUpstreamCode } from "../lib/upstream-retry";
+import { isShortOpenRouterInFlightBudget402 } from "../lib/upstream-condition";
 import { isAnthropicBillingFailure, isAnthropicExtraUsageFailure } from "../providers/anthropic-billing-refusal";
 import { hasConflictingReasoningEffortCode } from "../providers/reasoning-metadata";
 import { isKiroAccountProfileRefusal } from "../adapters/kiro-refusal";
@@ -1523,6 +1524,8 @@ export function comboFailureCooldownScope(
   message: string,
   options?: {
     code?: string | number | null;
+    type?: string | null;
+    retryAfter?: string | null;
     malformedResponseFormat?: boolean;
     openRouterOpaque400?: boolean;
     unofferedToolCallRefusal?: boolean;
@@ -1532,6 +1535,14 @@ export function comboFailureCooldownScope(
 ): ComboFailureCooldownScope {
   const rawCode = typeof options?.code === "number" ? String(options.code) : options?.code;
   const code = normalizedFailureCode(rawCode);
+  if (isShortOpenRouterInFlightBudget402({
+    status,
+    code: rawCode ?? undefined,
+    type: options?.type ?? undefined,
+    retryAfter: options?.retryAfter,
+  })) {
+    return "target";
+  }
   if (isAnthropicBillingFailure(status, message, rawCode)) return "provider";
   // Request-shape refusals first: an oversized request must not cool a healthy target.
   // A native transport can surface a zero-output model overflow as a generic

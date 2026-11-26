@@ -31,6 +31,7 @@ export type { AnthropicInstanceId } from "./providers/anthropic-instance-id";
 export { ANTHROPIC_INSTANCE_IDS, ANTHROPIC_PRIMARY_INSTANCE, ANTHROPIC_POOL2_INSTANCE, isAnthropicInstanceId } from "./providers/anthropic-instance-id";
 export type { AnthropicAccountPoolConfig, AnthropicModelRoute } from "./types/anthropic-account-pool";
 export type { EpxComboJevEffortMode } from "./types/combo-jev-effort-mode";
+export type { EpxComboJevSelectionPolicy } from "./types/config";
 export type { EpxComboCapabilityPolicy, EpxComboOnUnservable } from "./types/combo-capability-policy";
 export {
   UPSTREAM_HTTP_VERSION_VALUES,

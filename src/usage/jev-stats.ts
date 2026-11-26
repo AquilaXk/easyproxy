@@ -1,6 +1,7 @@
 import { normalizeJevQuotaSummary, type JevQuotaDecisionSummary } from "../combos/jev-quota-config";
+import type { JevSelectionPolicyDelta } from "../combos/jev-risk-policy";
 import { JEV_SESSION_PIN_REASONS, JEV_SESSION_PINNED_REASONS, type JevSessionPinReason } from "../combos/jev-session-pin-config";
-import type { EpxComboDefaultEffort } from "../types";
+import type { EpxComboDefaultEffort, EpxComboJevSelectionPolicy } from "../types";
 import type { PersistedUsageEntry } from "./log";
 import { usageDisplayTotalTokens } from "./totals";
 
@@ -49,6 +50,8 @@ export interface PersistedJevDecisionV1 {
     outputTokens: number;
     totalTokens: number;
   };
+  policy?: EpxComboJevSelectionPolicy;
+  policyDelta?: JevSelectionPolicyDelta;
   /**
    * The turn reused its session pin (#7525). With `session` no decision request was sent; with
    * `session_effort` one was sent for the pinned target's effort only.
@@ -126,6 +129,18 @@ export interface JevStatsResponse {
   models: JevStatsModelRow[];
   snapshotWindowStart: number | null;
   snapshotWindowEnd: number | null;
+  selectionPolicy?: {
+    compared: number;
+    differed: number;
+    targetChanged: number;
+    effortDecreased: number;
+    effortIncreased: number;
+    byPolicy: {
+      argmax: number;
+      minRisk: number;
+      observe: number;
+    };
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -173,6 +188,14 @@ function normalizedDecisionUsage(value: unknown): PersistedJevDecisionV1["usage"
   };
 }
 
+function normalizedPolicyDelta(value: unknown): JevSelectionPolicyDelta | undefined {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.differs !== "boolean" || typeof value.targetChanged !== "boolean") return undefined;
+  const delta = value.effortStepDelta;
+  if (typeof delta !== "number" || !Number.isInteger(delta) || delta < -6 || delta > 6) return undefined;
+  return { differs: value.differs, targetChanged: value.targetChanged, effortStepDelta: delta };
+}
+
 /**
  * Re-validates the privacy-bounded decision record at both write and hydration boundaries.
  * Only closed enums, bounded identifiers and finite counters survive; prompts and credentials
@@ -198,6 +221,10 @@ export function normalizePersistedJevDecision(value: unknown): PersistedJevDecis
   const backend = value.backend === "typesafe" || value.backend === "systemone" || value.backend === "model"
     ? value.backend
     : undefined;
+  const policy = value.policy === "argmax" || value.policy === "min-risk" || value.policy === "observe"
+    ? value.policy
+    : undefined;
+  const policyDelta = normalizedPolicyDelta(value.policyDelta);
   const pinReason = typeof value.pinReason === "string"
     && (JEV_SESSION_PIN_REASONS as readonly string[]).includes(value.pinReason)
     ? value.pinReason as JevSessionPinReason
@@ -221,6 +248,8 @@ export function normalizePersistedJevDecision(value: unknown): PersistedJevDecis
     ...(confidence !== undefined ? { confidence } : {}),
     ...(chosenProbability !== undefined ? { chosenProbability } : {}),
     ...(usage ? { usage } : {}),
+    ...(policy !== undefined && policy !== "argmax" ? { policy } : {}),
+    ...(policyDelta ? { policyDelta } : {}),
     ...(pinned ? { pinned: true as const } : {}),
     ...(pinReason ? { pinReason } : {}),
   };
@@ -350,6 +379,14 @@ class StreamingJevStatsAccumulator implements JevStatsAccumulator {
   private confidenceCount = 0;
   private probabilityTotal = 0;
   private probabilityCount = 0;
+  private policyCompared = 0;
+  private policyDiffered = 0;
+  private policyTargetChanged = 0;
+  private policyEffortDecreased = 0;
+  private policyEffortIncreased = 0;
+  private policyArgmax = 0;
+  private policyMinRisk = 0;
+  private policyObserve = 0;
 
   constructor(options: JevStatsAccumulatorOptions = {}) {
     this.comboId = boundedIdentity(options.comboId, MAX_COMBO_ID_CHARS) ?? null;
@@ -438,6 +475,16 @@ class StreamingJevStatsAccumulator implements JevStatsAccumulator {
       this.decisionOutputTokens = saturatingAdd(this.decisionOutputTokens, decision.usage.outputTokens);
       this.decisionTotalTokens = saturatingAdd(this.decisionTotalTokens, decision.usage.totalTokens);
     }
+    if (decision.policy === "min-risk") this.policyMinRisk = saturatingAdd(this.policyMinRisk, 1);
+    else if (decision.policy === "observe") this.policyObserve = saturatingAdd(this.policyObserve, 1);
+    else this.policyArgmax = saturatingAdd(this.policyArgmax, 1);
+    if (decision.policyDelta) {
+      this.policyCompared = saturatingAdd(this.policyCompared, 1);
+      if (decision.policyDelta.differs) this.policyDiffered = saturatingAdd(this.policyDiffered, 1);
+      if (decision.policyDelta.targetChanged) this.policyTargetChanged = saturatingAdd(this.policyTargetChanged, 1);
+      if (decision.policyDelta.effortStepDelta < 0) this.policyEffortDecreased = saturatingAdd(this.policyEffortDecreased, 1);
+      else if (decision.policyDelta.effortStepDelta > 0) this.policyEffortIncreased = saturatingAdd(this.policyEffortIncreased, 1);
+    }
 
     const selected = this.rowFor(decision.selected.provider, decision.selected.model);
     selected.picks = saturatingAdd(selected.picks, 1);
@@ -512,6 +559,14 @@ class StreamingJevStatsAccumulator implements JevStatsAccumulator {
     cloned.confidenceCount = this.confidenceCount;
     cloned.probabilityTotal = this.probabilityTotal;
     cloned.probabilityCount = this.probabilityCount;
+    cloned.policyCompared = this.policyCompared;
+    cloned.policyDiffered = this.policyDiffered;
+    cloned.policyTargetChanged = this.policyTargetChanged;
+    cloned.policyEffortDecreased = this.policyEffortDecreased;
+    cloned.policyEffortIncreased = this.policyEffortIncreased;
+    cloned.policyArgmax = this.policyArgmax;
+    cloned.policyMinRisk = this.policyMinRisk;
+    cloned.policyObserve = this.policyObserve;
     return cloned;
   }
 
@@ -565,6 +620,22 @@ class StreamingJevStatsAccumulator implements JevStatsAccumulator {
       models: rows,
       snapshotWindowStart: this.snapshotWindowStart,
       snapshotWindowEnd: this.snapshotWindowEnd,
+      ...(this.policyCompared > 0 || this.policyMinRisk > 0 || this.policyObserve > 0
+        ? {
+          selectionPolicy: {
+            compared: this.policyCompared,
+            differed: this.policyDiffered,
+            targetChanged: this.policyTargetChanged,
+            effortDecreased: this.policyEffortDecreased,
+            effortIncreased: this.policyEffortIncreased,
+            byPolicy: {
+              argmax: this.policyArgmax,
+              minRisk: this.policyMinRisk,
+              observe: this.policyObserve,
+            },
+          },
+        }
+        : {}),
     };
   }
 }

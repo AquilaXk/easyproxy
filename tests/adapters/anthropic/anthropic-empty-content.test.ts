@@ -23,17 +23,17 @@ describe("anthropic empty content block guard", () => {
     const body = await bodyOf(parsed([
       { role: "user", content: "", timestamp: 0 },
     ]));
-    const msg = body.messages[0] as { role: string; content: string };
-    expect(msg.content).toBe("(empty)");
+    const msg = body.messages[0] as { role: string; content: Array<{ type: string; text: string }> };
+    expect(msg.content).toEqual([{ type: "text", text: "(empty)" }]);
   });
 
   test("user message with empty text part is filtered out", async () => {
     const body = await bodyOf(parsed([
       { role: "user", content: [{ type: "text", text: "" }], timestamp: 0 },
     ]));
-    const msg = body.messages[0] as { role: string; content: string };
-    // Empty part filtered -> falls back to placeholder string
-    expect(msg.content).toBe("(empty)");
+    const msg = body.messages[0] as { role: string; content: Array<{ type: string; text: string }> };
+    // Empty part filtered -> falls back to placeholder block
+    expect(msg.content).toEqual([{ type: "text", text: "(empty)" }]);
   });
 
   test("user message with mixed empty and non-empty parts keeps only non-empty", async () => {

@@ -325,6 +325,15 @@ export function decodeRequestBody(
   return assertBodySizeWithinLimit(decoded, maxBytes);
 }
 
+function countNonWhitespaceAsciiBytes(bytes: Uint8Array): number {
+  let count = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i]!;
+    if (b >= 0x21 && b <= 0x7e) count++;
+  }
+  return count;
+}
+
 /**
  * Parse a bounded JSON request body, transparently decoding compressed payloads.
  *
@@ -371,7 +380,7 @@ export async function readBoundedJsonRequestBody(
   let releaseText: (() => void) | undefined;
   try {
     const decoded = decodeRequestBody(raw, encoding, maxBytes);
-    recordRequestBodyFacts(req, raw.byteLength, encoding, decoded.byteLength);
+    recordRequestBodyFacts(req, raw.byteLength, encoding, decoded.byteLength, countNonWhitespaceAsciiBytes(decoded));
     releaseDecoded = decoded === raw ? undefined : budget?.observeAcceptedRequestCopy(decoded.byteLength);
     assertJsonNestingDepth(decoded);
     const text = new TextDecoder().decode(decoded);

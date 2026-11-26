@@ -95,19 +95,24 @@ export function deriveRequestFailureStage(facts: RequestFailureFacts): RequestFa
  * without it a rejected ciphertext, a rejected reasoning parameter and a rejected payload are one
  * undifferentiated answer, which is three different remedies collapsed into one.
  */
-const STATUS_CONFIRMED_RECOVERY_KINDS: Readonly<Partial<Record<AttemptRecoveryKind, number>>> = Object.freeze({
+const STATUS_CONFIRMED_RECOVERY_KINDS: Readonly<Partial<Record<AttemptRecoveryKind, number | readonly number[]>>> = Object.freeze({
   "opaque-blob-rejection": 400,
   "reasoning-effort-downgrade": 400,
   "anthropic-fast-downgrade": 400,
+  "flex-tier-downgrade": [429, 503],
 });
 
-function refinedFourHundredCause(
+function statusConfirmedRecoveryCause(
   facts: RequestFailureFacts,
 ): RequestFailureCause | undefined {
   const last = facts.recoveryKinds?.at(-1);
   if (last === undefined) return undefined;
   const confirmedStatus = STATUS_CONFIRMED_RECOVERY_KINDS[last];
-  return confirmedStatus === facts.status ? causeForRecoveryKind(last) : undefined;
+  if (confirmedStatus === undefined) return undefined;
+  const matches = Array.isArray(confirmedStatus)
+    ? confirmedStatus.includes(facts.status)
+    : confirmedStatus === facts.status;
+  return matches ? causeForRecoveryKind(last) : undefined;
 }
 
 /**
@@ -152,11 +157,11 @@ export function deriveRequestFailureCause(facts: RequestFailureFacts): RequestFa
   // Payment required. Waiting out a retry window does not help; the account has to change.
   if (status === 402) return "quota-exhausted";
   if (status === 413) return "payload-too-large";
-  if (status === 429) return "rate-limit";
+  if (status === 429) return statusConfirmedRecoveryCause(facts) ?? "rate-limit";
   if (status === 451) return "policy-refusal";
-  if (status === 503) return "upstream-declined";
+  if (status === 503) return statusConfirmedRecoveryCause(facts) ?? "upstream-declined";
   if (status >= 500) return "upstream-fault";
-  if (status >= 400) return refinedFourHundredCause(facts) ?? "payload-rejected";
+  if (status >= 400) return statusConfirmedRecoveryCause(facts) ?? "payload-rejected";
   // No response head at all, and nothing proved the bytes never left. `transport-ambiguous` is
   // the honest answer for an unknown execution state, and it is the safe one: it refuses an
   // automatic resend where `transport-unsent` would permit one. `transport-unsent` is reachable

@@ -16,6 +16,12 @@ import { takeLocalFailureState } from "../request-log-failure-detail";
 import type { AttemptRecoveryKind } from "../../usage/log";
 import { rememberReasoningReplayOpaqueBlobRejection } from "../../responses/reasoning-replay-cache";
 import { resolvedAdapterWire } from "../../responses/continuation-ownership";
+import { codexWsActualSentFrame } from "./codex-ws-wire";
+import {
+  destinationHostOfUrl,
+  matchConfigurationUpdate400Rejection,
+  rememberConfigurationUpdateUnsupported,
+} from "../../adapters/openai-responses/config-update-fallback";
 
 export const OPAQUE_RESPONSES_INPUT_TYPES = new Set([
   "reasoning",
@@ -89,6 +95,41 @@ export async function refusedReasoningEffortDowngrade(
   return rejectionText === undefined
     ? undefined
     : planReasoningEffortDowngrade({ ...plan, rejectionText });
+}
+
+/**
+ * Check whether an upstream 400 specifically rejected an `input[N]` `configuration_update` item
+ * on the actual sent frame (including Codex WebSocket delta frames). Records the 1-hour capability
+ * memo on match so subsequent turns strip the item proactively.
+ */
+export async function refusedConfigurationUpdateStrip(
+  response: Response,
+  signal: AbortSignal,
+  guard: { attempted: boolean },
+  context: {
+    outboundBody: string | undefined;
+    outboundUrl: string | undefined;
+    modelId: string;
+  },
+): Promise<boolean> {
+  if (guard.attempted || response.status !== 400 || isNonReplayableResponse(response)) return false;
+  const sentBodyText = codexWsActualSentFrame(response) ?? context.outboundBody;
+  if (!sentBodyText) return false;
+  try {
+    const body = await readBoundedResponseBody(response.clone(), { signal });
+    if (!body.displaySafe || body.truncated) return false;
+    const matched = matchConfigurationUpdate400Rejection({
+      status: response.status,
+      nonReplayable: false,
+      errorText: body.text,
+      sentBodyText,
+    });
+    if (!matched) return false;
+    rememberConfigurationUpdateUnsupported(destinationHostOfUrl(context.outboundUrl), context.modelId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

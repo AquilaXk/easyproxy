@@ -10,6 +10,9 @@ const DEFAULT_FALLBACK_OUTPUT_TOKENS = 64;
 const MAX_HOLD_INPUT_TOKENS = 1_000_000;
 const MAX_HOLD_OUTPUT_TOKENS = 128_000;
 const UNPRICED_INFLIGHT_HOLD_USD = 0.0001;
+const DENSE_ASCII_FALLBACK_MIN_BYTES = 256;
+const DENSE_ASCII_FALLBACK_SHARE = 0.85;
+const DENSE_ASCII_BYTES_PER_TOKEN = 2;
 
 export interface BudgetReservationEstimate {
   estimatedTokens: number;
@@ -20,12 +23,25 @@ export function estimateBudgetReservationForTurn(params: {
   providerName: string;
   modelId: string;
   decodedBytes?: number;
+  nonWhitespaceAsciiBytes?: number;
   estimatedInputTokens?: number;
   maxOutputTokens?: number;
 }): BudgetReservationEstimate {
-  const inputFromBytes = typeof params.decodedBytes === "number" && Number.isFinite(params.decodedBytes) && params.decodedBytes > 0
-    ? Math.ceil(params.decodedBytes / 4)
-    : 1;
+  const decodedBytes = typeof params.decodedBytes === "number" && Number.isFinite(params.decodedBytes) && params.decodedBytes > 0
+    ? Math.trunc(params.decodedBytes)
+    : 0;
+  let inputFromBytes = decodedBytes > 0 ? Math.ceil(decodedBytes / 4) : 1;
+  if (
+    decodedBytes >= DENSE_ASCII_FALLBACK_MIN_BYTES
+    && typeof params.nonWhitespaceAsciiBytes === "number"
+    && Number.isFinite(params.nonWhitespaceAsciiBytes)
+    && params.nonWhitespaceAsciiBytes > 0
+  ) {
+    const denseAsciiBytes = Math.min(decodedBytes, Math.trunc(params.nonWhitespaceAsciiBytes));
+    if (denseAsciiBytes >= decodedBytes * DENSE_ASCII_FALLBACK_SHARE) {
+      inputFromBytes = Math.max(inputFromBytes, Math.ceil(denseAsciiBytes / DENSE_ASCII_BYTES_PER_TOKEN));
+    }
+  }
   const rawInput = typeof params.estimatedInputTokens === "number" && Number.isFinite(params.estimatedInputTokens) && params.estimatedInputTokens > 0
     ? Math.trunc(params.estimatedInputTokens)
     : inputFromBytes;
@@ -107,6 +123,7 @@ export async function reservePreDispatchApiKeyHold(params: {
   providerName: string;
   modelId: string;
   decodedBytes?: number;
+  nonWhitespaceAsciiBytes?: number;
   estimatedInputTokens?: number;
   maxOutputTokens?: number;
   anthropicSurface?: boolean;
@@ -133,10 +150,13 @@ export async function reservePreDispatchApiKeyHold(params: {
   if (!keyHasHoldSensitiveQuotas(entry)) return null;
 
   const decodedBytes = params.decodedBytes ?? params.logCtx?.requestBodyHolder?.facts?.decodedBytes;
+  const nonWhitespaceAsciiBytes = params.nonWhitespaceAsciiBytes
+    ?? (params.decodedBytes === undefined ? params.logCtx?.requestBodyHolder?.nonWhitespaceAsciiBytes : undefined);
   const estimate = estimateBudgetReservationForTurn({
     providerName: params.providerName,
     modelId: params.modelId,
     decodedBytes,
+    nonWhitespaceAsciiBytes,
     estimatedInputTokens: params.estimatedInputTokens,
     maxOutputTokens: params.maxOutputTokens,
   });

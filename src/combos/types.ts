@@ -8,7 +8,7 @@ import {
 import { isCodexReasoningEffort, isDeclaredReasoningEffort } from "../reasoning-effort";
 import { SUPPORTED_NATIVE_OPENAI_SLUGS } from "../codex/catalog/native-models";
 import { ewmaLatencyConfigIssues, normalizeEwmaLatencyConfig } from "./ewma";
-import type { EpxComboCapabilityPolicy, EpxComboConfig, EpxComboCooldownWaitPolicy, EpxComboDefaultEffort, EpxComboDefaultEffortMode, EpxComboEwmaLatencyConfig, EpxComboJevEffortMode, EpxComboOnUnservable, EpxComboReasoningEffortMode, EpxComboStrategy, EpxComboTarget, EpxProviderConfig } from "../types";
+import type { EpxComboCapabilityPolicy, EpxComboConfig, EpxComboCooldownWaitPolicy, EpxComboDefaultEffort, EpxComboDefaultEffortMode, EpxComboEwmaLatencyConfig, EpxComboJevEffortMode, EpxComboJevSelectionPolicy, EpxComboOnUnservable, EpxComboReasoningEffortMode, EpxComboStrategy, EpxComboTarget, EpxProviderConfig } from "../types";
 import { COMBO_NAMESPACE, isValidComboId, resolveComboId, targetKey } from "./identifiers";
 import {
   CANONICAL_JEV_DECISION_PROVIDER,
@@ -80,6 +80,8 @@ export interface NormalizedComboConfig {
    * (for example one whose effort swaps the upstream model id) is never re-tiered.
    */
   jevEffortMode: EpxComboJevEffortMode;
+  /** JEV selection policy; omitted / "argmax" keeps existing argmax routing. */
+  jevSelectionPolicy?: EpxComboJevSelectionPolicy;
   /** Catalog derivation and per-request member filtering; absent means `intersection`, the legacy rule. */
   capabilityPolicy?: Extract<EpxComboCapabilityPolicy, "union">;
   /** `union` only: what to do when no member can serve the request; absent means `degrade`. */
@@ -303,6 +305,20 @@ export function comboConfigIssues(
     });
   } else if (body.jevEffortMode === "client" && body.strategy !== "jev") {
     issues.push({ path: ["jevEffortMode"], message: 'jevEffortMode "client" is only valid with strategy "jev"' });
+  }
+  if (body.jevSelectionPolicy !== undefined
+    && body.jevSelectionPolicy !== "argmax"
+    && body.jevSelectionPolicy !== "min-risk"
+    && body.jevSelectionPolicy !== "observe") {
+    issues.push({
+      path: ["jevSelectionPolicy"],
+      message: 'jevSelectionPolicy must be "argmax", "min-risk", or "observe"',
+    });
+  } else if (body.jevSelectionPolicy !== undefined && body.strategy !== "jev") {
+    issues.push({
+      path: ["jevSelectionPolicy"],
+      message: 'jevSelectionPolicy is only valid with strategy "jev"',
+    });
   }
   if (body.imageInput !== undefined && body.imageInput !== "auto" && body.imageInput !== "disabled") {
     issues.push({ path: ["imageInput"], message: 'imageInput must be "auto" or "disabled"' });
@@ -604,6 +620,9 @@ export function normalizeComboConfig(raw: EpxComboConfig): NormalizedComboConfig
     defaultEffortMode: raw.defaultEffortMode === "force" && defaultEffort !== null ? "force" : "fallback",
     reasoningEffortMode: raw.reasoningEffortMode === "adaptive" ? "adaptive" : "strict",
     jevEffortMode: raw.jevEffortMode === "client" ? "client" : "decide",
+    ...(raw.strategy === "jev" && (raw.jevSelectionPolicy === "min-risk" || raw.jevSelectionPolicy === "observe")
+      ? { jevSelectionPolicy: raw.jevSelectionPolicy }
+      : {}),
     // Sparse like `allowMeteredTargets`: the default shape stays exactly what it was before the policy existed.
     ...(raw.capabilityPolicy === "union" ? { capabilityPolicy: "union" as const } : {}),
     ...(raw.onUnservable === "reject" ? { onUnservable: "reject" as const } : {}),

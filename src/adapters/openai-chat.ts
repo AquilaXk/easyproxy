@@ -47,6 +47,7 @@ import { openAIChatTransport, stripBracketedModelSuffix } from "./openai-chat/wi
 import { toolChoiceToChatFormat, toolsToChatFormatForProvider } from "./openai-chat/tool-schema";
 import { freeformToolsByWireName, type FreeformToolIdentity, reconcileStructuredToolCall, reconcileStructuredToolCalls } from "./openai-chat/serialized-tool-call-content";
 import { StandaloneBareToolCallBuffer, reconcileStandaloneBareToolCallEvents } from "./openai-chat/standalone-bare-tool-calls";
+import { createOpenAIChatToolContentBuffer, reconcileLeakedToolCallEvents, resolveLeakedToolCallOptions, type LeakedToolCallOptions } from "./openai-chat/leaked-tool-calls";
 import { COMPLETED_TOOL_BLOCKS_PROTOCOL, completedToolBlocksEnabled, completedToolPrefix, observeCompletedToolBlock, type PendingChatToolCall } from "./openai-chat/completed-tool-blocks";
 
 export { stripBracketedModelSuffix } from "./openai-chat/wire";
@@ -90,6 +91,7 @@ function canSerializeOpenAIChatServiceTier(
 export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAdapter {
   let lastRequestedModelId: string | undefined;
   let freeformTools = new Map<string, FreeformToolIdentity>();
+  let leakedToolOptions: LeakedToolCallOptions | undefined;
   const minImageEdge = registryEntryForProviderDestination(provider)?.minImageEdge;
   return withRequiredChatToolResult(withOpenAIChatToolNames(toolNames => ({
     name: "openai-chat",
@@ -105,6 +107,7 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
 
       const messages = toolNames.messages(parsed, provider.baseUrl, messagesToChatFormat(parsed, provider));
       freeformTools = freeformToolsByWireName(parsed.context.tools, tool => toolNames.registry().alias(tool));
+      leakedToolOptions = resolveLeakedToolCallOptions(provider, parsed.modelId, parsed.context.tools, toolNames.registry());
       const finish = (): AdapterRequest => {
         const tools = toolsToChatFormatForProvider(parsed, provider, toolNames.registry());
         const toolChoice = toolChoiceToChatFormat(parsed.options.toolChoice, parsed.context.tools, provider, toolNames.registry());
@@ -287,7 +290,7 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
       let bufferBytes = 0;
       const completedBlocksEnabled = completedToolBlocksEnabled(streamContext?.completedToolBlocks === true, provider, response.headers, lastRequestedModelId ?? "");
       const pendingToolCalls: PendingChatToolCall[] = [];
-      const toolCallContent = new StandaloneBareToolCallBuffer(budget, lastRequestedModelId, freeformTools);
+      const toolCallContent = createOpenAIChatToolContentBuffer(budget, lastRequestedModelId, freeformTools, leakedToolOptions);
       const heldText = (): AdapterEvent[] => toolCallContent.drain([]);
       let toolCallSeq = 0;
       const closeToolCalls = (): PendingChatToolCall[] => {
@@ -324,7 +327,7 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
         }
         const references = reconcileStructuredToolCalls(calls.map(call => ({ wireName: call.name, restoredName: toolNames.restore(call.name), argumentsText: call.args, freeformTool: freeformTools.get(call.name) })), toolCallContent.current(), !toolCallContent.releasedAnswerText && /(?:^|[/-])mimo-v2(?:\.|$)/i.test(lastRequestedModelId ?? ""));
         calls.forEach((call, index) => { call.args = references[index]!.argumentsText; });
-        yield* toolCallContent.recoverStandalone(calls.length === 0 && terminal, () => `call_${++toolCallSeq}`, name => toolNames.restore(name));
+        yield* toolCallContent.recoverStandalone(calls.length === 0 && terminal && stopReasonFor(finishReason) === undefined, () => `call_${++toolCallSeq}`, name => toolNames.restore(name));
         yield* toolCallContent.drain(references);
         for (const call of calls) {
           if (call.emittedEarly) continue;
@@ -796,8 +799,9 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
         }
         const references = reconcileStructuredToolCalls(structuredCalls, answerText, /(?:^|[/-])mimo-v2(?:\.|$)/i.test(lastRequestedModelId ?? ""));
         structuredCalls.forEach((call, index) => { call.delta.arguments = references[index]!.argumentsText; });
-        reconcileStandaloneBareToolCallEvents(events, contentStart, contentEnd, references, budget, lastRequestedModelId, freeformTools, name => toolNames.restore(name));
         const stopReason = stopReasonFor(choice.finish_reason);
+        reconcileStandaloneBareToolCallEvents(events, contentStart, contentEnd, references, budget, lastRequestedModelId, freeformTools, name => toolNames.restore(name));
+        reconcileLeakedToolCallEvents(events, contentStart, contentEnd, references, budget, leakedToolOptions, stopReason);
         events.push({
           type: "done",
           usage,

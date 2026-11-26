@@ -93,9 +93,70 @@ export function charsPerToken(modelId?: string): number {
  * single blended divisor cannot express.
  */
 const CJK_CHARS_PER_TOKEN = 1.5;
+const DENSE_SCRIPT_CHARS_PER_TOKEN = 1.5;
+const MEDIUM_SCRIPT_CHARS_PER_TOKEN = 2.0;
 
 // Reuse a sticky Unicode matcher so astral Han needs no substring or per-character regex.
 const SUPPLEMENTARY_HAN = /\p{Script=Han}/uy;
+
+function isAstralHanCodePoint(cp: number): boolean {
+  return (
+    (cp >= 0x20000 && cp <= 0x2a6df)
+    || (cp >= 0x2a700 && cp <= 0x2ee5d)
+    || (cp >= 0x2f800 && cp <= 0x2fa1d)
+    || (cp >= 0x30000 && cp <= 0x33479)
+    || cp === 0x16fe2
+    || cp === 0x16fe3
+    || (cp >= 0x16ff0 && cp <= 0x16ff6)
+  );
+}
+
+function isAstralEmojiCodePoint(cp: number): boolean {
+  return cp >= 0x1f000 && cp <= 0x1faff;
+}
+
+function isBmpCjkCodeUnit(c: number): boolean {
+  return (
+    (c >= 0xac00 && c <= 0xd7a3)
+    || (c >= 0x1100 && c <= 0x11ff)
+    || (c >= 0x3130 && c <= 0x318f)
+    || (c >= 0x4e00 && c <= 0x9fff)
+    || (c >= 0x3400 && c <= 0x4dbf)
+    || (c >= 0x3040 && c <= 0x30ff)
+  );
+}
+
+function isBmpDenseMultilingualOrEmoji(c: number): boolean {
+  return (
+    isBmpCjkCodeUnit(c)
+    // Indic / Tibetan / Thai / Lao / Myanmar scripts tokenize at CJK-like character density in BPE.
+    || (c >= 0x0900 && c <= 0x109f)
+    || (c >= 0x1780 && c <= 0x17ff)
+    // Non-Han BMP emoji and pictograph blocks (watch, hourglass, media symbols, misc symbols, dingbats).
+    || (c >= 0x231a && c <= 0x231b)
+    || (c >= 0x23e9 && c <= 0x23fa)
+    || (c >= 0x2600 && c <= 0x27bf)
+    || c === 0x2b50
+    || c === 0x2b55
+  );
+}
+
+function isBmpMediumMultilingual(c: number): boolean {
+  return (
+    // Greek, Cyrillic, Armenian, Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan, Mandaic
+    (c >= 0x0370 && c <= 0x08ff)
+    // Georgian and Ethiopic
+    || (c >= 0x10a0 && c <= 0x10ff)
+    || (c >= 0x1200 && c <= 0x137f)
+    // Cyrillic / Georgian Extended ranges
+    || (c >= 0x1c80 && c <= 0x1cbf)
+    || (c >= 0x2de0 && c <= 0x2dff)
+    || (c >= 0xa640 && c <= 0xa69f)
+    // Hebrew / Arabic Presentation Forms (disjoint from UTF-16 surrogates)
+    || (c >= 0xfb1d && c <= 0xfdff)
+    || (c >= 0xfe70 && c <= 0xfeff)
+  );
+}
 
 /**
  * Count CJK characters exactly, in one pass, with no allocation and no regex object per char.
@@ -116,14 +177,7 @@ export function countCjk(text: string): number {
         continue;
       }
     }
-    if (
-      (c >= 0xac00 && c <= 0xd7a3)
-      || (c >= 0x1100 && c <= 0x11ff)
-      || (c >= 0x3130 && c <= 0x318f)
-      || (c >= 0x4e00 && c <= 0x9fff)
-      || (c >= 0x3400 && c <= 0x4dbf)
-      || (c >= 0x3040 && c <= 0x30ff)
-    ) cjk++;
+    if (isBmpCjkCodeUnit(c)) cjk++;
   }
   return cjk;
 }
@@ -153,8 +207,34 @@ export function estimateTokens(text: string, modelId?: string, contextWindow?: n
   if (!text) return 0;
   const len = text.length;
   if (len === 0) return 0;
-  const cjk = countCjk(text);
-  return estimateTokensFromCharacterCounts(len - cjk, cjk, modelId, contextWindow);
+
+  let dense = 0;
+  let medium = 0;
+  for (let i = 0; i < len; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x0370) continue;
+    if (c >= 0xd800 && c <= 0xdbff) {
+      if (i + 1 < len) {
+        const lo = text.charCodeAt(i + 1);
+        if (lo >= 0xdc00 && lo <= 0xdfff) {
+          const cp = 0x10000 + (((c - 0xd800) << 10) | (lo - 0xdc00));
+          i++;
+          if (isAstralHanCodePoint(cp) || isAstralEmojiCodePoint(cp)) dense += 2;
+        }
+      }
+      continue;
+    }
+    if (c >= 0xdc00 && c <= 0xdfff) continue;
+    if (isBmpDenseMultilingualOrEmoji(c)) dense++;
+    else if (isBmpMediumMultilingual(c)) medium++;
+  }
+
+  const sparse = len - dense - medium;
+  const latinRatio = charsPerToken(modelId);
+  const estimate = dense === 0 && medium === 0
+    ? Math.ceil(len / latinRatio)
+    : Math.ceil(sparse / latinRatio + dense / DENSE_SCRIPT_CHARS_PER_TOKEN + medium / MEDIUM_SCRIPT_CHARS_PER_TOKEN);
+  return capEstimateAtContextWindow(Math.max(1, estimate), contextWindow);
 }
 
 /**

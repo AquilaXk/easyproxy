@@ -22,11 +22,39 @@ describe("supplementary Han token estimates", () => {
     }
   });
 
-  test("emoji, mathematical symbols and lone surrogates keep their previous weights", () => {
-    for (const text of ["😀".repeat(30), String.fromCodePoint(0x1d400).repeat(30),
+  test("mathematical symbols and lone surrogates keep their previous weights", () => {
+    for (const text of [String.fromCodePoint(0x1d400).repeat(30),
       "\uD840".repeat(30), "\uDC00".repeat(30)]) {
       expect(estimateTokens(text)).toBe(Math.ceil(text.length / 4));
     }
+  });
+
+  test("non-Han emoji receive denser token weights across astral and BMP symbols", () => {
+    const astralEmoji = "😀".repeat(30);
+    expect(estimateTokens(astralEmoji)).toBe(Math.ceil(astralEmoji.length / 1.5));
+    expect(estimateTokens(astralEmoji)).toBeGreaterThan(Math.ceil(astralEmoji.length / 4));
+
+    const bmpEmoji = "✨".repeat(30);
+    expect(estimateTokens(bmpEmoji)).toBe(Math.ceil(bmpEmoji.length / 1.5));
+    expect(estimateTokens(bmpEmoji)).toBeGreaterThan(Math.ceil(bmpEmoji.length / 4));
+  });
+
+  test("non-CJK multilingual scripts receive calibrated dense/medium weights while Latin/CJK ratios hold", () => {
+    const cyrillic = "Привет, мир! Это тестовая строка на русском языке. ".repeat(5);
+    expect(estimateTokens(cyrillic)).toBeGreaterThan(Math.ceil(cyrillic.length / 4));
+
+    const arabic = "مرحبا بالعالم هذا نص اختبار باللغة العربية ".repeat(5);
+    expect(estimateTokens(arabic)).toBeGreaterThan(Math.ceil(arabic.length / 4));
+
+    const devanagari = "नमस्ते दुनिया यह हिंदी भाषा में परीक्षण पाठ है ".repeat(5);
+    expect(estimateTokens(devanagari)).toBeGreaterThan(Math.ceil(devanagari.length / 4));
+
+    const thai = "สวัสดีชาวโลก นี่คือข้อความทดสอบภาษาไทย ".repeat(5);
+    expect(estimateTokens(thai)).toBeGreaterThan(Math.ceil(thai.length / 4));
+
+    // Monotonicity holds across script transitions even when lone surrogates precede dense pairs.
+    const base = "prefix\uD840";
+    expect(estimateTokens(base + "\uDC00")).toBeGreaterThanOrEqual(estimateTokens(base));
   });
 
   test("repeated calls cannot carry Unicode matching state between strings", () => {

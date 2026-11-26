@@ -1384,6 +1384,7 @@ export const en = {
   "logs.detail.attempt.recovery.opaqueBlobRejection": "Stale encrypted state dropped",
   "logs.detail.attempt.recovery.reasoningEffortDowngrade": "Reasoning effort downgraded",
   "logs.detail.attempt.recovery.anthropicFastDowngrade": "Fast mode refused, retried at standard speed",
+  "logs.detail.attempt.recovery.flexTierDowngrade": "Flex tier unavailable, retried on standard tier",
   "logs.detail.outcome.label": "Outcome",
   "logs.detail.outcome.completed": "Completed",
   "logs.detail.outcome.failed": "Failed",

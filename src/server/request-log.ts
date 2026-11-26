@@ -109,6 +109,7 @@ import { requestBodyField, requestBodyLogField, type RequestBodyEntryField, type
 import type {
   CacheDiagnosticDraft,
   CacheDiagnosticFinalFacts,
+  ContextTokenBreakdown,
   PromptCacheKeySource,
 } from "../usage/cache-diagnostic";
 
@@ -118,6 +119,7 @@ interface CacheDiagnosticHooks {
   enabled(): boolean;
   observeInbound(body: unknown, headers: Headers, source: PromptCacheKeySource, admissionPrincipal?: string): CacheDiagnosticDraft;
   rebind(body: unknown, draft: CacheDiagnosticDraft | undefined): void;
+  observeContextTokens?(draft: CacheDiagnosticDraft | undefined, contextTokens: ContextTokenBreakdown): void;
   finalize(facts: CacheDiagnosticFinalFacts): void;
 }
 function cacheDiagnosticHooks(): CacheDiagnosticHooks | undefined {
@@ -187,6 +189,18 @@ export function rebindCacheDiagnosticBody(
   draft: CacheDiagnosticDraft | undefined,
 ): void {
   cacheDiagnosticHooks()?.rebind(body, draft);
+}
+
+/** Record content-free per-category input token scalars on the active diagnostic draft. */
+export function observeCacheDiagnosticContextTokens(
+  logCtx: RequestLogContext,
+  contextTokens: ContextTokenBreakdown,
+): void {
+  if (!cacheDiagnosticsObserving() || !logCtx.cacheDiagnosticDraft) return;
+  const hooks = cacheDiagnosticHooks();
+  if (hooks?.observeContextTokens) {
+    hooks.observeContextTokens(logCtx.cacheDiagnosticDraft, contextTokens);
+  }
 }
 
 const requestLogRing = new Array<RequestLogEntry | undefined>(MAX_LOG_SIZE);

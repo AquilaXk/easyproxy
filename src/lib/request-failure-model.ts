@@ -237,6 +237,9 @@ const RECOVERY_KIND_CAUSE = {
   // Anthropic refused `speed: "fast"` (no usage credits, org not enabled, model outside the
   // lane); the same turn succeeds once the parameter is dropped.
   "anthropic-fast-downgrade": "parameter-rejected",
+  // Upstream declined `service_tier: "flex"` due to transient lane capacity; standard tier
+  // fallback resends without cooling credentials.
+  "flex-tier-downgrade": "upstream-declined",
 } as const satisfies Record<AttemptRecoveryKind, RequestFailureCause>;
 
 export function causeForRecoveryKind(kind: AttemptRecoveryKind): RequestFailureCause {

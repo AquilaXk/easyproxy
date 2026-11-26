@@ -38,10 +38,23 @@ export interface UpstreamConditionEvidence {
   code?: string;
   reason?: string;
   message?: string;
+  retryAfter?: string | null;
+  retryAfterMs?: number;
+  now?: number;
 }
+
+export const OPENROUTER_IN_FLIGHT_BUDGET_CODE = "openrouter_in_flight_budget";
+export const MAX_SHORT_IN_FLIGHT_402_RETRY_AFTER_MS = 60_000;
+const FLEX_UNAVAILABLE_CODES = new Set([
+  "flex_unavailable",
+  "service_tier_capacity_exceeded",
+  "service_tier_unavailable",
+]);
+const FLEX_UNAVAILABLE_MESSAGE_RE = /\b(?:flex(?:_tier)?\s+(?:unavailable|capacity|tier\s+(?:is\s+)?(?:unavailable|overloaded|at\s+capacity))|service_tier(?:_capacity_exceeded|\s*[:=]?\s*["']?flex["']?\s+(?:is\s+)?(?:unavailable|capacity|not\s+available|overloaded)))\b/i;
 
 // Structured tokens are compared after lowercasing; anything longer than this is not a token.
 const MAX_TOKEN_LENGTH = 128;
+const MAX_RETRY_AFTER_CHARS = 128;
 // Keyword matching reads at most this much of the message.
 const MAX_MESSAGE_SCAN = 4096;
 
@@ -56,7 +69,7 @@ const STRUCTURED: ReadonlyArray<readonly [UpstreamCondition, ReadonlySet<string>
   ["billing_exhausted", new Set(["insufficient_quota", "billing_hard_limit_reached", "usage_limit_reached", "usage_limit_exceeded", "1308", "monthly_request_count", "overage_request_limit_exceeded", "payment_required", "insufficient_balance", "credit_balance_too_low"])],
   ["model_unavailable", new Set(["model_not_found", "unsupported_model", "model_not_available", "model_not_supported", "deployment_not_found"])],
   ["rate_limited", new Set(["rate_limit_exceeded", "rate_limit_error", "too_many_requests", "throttling", "throttled", "rate_limited"])],
-  ["upstream_unavailable", new Set(["server_is_overloaded", "overloaded_error", "service_unavailable", "unavailable"])],
+  ["upstream_unavailable", new Set(["server_is_overloaded", "overloaded_error", "service_unavailable", "unavailable", ...FLEX_UNAVAILABLE_CODES])],
   ["upstream_failed", TRANSPORT_FAILURE_CODES],
 ];
 
@@ -74,6 +87,87 @@ function token(value: string | undefined): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed && trimmed.length <= MAX_TOKEN_LENGTH ? trimmed.toLowerCase() : undefined;
+}
+
+export function parseShortRetryAfterMs(
+  retryAfter: string | null | undefined,
+  retryAfterMs?: number,
+  now = Date.now(),
+): number | undefined {
+  if (retryAfterMs !== undefined) {
+    return typeof retryAfterMs === "number"
+      && Number.isFinite(retryAfterMs)
+      && retryAfterMs >= 0
+      && retryAfterMs <= MAX_SHORT_IN_FLIGHT_402_RETRY_AFTER_MS
+      ? retryAfterMs
+      : undefined;
+  }
+  if (typeof retryAfter !== "string") return undefined;
+  const trimmed = retryAfter.trim();
+  if (!trimmed || trimmed.length > MAX_RETRY_AFTER_CHARS) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    const ms = Number(trimmed) * 1000;
+    return Number.isFinite(ms) && ms >= 0 && ms <= MAX_SHORT_IN_FLIGHT_402_RETRY_AFTER_MS ? ms : undefined;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isFinite(dateMs)) return undefined;
+  const delta = dateMs - now;
+  return delta >= 0 && delta <= MAX_SHORT_IN_FLIGHT_402_RETRY_AFTER_MS ? delta : undefined;
+}
+
+/**
+ * OpenRouter emits HTTP 402 with `code: "openrouter_in_flight_budget"` and a short `Retry-After`
+ * (<= 60s) when concurrent in-flight credit reservations exceed budget. Unlike empty account
+ * credit balances, that refusal clears once in-flight requests finish and maps to transient
+ * rate-limiting instead of permanent billing exhaustion.
+ */
+export function isShortOpenRouterInFlightBudget402(evidence: UpstreamConditionEvidence): boolean {
+  if (evidence.status !== 402) return false;
+  const tokens = [token(evidence.code), token(evidence.type), token(evidence.reason)];
+  if (!tokens.includes(OPENROUTER_IN_FLIGHT_BUDGET_CODE)) return false;
+  return parseShortRetryAfterMs(evidence.retryAfter, evidence.retryAfterMs, evidence.now) !== undefined;
+}
+
+export function isFlexUnavailableConditionEvidence(evidence: Pick<UpstreamConditionEvidence, "status" | "code" | "type" | "reason" | "message">): boolean {
+  if (evidence.status !== 429 && evidence.status !== 503) return false;
+  const tokens = [token(evidence.code), token(evidence.type), token(evidence.reason)];
+  if (tokens.some(t => t !== undefined && FLEX_UNAVAILABLE_CODES.has(t))) return true;
+  if (typeof evidence.message === "string" && evidence.message) {
+    return FLEX_UNAVAILABLE_MESSAGE_RE.test(evidence.message.slice(0, MAX_MESSAGE_SCAN));
+  }
+  return false;
+}
+
+export function isFlexUnavailableErrorText(bodyText: string | undefined): boolean {
+  if (typeof bodyText !== "string" || !bodyText) return false;
+  const bounded = bodyText.slice(0, MAX_MESSAGE_SCAN);
+  try {
+    const parsed = JSON.parse(bounded) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const root = parsed as Record<string, unknown>;
+      const nested = root.error && typeof root.error === "object" && !Array.isArray(root.error)
+        ? root.error as Record<string, unknown>
+        : undefined;
+      const detail = root.detail && typeof root.detail === "object" && !Array.isArray(root.detail)
+        ? root.detail as Record<string, unknown>
+        : undefined;
+      for (const candidate of [nested, detail, root]) {
+        if (!candidate) continue;
+        const t = token(typeof candidate.code === "string" ? candidate.code : undefined)
+          ?? token(typeof candidate.type === "string" ? candidate.type : undefined)
+          ?? token(typeof candidate.reason === "string" ? candidate.reason : undefined);
+        if (t !== undefined && FLEX_UNAVAILABLE_CODES.has(t)) return true;
+        if (typeof candidate.message === "string" && FLEX_UNAVAILABLE_MESSAGE_RE.test(candidate.message.slice(0, MAX_MESSAGE_SCAN))) {
+          return true;
+        }
+      }
+      return false;
+    }
+  } catch {
+    // Non-JSON error body: fall back to narrow regex scan on bounded text.
+  }
+  return FLEX_UNAVAILABLE_MESSAGE_RE.test(bounded)
+    || /\b(?:flex_unavailable|service_tier_capacity_exceeded|service_tier_unavailable)\b/i.test(bounded);
 }
 
 function structuredCondition(tokens: readonly string[]): UpstreamCondition | undefined {
@@ -117,6 +211,7 @@ export function classifyUpstreamCondition(evidence: UpstreamConditionEvidence): 
   const { status } = evidence;
   if (!Number.isInteger(status)) return undefined;
   if (status === 401) return "auth_failed";
+  if (isShortOpenRouterInFlightBudget402(evidence)) return "rate_limited";
   const code = token(evidence.code);
   if (code !== undefined && TRANSPORT_FAILURE_CODES.has(code)) return "upstream_failed";
   const tokens = [code, token(evidence.type), token(evidence.reason)].filter((value): value is string => value !== undefined);

@@ -126,6 +126,8 @@ there is no transport-local retry budget or credential snapshot with independent
 
 `src/providers/opencode-zen-rate-limit.ts` recognizes the complete Console upload-rejection envelope only at the effective HTTPS opencode.ai Zen/Go generation endpoint. A provider row name cannot authorize another destination. The two recovery loops in `src/server/responses/core.ts` wait 800 ms and replay the captured serialized request once; cancellation, nonreplayable responses, other errors and a second upload rejection keep their failure semantics. The recovery kind is persisted as `console-go-upload-retry` and has a localized Logs label.
 
+Pre-output `service_tier: "flex"` HTTP 429/503 `flex_unavailable` (`service_tier_capacity_exceeded`) downgrades once to standard tier (`flex-tier-downgrade`, `upstream-declined`, `"transient"` budget) without cooling credentials (`src/server/responses/adapter-terminal-recovery.ts`, `adapter-dispatch.ts`, `passthrough-dispatch.ts`). Short OpenRouter `openrouter_in_flight_budget` HTTP 402 responses (`Retry-After <= 60s`) route into transient rate-limit attribution and target-scoped cooldown (`passthrough-delivery.ts`, `core-combo.ts`).
+
 ## Same-provider combo quota fallback
 
 Native account-gated model selection maps no grant to 400, temporary capable-account exhaustion to 429, and actual credential failures to 401; Images, Live, and Search reuse this distinction. For a failover combo with multiple models on the same Codex-login OpenAI provider, a pre-stream

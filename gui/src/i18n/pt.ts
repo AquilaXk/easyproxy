@@ -1379,6 +1379,7 @@ export const pt: Record<TKey, string> = {
   "logs.detail.attempt.recovery.opaqueBlobRejection": "Estado criptografado obsoleto descartado",
   "logs.detail.attempt.recovery.reasoningEffortDowngrade": "Esforço de raciocínio reduzido",
   "logs.detail.attempt.recovery.anthropicFastDowngrade": "Modo rápido recusado, repetido em velocidade padrão",
+  "logs.detail.attempt.recovery.flexTierDowngrade": "Nível Flex indisponível, repetido no nível padrão",
   "logs.detail.outcome.label": "Resultado",
   "logs.detail.outcome.completed": "Concluída",
   "logs.detail.outcome.failed": "Falhou",

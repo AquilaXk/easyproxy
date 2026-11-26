@@ -1,4 +1,105 @@
+import { createHash } from "node:crypto";
+import type { EpxProviderConfig } from "../../types";
+import { destinationHostOfUrl } from "./config-update-fallback";
 import { isPlainObject } from "./internal";
+
+export const MAX_PROMPT_CACHE_KEY_SHARD_CACHE = 4096;
+const MAX_SHARD_INPUT_BYTES = 16 * 1024;
+const PRINTABLE_KEY_PREFIX_RE = /^[A-Za-z0-9._:-]{1,51}$/;
+
+const promptCacheKeyShardCache = new Map<string, string>();
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function resolveServingPoolIdentity(
+  provider: EpxProviderConfig,
+  providerName: string,
+  url: string,
+): string {
+  const override = (provider as { _codexAccountOverride?: { chatgptAccountId?: string; kind?: string } })._codexAccountOverride;
+  if (override?.chatgptAccountId && override.chatgptAccountId.trim()) {
+    const kindPrefix = override.kind === "main-pool" ? "main:" : "";
+    return `codex:${kindPrefix}${override.chatgptAccountId.trim()}`;
+  }
+  const attempt = provider._apiKeyAttempt;
+  if (attempt?.entryId) return `key:${providerName}:${attempt.entryId}`;
+  if (attempt?.reference) return `ref:${providerName}:${attempt.reference}`;
+  if (typeof provider.apiKey === "string" && provider.apiKey.trim().length > 0) {
+    return `apikey:${providerName}:${sha256Hex(provider.apiKey).slice(0, 16)}`;
+  }
+  return `provider:${providerName}:${destinationHostOfUrl(url)}`;
+}
+
+/**
+ * Deterministically shard an outbound `prompt_cache_key` by resolved post-affinity credential/account
+ * lane so shared caller cohort keys or failovers stay cleanly isolated upstream, backed by a
+ * bounded 4,096-entry LRU cache.
+ */
+export function shardOutboundPromptCacheKey(
+  rawPromptCacheKey: unknown,
+  context: { provider: EpxProviderConfig; providerName?: string; url: string },
+): string | undefined {
+  if (context.provider.promptCacheKeyLaneSharding !== true) return undefined;
+  if (typeof rawPromptCacheKey !== "string") return undefined;
+  const trimmed = rawPromptCacheKey.trim();
+  if (trimmed.length === 0) return undefined;
+  if (Buffer.byteLength(trimmed, "utf8") > MAX_SHARD_INPUT_BYTES) return undefined;
+
+  const servingIdentity = resolveServingPoolIdentity(
+    context.provider,
+    context.providerName ?? "<unnamed>",
+    context.url,
+  );
+  const lookupKey = trimmed.length <= 128
+    ? `${servingIdentity}\0${trimmed}`
+    : `${servingIdentity}\0#sha256:${sha256Hex(trimmed)}`;
+
+  const cached = promptCacheKeyShardCache.get(lookupKey);
+  if (cached !== undefined) {
+    promptCacheKeyShardCache.delete(lookupKey);
+    promptCacheKeyShardCache.set(lookupKey, cached);
+    return cached;
+  }
+
+  const laneDigest = createHash("sha256")
+    .update("epx-prompt-cache-lane-v1\0")
+    .update(servingIdentity)
+    .update("\0")
+    .update(trimmed)
+    .digest("hex")
+    .slice(0, 12);
+
+  const sharded = PRINTABLE_KEY_PREFIX_RE.test(trimmed)
+    ? `${trimmed}:${laneDigest}`
+    : `epx_${laneDigest}_${sha256Hex(trimmed).slice(0, 12)}`;
+
+  promptCacheKeyShardCache.set(lookupKey, sharded);
+  while (promptCacheKeyShardCache.size > MAX_PROMPT_CACHE_KEY_SHARD_CACHE) {
+    promptCacheKeyShardCache.delete(promptCacheKeyShardCache.keys().next().value!);
+  }
+  return sharded;
+}
+
+export function applyOutboundPromptCacheKeyLaneSharding(
+  body: unknown,
+  context: { provider: EpxProviderConfig; providerName?: string; url: string },
+): unknown {
+  if (context.provider.promptCacheKeyLaneSharding !== true) return body;
+  if (!isPlainObject(body) || typeof body.prompt_cache_key !== "string") return body;
+  const sharded = shardOutboundPromptCacheKey(body.prompt_cache_key, context);
+  if (!sharded || sharded === body.prompt_cache_key) return body;
+  return { ...body, prompt_cache_key: sharded };
+}
+
+export function getPromptCacheKeyShardCacheSizeForTests(): number {
+  return promptCacheKeyShardCache.size;
+}
+
+export function resetPromptCacheKeyShardCacheForTests(): void {
+  promptCacheKeyShardCache.clear();
+}
 
 /**
  * GPT-5.6 retired the legacy 24-hour retention field, and the ChatGPT backend 400s the whole

@@ -147,7 +147,7 @@ describe("adapter reasoning and usage details", () => {
       cache_control: { type: "ephemeral", ttl: "1h" },
     }]);
     // The moving final user block is handled by top-level automatic caching.
-    expect(body.messages[0].content).toBe("hi");
+    expect(body.messages[0].content).toEqual([{ type: "text", text: "hi" }]);
   });
 
   test("Anthropic OAuth requests keep Claude identity first and cache user system prompt", async () => {
@@ -250,7 +250,7 @@ describe("adapter reasoning and usage details", () => {
     expect(body.tools[0].cache_control).toBeUndefined();
     expect(body.tools[1].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
     // Native automatic caching consumes the final-turn slot, so the last user block stays plain.
-    expect(body.messages[0].content).toBe("hi");
+    expect(body.messages[0].content).toEqual([{ type: "text", text: "hi" }]);
   });
 
   test("Anthropic native automatic caching reserves one explicit breakpoint slot", async () => {
@@ -286,7 +286,7 @@ describe("adapter reasoning and usage details", () => {
     expect(body.messages[0].content).toEqual([
       { type: "text", text: "previous turn", cache_control: { type: "ephemeral", ttl: "1h" } },
     ]);
-    expect(body.messages[1].content).toBe("current turn");
+    expect(body.messages[1].content).toEqual([{ type: "text", text: "current turn" }]);
   });
 
   test("Anthropic cache TTL: 1h by default only on api.anthropic.com, explicit retention wins", async () => {

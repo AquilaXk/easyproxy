@@ -90,7 +90,7 @@ describe("dsh-account adapter buildRequest", () => {
     const body = JSON.parse(req.body as string);
     expect(body.model).toBe("deepseek-flash");
     expect(body.messages).toHaveLength(1);
-    expect(body.messages[0].content).toBe("Hello from test");
+    expect(body.messages[0].content).toEqual([{ type: "text", text: "Hello from test" }]);
   });
 
   test("fails closed when provider.headers contains Authorization", async () => {

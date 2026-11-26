@@ -930,6 +930,7 @@ export async function executeComboResponses(
           decisionScope, { providerName, modelId },
         ),
         ...(combo.decisionQuotaSignals === true ? { decisionQuotaSignals: true, decisionQuotaTiers: combo.decisionQuotaTiers } : {}),
+        ...(combo.jevSelectionPolicy ? { jevSelectionPolicy: combo.jevSelectionPolicy } : {}),
         ...(combo.decisionProvider ? { decisionProvider: combo.decisionProvider } : {}),
         ...(combo.decisionModel
           ? {
@@ -1006,6 +1007,8 @@ export async function executeComboResponses(
         : {}),
       ...(observedDecision.usage ? { usage: observedDecision.usage } : {}),
       ...(observedDecision.quota ? { quota: observedDecision.quota } : {}),
+      ...(observedDecision.policy && observedDecision.policy !== "argmax" ? { policy: observedDecision.policy } : {}),
+      ...(observedDecision.policyDelta ? { policyDelta: observedDecision.policyDelta } : {}),
       ...(decision.pinned ? { pinned: true } : {}),
       ...(decision.pinReason ? { pinReason: decision.pinReason } : {}),
     }) : undefined;
@@ -1822,18 +1825,25 @@ export async function executeComboResponses(
     }
     // A bare status made a revoked credential read as a provider outage. Log the classified
     // condition (a closed member), never upstream-authored code or message text.
+    const failureNow = Date.now();
     const failureReason = localDeadline ? undefined : classifyUpstreamCondition({
-      status: failure.response.status, code: failure.upstreamCode, type: failure.upstreamType, message: failure.upstreamMessage,
+      status: failure.response.status,
+      code: failure.upstreamCode ?? failure.upstreamRootCode,
+      type: failure.upstreamType,
+      message: failure.upstreamMessage,
+      retryAfter: failure.retryAfter,
+      now: failureNow,
     });
     console.warn(
       `[combo] ${comboLogLabel(config, comboId)}: ${comboTargetLogLabel(config, comboId, pick.target)} failed with ${failure.response.status}`
         + ` after ${Date.now() - started}ms${failureReason ? `: ${failureReason}` : ""}`,
     );
-    const failureNow = Date.now();
     const attemptedTargets = pick.attempted;
     // Legacy privacy mode is specific to the serving account.
     const failureCooldownScope = localDeadline || xaiPrivacyRefusal || isPolicyCandidateRefusal(failure.response) ? "none" : comboFailureCooldownScope(failure.response.status, failure.classificationText, {
-      code: failure.upstreamCode,
+      code: failure.upstreamCode ?? failure.upstreamRootCode,
+      type: failure.upstreamType,
+      retryAfter: failure.retryAfter,
       malformedResponseFormat: failure.malformedResponseFormat,
       openRouterOpaque400: failure.openRouterOpaque400,
       unofferedToolCallRefusal: failure.unofferedToolCallRefusal,
@@ -1846,13 +1856,13 @@ export async function executeComboResponses(
     // account label, which is stamped for pool and main-pool contexts alone (#8880).
     const poolAccountLabel = poolAccountProviderLabel(childLog.provider, pick.target.provider)
       ?? (childLog.accountLogLabel === "main" ? `${pick.target.provider}-main` : undefined);
-    const failedAccount = failure.response.status === 402
+    const failedAccount = failure.response.status === 402 && !failure.transientRateLimit402
       ? creditRefusedAnthropicAccountLabel(
         config, pick.target.provider, pick.target.model, poolAccountLabel, failure.classificationText, failure.upstreamCode,
         failure.response,
       )
       : cooledPoolAccountLabel(config, pick.target.provider, pick.target.model, poolAccountLabel)
-      ?? (failure.response.status === 429 && failureCooldownScope === "target"
+      ?? ((failure.response.status === 429 || failure.transientRateLimit402) && failureCooldownScope === "target"
       ? cooledGenericOAuthAccountLabel(config, pick.target.provider, pick.target.model, childLog.accountLogLabel, failure.retryAfter)
       : undefined);
     // The target still cools on the pool's own refusal (the anti-hammer guard), but for the local
@@ -1868,7 +1878,7 @@ export async function executeComboResponses(
       now: failureNow,
       recordFailure: !localDeadline, cooldownScope: failureCooldownScope,
       eligible: targetEligible,
-      status: failure.response.status,
+      status: failure.transientRateLimit402 ? 429 : failure.response.status,
       code: failure.upstreamCode,
       message: failure.classificationText,
       failedAccount,

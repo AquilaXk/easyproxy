@@ -1364,6 +1364,7 @@ export const vi: Record<TKey, string> = {
   "logs.detail.attempt.recovery.opaqueBlobRejection": "Đã bỏ trạng thái mã hóa cũ",
   "logs.detail.attempt.recovery.reasoningEffortDowngrade": "Đã giảm mức suy luận",
   "logs.detail.attempt.recovery.anthropicFastDowngrade": "Chế độ nhanh bị từ chối, thử lại ở tốc độ chuẩn",
+  "logs.detail.attempt.recovery.flexTierDowngrade": "Gói Flex không khả dụng, đã thử lại ở gói tiêu chuẩn",
   "logs.detail.outcome.label": "Kết quả",
   "logs.detail.outcome.completed": "Hoàn tất",
   "logs.detail.outcome.failed": "Thất bại",

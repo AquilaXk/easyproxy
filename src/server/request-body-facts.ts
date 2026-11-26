@@ -11,7 +11,11 @@ export interface RequestBodyEntryField { requestBody?: RequestBodyFacts }
  * the request it hands to the handler to that request's log context, and the reader fills the holder
  * of the request it reads. Nothing is retained beyond the Request itself (WeakMap).
  */
-export interface RequestBodyFactsHolder { facts?: RequestBodyFacts; rejected?: boolean }
+export interface RequestBodyFactsHolder {
+  facts?: RequestBodyFacts;
+  nonWhitespaceAsciiBytes?: number;
+  rejected?: boolean;
+}
 
 const holders = new WeakMap<Request, RequestBodyFactsHolder>();
 
@@ -37,11 +41,23 @@ function encodingOf(header: string | null): RequestBodyEncoding | null {
 }
 
 /** Called once a body was read and decoded in full. */
-export function recordRequestBodyFacts(req: Request, wireBytes: number, contentEncoding: string | null, decodedBytes: number): void {
+export function recordRequestBodyFacts(
+  req: Request,
+  wireBytes: number,
+  contentEncoding: string | null,
+  decodedBytes: number,
+  nonWhitespaceAsciiBytes?: number,
+): void {
   const encoding = encodingOf(contentEncoding);
   if (encoding === null) return;
   const facts = normalizeRequestBodyFacts({ wireBytes, encoding, decodedBytes });
-  if (facts) requestBodyFactsHolder(req).facts = facts;
+  if (!facts) return;
+  const holder = requestBodyFactsHolder(req);
+  holder.facts = facts;
+  holder.nonWhitespaceAsciiBytes =
+    typeof nonWhitespaceAsciiBytes === "number" && Number.isFinite(nonWhitespaceAsciiBytes) && nonWhitespaceAsciiBytes >= 0
+      ? Math.min(decodedBytes, Math.trunc(nonWhitespaceAsciiBytes))
+      : undefined;
 }
 
 /** The log context side: the facts of the request the turn read, if it read one. */

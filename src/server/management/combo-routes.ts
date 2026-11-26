@@ -94,9 +94,10 @@ function sparseComboConfig<T extends {
   reasoningEffortMode?: "strict" | "adaptive";
   defaultEffortMode?: "fallback" | "force";
   jevEffortMode?: "decide" | "client";
+  jevSelectionPolicy?: "argmax" | "min-risk" | "observe";
   capabilityPolicy?: "intersection" | "union";
   onUnservable?: "degrade" | "reject";
-}>(combo: T): Omit<T, "cooldownMs" | "waitForCooldownMs" | "cooldownWaitPolicy" | "imageInput" | "reasoningEffortMode" | "defaultEffortMode" | "jevEffortMode" | "capabilityPolicy" | "onUnservable"> & {
+}>(combo: T): Omit<T, "cooldownMs" | "waitForCooldownMs" | "cooldownWaitPolicy" | "imageInput" | "reasoningEffortMode" | "defaultEffortMode" | "jevEffortMode" | "jevSelectionPolicy" | "capabilityPolicy" | "onUnservable"> & {
   cooldownMs?: number;
   waitForCooldownMs?: number;
   cooldownWaitPolicy?: EpxComboCooldownWaitPolicy;
@@ -104,6 +105,7 @@ function sparseComboConfig<T extends {
   reasoningEffortMode?: "adaptive";
   defaultEffortMode?: "force";
   jevEffortMode?: "client";
+  jevSelectionPolicy?: "min-risk" | "observe";
   capabilityPolicy?: "union";
   onUnservable?: "reject";
 } {
@@ -115,6 +117,7 @@ function sparseComboConfig<T extends {
     reasoningEffortMode,
     defaultEffortMode,
     jevEffortMode,
+    jevSelectionPolicy,
     capabilityPolicy,
     onUnservable,
     ...rest
@@ -132,6 +135,7 @@ function sparseComboConfig<T extends {
     ...(reasoningEffortMode === "adaptive" ? { reasoningEffortMode: "adaptive" as const } : {}),
     ...(defaultEffortMode === "force" ? { defaultEffortMode: "force" as const } : {}),
     ...(jevEffortMode === "client" ? { jevEffortMode: "client" as const } : {}),
+    ...(jevSelectionPolicy === "min-risk" || jevSelectionPolicy === "observe" ? { jevSelectionPolicy } : {}),
     ...(capabilityPolicy === "union" ? { capabilityPolicy: "union" as const } : {}),
     ...(onUnservable === "reject" ? { onUnservable: "reject" as const } : {}),
   };
@@ -246,6 +250,7 @@ export async function handleComboRoutes(ctx: ManagementContext): Promise<Respons
         : {}),
       ...(!Object.hasOwn(requestedCombo, "decisionQuotaSignals") && requestedCombo.strategy === "jev" && previous?.decisionQuotaSignals !== undefined ? { decisionQuotaSignals: previous.decisionQuotaSignals } : {}),
       ...(!Object.hasOwn(requestedCombo, "jevEffortMode") && requestedCombo.strategy === "jev" && previous?.jevEffortMode !== undefined ? { jevEffortMode: previous.jevEffortMode } : {}),
+      ...(!Object.hasOwn(requestedCombo, "jevSelectionPolicy") && requestedCombo.strategy === "jev" && previous?.jevSelectionPolicy !== undefined ? { jevSelectionPolicy: previous.jevSelectionPolicy } : {}),
       ...(!Object.hasOwn(requestedCombo, "decisionQuotaTiers") && requestedCombo.strategy === "jev" && previous?.decisionQuotaTiers !== undefined ? { decisionQuotaTiers: previous.decisionQuotaTiers } : {}),
       // The dashboard does not edit the session pin (#7525): an omitted field keeps it on a JEV save.
       ...(!Object.hasOwn(requestedCombo, "sessionPin") && requestedCombo.strategy === "jev" && previous?.sessionPin != null ? { sessionPin: previous.sessionPin } : {}),

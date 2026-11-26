@@ -3,7 +3,8 @@ import type { JevQuotaTiers, JevQuotaDecisionSummary } from "./jev-quota-config"
 import { boundedJevQuotaPayload, jevQuotaCandidates, withJevQuotaSummary } from "./jev-quota-route";
 import { JEV_MAX_REQUEST_BYTES as REQUEST_LIMIT } from "./jev-service-exchange";
 import type { providerOutboundPost } from "../lib/provider-outbound";
-import type { EpxComboDefaultEffort, EpxConfig } from "../types";
+import type { EpxComboDefaultEffort, EpxComboJevSelectionPolicy, EpxConfig } from "../types";
+import { selectMinRiskJevChoice, type JevSelectionPolicyDelta } from "./jev-risk-policy";
 import {
   JEV_MAX_CANDIDATE_FIELD_CHARS,
 } from "./types";
@@ -112,6 +113,10 @@ export interface JevDecision {
   confidence?: number;
   chosenProbability?: number;
   usage?: Record<string, number>;
+  /** Selection policy applied when resolving this decision (omitted when default `"argmax"`). */
+  policy?: EpxComboJevSelectionPolicy;
+  /** Content-free diff between minimum-risk selection and argmax when probabilities were available. */
+  policyDelta?: JevSelectionPolicyDelta;
   /** Set when the turn reused a session pin (#7525). */
   pinned?: true;
   /** `session` or `session_effort` with `pinned`; otherwise why the original pin was released. */
@@ -130,6 +135,8 @@ export interface ResolveJevDecisionOptions {
   decisionProvider?: string;
   decisionQuotaSignals?: boolean;
   decisionQuotaTiers?: JevQuotaTiers;
+  /** Route & effort selection policy; omitted / `"argmax"` keeps existing argmax routing. */
+  jevSelectionPolicy?: EpxComboJevSelectionPolicy;
   /** Request-local authorization of the concrete decision destination, before credential access. */
   isDestinationAllowed?: (providerName: string, modelId: string) => boolean;
   /** Decision deadline; values outside 1000..120000 ms keep the four-second default. */
@@ -568,11 +575,12 @@ export function jevUsage(payload: Record<string, unknown>): Record<string, numbe
   return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
-/** Validate an allowlisted route choice and any complete probability distribution; throw on invalid answers. */
-export function parseJevDecision(
+type ParsedJevDecision = Pick<JevDecision, "targetKey" | "effort" | "confidence" | "chosenProbability" | "usage">;
+
+function parseJevDecisionWithDistribution(
   payload: unknown,
   candidates: readonly JevCandidate[],
-): Pick<JevDecision, "targetKey" | "effort" | "confidence" | "chosenProbability" | "usage"> {
+): { decision: ParsedJevDecision; distribution?: ReadonlyMap<string, number> } {
   if (!isRecord(payload)) {
     throw new Error("missing JEV route decision");
   }
@@ -597,6 +605,7 @@ export function parseJevDecision(
   }
 
   let chosenProbability: number | undefined;
+  let distribution: Map<string, number> | undefined;
   if (answer.probabilities !== undefined) {
     let probabilities: Record<string, unknown>;
     if (Array.isArray(answer.probabilities)) {
@@ -629,6 +638,8 @@ export function parseJevDecision(
       throw new Error("inconsistent JEV route distribution");
     }
     chosenProbability = selected;
+    distribution = new Map();
+    for (const key of actual) distribution.set(key, probabilities[key] as number);
   }
 
   const option = options.get(choiceValue)!;
@@ -640,12 +651,23 @@ export function parseJevDecision(
     : undefined;
   const usage = jevUsage(payload);
   return {
-    targetKey: option.targetKey,
-    effort: option.effort,
-    ...(confidence !== undefined ? { confidence } : {}),
-    ...(chosenProbability !== undefined ? { chosenProbability } : {}),
-    ...(usage ? { usage } : {}),
+    decision: {
+      targetKey: option.targetKey,
+      effort: option.effort,
+      ...(confidence !== undefined ? { confidence } : {}),
+      ...(chosenProbability !== undefined ? { chosenProbability } : {}),
+      ...(usage ? { usage } : {}),
+    },
+    ...(distribution ? { distribution } : {}),
   };
+}
+
+/** Validate an allowlisted route choice and any complete probability distribution; throw on invalid answers. */
+export function parseJevDecision(
+  payload: unknown,
+  candidates: readonly JevCandidate[],
+): ParsedJevDecision {
+  return parseJevDecisionWithDistribution(payload, candidates).decision;
 }
 
 /** Preserve the caller's eligible target/effort fallback while recording the failed gate, backend, and latency. */
@@ -751,7 +773,7 @@ export async function resolveJevDecision(options: ResolveJevDecisionOptions): Pr
     return { body: payload.body };
   }, (payload) => {
     try {
-      return parseJevDecision(payload, options.candidates);
+      return parseJevDecisionWithDistribution(payload, options.candidates);
     } catch (error) {
       if (isRecord(payload)) rejectedUsage = jevUsage(payload);
       throw error;
@@ -761,9 +783,34 @@ export async function resolveJevDecision(options: ResolveJevDecisionOptions): Pr
     const decision = failed(exchanged.gate);
     return withJevQuotaSummary(rejectedUsage ? { ...decision, usage: rejectedUsage } : decision, candidates);
   }
+  const policy = options.jevSelectionPolicy ?? "argmax";
+  const baseDecision = exchanged.value.decision;
+  const distribution = exchanged.value.distribution;
+  let routedDecision: ParsedJevDecision = baseDecision;
+  let policyDelta: JevSelectionPolicyDelta | undefined;
+  if ((policy === "min-risk" || policy === "observe") && distribution) {
+    const minRisk = selectMinRiskJevChoice({
+      candidates: options.candidates,
+      distribution,
+      fallbackChoice: { targetKey: baseDecision.targetKey, effort: baseDecision.effort },
+    });
+    policyDelta = minRisk.delta;
+    if (policy === "min-risk") {
+      const selectedKey = `${minRisk.targetKey}:${minRisk.effort ?? "none"}`;
+      const selectedProb = distribution.get(selectedKey);
+      routedDecision = {
+        ...baseDecision,
+        targetKey: minRisk.targetKey,
+        effort: minRisk.effort,
+        ...(selectedProb !== undefined ? { chosenProbability: selectedProb } : {}),
+      };
+    }
+  }
   return withJevQuotaSummary({
     backend,
-    ...exchanged.value,
+    ...routedDecision,
+    ...(policy !== "argmax" ? { policy } : {}),
+    ...(policyDelta ? { policyDelta } : {}),
     gate: "apply",
     latencyMs: Math.max(0, now() - startedAt),
   }, candidates);

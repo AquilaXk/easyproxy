@@ -25,7 +25,7 @@ describe("anthropic tail guard", () => {
       { role: "assistant", content: [{ type: "text", text: "partial answer" }], model: "claude", timestamp: 0 },
     ]));
 
-    expect(body.messages.at(-1)).toEqual({ role: "user", content: "(continue)" });
+    expect(body.messages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "(continue)" }] });
   });
 
   test("leaves context ending with user unchanged", async () => {
@@ -36,14 +36,14 @@ describe("anthropic tail guard", () => {
 
     expect(body.messages).toEqual([
       { role: "assistant", content: [{ type: "text", text: "answer" }] },
-      { role: "user", content: "follow up" },
+      { role: "user", content: [{ type: "text", text: "follow up" }] },
     ]);
   });
 
   test("turns empty context messages into a single user continue nudge", async () => {
     const body = await bodyOf(parsed([]));
 
-    expect(body.messages).toEqual([{ role: "user", content: "(continue)" }]);
+    expect(body.messages).toEqual([{ role: "user", content: [{ type: "text", text: "(continue)" }] }]);
   });
 
   test("does not append a nudge after an assistant tool call followed by a tool result", async () => {

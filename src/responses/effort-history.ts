@@ -37,17 +37,29 @@ const MAX_CAPABILITY = 256;
 /** A pending slot expires this long after admission. */
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 export const SCOPE_PARTS = ["cohort", "provider", "destination", "adapter", "model", "credential", "authMode"] as const;
-// api.anthropic.com only. Fable 5.1 stays off until its wire id is checked against the Mythos rule.
-const IN_SCOPE_MODEL = /^(claude-)?(mythos-5-1|opus-5-5|opus-5|sonnet-5-5|haiku-5-5)$/;
+// api.anthropic.com only.
+const IN_SCOPE_MODEL = /^(claude-)?(mythos-5-1|opus-5-5|opus-5|sonnet-5-5|haiku-5-5|fable-5-1|fable-5-2)$/;
 const ENDPOINT = "api.anthropic.com";
 // Effort names the serializer can emit (anthropic.ts adaptiveEffort / reasoningBudget).
 const EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 /**
  * The documented 400 for a model without per-message effort:
  * "output_config.effort requires a model that supports per-turn effort; this model does not".
+ * Also matches explicit mid-conversation effort beta / system effort message 400 rejections.
  * Any other 400 sets nothing.
  */
 export const BETA_FRAGMENT = "requires a model that supports per-turn effort";
+
+export function isPerMessageEffortRejectionText(errorText: string): boolean {
+  if (typeof errorText !== "string" || !errorText) return false;
+  if (errorText.includes(BETA_FRAGMENT)) return true;
+  if (errorText.includes("mid-conversation-output-config")) return true;
+  if (/\bmessages(?:\[\d+\]|\.\d+)\.(?:output_config|role)\b/i.test(errorText)
+    && /\b(?:output_config|system|extra inputs are not permitted|unexpected|not permitted|not allowed|unsupported)\b/i.test(errorText)) {
+    return true;
+  }
+  return /\bunexpected\s+role\b/i.test(errorText) && /\bsystem\b/i.test(errorText) && /\bmessages\b/i.test(errorText);
+}
 
 type Rec = Record<string, unknown>;
 export type EffortHistoryScope = Record<(typeof SCOPE_PARTS)[number], string | undefined>;
@@ -339,8 +351,6 @@ function decideInner(store: EffortHistoryStore, req: EffortHistoryRequest, opts:
   if (req.apiKind === "messages") return off("out-of-scope-messages-api");
   if (req.previousResponseId) return off("out-of-scope-previous-response-id");
 
-  // Fable 5.1 is in scope only once its wire id is checked against the Mythos rule; until then off.
-  if (/fable/i.test(req.scope?.model ?? "")) return off("fable-wire-id-unchecked");
   if (hasOrphanCall([...req.parent, ...req.suffix])) return off("orphan-tool-call");
   // No effort level ("none" or absent) cannot be a per-message effort value: off, as today.
   if (typeof req.effort !== "string" || !EFFORTS.has(req.effort)) return off("no-effort-level");
@@ -446,19 +456,16 @@ function decideInner(store: EffortHistoryStore, req: EffortHistoryRequest, opts:
   if (userCount > 1) return offSend(store, parentKey, "more-than-one-user-message");
 
   const effort = mapEffort(req.effort);
-  if (toolOnly) {
-    if (effort !== parent.effortInEffect) return offSend(store, parentKey, "tool-only-effort-change");
-    return admitMatched(store, { scopeKey, parentKey, req, parent, now, inputHash, changePoint: false, shape: "tool-only" });
-  }
-  if (!shapeA) return offSend(store, parentKey, "unclassified-suffix");
+  if (!toolOnly && !shapeA) return offSend(store, parentKey, "unclassified-suffix");
+  const shape = toolOnly ? "tool-only" : "a";
 
   const changePoint = effort !== parent.effortInEffect;
   if (changePoint && parent.changePoints.length >= MAX_CHANGE_POINTS) return offSend(store, parentKey, "change-points-full");
   // Mythos: any effort change is off, because its budget depends on effort.
   if (changePoint && /mythos/i.test(s.model)) return offSend(store, parentKey, "mythos-effort-change");
-  // The effort message must land before this turn's user message on the wire; without a place, off.
+  // The effort message must land before this turn's user message or tool_result batch on the wire; without a place, off.
   if (changePoint && !validWireIndex(req.changeWireIndex)) return offSend(store, parentKey, "change-point-unplaceable");
-  return admitMatched(store, { scopeKey, parentKey, req, parent, now, inputHash, changePoint, shape: "a" });
+  return admitMatched(store, { scopeKey, parentKey, req, parent, now, inputHash, changePoint, shape });
 }
 
 interface MatchPlan {
@@ -665,7 +672,7 @@ function commitInner(store: EffortHistoryStore, token: unknown, result: EffortHi
 function rejectInner(store: EffortHistoryStore, token: unknown, { status, errorText = "" }: { status?: number; errorText?: string } = {}): EffortHistoryOutcome {
   const slot = takeSlot(store, token);
   if (!slot) return { action: "dropped", reason: "pending-missing" };
-  if (status === 400 && typeof errorText === "string" && errorText.includes(BETA_FRAGMENT)) {
+  if (status === 400 && isPerMessageEffortRejectionText(errorText)) {
     store.capability.set(slot.req.capabilityKey, { state: "unsupported", at: Date.now() });
     while (store.capability.size > MAX_CAPABILITY) store.capability.delete(store.capability.keys().next().value as string);
     return { action: "off", reason: "capability-unsupported", deleted: true };

@@ -964,15 +964,16 @@ function messagesToAnthropicFormat(
     switch (msg.role) {
       case "user":
       case "developer": {
-        let content: string | unknown[];
+        let content: unknown[];
         if (typeof msg.content === "string") {
-          // Anthropic rejects empty string text content blocks.
-          content = msg.content || "(empty)";
+          // Always emit a content block array so moving cache_control breakpoints never flips
+          // historical messages between string and array representations across turns.
+          content = [{ type: "text", text: msg.content || "(empty)" }];
         } else {
           const parts = (msg.content as EpxContentPart[])
             .map(toAnthropicContentPart)
             .filter(p => !((p as { type?: string }).type === "text" && !(p as { text?: string }).text));
-          content = parts.length > 0 ? parts : "(empty)";
+          content = parts.length > 0 ? parts : [{ type: "text", text: "(empty)" }];
         }
         messages.push({ role: "user", content });
         break;
@@ -1102,9 +1103,9 @@ function messagesToAnthropicFormat(
   // previous_response_id expansion with empty new input, interrupted-turn replay, and web-search sidecar
   // first iterations can all reach this; Kiro uses the same "(continue)" nudge precedent (src/adapters/kiro.ts:283).
   if (messages.length === 0) {
-    messages.push({ role: "user", content: "(continue)" });
+    messages.push({ role: "user", content: [{ type: "text", text: "(continue)" }] });
   } else if ((messages[messages.length - 1] as { role?: string }).role === "assistant") {
-    messages.push({ role: "user", content: "(continue)" });
+    messages.push({ role: "user", content: [{ type: "text", text: "(continue)" }] });
   }
 
   return { system, systemBlockCacheControls, callerSystem, messages };

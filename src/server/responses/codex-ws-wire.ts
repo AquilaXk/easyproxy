@@ -643,3 +643,15 @@ export function codexWsCreateFrameExceedsLimit(
   if (frameText.length * 3 < limitBytes) return false;
   return Buffer.byteLength(frameText, "utf8") >= limitBytes;
 }
+
+const codexWsSentFrames = new WeakMap<Response, string>();
+
+/** Record the exact serialized WebSocket frame text that produced a pre-output refusal Response. */
+export function recordCodexWsActualSentFrame(response: Response, frameText: string): void {
+  codexWsSentFrames.set(response, frameText);
+}
+
+/** Retrieve the exact serialized WebSocket frame text recorded on a pre-output refusal Response. */
+export function codexWsActualSentFrame(response: Response): string | undefined {
+  return codexWsSentFrames.get(response);
+}

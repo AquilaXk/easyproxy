@@ -29,6 +29,16 @@ export type PrefixComparison =
   | { status: "first" | "equal" }
   | { status: "append-only" | "different" | "truncated"; section: PrefixSection; index: number }
   | { status: "uncomparable"; reason: "missing-session" | "missing-observation" | "unsupported-shape" };
+export interface ContextTokenBreakdown {
+  system: number;
+  toolSchemas: number;
+  userText: number;
+  assistantText: number;
+  toolResults: number;
+  media: number;
+  reasoning: number;
+}
+
 export interface CacheDiagnosticDraft {
   promptCacheKey?: { inbound?: TaggedPresence; outbound?: TaggedPresence };
   session?: {
@@ -40,6 +50,8 @@ export interface CacheDiagnosticDraft {
   prefix?: { inbound?: PrefixFingerprint; outbound?: PrefixFingerprint };
   /** The shared Pool key derivation's result, not a binding lookup or selection decision. */
   accountAffinity?: { inbound?: TaggedPresence; outbound?: TaggedPresence };
+  /** Per-category estimated input token scalars only (never stores raw content). */
+  contextTokens?: ContextTokenBreakdown;
 }
 
 export interface CacheDiagnosticFinalFacts {
@@ -315,6 +327,34 @@ export function rebindCacheDiagnosticBodyAlias(body: unknown, draft: CacheDiagno
   if (body && typeof body === "object") bodyDrafts.set(body, draft);
 }
 
+function clampScalarTokenCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.trunc(value)
+    : 0;
+}
+
+function sanitizeContextTokens(raw: unknown): ContextTokenBreakdown | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  return {
+    system: clampScalarTokenCount(record.system),
+    toolSchemas: clampScalarTokenCount(record.toolSchemas),
+    userText: clampScalarTokenCount(record.userText),
+    assistantText: clampScalarTokenCount(record.assistantText),
+    toolResults: clampScalarTokenCount(record.toolResults),
+    media: clampScalarTokenCount(record.media),
+    reasoning: clampScalarTokenCount(record.reasoning),
+  };
+}
+
+export function observeContextTokens(
+  draft: CacheDiagnosticDraft | undefined,
+  contextTokens: ContextTokenBreakdown,
+): void {
+  if (!isCacheDiagnosticEnabled() || !draft || staleDraft(draft)) return;
+  draft.contextTokens = sanitizeContextTokens(contextTokens);
+}
+
 export function observeOutbound(
   inboundBody: unknown,
   outboundBody: unknown,
@@ -373,6 +413,7 @@ export function appendFinalCacheDiagnostic(facts: CacheDiagnosticFinalFacts): vo
     const comparison = comparePrefixes(inboundPrefix, outboundPrefix);
     // Only explicit account facts are evidence; never infer an account from provider text.
     const account = taggedPresence(facts.accountLogLabel, "cache-debug:account-log-label");
+    const contextTokens = sanitizeContextTokens(draft.contextTokens);
     const record = {
       version: 1 as const,
       ts: Date.now(),
@@ -426,6 +467,7 @@ export function appendFinalCacheDiagnostic(facts: CacheDiagnosticFinalFacts): vo
           provenance: facts.cacheProvenance,
         },
       },
+      ...(contextTokens ? { contextTokens } : {}),
     };
     ensureDir();
     const path = cacheDiagnosticPath();
@@ -442,11 +484,13 @@ interface CacheDiagnosticHooks {
   enabled(): boolean;
   observeInbound(body: unknown, headers: Headers, source: PromptCacheKeySource, admissionPrincipal?: string): CacheDiagnosticDraft;
   rebind(body: unknown, draft: CacheDiagnosticDraft | undefined): void;
+  observeContextTokens?(draft: CacheDiagnosticDraft | undefined, contextTokens: ContextTokenBreakdown): void;
   finalize(facts: CacheDiagnosticFinalFacts): void;
 }
 (globalThis as Record<symbol, CacheDiagnosticHooks | undefined>)[CACHE_DIAGNOSTIC_HOOK] = {
   enabled: isCacheDiagnosticEnabled,
   observeInbound,
   rebind: rebindCacheDiagnosticBodyAlias,
+  observeContextTokens,
   finalize: appendFinalCacheDiagnostic,
 };

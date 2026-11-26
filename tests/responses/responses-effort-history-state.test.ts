@@ -145,12 +145,15 @@ test("minimal and low are the same effort: no change point", () => {
   assert.equal(d.changePoint, false);
 });
 
-test("tool results only with a different effort: off and entry deleted", () => {
+test("tool results only with a different effort: matched change point at batch boundary", () => {
   const store = createStore();
   const t = startChat(store, { effort: "low" });
   const d = decide(store, { ...base, effort: "high", parent: t, suffix: [tool("ok")] }, ON);
-  assert.equal(d.reason, "tool-only-effort-change");
-  assert.equal(store.entries.size, 0);
+  assert.equal(d.action, "send");
+  assert.equal(d.kind, "matched");
+  assert.equal(d.shape, "tool-only");
+  assert.equal(d.changePoint, true);
+  assert.deepEqual(d.insert, { at: t.length, wireIndex: 1, effort: "high" });
 });
 
 test("tool-only with no entry: off, nothing written", () => {
@@ -818,10 +821,14 @@ test("P = 0 new history: the turn-1 retry is a replay (off), not a second histor
   assert.equal(retry.reason, "replay");
 });
 
-test("Fable is off until its wire ID is checked", () => {
+test("Fable 5.1 and 5.2 are admitted while unversioned Fable stays out of scope", () => {
   const store = createStore();
-  const d = decide(store, { ...base, scope: { ...scope, model: "claude-fable-5-1" }, effort: "low", parent: [], suffix: [user("hi")] }, ON);
-  assert.equal(d.reason, "fable-wire-id-unchecked");
+  const d51 = decide(store, { ...base, scope: { ...scope, model: "claude-fable-5-1" }, effort: "low", parent: [], suffix: [user("hi")] }, ON);
+  assert.equal(d51.action, "send");
+  const d52 = decide(createStore(), { ...base, scope: { ...scope, model: "claude-fable-5-2" }, effort: "high", parent: [], suffix: [user("hi")] }, ON);
+  assert.equal(d52.action, "send");
+  const d50 = decide(createStore(), { ...base, scope: { ...scope, model: "claude-fable-5" }, effort: "low", parent: [], suffix: [user("hi")] }, ON);
+  assert.equal(d50.reason, "out-of-scope-model");
 });
 
 test("compaction marker not identified: new history is off even with the NEW header", () => {

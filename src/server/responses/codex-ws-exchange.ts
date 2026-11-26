@@ -16,7 +16,7 @@ import { UPGRADE_DEADLINE_MS, CODEX_WS_LIVENESS_PING_INTERVAL_MS, CODEX_WS_RESPO
   codexWsCreateFrameExceedsLimit, codexWsFailureDetail, codexWsPreResponseFailure, markCodexWsStage, codexWsEpxVersion,
   markCodexWsSocketDeath, codexWsWrapperStatus, isCodexWsTerminalEvent, type CodexWsFailureStage, type CodexWsStageRecord,
   type CodexWsTerminalEvent, codexWsPreOutputRefusalStatus, isEmptyCodexWsLifecycleEvent, codexWsFrameResponseIds,
-  markCodexWsPreOutputRefusal, responsesFrameIsReplayUnsafe, type CodexWsPreOutputRefusalHold } from "./codex-ws-wire";
+  recordCodexWsActualSentFrame, markCodexWsPreOutputRefusal, responsesFrameIsReplayUnsafe, type CodexWsPreOutputRefusalHold } from "./codex-ws-wire";
 
 interface ExchangeOptions {
   incrementalPlan?: IncrementalPlan;
@@ -733,6 +733,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
               const rejection = wrappedRejectionResponse({ type: "error", status: cacheMissStatus ?? 400,
                 error: normalized.payload.error, headers: normalized.payload.headers }, metadata?.snapshot() ?? new Headers(), metadataContext);
               if (!rejection) throw new Error("Invalid cache-miss refusal");
+              recordCodexWsActualSentFrame(rejection, frameText);
               markCodexWsPreludeProjection(rejection);
               resolve(rejection);
             }
@@ -755,6 +756,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
             cleanup();
             try { controller.close(); } catch { /* unused stream already closed */ }
             session.dispose();
+            recordCodexWsActualSentFrame(rejection, frameText);
             markCodexWsPreludeProjection(rejection);
             resolve(rejection);
             return;

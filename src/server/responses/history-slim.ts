@@ -1,6 +1,9 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import type { EpxConfig } from "../../types";
 import { isPlainObject } from "../../adapters/openai-responses/internal";
+import { ToolOutputDedupTracker } from "../../adapters/openai-responses/tool-output-dedup";
+import { codexWsIncrementalUploadEnabled } from "../../config/codex-ws-incremental-setting";
 import { CODEX_RESPONSES_HTTP_URL } from "./codex-ws-request";
 
 /**
@@ -23,16 +26,48 @@ const TOOL_OUTPUT_TYPES = new Set(["function_call_output", "custom_tool_call_out
 const TEXT_KEYS = new Set(["text", "output", "content", "refusal"]);
 const STRUCTURAL_KEYS = new Set(["call_id", "id", "name", "type", "status", "role", "file_id"]);
 
-let boundConfig: Pick<EpxConfig, "upstreamHistorySlim"> | null = null;
+export const HISTORY_SLIM_SHORT_TTL_MS = 5 * 60_000;
+export const HISTORY_SLIM_LONG_TTL_MS = 60 * 60_000;
+const DIGEST_BOOK_MAX_ENTRIES = 1024;
+const DIGEST_BOOK_MAX_BYTES = 256 * 1024;
+const DIGEST_ENTRY_BYTES = 256;
+const DIGEST_BOOK_HARD_EXPIRY_MS = 2 * 60 * 60_000;
+
+interface SessionDigestEntry {
+  lastSentAt: number;
+  ttlMs: number;
+  slimmedBoundary: number;
+  slimmedPrefixHash: string;
+  cachedPrefixLen: number;
+  cachedPrefixHash: string;
+}
+
+const sessionDigestBook = new Map<string, SessionDigestEntry>();
+let sessionDigestBookBytes = 0;
+
+let boundConfig: Pick<EpxConfig, "upstreamHistorySlim" | "cacheRetention"> | null = null;
 let slimmedRequests = 0;
 let slimmedBytes = 0;
+
+/** Clear process-local history slimming digest book state (intended for tests). */
+export function resetHistorySlimDigestBookForTest(): void {
+  sessionDigestBook.clear();
+  sessionDigestBookBytes = 0;
+}
+
+/** Current entry/byte metrics for the content-free session digest book (no text stored). */
+export function historySlimDigestBookStats(): { entries: number; bytes: number } {
+  return { entries: sessionDigestBook.size, bytes: sessionDigestBookBytes };
+}
 
 /** Scalar counters only. They do not retain request text or image bytes. */
 export function upstreamHistorySlimCounters(): { requests: number; bytes: number } {
   return { requests: slimmedRequests, bytes: slimmedBytes };
 }
 
-export function bindUpstreamHistorySlimConfig(config: Pick<EpxConfig, "upstreamHistorySlim"> | null): void {
+export function bindUpstreamHistorySlimConfig(
+  config: Pick<EpxConfig, "upstreamHistorySlim" | "cacheRetention"> | null,
+): void {
   boundConfig = config;
 }
 
@@ -156,12 +191,123 @@ function isUserMessage(item: unknown): boolean {
   return item.type === undefined || item.type === "message";
 }
 
+const SESSION_HEADER_KEYS = [
+  "x-codex-turn-state",
+  "session_id",
+  "session-id",
+  "x-session-id",
+  "conversation_id",
+  "thread-id",
+  "x-codex-parent-thread-id",
+] as const;
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function resolveSessionKeyDigest(
+  target: string,
+  parsed: Record<string, unknown>,
+  headers?: HeadersInit,
+): string | undefined {
+  let rawId: string | undefined;
+  if (headers) {
+    const parsedHeaders = headers instanceof Headers ? headers : new Headers(headers);
+    for (const key of SESSION_HEADER_KEYS) {
+      const value = parsedHeaders.get(key)?.trim();
+      if (value) {
+        rawId = `${key}:${value}`;
+        break;
+      }
+    }
+  }
+  if (!rawId && typeof parsed.prompt_cache_key === "string" && parsed.prompt_cache_key.trim()) {
+    rawId = `pck:${parsed.prompt_cache_key.trim()}`;
+  }
+  return rawId ? sha256Hex(`${target}\0${rawId}`) : undefined;
+}
+
+function resolveCacheTtlMs(parsed: Record<string, unknown>, headers?: HeadersInit): number {
+  if (boundConfig?.cacheRetention === "long") return HISTORY_SLIM_LONG_TTL_MS;
+  const retention = parsed.prompt_cache_retention;
+  if (typeof retention === "string") {
+    const normalized = retention.trim().toLowerCase();
+    if (normalized === "1h" || normalized === "long" || normalized === "24h") return HISTORY_SLIM_LONG_TTL_MS;
+  } else if (typeof retention === "number" && Number.isFinite(retention) && retention >= 3600) {
+    return HISTORY_SLIM_LONG_TTL_MS;
+  }
+  if (headers) {
+    const beta = (headers instanceof Headers ? headers : new Headers(headers)).get("anthropic-beta");
+    if (beta && beta.toLowerCase().includes("extended-cache-ttl")) return HISTORY_SLIM_LONG_TTL_MS;
+  }
+  return HISTORY_SLIM_SHORT_TTL_MS;
+}
+
+function computePrefixHashes(
+  items: readonly unknown[],
+  checkpoints: readonly number[],
+): Map<number, string> {
+  const sorted = new Set(checkpoints.filter(n => n >= 0 && n <= items.length));
+  const out = new Map<number, string>();
+  let rolling = sha256Hex("epx-history-v1");
+  if (sorted.has(0)) out.set(0, rolling);
+  for (let i = 0; i < items.length; i += 1) {
+    const itemDigest = sha256Hex(JSON.stringify(items[i]));
+    rolling = sha256Hex(`${rolling}:${itemDigest}`);
+    const len = i + 1;
+    if (sorted.has(len)) out.set(len, rolling);
+  }
+  return out;
+}
+
+function getDigestEntry(keyDigest: string, now: number): SessionDigestEntry | undefined {
+  const entry = sessionDigestBook.get(keyDigest);
+  if (!entry) return undefined;
+  if (now - entry.lastSentAt > DIGEST_BOOK_HARD_EXPIRY_MS) {
+    sessionDigestBook.delete(keyDigest);
+    sessionDigestBookBytes = Math.max(0, sessionDigestBookBytes - DIGEST_ENTRY_BYTES);
+    return undefined;
+  }
+  return entry;
+}
+
+function putDigestEntry(keyDigest: string, entry: SessionDigestEntry, now: number): void {
+  if (sessionDigestBook.has(keyDigest)) {
+    sessionDigestBook.delete(keyDigest);
+    sessionDigestBookBytes = Math.max(0, sessionDigestBookBytes - DIGEST_ENTRY_BYTES);
+  }
+  sessionDigestBook.set(keyDigest, entry);
+  sessionDigestBookBytes += DIGEST_ENTRY_BYTES;
+  if (sessionDigestBook.size > DIGEST_BOOK_MAX_ENTRIES || sessionDigestBookBytes > DIGEST_BOOK_MAX_BYTES) {
+    for (const [k, candidate] of sessionDigestBook) {
+      if (k !== keyDigest && now - candidate.lastSentAt > DIGEST_BOOK_HARD_EXPIRY_MS) {
+        sessionDigestBook.delete(k);
+        sessionDigestBookBytes = Math.max(0, sessionDigestBookBytes - DIGEST_ENTRY_BYTES);
+      }
+      if (sessionDigestBook.size <= DIGEST_BOOK_MAX_ENTRIES && sessionDigestBookBytes <= DIGEST_BOOK_MAX_BYTES) break;
+    }
+    while (sessionDigestBook.size > DIGEST_BOOK_MAX_ENTRIES || sessionDigestBookBytes > DIGEST_BOOK_MAX_BYTES) {
+      const oldest = sessionDigestBook.keys().next().value;
+      if (oldest === undefined || oldest === keyDigest) break;
+      sessionDigestBook.delete(oldest);
+      sessionDigestBookBytes = Math.max(0, sessionDigestBookBytes - DIGEST_ENTRY_BYTES);
+    }
+  }
+}
+
+export interface SlimCodexHistoryOptions {
+  target?: string;
+  headers?: HeadersInit;
+  useDigestBook?: boolean;
+  now?: number;
+}
+
 /**
- * Returns a new JSON body when a prefix item was shortened, or null when the
+ * Returns a new JSON body when a prefix item was shortened/deduplicated, or null when the
  * outbound body should be sent unchanged. Null keeps the caller's bytes intact
  * so an unchanged turn does not get a fresh serialization.
  */
-export function slimCodexHistoryJson(body: string): string | null {
+export function slimCodexHistoryJson(body: string, options?: SlimCodexHistoryOptions): string | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -173,13 +319,80 @@ export function slimCodexHistoryJson(body: string): string | null {
   for (let index = 0; index < parsed.input.length; index += 1) {
     if (isUserMessage(parsed.input[index])) lastUser = index;
   }
-  if (lastUser <= 0) return null;
+  const coldBoundary = Math.max(0, lastUser);
+
+  const now = options?.now ?? Date.now();
+  const useBook = options?.useDigestBook === true && !codexWsIncrementalUploadEnabled();
+  const sessionDigest = useBook
+    ? resolveSessionKeyDigest(options?.target ?? CODEX_RESPONSES_HTTP_URL, parsed, options?.headers)
+    : undefined;
+  const ttlMs = resolveCacheTtlMs(parsed, options?.headers);
+
+  let effectiveBoundary = coldBoundary;
+  if (sessionDigest !== undefined) {
+    const previous = getDigestEntry(sessionDigest, now);
+    if (
+      previous
+      && now >= previous.lastSentAt
+      && now - previous.lastSentAt <= Math.min(previous.ttlMs, ttlMs)
+      && parsed.input.length >= previous.cachedPrefixLen
+      && previous.slimmedBoundary <= coldBoundary
+    ) {
+      const hashes = computePrefixHashes(parsed.input, [
+        previous.slimmedBoundary,
+        previous.cachedPrefixLen,
+        parsed.input.length,
+      ]);
+      const matchesSlimPrefix = hashes.get(previous.slimmedBoundary) === previous.slimmedPrefixHash;
+      const matchesCachedPrefix = hashes.get(previous.cachedPrefixLen) === previous.cachedPrefixHash;
+      if (matchesSlimPrefix && matchesCachedPrefix) {
+        // Warm cache: keep exact prior slim/dedup boundary frozen to preserve 100% cache prefix.
+        effectiveBoundary = previous.slimmedBoundary;
+        putDigestEntry(sessionDigest, {
+          lastSentAt: now,
+          ttlMs,
+          slimmedBoundary: previous.slimmedBoundary,
+          slimmedPrefixHash: previous.slimmedPrefixHash,
+          cachedPrefixLen: parsed.input.length,
+          cachedPrefixHash: hashes.get(parsed.input.length) ?? previous.cachedPrefixHash,
+        }, now);
+      } else {
+        const freshHashes = computePrefixHashes(parsed.input, [coldBoundary, parsed.input.length]);
+        putDigestEntry(sessionDigest, {
+          lastSentAt: now,
+          ttlMs,
+          slimmedBoundary: coldBoundary,
+          slimmedPrefixHash: freshHashes.get(coldBoundary) ?? sha256Hex(""),
+          cachedPrefixLen: parsed.input.length,
+          cachedPrefixHash: freshHashes.get(parsed.input.length) ?? sha256Hex(""),
+        }, now);
+      }
+    } else {
+      const freshHashes = computePrefixHashes(parsed.input, [coldBoundary, parsed.input.length]);
+      putDigestEntry(sessionDigest, {
+        lastSentAt: now,
+        ttlMs,
+        slimmedBoundary: coldBoundary,
+        slimmedPrefixHash: freshHashes.get(coldBoundary) ?? sha256Hex(""),
+        cachedPrefixLen: parsed.input.length,
+        cachedPrefixHash: freshHashes.get(parsed.input.length) ?? sha256Hex(""),
+      }, now);
+    }
+  }
+
+  if (effectiveBoundary <= 0) return null;
   let changed = false;
+  const dedupTracker = new ToolOutputDedupTracker(TOOL_OUTPUT_TYPES);
   const input = parsed.input.map((item, index) => {
-    if (index >= lastUser) return item;
+    if (index >= effectiveBoundary) return item;
     const stripped = stripInlineImages(item);
     let next = stripped.value;
     changed ||= stripped.changed;
+    const deduped = dedupTracker.deduplicateItem(next);
+    if (deduped.changed) {
+      next = deduped.value;
+      changed = true;
+    }
     if (isPlainObject(next) && trimToolOutput(next)) changed = true;
     return next;
   });
@@ -194,11 +407,17 @@ export function slimCodexHistoryJson(body: string): string | null {
 export function slimOutboundCodexHistory(
   input: Parameters<typeof globalThis.fetch>[0],
   init?: RequestInit,
+  options?: { now?: number },
 ): RequestInit | undefined {
   if (!init || currentUpstreamHistorySlim() !== "codex" || typeof init.body !== "string") return init;
   const target = input instanceof Request ? input.url : String(input);
   if (target !== CODEX_RESPONSES_HTTP_URL) return init;
-  const next = slimCodexHistoryJson(init.body);
+  const next = slimCodexHistoryJson(init.body, {
+    target,
+    headers: init.headers ?? (input instanceof Request ? input.headers : undefined),
+    useDigestBook: !codexWsIncrementalUploadEnabled(),
+    ...(options?.now !== undefined ? { now: options.now } : {}),
+  });
   if (next === null) return init;
   return { ...init, body: next };
 }

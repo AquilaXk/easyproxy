@@ -93,7 +93,7 @@ import { configuredAnthropicInstance } from "../../providers/anthropic-instance"
 import { isTranslatorBudgetExceededError } from "../../lib/translator-budget";
 import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "../outbound-payload-hygiene";
 import { bindTurnTerminationScope, rememberDeliveredFinalAnswer } from "../../responses/turn-termination";
-import { beginRequestAttempt, finishRequestAttempt, markLocalRequestLogRefusal, noteAttemptSend, noteCodexSelectionAffinity, observeCacheDiagnosticInbound, rebindCacheDiagnosticBody, requestLogSpeedLabel, readConfiguredCodexServiceTier, usageFromResponsesPayload } from "../request-log";
+import { beginRequestAttempt, cacheDiagnosticsObserving, finishRequestAttempt, markLocalRequestLogRefusal, noteAttemptSend, noteCodexSelectionAffinity, observeCacheDiagnosticContextTokens, observeCacheDiagnosticInbound, rebindCacheDiagnosticBody, requestLogSpeedLabel, readConfiguredCodexServiceTier, usageFromResponsesPayload } from "../request-log";
 import type { PersistedUsageAttempt } from "../../usage/log";
 import type { RouteResult } from "../../router";
 import {
@@ -157,7 +157,7 @@ import {
   CODEX_RESERVE_HELPER_UNSUPPORTED_MESSAGE,
   CODEX_RESERVE_OPT_IN_REQUIRED_MESSAGE,
 } from "../../codex/loopback-target";
-import { checkComboTargetInputAdmission, checkInputAdmission } from "./input-admission";
+import { checkComboTargetInputAdmission, checkInputAdmission, estimateInputTokenBreakdown } from "./input-admission";
 import {
   admissionMayUseMeteredComboTargets,
   admissionModelDeniedResponse, projectAdmissionModelDeniedLog,
@@ -1696,6 +1696,12 @@ export async function prepareResponsesRequest(
   // Compaction turns are exempt: Codex sends compaction_trigger BECAUSE context is full, so
   // refusing the turn that shrinks the context would deadlock the client against the very
   // limit this gate reports — it would be told to compact and then denied the compaction.
+  if (cacheDiagnosticsObserving() && logCtx.cacheDiagnosticDraft) {
+    observeCacheDiagnosticContextTokens(
+      logCtx,
+      estimateInputTokenBreakdown(parsed, parsed.modelId, route.provider),
+    );
+  }
   if (parsed._compactionRequest !== true) {
     // A combo child is the one caller that can afford a strict gate: skipping a target it
     // cannot fit is safe before any upstream bytes are sent, and the ladder continues. A

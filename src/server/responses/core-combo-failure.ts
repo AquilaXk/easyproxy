@@ -41,6 +41,7 @@ import { usageFromResponsesPayload } from "../request-log";
 import type { ResponsesTerminalStatus } from "../../bridge";
 import { isXaiLegacyPrivacyError, isXaiPrivacyModeRefusal, xaiPrivacyModeRefusal, XAI_LEGACY_PRIVACY_MESSAGE } from "../../providers/xai-privacy-mode";
 import { stampMetaMusePlanRefusal } from "../../providers/meta-muse-plan-refusal";
+import { isShortOpenRouterInFlightBudget402 } from "../../lib/upstream-condition";
 import type { RequestFailureCause } from "../../usage/telemetry-contract";
 
 export function sanitizedRetryAfter(value: string | null, now: number): string | undefined {
@@ -208,10 +209,21 @@ export async function consumeComboFailure(
   if (verifiedPlanRefusal) markVerifiedModelNotInPlanResponse(failureResponse);
   carryAnthropicRefusalCredential(response, failureResponse);
   carryCodexAccountCooldownResponse(response, failureResponse);
+  const shortInFlight402 = isShortOpenRouterInFlightBudget402({
+    status: response.status,
+    code: upstreamCode ?? upstreamRootCode,
+    type: upstreamType,
+    retryAfter: cooldownRetryAfter ?? effectiveRetryAfter,
+    now,
+  });
+  if (shortInFlight402 && logCtx) {
+    logCtx.causeHint = "rate-limit";
+  }
   return {
     response: failureResponse,
     ...(nonReplayable ? { nonReplayable: true } : {}),
     ...(verifiedPlanRefusal ? { verifiedPlanRefusal: true } : {}),
+    ...(shortInFlight402 ? { transientRateLimit402: true as const } : {}),
     classificationText,
     ...(codexModelRefusal !== undefined ? { codexModelRefusal } : {}),
     ...(malformedResponseFormat !== undefined ? { malformedResponseFormat } : {}),

@@ -1545,6 +1545,8 @@ export interface EpxComboTarget {
   metered?: boolean;
 }
 
+export type EpxComboJevSelectionPolicy = "argmax" | "min-risk" | "observe";
+
 export interface EpxComboConfig {
   targets: EpxComboTarget[];
   /** Operator consent for metered targets on a loopback-only proxy. Default false; public listeners still require key consent. */
@@ -1591,6 +1593,8 @@ export interface EpxComboConfig {
    */
   reasoningEffortMode?: EpxComboReasoningEffortMode;
   jevEffortMode?: import("./combo-jev-effort-mode").EpxComboJevEffortMode; // wire-effort owner on a `jev` combo; omitted = "decide"
+  /** JEV choice selection policy: "argmax" (default), "min-risk" (2-stage asymmetric expected loss), or "observe" (keep argmax routing and log comparison stats). */
+  jevSelectionPolicy?: EpxComboJevSelectionPolicy;
   capabilityPolicy?: import("./combo-capability-policy").EpxComboCapabilityPolicy; // omitted = "intersection"
   onUnservable?: import("./combo-capability-policy").EpxComboOnUnservable; // `union` only; omitted = "degrade"
   /**

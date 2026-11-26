@@ -94,17 +94,28 @@ function firstWireText(message: Rec): string | undefined {
 
 /**
  * The Anthropic `messages` index where this turn's effort message goes: the wire message that
- * starts with this turn's user text. Only the trailing user-role run is searched, since this turn's
+ * starts with this turn's user text, or the trailing user message carrying a `tool_result` batch
+ * when the new turn is tool-only. Only the trailing user-role run is searched, since this turn's
  * input is user, tool-result and developer items. A user message merged behind other content, or
  * one that starts with an image, has no such index and the change point is not placed.
  */
 export function userMessageWireIndex(messages: readonly unknown[], suffix: readonly unknown[]): number | undefined {
   const text = firstInputText(suffix.find(item => kindOf(item) === "user"));
-  if (text === undefined) return undefined;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (!isRec(message) || message.role !== "user") return undefined;
-    if (firstWireText(message) === text) return index;
+  if (text !== undefined) {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (!isRec(message) || message.role !== "user") return undefined;
+      if (firstWireText(message) === text) return index;
+    }
+    return undefined;
+  }
+  if (suffix.length > 0 && suffix.every(item => kindOf(item) === "tool_result")) {
+    const lastIdx = messages.length - 1;
+    const last = lastIdx >= 0 ? messages[lastIdx] : undefined;
+    if (isRec(last) && last.role === "user" && Array.isArray(last.content)
+      && last.content.some(block => isRec(block) && block.type === "tool_result")) {
+      return lastIdx;
+    }
   }
   return undefined;
 }
@@ -216,6 +227,7 @@ export function applyAnthropicPerMessageEffort(build: PerMessageEffortBuild): vo
   // Counted before the switch: a failover to a provider without the option is still a second build.
   if (existing && existing.builds > 0) {
     existing.builds += 1;
+    existing.applied = false;
     const token = existing.token;
     existing.token = undefined;
     if (token) abandon(store, token, { sent: true });
@@ -244,6 +256,7 @@ export function applyAnthropicPerMessageEffort(build: PerMessageEffortBuild): vo
     abandon(store, decision.pendingToken, { sent: false });
     return;
   }
+  turn.applied = true;
   turn.token = decision.pendingToken;
 }
 
@@ -256,6 +269,7 @@ export function settleAnthropicPerMessageEffort(parsed: EpxParsedRequest, respon
   const token = turn?.token;
   if (!turn || !token) return;
   turn.token = undefined;
+  turn.applied = undefined;
   if (response.status !== "completed" || turn.builds !== 1 || adapterName !== "anthropic") {
     abandon(store, token, { sent: true });
     return;
@@ -274,14 +288,21 @@ export function settleAnthropicPerMessageEffort(parsed: EpxParsedRequest, respon
 }
 
 /**
- * An upstream error for a turn that holds a pending slot: the slot is deleted, and the documented
- * model-unsupported 400 marks the model and destination unsupported. Nothing is resent here.
+ * An upstream error for a turn that holds a pending slot: the slot is deleted, and a documented
+ * model-unsupported or mid-conversation effort 400 marks the model and destination unsupported for
+ * 1 hour and signals the dispatch loop to strip controls and resend once.
  */
-export async function rejectAnthropicPerMessageEffort(parsed: EpxParsedRequest, response: Response, signal?: AbortSignal): Promise<void> {
+export async function rejectAnthropicPerMessageEffort(
+  parsed: EpxParsedRequest,
+  response: Response,
+  signal?: AbortSignal,
+): Promise<{ unsupported: boolean }> {
   const turn = parsed._perMessageEffort;
   const token = turn?.token;
-  if (!turn || !token || response.ok) return;
+  if (!turn || !token || response.ok) return { unsupported: false };
+  const wasApplied = turn.applied === true;
   turn.token = undefined;
+  turn.applied = undefined;
   let errorText = "";
   if (response.status === 400) {
     try {
@@ -291,6 +312,9 @@ export async function rejectAnthropicPerMessageEffort(parsed: EpxParsedRequest, 
       // An unreadable body is an unclassified 400: the slot is still deleted, no capability record.
     }
   }
-  rejectUpstream(store, token, { status: response.status, errorText });
+  const outcome = rejectUpstream(store, token, { status: response.status, errorText });
+  return {
+    unsupported: response.status === 400 && wasApplied && outcome.action === "off" && outcome.reason === "capability-unsupported",
+  };
 }
 

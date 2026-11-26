@@ -17,6 +17,7 @@
  */
 import { clearableDeadline } from "./abort";
 import { isDefiniteContextOverflow } from "./context-overflow-verdict";
+import { isFlexUnavailableErrorText } from "./upstream-condition";
 import { errorDestinationLabel, errorDestinationText, type ErrorDestinationLabel } from "./error-destination";
 export { errorDestinationLabel, providerErrorDestinationLabel, errorDestinationText } from "./error-destination";
 import { redactSecretString } from "./redact";
@@ -563,6 +564,8 @@ export interface ResetRetryOptions {
    * `createOfflineResendWait` in offline-resend.ts, which owns the single-use and pre-connect rules.
    */
   offlineWait?: (error: unknown, signal?: AbortSignal) => Promise<boolean>;
+  /** True when the outbound request actually sent `service_tier: "flex"` so 503 flex_unavailable surfaces immediately for standard-tier fallback. */
+  flexTierSent?: boolean;
 }
 
 export interface TransientRetryOptions extends ResetRetryOptions {
@@ -875,6 +878,17 @@ async function isContextOverflowResponse(res: Response, signal?: AbortSignal): P
   }
 }
 
+async function isFlexUnavailableResponse(res: Response, signal?: AbortSignal): Promise<boolean> {
+  if (res.status !== 503) return false;
+  if ((res.headers.get("content-type") ?? "").includes("text/event-stream")) return false;
+  try {
+    const text = await peekBodyText(res, CONTEXT_OVERFLOW_PEEK_BYTES, CONTEXT_OVERFLOW_PEEK_MS, signal);
+    return text.length > 0 && isFlexUnavailableErrorText(text);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * fetchWithResetRetry plus the caller-selected transient-5xx policy, PRE-STREAM only.
  * A received HTTP error follows that policy; an ambiguous reset's non-replayable
@@ -963,6 +977,7 @@ export async function fetchWithTransientRetry(
     // A 5xx that says the input does not fit is deterministic: resending the same body is
     // refused the same way, so it goes back for the caller to classify (#8127).
     if (await isContextOverflowResponse(res, opts.abortSignal)) return res;
+    if (opts.flexTierSent === true && await isFlexUnavailableResponse(res, opts.abortSignal)) return res;
     // Checked before cancelResponseBodyBestEffort so an already-aborted caller never receives
     // a response whose body we just cancelled.
     if (opts.abortSignal?.aborted) return res;

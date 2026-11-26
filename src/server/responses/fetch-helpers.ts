@@ -24,7 +24,7 @@ import { withUpstreamHttpVersion } from "../../lib/upstream-http-version";
 import { providerTlsFetch } from "../../lib/provider-tls-profile";
 import { inheritPassiveKeyProof, markPassiveKeyTransparent } from "../../lib/passive-key-fetch-proof";
 import type { CodexWsQuotaObserver } from "./codex-ws-metadata";
-import { configuredOutboundFetch } from "../../lib/proxy-env";
+import { configuredOutboundFetch, resolveProxyRoute, type ProxyEnvMap } from "../../lib/proxy-env";
 import { isLoopbackUrl, rewriteUpstream } from "../../plugins/upstream-hooks";
 import {
   describeProviderEgressForLog,
@@ -163,6 +163,239 @@ export function wantsFreshConnection(
     /* unparseable target URL keeps default connection behavior */
   }
   return false;
+}
+
+const MAX_PRECONNECT_ORIGINS = 256;
+const IDLE_PRECONNECT_THRESHOLD_MS = 30_000;
+const PRECONNECT_COOLDOWN_MS = 30_000;
+const NON_PUBLIC_HOSTNAME_SUFFIXES = [
+  ".local", ".localdomain", ".internal", ".localhost", ".home.arpa",
+  ".invalid", ".lan", ".home", ".corp", ".arpa",
+] as const;
+
+interface PreconnectOriginState {
+  lastSeenAt: number;
+  lastPreconnectAt: number;
+}
+
+const preconnectOriginStates = new Map<string, PreconnectOriginState>();
+
+export type PreconnectGateResult =
+  | { ok: true; origin: string }
+  | {
+    ok: false;
+    reason:
+      | "invalid-url"
+      | "non-https"
+      | "credentials-in-url"
+      | "non-public-origin"
+      | "provider-proxy"
+      | "env-proxy"
+      | "tls-profile"
+      | "fresh-connection-host";
+  };
+
+const BLOCKED_METADATA_HOSTS = new Set([
+  "metadata.google.internal",
+  "metadata",
+  "metadata.goog",
+  "instance-data",
+]);
+
+function isPublicIpv4Tuple(a: number, b: number, c: number): boolean {
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT
+  if (a === 169 && b === 254) return false; // link-local / IMDS
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && ((b === 0 && (c === 0 || c === 2)) || b === 168)) return false;
+  if (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) return false;
+  if (a === 203 && b === 0 && c === 113) return false;
+  return true;
+}
+
+function isPublicIpv4Host(host: string): boolean | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return null;
+  const octets = m.slice(1, 5).map(n => Number.parseInt(n, 10));
+  if (octets.some(n => !Number.isFinite(n) || n < 0 || n > 255)) return false;
+  return isPublicIpv4Tuple(octets[0]!, octets[1]!, octets[2]!);
+}
+
+function parseIpv6Hextets(host: string): number[] | null {
+  const halves = host.split("::");
+  if (halves.length > 2) return null;
+  const parseGroup = (part: string): number[] | null => {
+    if (!part) return [];
+    const tokens = part.split(":");
+    const out: number[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i]!;
+      if (tok.includes(".") && i === tokens.length - 1) {
+        const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(tok);
+        if (!m) return null;
+        const octets = m.slice(1, 5).map(n => Number.parseInt(n, 10));
+        if (octets.some(n => n < 0 || n > 255)) return null;
+        out.push((octets[0]! << 8) | octets[1]!, (octets[2]! << 8) | octets[3]!);
+      } else {
+        if (!/^[0-9a-f]{1,4}$/i.test(tok)) return null;
+        out.push(Number.parseInt(tok, 16));
+      }
+    }
+    return out;
+  };
+  const left = parseGroup(halves[0]!);
+  if (!left) return null;
+  if (halves.length === 1) return left.length === 8 ? left : null;
+  const right = parseGroup(halves[1]!);
+  if (!right) return null;
+  const missing = 8 - left.length - right.length;
+  if (missing < 1) return null;
+  return [...left, ...new Array<number>(missing).fill(0), ...right];
+}
+
+function isPublicIpv6Host(host: string): boolean {
+  const h = parseIpv6Hextets(host);
+  if (!h) return false;
+  // IPv4-mapped ::ffff:a.b.c.d
+  if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0xffff) {
+    return isPublicIpv4Tuple((h[6]! >> 8) & 0xff, h[6]! & 0xff, (h[7]! >> 8) & 0xff);
+  }
+  // NAT64 64:ff9b::/96
+  if (h[0] === 0x0064 && h[1] === 0xff9b && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0) {
+    return isPublicIpv4Tuple((h[6]! >> 8) & 0xff, h[6]! & 0xff, (h[7]! >> 8) & 0xff);
+  }
+  const first = h[0]!;
+  if (first === 0x2001 && h[1] === 0x0db8) return false; // documentation 2001:db8::/32
+  return first >= 0x2000 && first <= 0x3fff; // only global unicast 2000::/3
+}
+
+function isVerifiedPublicHostname(hostname: string): boolean {
+  let host = hostname.trim().toLowerCase().replace(/\.+$/, "");
+  if (!host) return false;
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (host.includes("%")) return false;
+  if (BLOCKED_METADATA_HOSTS.has(host)) return false;
+  if (host === "localhost" || host.endsWith(".localhost")) return false;
+  const ipv4 = isPublicIpv4Host(host);
+  if (ipv4 !== null) return ipv4;
+  if (host.includes(":")) return isPublicIpv6Host(host);
+  if (!host.includes(".")) return false;
+  for (const suffix of NON_PUBLIC_HOSTNAME_SUFFIXES) {
+    if (host.endsWith(suffix)) return false;
+  }
+  return true;
+}
+
+/**
+ * 4-gate preconnect guard: requires (1) no provider or env proxy on route, (2) no custom
+ * `tlsProfile` fingerprint, (3) host absent from `EPX_FRESH_CONNECTION_HOSTS`, and
+ * (4) verified public HTTPS origin (fail-closed on http:, userinfo, loopback, private, metadata).
+ */
+export function evaluateSafePreconnectOrigin(
+  input: Parameters<typeof globalThis.fetch>[0] | undefined,
+  options: {
+    provider: EpxProviderConfig;
+    providerName?: string;
+    hasTlsProfileTransport?: boolean;
+    hostsEnv?: string;
+    proxyEnv?: ProxyEnvMap;
+  },
+): PreconnectGateResult {
+  if (options.hasTlsProfileTransport === true || options.provider.tlsProfile !== undefined) {
+    return { ok: false, reason: "tls-profile" };
+  }
+  let parsed: URL;
+  try {
+    const rawUrl = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input?.url;
+    if (!rawUrl) return { ok: false, reason: "invalid-url" };
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, reason: "invalid-url" };
+  }
+  if (parsed.protocol !== "https:") return { ok: false, reason: "non-https" };
+  if (parsed.username !== "" || parsed.password !== "") {
+    return { ok: false, reason: "credentials-in-url" };
+  }
+  if (!isVerifiedPublicHostname(parsed.hostname)) {
+    return { ok: false, reason: "non-public-origin" };
+  }
+  const origin = parsed.origin;
+  if (wantsFreshConnection(origin, options.hostsEnv)) {
+    return { ok: false, reason: "fresh-connection-host" };
+  }
+  try {
+    const egress = resolveProviderEgress({
+      providerName: options.providerName ?? "<unnamed provider>",
+      provider: options.provider,
+      url: origin,
+    });
+    if (egress.kind === "proxy") return { ok: false, reason: "provider-proxy" };
+    if (egress.kind === "inherit" && resolveProxyRoute(new URL(origin), options.proxyEnv).kind !== "direct") {
+      return { ok: false, reason: "env-proxy" };
+    }
+  } catch {
+    return { ok: false, reason: "provider-proxy" };
+  }
+  return { ok: true, origin };
+}
+
+function touchPreconnectOriginState(origin: string): PreconnectOriginState {
+  const existing = preconnectOriginStates.get(origin);
+  if (existing) {
+    preconnectOriginStates.delete(origin);
+    preconnectOriginStates.set(origin, existing);
+    return existing;
+  }
+  const created: PreconnectOriginState = { lastSeenAt: 0, lastPreconnectAt: 0 };
+  preconnectOriginStates.set(origin, created);
+  while (preconnectOriginStates.size > MAX_PRECONNECT_ORIGINS) {
+    preconnectOriginStates.delete(preconnectOriginStates.keys().next().value!);
+  }
+  return created;
+}
+
+export function maybePreconnectIdleOrigin(
+  input: Parameters<typeof globalThis.fetch>[0] | undefined,
+  preconnectFn: typeof globalThis.fetch.preconnect | undefined,
+  options: {
+    provider: EpxProviderConfig;
+    providerName?: string;
+    hasTlsProfileTransport?: boolean;
+    hostsEnv?: string;
+    proxyEnv?: ProxyEnvMap;
+    now?: number;
+    requireIdleWindow?: boolean;
+    preconnectInit?: Parameters<typeof globalThis.fetch.preconnect>[1];
+  },
+): boolean {
+  if (typeof preconnectFn !== "function") return false;
+  const gate = evaluateSafePreconnectOrigin(input, options);
+  if (!gate.ok) return false;
+  const now = options.now ?? Date.now();
+  const state = touchPreconnectOriginState(gate.origin);
+  const wasSeenBefore = state.lastSeenAt > 0;
+  const idleElapsed = wasSeenBefore ? now - state.lastSeenAt : 0;
+  const cooldownElapsed = state.lastPreconnectAt > 0 ? now - state.lastPreconnectAt : PRECONNECT_COOLDOWN_MS;
+  state.lastSeenAt = now;
+  if (options.requireIdleWindow !== false && (!wasSeenBefore || idleElapsed < IDLE_PRECONNECT_THRESHOLD_MS)) {
+    return false;
+  }
+  if (cooldownElapsed < PRECONNECT_COOLDOWN_MS) return false;
+  state.lastPreconnectAt = now;
+  try {
+    preconnectFn(gate.origin, options.preconnectInit);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function resetPreconnectOriginStatesForTests(): void {
+  preconnectOriginStates.clear();
 }
 
 
@@ -373,8 +606,14 @@ export function providerFetch(
   const base = customExecutor ?? configuredFetch;
   const transport = options.providerName ? providerTlsFetch(options.providerName, provider, base) : base;
   const preconnect = (...args: Parameters<typeof globalThis.fetch.preconnect>): void => {
-    // A TLS profile owns the handshake; a Bun preconnect would open a differently fingerprinted one.
-    if (transport === base) base.preconnect?.(...args);
+    // 4-gate guard blocks proxy/tlsProfile/fresh-host/non-public preconnects.
+    maybePreconnectIdleOrigin(args[0], base.preconnect, {
+      provider,
+      providerName,
+      hasTlsProfileTransport: transport !== base,
+      requireIdleWindow: false,
+      preconnectInit: args[1],
+    });
   };
   // Rebuilt dispatches must use the same physical-send boundary as ordinary HTTP sends.
   // Return the original 3xx so the response owner retains its retry/health/relay contract.
@@ -407,6 +646,12 @@ export function providerFetch(
       // refusing on this destination would reject a request whose real route is fine.
       if (override) egressFor(input);
       else providerEgressSendInit(egressBinding, transport, input);
+      maybePreconnectIdleOrigin(input, base.preconnect, {
+        provider,
+        providerName,
+        hasTlsProfileTransport: transport !== base,
+        requireIdleWindow: true,
+      });
       // The hook inspects the outgoing headers and refuses the send by throwing; it is not a
       // mutator, and the copy it receives is deliberately not threaded onward. `Connection`
       // is decided inside `dispatch`, which runs after this, so the fresh-connection policy

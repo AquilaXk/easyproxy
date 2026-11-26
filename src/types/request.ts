@@ -239,6 +239,8 @@ export interface EpxParsedRequest {
   _codexNewHistory?: boolean;
   /** This turn's per-message effort bookkeeping (src/adapters/anthropic/per-message-effort.ts). */
   _perMessageEffort?: PerMessageEffortTurn;
+  /** Strip OpenAI-private `configuration_update` input items on rebuild after a 400 refusal. */
+  _stripConfigurationUpdateItems?: boolean;
   /**
    * Core-owned registration slot for the optional advisor subsystem (src/advisor). Set per request
    * by the sidecar planner, never at module load: the core Responses path only sees this
@@ -612,6 +614,8 @@ export interface PerMessageEffortTurn {
   token?: string;
   generation: string;
   builds: number;
+  /** True when the current build mutated the outbound request with per-message effort beta/controls. */
+  applied?: boolean;
 }
 
 /**

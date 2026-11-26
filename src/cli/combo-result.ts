@@ -8,6 +8,7 @@ const ENUMS: Readonly<Record<string, readonly (string | null)[]>> = {
   strategy: ["failover", "round-robin", "random", "least-used", "reset-window", "jev", "ewma-latency"],
   defaultEffort: [null, "low", "medium", "high", "xhigh", "max", "ultra"],
   defaultEffortMode: ["fallback", "force"], reasoningEffortMode: ["strict", "adaptive"], jevEffortMode: ["decide", "client"],
+  jevSelectionPolicy: ["argmax", "min-risk", "observe"],
   imageInput: ["auto", "disabled"], cooldownWaitPolicy: ["before-last-resort"],
   capabilityPolicy: ["intersection", "union"], onUnservable: ["degrade", "reject"],
 };

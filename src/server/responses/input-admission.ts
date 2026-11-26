@@ -24,6 +24,9 @@ import { estimateTokens } from "../../lib/token-estimate";
 import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import { modelRecordValue } from "../../reasoning-effort";
 import type { EpxContentPart, EpxParsedRequest, EpxProviderConfig } from "../../types";
+import type { ContextTokenBreakdown } from "../../usage/cache-diagnostic";
+
+export type { ContextTokenBreakdown };
 
 /**
  * Multiplier applied to the ceiling before refusing.
@@ -113,10 +116,94 @@ function base64PayloadTokens(base64: string, bytesPerToken = IMAGE_BYTES_PER_TOK
   return Math.max(1, Math.ceil(decoded / bytesPerToken));
 }
 
-function contentTokens(content: string | readonly EpxContentPart[], modelId: string): number {
-  if (typeof content === "string") return estimateTokens(content, modelId);
+function isMediaPart(part: EpxContentPart): boolean {
+  return part.type === "image" || part.type === "video" || part.type === "audio" || part.type === "document";
+}
+
+function accumulateContentTokens(
+  content: string | readonly EpxContentPart[],
+  modelId: string,
+  textCategory: "system" | "userText" | "toolResults",
+  breakdown: ContextTokenBreakdown | null,
+): number {
+  if (typeof content === "string") {
+    const tokens = estimateTokens(content, modelId);
+    if (breakdown) breakdown[textCategory] += tokens;
+    return tokens;
+  }
   let total = 0;
-  for (const part of content) total += contentPartTokens(part, modelId);
+  for (const part of content) {
+    const tokens = contentPartTokens(part, modelId);
+    total += tokens;
+    if (breakdown) {
+      breakdown[isMediaPart(part) ? "media" : textCategory] += tokens;
+    }
+  }
+  return total;
+}
+
+function accumulateInputTokens(
+  parsed: EpxParsedRequest,
+  modelId: string,
+  provider: EpxProviderConfig | undefined,
+  breakdown: ContextTokenBreakdown | null,
+): number {
+  const { context } = parsed;
+  const countThinking = provider?.adapter !== "openai-chat"
+    || openAIChatSerializesThinking(provider, parsed.modelId).text;
+  let total = 0;
+
+  for (const prompt of context.systemPrompt ?? []) {
+    const tokens = estimateTokens(prompt, modelId);
+    total += tokens;
+    if (breakdown) breakdown.system += tokens;
+  }
+
+  for (const message of context.messages) {
+    if (message.role === "assistant") {
+      for (const part of message.content) {
+        if (part.type === "text") {
+          const tokens = estimateTokens(part.text, modelId);
+          total += tokens;
+          if (breakdown) breakdown.assistantText += tokens;
+        } else if (part.type === "thinking") {
+          if (countThinking) {
+            const tokens = estimateTokens(part.thinking, modelId);
+            total += tokens;
+            if (breakdown) breakdown.reasoning += tokens;
+          }
+        } else {
+          const tokens = estimateTokens(part.name, modelId) + estimateTokens(JSON.stringify(part.arguments), modelId);
+          total += tokens;
+          if (breakdown) breakdown.assistantText += tokens;
+        }
+      }
+      // Opaque provider blob replayed verbatim upstream, so it costs real input tokens.
+      if (message.kiroRedactedReasoning) {
+        const tokens = estimateTokens(message.kiroRedactedReasoning, modelId);
+        total += tokens;
+        if (breakdown) breakdown.reasoning += tokens;
+      }
+      continue;
+    }
+    const textCategory = message.role === "developer"
+      ? "system"
+      : message.role === "toolResult"
+        ? "toolResults"
+        : "userText";
+    total += accumulateContentTokens(message.content, modelId, textCategory, breakdown);
+  }
+
+  // Tool schemas ride every turn: name, description, and the JSON parameter schema all
+  // reach the upstream, and a large MCP catalog can dominate a short conversation.
+  for (const tool of context.tools ?? []) {
+    const tokens = estimateTokens(tool.name, modelId)
+      + estimateTokens(tool.description, modelId)
+      + estimateTokens(JSON.stringify(tool.parameters), modelId);
+    total += tokens;
+    if (breakdown) breakdown.toolSchemas += tokens;
+  }
+
   return total;
 }
 
@@ -130,38 +217,26 @@ function contentTokens(content: string | readonly EpxContentPart[], modelId: str
  * gate. The routed provider determines whether replayed thinking reaches the wire.
  */
 export function estimateInputTokens(parsed: EpxParsedRequest, modelId: string, provider?: EpxProviderConfig): number {
-  const { context } = parsed;
-  const countThinking = provider?.adapter !== "openai-chat"
-    || openAIChatSerializesThinking(provider, parsed.modelId).text;
-  let total = 0;
+  return accumulateInputTokens(parsed, modelId, provider, null);
+}
 
-  for (const prompt of context.systemPrompt ?? []) total += estimateTokens(prompt, modelId);
-
-  for (const message of context.messages) {
-    if (message.role === "assistant") {
-      for (const part of message.content) {
-        if (part.type === "text") total += estimateTokens(part.text, modelId);
-        else if (part.type === "thinking") {
-          if (countThinking) total += estimateTokens(part.thinking, modelId);
-        }
-        else total += estimateTokens(part.name, modelId) + estimateTokens(JSON.stringify(part.arguments), modelId);
-      }
-      // Opaque provider blob replayed verbatim upstream, so it costs real input tokens.
-      if (message.kiroRedactedReasoning) total += estimateTokens(message.kiroRedactedReasoning, modelId);
-      continue;
-    }
-    total += contentTokens(message.content, modelId);
-  }
-
-  // Tool schemas ride every turn: name, description, and the JSON parameter schema all
-  // reach the upstream, and a large MCP catalog can dominate a short conversation.
-  for (const tool of context.tools ?? []) {
-    total += estimateTokens(tool.name, modelId)
-      + estimateTokens(tool.description, modelId)
-      + estimateTokens(JSON.stringify(tool.parameters), modelId);
-  }
-
-  return total;
+/** Compute content-free per-category input token scalars for cache diagnostics. */
+export function estimateInputTokenBreakdown(
+  parsed: EpxParsedRequest,
+  modelId: string,
+  provider?: EpxProviderConfig,
+): ContextTokenBreakdown {
+  const breakdown: ContextTokenBreakdown = {
+    system: 0,
+    toolSchemas: 0,
+    userText: 0,
+    assistantText: 0,
+    toolResults: 0,
+    media: 0,
+    reasoning: 0,
+  };
+  accumulateInputTokens(parsed, modelId, provider, breakdown);
+  return breakdown;
 }
 
 /**

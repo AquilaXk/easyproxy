@@ -111,3 +111,10 @@ export {
   type JevModelInvokeResult,
 } from "./jev-model-backend";
 export { resolveJevComboDecision, type ResolveJevComboDecisionOptions } from "./jev-dispatch";
+export {
+  JEV_SELECTION_POLICIES,
+  selectMinRiskJevChoice,
+  type JevRiskCandidate,
+  type JevSelectionChoice,
+  type JevSelectionPolicyDelta,
+} from "./jev-risk-policy";

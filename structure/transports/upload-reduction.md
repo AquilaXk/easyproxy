@@ -104,13 +104,22 @@ continues to fund those retries before dispatch.
 
 `src/server/responses/history-slim.ts` applies optional `upstreamHistorySlim: "codex"`
 only to canonical native Codex outbound HTTP string bodies, before compression, and to
-ordinary upstream WS creates when incremental upload is enabled. It leaves local replay
-state unchanged. The native `/responses/compact` endpoint receives the full context.
+ordinary upstream WS creates when incremental upload is enabled. On stateless HTTP routes
+(`!codexWsIncrementalUploadEnabled()`), a bounded content-free session digest book
+(up to 1,024 entries / 256 KiB, 2h max idle, storing hashed session keys and prefix digests only)
+tracks the `5m` / `1h` prompt-cache TTL: while the cache stays warm, the prior slimming and
+tool-output deduplication boundary remains frozen so the cached prefix stays 100% intact; once
+a cold transition occurs, slimming and identical non-error `function_call_output` SHA-256
+deduplication (`>= 2 KiB` items via `src/adapters/openai-responses/tool-output-dedup.ts`, replaced
+with earlier `call_id` reference stubs) advance up to the latest user message. `buildRoutedCompactionBody`
+in `src/adapters/openai-responses/passthrough.ts` applies the same SHA-256 tool-output deduplication
+after `stripInputImagesDeep`. Local replay state and the native `/responses/compact` endpoint are unchanged.
 Before the latest user message, oversized inline images become text
 placeholders and oversized tool text keeps bounded head/tail excerpts. Current-turn
 items, remote URLs and file references remain intact. This is a lossy context policy,
 not an exactly-once image cache; its default is off. `tests/responses/upstream-history-slim.test.ts`
-exercises current-turn retention, UTF-8 excerpts and destination/encoding gating.
+and `tests/responses/responses-phase2b-history-slim.test.ts` exercise warm-boundary preservation,
+cold transitions, tool-output dedup, current-turn retention and destination gating.
 Socket continuation follows the [incremental contract](#incremental-websocket-continuation).
 
 ## Configuration

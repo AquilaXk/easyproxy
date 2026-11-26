@@ -14,15 +14,19 @@ leaves the cached prefix intact.
 `src/server/management/provider-overwrite-carry.ts`) turns it on. Unset or `false` leaves every
 request byte-for-byte unchanged and touches no state. With it on, only a streamed Codex Responses
 turn on the `anthropic` adapter, API-key authentication, destination `api.anthropic.com`, and a
-model matching Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5 or Mythos 5.1 is ever considered. OAuth
+model matching Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5, Fable 5.1, Fable 5.2 or Mythos 5.1 is ever considered. OAuth
 accounts, gateways, Claude Messages and Chat Completions ingress, `previous_response_id`, the Advisor
 guard, routed compaction and memory-model phases stay off. A turn that a hosted web-search, image or
 video sidecar loop owns is served on its first model call: `src/server/responses/sidecar-execution.ts`
 shares one turn record across the loop's spread copies before the first build and settles it from
 the loop's completion, and an iteration after the first abandons the decision, so a turn that runs a
 hosted tool ends the history.
-Fable models stay off until their wire ids are checked against the Mythos rule, and any effort
+Unlisted Fable models stay off, and any effort
 change on Mythos is off because its thinking budget follows effort.
+
+`src/adapters/anthropic.ts` (`messagesToAnthropicFormat`) always emits block arrays (`[{ type: "text", text }]`)
+for string `user`/`developer` content so moving `applyPromptCaching` breakpoints never flips message `content`
+shapes across cached prefixes.
 
 ## Decision owner
 
@@ -59,22 +63,26 @@ either direction; no cap is raised to make a turn eligible.
 `src/adapters/anthropic/per-message-effort.ts` maps one build onto the state machine and is called
 once from `src/adapters/anthropic.ts` after prompt caching is applied. On a send decision it sets
 `output_config.effort` to the first turn's effort, inserts every recorded change point at its
-stored `messages` index (highest first, so earlier indices do not move); the indices must name
-user messages, rise strictly, and stay before this turn's user message, except this turn's own change point, which sits at it; then it merges the beta into
-`anthropic-beta`. A change point's index is the wire message that starts with that turn's user
-text, found in the trailing user-role run of the serialized body; a user message merged behind
-other content or opening with an image has none, and the turn goes off. The parsed request carries
-the turn in `_perMessageEffort` (`src/types/request.ts`); spread copies share it, so any second
-build of the same turn (retry, recovery rebuild, failover) abandons the decision and sends today's
-body.
+stored `messages` index (highest first, so earlier indices do not move); the indices must address
+`user` messages (`user` or `tool-only` `tool_result` batch boundaries), rise strictly, and stay
+before this turn's user message, except this turn's own change point, which sits at it; then it merges
+the beta into `anthropic-beta`. A change point's index resolves either the trailing user-role text run
+or the exact `tool-only` `tool_result` boundary (`messages[i]`); an unmatchable layout sends the turn off.
+The parsed request carries the turn in `_perMessageEffort` (`src/types/request.ts`); spread copies share it,
+so any unguarded second build abandons the decision.
 
 `src/server/responses/adapter-delivery.ts` settles the turn from the bridge's completion: a
 `completed` response from the `anthropic` adapter commits its `output` items, with the response
 usage's `cached_tokens` as the cache read and that read plus `cache_write_tokens` as P; a matched
 turn whose cache read is below the parent's P, any other status, a rebuilt turn, or another
-adapter deletes the slot. `src/server/responses/adapter-dispatch.ts` deletes the slot on an
-upstream error status; the documented 400 "requires a model that supports per-turn effort" also
-marks that model and destination unsupported for an hour. Nothing here resends. A hosted sidecar loop that fails does
+adapter deletes the slot. Before any client output commits (`nothing-observed`), `src/server/responses/adapter-dispatch.ts`
+handles Anthropic's documented HTTP 400 effort rejection ("requires a model that supports per-turn effort"),
+strips the per-message effort beta/control items, marks the model and destination unsupported for an hour,
+and resends once (`permitted-after-repair`). On direct OpenAI Responses routes (`src/adapters/openai-responses/config-update-fallback.ts`,
+`src/server/responses/adapter-terminal-recovery.ts`, `src/server/responses/codex-ws-exchange.ts`, `src/server/responses/codex-ws-wire.ts`),
+a pre-output HTTP 400 targeting `input[N]` for `type === "configuration_update"` (distinct from plain effort-enum
+errors; using actual transmitted WS frame index when sending over incremental WebSocket) strips configuration-update
+items, records a 1-hour memo, and retries once (`permitted-after-repair`). A hosted sidecar loop that fails does
 not reject its turn; the pending slot stays until its ten-minute expiry, and a retry of the same
 turn finds it and goes off.
 

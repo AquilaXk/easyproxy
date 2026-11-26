@@ -42,8 +42,9 @@ import {
 } from "../../providers/fastwire";
 import { dropResponsesReasoningInputItems, mapRoutedResponsesReasoningEffort, normalizeConfiguredReasoningSummaryDelivery, sanitizeReasoningInputContent, stripDisabledReasoningSummaries, stripDisabledVerbosity, stripInternalReasoningEnabled, stripNoneReasoningSummary, stripUnsupportedReasoningSummaryDelivery } from "./reasoning";
 import { repairUrlCitationAnnotations, scrubEpxCompactionItems, stripUnsupportedOutputInclude, stripArkKimiOrphanCipher, stripCanonicalOnlyInputItems, stripCanonicalOnlyToolFields, stripCanonicalOnlyTopLevelFields, stripInternalChatMessageMetadataPassthrough, stripInvalidItemIds, stripItemIdsWhenUnstored, stripProviderInputItemMetadata, stripRejectedSamplingParams } from "./request-strips";
+import { destinationHostOfUrl, isConfigurationUpdateUnsupportedMemoized } from "./config-update-fallback";
 import { notePlaintextReasoningDropped } from "./plaintext-reasoning-notice";
-import { stripCanonicalForwardPromptCacheOptions, stripDeprecatedPromptCacheRetention } from "./prompt-cache";
+import { applyOutboundPromptCacheKeyLaneSharding, stripCanonicalForwardPromptCacheOptions, stripDeprecatedPromptCacheRetention } from "./prompt-cache";
 import { stripBridgeCacheControlsForResponsesWire } from "../../protocols/cache-control";
 import { isPlainObject } from "./internal";
 import { rememberTransientOutboundWireBody } from "../../lib/transient-outbound-body";
@@ -62,6 +63,9 @@ import { normalizeMuseToolChoice } from "./muse-tool-choice";
 import { declaresHostedWebSearch, projectHostedSearchHistory, renderCompactionSearchHistoryItems } from "./compaction-search-history";
 import { isKimiCodingResponsesHttpsUrl, stripKimiEmptyAssistantMessages } from "./empty-assistant";
 import { normalizeOpenGatewayResponsesInput } from "./opengateway-input";
+import { deduplicateToolOutputArray } from "./tool-output-dedup";
+
+const COMPACTION_DEDUP_TYPES = new Set(["function_call_output"]);
 
 /**
  * Identifies DeepSeek's strict Responses replay contract: tool-bearing continuations need
@@ -124,7 +128,7 @@ function buildRoutedCompactionBody(body: unknown, responsesLite: boolean): unkno
     // Lite validates this flag even when the summarizer has no callable tools.
     ...(responsesLite ? { parallel_tool_calls: false } : {}),
     input: [
-      ...(stripInputImagesDeep(kept) as unknown[]),
+      ...deduplicateToolOutputArray(stripInputImagesDeep(kept) as unknown[], COMPACTION_DEDUP_TYPES),
       { type: "message", role: "user", content: [{ type: "input_text", text: COMPACT_PROMPT }] },
     ],
   };
@@ -328,6 +332,11 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         if (!isOpenAiOperatedResponsesDestination(provider)) {
           if (parsed._compactionRequest !== true && isPlainObject(outBody)) outBody = frameCompactionHistory(outBody);
           outBody = stripCanonicalOnlyTopLevelFields(outBody);
+          outBody = stripCanonicalOnlyInputItems(outBody);
+        } else if (
+          parsed._stripConfigurationUpdateItems === true
+          || isConfigurationUpdateUnsupportedMemoized(destinationHostOfUrl(url), parsed.modelId)
+        ) {
           outBody = stripCanonicalOnlyInputItems(outBody);
         }
         // Meta already captured discoveries from the original current-turn slice.
@@ -543,6 +552,11 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         finalBody = projectHostedSearchHistory(finalBody);
       }
       finalBody = normalizeOpenGatewayResponsesInput(finalBody, url);
+      finalBody = applyOutboundPromptCacheKeyLaneSharding(finalBody, {
+        provider,
+        providerName: incoming.providerName,
+        url,
+      });
       observeOutbound(parsed._rawBody, finalBody, headers);
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         validateFinalCustomToolCompatibility(finalBody, provider.supportsResponsesCustomTools);

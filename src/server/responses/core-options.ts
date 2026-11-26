@@ -77,6 +77,8 @@ export interface ConsumedComboFailure {
   nonReplayable?: boolean;
   /** The failed attempt was an adapter-normalized plan refusal; only this grants its combo hop. */
   verifiedPlanRefusal?: boolean;
+  /** True when a short-lived OpenRouter `openrouter_in_flight_budget` 402 should stay target-scoped rate limiting rather than permanent quota exhaustion. */
+  transientRateLimit402?: true;
 }
 
 

@@ -1,5 +1,6 @@
 {
   "jev-session-pin.test.ts": "routing",
+  "jev-risk-policy.test.ts": "routing",
   "server-jev-session-pin-refresh.test.ts": "server",
   "server-jev-session-pin-snapshot.test.ts": "server",
   "server-jev-post-decision-admission.test.ts": "server",

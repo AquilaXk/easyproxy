@@ -272,6 +272,7 @@ async function set(argv: string[], deps: RuntimeApiDeps): Promise<number> {
     delete combo.decisionQuotaTiers;
     delete combo.sessionPin;
     delete combo.jevEffortMode;
+    delete combo.jevSelectionPolicy;
   }
   if (strategy === "ewma-latency") {
     if (ewmaAlphaRaw !== undefined || ewmaHalfLifeRaw !== undefined || ewmaMinSamplesRaw !== undefined || ewmaPenaltyRaw !== undefined) {

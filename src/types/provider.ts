@@ -1122,6 +1122,11 @@ export interface EpxProviderConfig {
    */
   promptCacheKey?: boolean;
   /**
+   * Opt-in: after local pool affinity picks the serving account/credential, shard outbound
+   * Responses `prompt_cache_key` into a deterministic credential-scoped lane (bounded 4,096 LRU).
+   */
+  promptCacheKeyLaneSharding?: boolean;
+  /**
    * Conversation affinity to the key-pool credential that served a conversation's
    * last turn, so its upstream prompt cache is read again on the next turn instead
    * of rebuilt on another key. Only affects providers with 2+ key-pool entries;
@@ -1214,6 +1219,8 @@ export interface EpxProviderConfig {
    * Prefer a provider-side parser or `reasoningSplitModels` when the upstream supports either.
    */
   inlineThinkTagModels?: string[];
+  /** Model ids opted into XML (`<antml:invoke>` / `<function name=...>`) leaked tool-call recovery on Chat Completions. */
+  leakedToolCallModels?: string[];
   /**
    * Model ids whose chat endpoint carries thinking as a structured `reasoning_details` array
    * (MiniMax M-series with `reasoning_split`): stream deltas repeat each detail's `text` as a

@@ -417,7 +417,8 @@ export function createResponsesSendBudget(
    * mislabelled evidence #4592 existed to stop.
    */
   const recoveryClassFor = (recovery: AttemptRecoveryKind): SendClass =>
-    /401|429|oauth|rate-limit|key/.test(recovery) ? "auth-recovery" : "repair";
+    recovery === "flex-tier-downgrade" ? "transient"
+      : /401|429|oauth|rate-limit|key/.test(recovery) ? "auth-recovery" : "repair";
 
   return {
     imageRecoverySendReporter: (body: string, maxOutputTokens: number) => {

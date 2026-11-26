@@ -223,6 +223,7 @@ export function routedProviderConfig(providerName: string, provider: EpxProvider
   const requiresReasoningPlaceholderModels = staticPolicy.requiresReasoningPlaceholderModels;
   const reasoningSplitModels = staticPolicy.reasoningSplitModels;
   const inlineThinkTagModels = staticPolicy.inlineThinkTagModels;
+  const leakedToolCallModels = staticPolicy.leakedToolCallModels;
   const reasoningDetailsModels = staticPolicy.reasoningDetailsModels;
   const thinkingToggleModels = staticPolicy.thinkingToggleModels;
   const thinkingBudgetModels = staticPolicy.thinkingBudgetModels;
@@ -387,6 +388,7 @@ export function routedProviderConfig(providerName: string, provider: EpxProvider
     ...(requiresReasoningPlaceholderModels ? { requiresReasoningPlaceholderModels } : {}),
     ...(reasoningSplitModels ? { reasoningSplitModels } : {}),
     ...(inlineThinkTagModels ? { inlineThinkTagModels } : {}),
+    ...(leakedToolCallModels ? { leakedToolCallModels } : {}),
     ...(reasoningDetailsModels ? { reasoningDetailsModels } : {}),
     ...(thinkingToggleModels ? { thinkingToggleModels } : {}),
     ...(thinkingBudgetModels ? { thinkingBudgetModels } : {}),

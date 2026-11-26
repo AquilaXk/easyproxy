@@ -82,12 +82,18 @@ export const PROVIDER_DISPLAY_CARRY_FIELDS = [
   // The experimental Anthropic per-message effort switch (#6895) is operator configuration the form
   // cannot send; an unrelated save must not silently turn it off.
   "perMessageEffort",
+  // Outbound prompt_cache_key credential lane sharding opt-in.
+  "promptCacheKeyLaneSharding",
   // The dashboard form omits these operator-configured transport budgets.
   ...TIMEOUT_OVERRIDE_FIELDS,
 ] as const satisfies readonly (keyof EpxProviderConfig)[];
 
 /** Display policies that are plain booleans and can share one validation/patch branch. */
-const PROVIDER_BOOLEAN_DISPLAY_FIELDS = ["hideRawReasoning", "rawReasoningAsSummary"] as const satisfies readonly (keyof EpxProviderConfig)[];
+const PROVIDER_BOOLEAN_DISPLAY_FIELDS = [
+  "hideRawReasoning",
+  "rawReasoningAsSummary",
+  "promptCacheKeyLaneSharding",
+] as const satisfies readonly (keyof EpxProviderConfig)[];
 
 export type ProviderCompatCarryField = typeof PROVIDER_COMPAT_CARRY_FIELDS[number];
 type ProviderDisplayCarryField = typeof PROVIDER_DISPLAY_CARRY_FIELDS[number];

@@ -82,8 +82,15 @@ distribution accepts an object mapping option keys to numbers or an array of `{ 
 entries. Array distributions strictly refuse duplicate choice keys (`invalid JEV route probabilities`).
 Parsing validates that: (1) distribution keys match expected candidate choices exactly, (2) probabilities are
 finite numbers between 0 and 1, (3) total probability sums to 1.00 ± 0.02, and (4) the selected option holds
-the maximum probability (within 1e-6). Missing route answers, unknown choices, malformed distributions, duplicate
+the maximum probability (within 1e-6). missing route answers, unknown choices, malformed distributions, duplicate
 route answers or array keys, or inconsistent totals throw and fail open to the first eligible target.
+With probability validation preserved, `jevSelectionPolicy` (`"argmax"` default, `"min-risk"`,
+or `"observe"`) controls final selection in `src/combos/jev-risk-policy.ts`: after selecting
+the argmax target tier, `"min-risk"` evaluates allowed effort levels $i, j \in \{0, \dots, K-1\}$
+under an asymmetric loss (`|i - j|` with $3.0$ weight for extreme under-provisioning vs $1.0$
+for over-provisioning, breaking ties toward middle levels) to trim excess reasoning tokens on
+ordinary turns, while `"observe"` preserves argmax routing and records content-free selection-delta
+aggregates in `src/usage/jev-stats.ts`.
 
 The service exchange owns the canonical `jev-latest` destination, the self-hosted URL (shared
 `jevDecisionEndpointUrl`: an HTTPS path as configured with Vercel `/decisions` rewrite, `/systemone` trailing slashes normalized),

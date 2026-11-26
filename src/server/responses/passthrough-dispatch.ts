@@ -152,6 +152,11 @@ import {
   rateLimitRetryDelayMs,
   transientRetryPolicyFor,
 } from "../../providers/key-failover";
+import {
+  hasOutboundFlexServiceTier,
+  recoverPassthroughEffortAndConfigRepairs,
+  recoverPassthroughFlexTierDowngrade,
+} from "./adapter-terminal-recovery";
 import type { AttemptRecoveryKind } from "../../usage/log";
 import { resolveWireProtocolOverride } from "../adapter-resolve";
 import { refreshPoolForwardAuth, refreshNativeMainForwardAuth, withClaudeNativeSession } from "./core-auth";
@@ -174,7 +179,6 @@ import {
   resetStreamedOpaqueBlobLogContext,
   consoleGoUploadRejectionBody,
   CONSOLE_GO_UPLOAD_RETRY_DELAY_MS,
-  refusedReasoningEffortDowngrade, withRawBodyReasoningEffort,
 } from "./core-opaque-recovery";
 import type { RequestLogContext } from "../request-log";
 import { preflightComboStreamResponse } from "./combo-stream-preflight";
@@ -1037,6 +1041,7 @@ export async function preparePassthroughExchange(
         { abortSignal: upstream.signal, label: safeHostLabel(request.url), destination: errorDestinationLabel(request.url),
           attempts: sendBudgetState.initialSendAllowance(transientSendAttempts()),
           reserveRetrySpend,
+          flexTierSent: hasOutboundFlexServiceTier(request.body, parsed),
           onSendsConsumed: initialAccounting.report,
           claimAmbiguousResend: claimPreHeaderResend,
           // A combo fails over to another member instead of waiting once per target.
@@ -1052,6 +1057,10 @@ export async function preparePassthroughExchange(
     }
 
     const opaqueBlobRecoveryGuard: OpaqueBlobRecoveryGuard = { attempted: false };
+    // At most one pre-output configuration_update item repair resend per request.
+    const configurationUpdateRepairGuard: { attempted: boolean } = { attempted: false };
+    // At most one pre-output flex->standard tier downgrade resend per request.
+    const flexTierDowngradeGuard: { attempted: boolean } = { attempted: false };
     // Direct requests get one reasoning-effort downgrade. Combo candidates may walk down the
     // published ladder one refused rung at a time; the request send budget bounds those retries.
     const reasoningEffortDowngradeGuard: { attempted: boolean } = { attempted: false };
@@ -1116,6 +1125,7 @@ export async function preparePassthroughExchange(
           }), route.provider.authMode === "forward").then(adoptObservedResponse),
         { abortSignal: upstream.signal, label: safeHostLabel(request.url), destination: errorDestinationLabel(request.url),
           attempts: remainingTransientSendBudget(transientSendAttempts()),
+          flexTierSent: hasOutboundFlexServiceTier(request.body, parsed),
           reserveRetrySpend, retryFrom, onSendsConsumed: accounting.report, claimAmbiguousResend: claimPreHeaderResend },
       );
     };
@@ -1211,6 +1221,7 @@ export async function preparePassthroughExchange(
               .then(adoptObservedResponse);
           },
           { abortSignal: upstream.signal, label: safeHostLabel(request.url), destination: errorDestinationLabel(request.url), attempts: allowance.attempts,
+            flexTierSent: hasOutboundFlexServiceTier(request.body, parsed),
             reserveRetrySpend, retryFrom: reserveRetrySpend() ? preserveFailureResponse : undefined, onSendsConsumed: recoveryAccounting.report,
             claimAmbiguousResend: recovery === "empty-completion" ? undefined : claimPreHeaderResend },
         );
@@ -1226,6 +1237,15 @@ export async function preparePassthroughExchange(
 
     // Keep recovery kinds in sync with the generic `recovery:` loop below.
     passthroughRecovery: for (;;) {
+      const flexOutcome = await recoverPassthroughFlexTierDowngrade({
+        upstreamResponse, outboundBody: request.body, parsed, guard: flexTierDowngradeGuard,
+        signal: upstream.signal, configuredBudgetExhausted: configuredTransientSendBudgetExhausted(),
+        shouldRetainFailure: reserveRetrySpend() || sendBudgetState.adapterSendBudget !== undefined || sendBudgetState.workflowRootId !== undefined,
+        isComboAttempt: Boolean(options.comboAttempt), rebuildAndRefetch,
+      });
+      if (flexOutcome.kind === "return") return flexOutcome.response;
+      if (flexOutcome.kind === "continue") { upstreamResponse = flexOutcome.response; continue passthroughRecovery; }
+
       if (wasAccountAutoPaused(upstreamResponse) && route.provider.authMode !== "forward") {
         const recovered = await recoverAutoPausedAccount({ requestKey: transportState, reserve: reserveCredentialHop,
           remaining: transientSendCapFor(transientRetryPolicyFor(route.provider)?.attempts, sendBudgetState.targetSendsUsed),
@@ -1581,6 +1601,7 @@ export async function preparePassthroughExchange(
               .then(adoptObservedResponse);
           },
           { abortSignal: upstream.signal, label: safeHostLabel(request.url), destination: errorDestinationLabel(request.url), attempts: remainingTransientSendBudget(transientSendAttempts()),
+            flexTierSent: hasOutboundFlexServiceTier(request.body, parsed),
             reserveRetrySpend, retryFrom, onSendsConsumed: failoverAccounting.report, claimAmbiguousResend: claimPreHeaderResend },
         );
       } catch (err) {
@@ -1810,22 +1831,14 @@ export async function preparePassthroughExchange(
         continue passthroughRecovery;
       }
     }
-    // Learn each refused effort. Direct requests repair once and Combo targets can walk the ladder.
-    const downgrade = await refusedReasoningEffortDowngrade(upstreamResponse, upstream.signal, reasoningEffortDowngradeGuard,
-      options.comboAttempt, { provider: route.provider, modelId: parsed.modelId, requested: parsed.options.reasoning });
-    if (downgrade && !configuredTransientSendBudgetExhausted()) {
-      reasoningEffortDowngradeGuard.attempted = true;
-      parsed.options.reasoning = downgrade.effort;
-      parsed._rawBody = withRawBodyReasoningEffort(parsed._rawBody, downgrade.effort);
-      const refusal = reserveRetrySpend() ? await retainPacedRetryResponse(upstreamResponse, upstream.signal)
-        : options.comboAttempt ? upstreamResponse : undefined;
-      if (!refusal) try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-      const result = await rebuildAndRefetch("reasoning-effort-downgrade", refusal);
-      if ("failed" in result) return result.failed;
-      if (refusal && refusal !== result) try { void refusal.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
-      upstreamResponse = result;
-      continue passthroughRecovery;
-    }
+    const effortRepairOutcome = await recoverPassthroughEffortAndConfigRepairs({
+      upstreamResponse, outboundBody: request.body, outboundUrl: request.url, parsed, provider: route.provider,
+      configRepairGuard: configurationUpdateRepairGuard, effortDowngradeGuard: reasoningEffortDowngradeGuard,
+      signal: upstream.signal, configuredBudgetExhausted: configuredTransientSendBudgetExhausted(),
+      reserveRetrySpend: reserveRetrySpend(), comboAttempt: options.comboAttempt, rebuildAndRefetch,
+    });
+    if (effortRepairOutcome.kind === "return") return effortRepairOutcome.response;
+    if (effortRepairOutcome.kind === "continue") { upstreamResponse = effortRepairOutcome.response; continue passthroughRecovery; }
 
     // The WebSocket row of the same table (#4191). A Codex socket that closed or failed under its
     // create frame, before any Responses event, settled as a non-replayable 502 and every leg above
