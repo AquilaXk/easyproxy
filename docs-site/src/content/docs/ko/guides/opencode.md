@@ -3,8 +3,7 @@ title: opencode
 description: opencode에서 라우팅된 어떤 모델이든 사용하세요. easyproxy가 런타임 provider 블록을 주입하고 사용자의 opencode 설정은 그대로 둡니다.
 ---
 
-opencode는 환경 변수 대신 병합된 JSON 구성 레이어에서 provider를 읽으므로,
-`ANTHROPIC_BASE_URL`처럼 끼워 넣을 자리가 없습니다. `epx opencode`는 그 간극을
+opencode는 환경 변수 대신 병합된 JSON 구성 레이어에서 provider를 읽으므로 `ANTHROPIC_BASE_URL`처럼 끼워 넣을 자리가 없습니다. `epx opencode`는 그 간극을
 메웁니다. 프록시가 실행 중인지 확인하고 표시된 카탈로그에서 provider 블록을
 만들고 OpenCode의 인라인 런타임 레이어(`OPENCODE_CONFIG_CONTENT`)를 통해
 주입합니다.
@@ -52,7 +51,7 @@ JSONC를 읽을 때 일부 Windows 편집기가 파일 맨 앞에 붙이는 UTF-
 
 ## 블록을 사용자 구성에 넣기
 
-`epx opencode`는 provider 블록을 한 번의 실행에만 주입하므로, 평범한 `opencode`는
+`epx opencode`는 provider 블록을 한 번의 실행에만 주입하므로 평범한 `opencode`는
 여전히 프록시를 모릅니다. 일반 `opencode`에서, 혹은 런처를 거치지 않는 편집기
 확장에서 라우팅된 모델을 쓰고 싶다면 `epx export`가 같은 provider 블록을 출력해
 주므로 사용자 구성에 병합하면 됩니다:
@@ -141,7 +140,7 @@ export EASYPROXY_OPENCODE_API_KEY=<your key>
 
 출력 한도는 카탈로그 또는 생성된 메타데이터의 알려진 모델 한도를 사용합니다. 알 수 없는 경우에만 `32000`을 사용합니다. 출력 한도는 항상 context window 이하로 제한되며 `32000`보다 작은 알려진 한도도 유지됩니다.
 
-`easyproxy` provider 블록은 실행할 때마다 다시 생성되므로, 그 안에서 한 모델별
+`easyproxy` provider 블록은 실행할 때마다 다시 생성되므로 그 안에서 한 모델별
 조정은 유지되지 않습니다. 대신 사용자만의 provider 키 아래에 사용자 정의 항목을
 두세요.
 

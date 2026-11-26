@@ -80,7 +80,7 @@ Grok Build는 루프백에서도 사용자 정의 모델에 비어 있지 않은
 
 여기서는 `api_key`를 `env_key`로 바꾸지 마세요. `env_key`가 해결되지 않아도 요청은 멈추지 않습니다. Grok가 사용자의 xAI 세션 토큰으로 넘어가서 항목이 가리키는 `base_url`로 보냅니다. LAN 배포에서는 그 `base_url`이 xAI가 아닌 평문 HTTP 엔드포인트입니다.
 
-provider 항목에 주입된 `api_key`는 이 모델들에 대한 Grok의 자격 증명 체인에서 가장 먼저 사용되므로, easyproxy를 대상으로 하는 요청에는 추가 Grok 로그인이 필요하지 않습니다. xAI에 직접 접속하는 네이티브 grok 모델과 모든 하니스 기능에는 평소 쓰던 `grok login` / `XAI_API_KEY` 구성을 그대로 유지합니다.
+provider 항목에 주입된 `api_key`는 이 모델들에 대한 Grok의 자격 증명 체인에서 가장 먼저 사용되므로 easyproxy를 대상으로 하는 요청에는 추가 Grok 로그인이 필요하지 않습니다. xAI에 직접 접속하는 네이티브 grok 모델과 모든 하니스 기능에는 평소 쓰던 `grok login` / `XAI_API_KEY` 구성을 그대로 유지합니다.
 
 ## 수동 설정 (자동 등록 없음)
 

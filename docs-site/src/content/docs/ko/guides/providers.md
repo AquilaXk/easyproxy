@@ -18,13 +18,12 @@ bare `gpt-5.6-sol`은 Providers 페이지의 Pool/Direct 옵션을 따르고
 max input 922,000이며 `*-pro` virtual id는 공개 상태에 유지되고 wire에서 base 모델과
 `reasoning.mode: "pro"`로 바뀝니다.
 
-내장 `openai` 제공자가 없거나 비활성화된 경우 대시보드 Accounts 선택기와 Codex Auth 페이지에서 복구할 수 있습니다. 없는 항목은 정규 프리셋으로 만들고 비활성화된 정규 항목은 저장된 모드/모델 설정을 바꾸지 않고 다시 켜며 비정규 `openai` 항목에는 그 복구 경로를 제공하지 않습니다.
+내장 `openai` 프로바이더가 없거나 비활성화된 경우 대시보드 Accounts 선택기와 Codex Auth 페이지에서 복구할 수 있습니다. 없는 항목은 정규 프리셋으로 만들고 비활성화된 정규 항목은 저장된 모드/모델 설정을 바꾸지 않고 다시 켜며 비정규 `openai` 항목에는 그 복구 경로를 제공하지 않습니다.
 
 ### 프로바이더 개요의 풀 용량
 
 Codex 로그인을 Pool 모드로 사용하면 Providers 개요에는 임의의 한 계정이 아니라 풀 전체의
-사용 용량 추정치가 표시됩니다. 같은 행에는 현재 유효 계정의 원본 quota 사용률도 표시되므로,
-풀 추정치와 다음 요청에서 사용할 계정의 상태를 구분할 수 있습니다.
+사용 용량 추정치가 표시됩니다. 같은 행에는 현재 유효 계정의 원본 quota 사용률도 표시되므로 풀 추정치와 다음 요청에서 사용할 계정의 상태를 구분할 수 있습니다.
 
 리셋 정보가 있으면 다음 리셋 시각과 그때 회복되는 풀 용량을 표시합니다. **불완전한 범위**는
 요금제나 quota를 알 수 없거나 측정값이 오래되었거나 계정이 일시 중지되었거나 재인증이 필요한
@@ -113,7 +112,7 @@ epx logout <provider>
 | `xai` | `openai-chat` | `https://cli-chat-proxy.grok.com/v1` | OAuth는 별도의 Grok CLI 구독 게이트웨이를 사용합니다. API 키 오버라이드는 `https://api.x.ai/v1`을 사용하며 Priority Processing을 주입할 수 있습니다. 실시간 목록을 우선 사용하며 폴백 기본 모델은 `grok-4.5`입니다. |
 | `anthropic` | `anthropic` | `https://api.anthropic.com` | Claude 모델; 실시간 모델 목록은 `/v1/models`에서 가져옵니다. |
 | `kimi` | `openai-chat` | `https://api.kimi.com/coding/v1` | Kimi Code 모델입니다. `kimi-for-coding`은 현재 K2.8 Preview를 가리키며 100만 토큰 문맥, `low`/`high`/`max` 추론, 텍스트·이미지 입력을 지원합니다. `k3-256k`의 문맥 한도는 256K로 고정됩니다. |
-| `kimi-responses` | `openai-responses` | `https://api.kimi.com/coding/v1` | `kimi`와 동일한 OAuth 로그인과 모델 목록을 Responses 방식으로 사용합니다. 추론 내용은 서버 측에서 암호화된 상태로 유지되고 도구 호출과 결과는 볼 수 있습니다. 대시보드 **Add provider** 선택기(**Kimi (Responses)**)나 `epx provider add kimi-responses --live`로 추가합니다. 자체 로그인이 없으므로 Kimi에 이미 로그인되어 있으면 추가할 때 다시 로그인하지 않으며 선택기의 이 항목에서 로그인해도 이 행만 만들어지고 `kimi` 행은 그대로 둡니다. 어느 행에서 로그아웃하든(`epx logout kimi` 또는 `epx logout kimi-responses`, 로컬이든 `--live`든, 대시보드 어느 행의 **Logout**이든) 두 행 모두에서 현재 Kimi 계정이 제거되고 그 사실이 안내되며 저장된 다른 Kimi 계정이 있으면 두 행 모두 그 계정이 활성화되며 일시 중지된 동안에는 두 행 모두 그 계정을 쓰지 않고 다시 로그인해야 하면 그 계정으로 다시 로그인하세요. 대시보드(또는 `--live`)에서 한 행을 삭제해도 다른 행이 쓰는 동안 로그인은 유지되고 마지막 행을 삭제하면 로그인도 삭제됩니다. 로컬 `epx provider remove`는 다른 공급자와 마찬가지로 저장된 로그인을 그대로 둡니다. |
+| `kimi-responses` | `openai-responses` | `https://api.kimi.com/coding/v1` | `kimi`와 동일한 OAuth 로그인과 모델 목록을 Responses 방식으로 사용합니다. 추론 내용은 서버 측에서 암호화된 상태로 유지되고 도구 호출과 결과는 볼 수 있습니다. 대시보드 **Add provider** 선택기(**Kimi (Responses)**)나 `epx provider add kimi-responses --live`로 추가합니다. 자체 로그인이 없으므로 Kimi에 이미 로그인되어 있으면 추가할 때 다시 로그인하지 않으며 선택기의 이 항목에서 로그인해도 이 행만 만들어지고 `kimi` 행은 그대로 둡니다. 어느 행에서 로그아웃하든(`epx logout kimi` 또는 `epx logout kimi-responses`, 로컬이든 `--live`든, 대시보드 어느 행의 **Logout**이든) 두 행 모두에서 현재 Kimi 계정이 제거되고 그 사실이 안내되며 저장된 다른 Kimi 계정이 있으면 두 행 모두 그 계정이 활성화되며 일시 중지된 동안에는 두 행 모두 그 계정을 쓰지 않고 다시 로그인해야 하면 그 계정으로 다시 로그인하세요. 대시보드(또는 `--live`)에서 한 행을 삭제해도 다른 행이 쓰는 동안 로그인은 유지되고 마지막 행을 삭제하면 로그인도 삭제됩니다. 로컬 `epx provider remove`는 다른 프로바이더와 마찬가지로 저장된 로그인을 그대로 둡니다. |
 | `nous` | `openai-chat` | `https://inference-api.nousresearch.com/v1` | Nous Research 구독 게이트웨이(Hermes Agent와 동일한 백엔드). `portal.nousresearch.com`에 대한 디바이스 그랜트 로그인; access 토큰은 요청별 inference JWT. 유료 + `:free` 모델 혼합 카탈로그(`tencent/hy3:free`, `stepfun/step-3.7-flash:free` 등)는 로그인한 계정에서 실시간으로 발견됩니다. Refresh 토큰은 단회 사용이며 갱신할 때마다 회전됩니다. |
 | `kiro` | `kiro` | `https://runtime.us-east-1.kiro.dev` | 최초 로그인은 설치하고 로그인한 `kiro-cli` 세션을 가져옵니다(Unix에서는 `curl -fsSL https://cli.kiro.dev/install` &#124; `bash`, Windows PowerShell에서는 `irm 'https://cli.kiro.dev/install.ps1'` &#124; `iex`로 설치한 뒤 `kiro-cli login` 실행). **계정 추가**는 `kiro-cli`에서 로그아웃한 뒤 새 브라우저 로그인을 시작하여 `kiro-cli` 자체의 계정을 전환하고 계정별 프로필 메타데이터를 저장합니다. 기존 EasyProxy 계정은 유지되며 취소되거나 실패하면 이전 `kiro-cli` 세션을 복원합니다. |
 | `google-antigravity` | `google` | `https://daily-cloudcode-pa.googleapis.com` | Google OAuth를 Cloud Code Assist wire로 사용합니다. 실시간 탐색은 인증된 CCA `v1internal:fetchAvailableModels` 엔드포인트를 사용하며 로그인한 계정에서 사용할 수 있는 agent 모델만 게시합니다. 유지 관리되는 카탈로그는 폴백으로 남습니다. |
@@ -122,7 +121,7 @@ epx logout <provider>
 | `dsh-account` | `dsh-account` | `https://api.deepseek.com/anthropic` | 설치 및 로그인된 DeepSeek Harness (DSH) Desktop 계정을 재사용하는 실험적 자격 임포트 우선 계정 프로바이더입니다. 명시적 임포트 시 `~/.dsh/.credentials.yaml`에서 엄격히 읽기 전용으로 자격을 읽습니다. DeepSeek API 키 요금 청구와 완전히 독립적입니다. |
 | `github-copilot` | `openai-chat` | `https://api.githubcopilot.com` | 실험적. GitHub 디바이스 플로우 + `copilot_internal` 교환(VS Code OAuth 클라이언트). 활성 Copilot 구독 필요; 공식 서드파티 API가 아닙니다. |
 
-Google Antigravity 계정·제공자 할당량 확인은 모델 목록 폴백을 포함해 고정된 Google 회계 엔드포인트를 사용합니다. 해당 목적지의 투명 Fake-IP DNS를 지원하며 TLS 검증, 리다이렉트 거부, 사설 주소 검사는 유지합니다. 사용자 지정 base URL은 모델 요청에만 적용되며 할당량 목적지는 바꾸지 않습니다. `NO_PROXY`는 기존 직접 연결 정책을 유지합니다.
+Google Antigravity 계정·프로바이더 할당량 확인은 모델 목록 폴백을 포함해 고정된 Google 회계 엔드포인트를 사용합니다. 해당 목적지의 투명 Fake-IP DNS를 지원하며 TLS 검증, 리다이렉트 거부, 사설 주소 검사는 유지합니다. 사용자 지정 base URL은 모델 요청에만 적용되며 할당량 목적지는 바꾸지 않습니다. `NO_PROXY`는 기존 직접 연결 정책을 유지합니다.
 
 Vertex AI의 Gemini 3 이상 모델(`gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen`, `gemini-4-neon` 등)은 스크린샷 같은 도구 결과 이미지를
 해당 함수 응답 안에 담아 받습니다. Vertex AI 모델 탐색, 자격 증명 규칙과 이 처리 방식은
@@ -173,7 +172,7 @@ Providers 페이지에서 계정을 추가하고 다른 계정을 로그아웃�
 
 ### Cockpit Tools Antigravity 가져오기
 
-v1에서 EasyProxy는 `google-antigravity` 공급자의 **Cockpit Tools Antigravity** JSON 내보내기만 가져옵니다. Providers 대시보드에서 해당 공급자의 Accounts 탭을 열고 로컬 JSON 파일을 선택하세요. 대시보드는 파일 내용이나 자격 증명 값을 표시하지 않으며 가져온, 업데이트된, 실패한, 지원되지 않는 항목의 수만 보고합니다. 다른 Cockpit 공급자는 v1에서 지원되지 않습니다.
+v1에서 EasyProxy는 `google-antigravity` 프로바이더의 **Cockpit Tools Antigravity** JSON 내보내기만 가져옵니다. Providers 대시보드에서 해당 프로바이더의 Accounts 탭을 열고 로컬 JSON 파일을 선택하세요. 대시보드는 파일 내용이나 자격 증명 값을 표시하지 않으며 가져온, 업데이트된, 실패한, 지원되지 않는 항목의 수만 보고합니다. 다른 Cockpit 프로바이더는 v1에서 지원되지 않습니다.
 
 CLI는 파일 또는 stdin에서만 내보내기를 받으며 명령 인수에 붙여넣을 수 없습니다:
 
@@ -197,7 +196,7 @@ Kiro 로그인에는 Kiro CLI가 필요합니다. Unix에서는 `curl -fsSL http
 
 가져온 자격 증명은 `~/.easyproxy/auth.json`에 저장됩니다. **계정 추가** 롤백은 별도 절차로, 이전 스냅샷을 복원할 때 데이터베이스를 교체하고 현재 WAL, SHM, journal 사이드카를 제거합니다.
 
-롤백은 스냅샷이 있을 때만 가능하므로, 세션 저장소가 존재하지만 캡처할 수 없는 경우(파일을 읽을 수 없음, 스키마 불일치, 토큰 선택 모호), `KIROCLI_DB_PATH` / `KIRO_CLI_DB_FILE`이 실제 CLI 저장소와 다른 가져오기 경로를 가리키는 경우, 또는 기본 CLI 데이터베이스에 인식 가능한 토큰 행이 없는 경우 **계정 추가**는 `kiro-cli` 로그아웃을 거부합니다. 일반 `kiro-cli` 데이터 경로의 손상된 데이터베이스를 수리하거나 제거하고 가져오기 전용 선택자가 설정돼 있으면 해제한 뒤 다시 시도하세요. 기존 `kiro-cli` 세션이 아예 없는 환경에서는 영향이 없습니다.
+롤백은 스냅샷이 있을 때만 가능하므로 세션 저장소가 존재하지만 캡처할 수 없는 경우(파일을 읽을 수 없음, 스키마 불일치, 토큰 선택 모호), `KIROCLI_DB_PATH` / `KIRO_CLI_DB_FILE`이 실제 CLI 저장소와 다른 가져오기 경로를 가리키는 경우, 또는 기본 CLI 데이터베이스에 인식 가능한 토큰 행이 없는 경우 **계정 추가**는 `kiro-cli` 로그아웃을 거부합니다. 일반 `kiro-cli` 데이터 경로의 손상된 데이터베이스를 수리하거나 제거하고 가져오기 전용 선택자가 설정돼 있으면 해제한 뒤 다시 시도하세요. 기존 `kiro-cli` 세션이 아예 없는 환경에서는 영향이 없습니다.
 
 ### DeepSeek Account (DSH)
 
@@ -295,15 +294,15 @@ Responses 도구 결과 배열은 텍스트로 변환하고 이미지는 짝이 
 예산이 남고 안전하게 재전송할 수 있는 빈 완료는 기존 호출 한도 안에서 한 번만 재시도합니다.
 `emptyCompletionRetry: false` 또는 `EPX_EMPTY_COMPLETION_RETRY=0`이면 이 재시도를 끕니다.
 텍스트·거절·도구 동작·알 수 없는 스트림 이벤트가 관측되면 재전송하지 않고 원본을 유지합니다.
-다른 제공자의 동작과 재시도 기본값에는 적용하지 않습니다.
+다른 프로바이더의 동작과 재시도 기본값에는 적용하지 않습니다.
 재전송은 명시적인 `store: false`, 완전한 입력, 클라이언트 실행 도구만 있는 요청에 한정합니다.
 `web_search` 같은 서버 실행 도구가 선언돼 있으면 도구 이벤트가 없어도 자동 재전송하지 않습니다.
 
 **OpenCode Zen**(`opencode-zen`)은 [opencode.ai/auth](https://opencode.ai/auth)에서 발급한 API 키로 `https://opencode.ai/zen/v1`을 사용합니다. 무료 모델은 분당 약 15–20회 요청의 짧은 창 속도 제한에 걸릴 수 있습니다(커뮤니티 측정; OpenCode는 RPM을 공개하지 않음). 속도 제한 429에 `Retry-After`가 없으면 easyproxy가 안내와 합성 `Retry-After`를 추가하며 유효한 업스트림 헤더가 우선합니다. 동일 키 재시도는 [`retryOn429`](/ko/reference/configuration/)로 선택합니다.
 
-정식 `opencode-zen` 제공자에서 API 키 인증과 공식 경로 `https://opencode.ai/zen/v1` 또는 `https://opencode.ai/inference/v1`을 사용하면 Gemini는 기본 `googleMode: ai-studio`에서 Google 네이티브 API를 자동으로 사용합니다. Zen 모델 ID는 `-tiered` 접미사가 없는 Flash ID도 그대로 유지합니다. Claude는 `googleMode`와 관계없이 Anthropic Messages를 사용합니다. 저장된 설정을 읽을 때 이 네이티브 모델의 조건에 맞는 기존 Chat/Responses 재정의와 조건에 맞는 Responses 전용 `image_generation` 호스팅 도구 선호 설정만 무시합니다. 사용자 지정 제공자, 키 인증이 아닌 경로, 그 밖의 선호 설정은 그대로 유지합니다.
+정식 `opencode-zen` 프로바이더에서 API 키 인증과 공식 경로 `https://opencode.ai/zen/v1` 또는 `https://opencode.ai/inference/v1`을 사용하면 Gemini는 기본 `googleMode: ai-studio`에서 Google 네이티브 API를 자동으로 사용합니다. Zen 모델 ID는 `-tiered` 접미사가 없는 Flash ID도 그대로 유지합니다. Claude는 `googleMode`와 관계없이 Anthropic Messages를 사용합니다. 저장된 설정을 읽을 때 이 네이티브 모델의 조건에 맞는 기존 Chat/Responses 재정의와 조건에 맞는 Responses 전용 `image_generation` 호스팅 도구 선호 설정만 무시합니다. 사용자 지정 프로바이더, 키 인증이 아닌 경로, 그 밖의 선호 설정은 그대로 유지합니다.
 
-**`opencode-free` 지원이 제거되었습니다.** OpenCode의 업스트림 무료 등급 제한으로 모든 모델이 `403 permission_denied`를 반환하기 때문입니다([#7255](https://github.com/AquilaXk/easyproxy/issues/7255)). 기존 설정을 불러오면 해당 항목과 종속 모델 참조를 메모리에서 비활성화하고 프로세스당 한 번 경고하며 불러올 때 파일은 변경하지 않습니다. 다음 설정 저장 시 해당 항목과 참조가 config.json에서 제거됩니다. 저장 전에 원본 파일을 같은 폴더의 `config.json.pre-opencode-free-removal.bak`에 자동 보관합니다. 해당 이름이 이미 사용 중이면 고유한 이름의 사본을 만듭니다. 바이트가 동일한 독립 사본은 소유자만 접근할 수 있음을 검증한 경우에만 재사용하고 그렇지 않으면 그 옆에 보호된 새 사본을 만듭니다. 기존 파일은 덮어쓰지 않습니다. 첫 로드가 겹치면 동일하게 보호된 사본이 여러 개 남을 수 있습니다. 경고에 복구 사본 경로가 표시됩니다. 다운그레이드 후 복원하려면 이 사본을 config.json 위에 복사하세요. 자동 복사에 실패하면 config.json을 즉시 복사하라는 경고가 표시됩니다. 기본 공급자였다면 표준 OpenAI OAuth 경로가 기본값이 됩니다. `opencode-go`, API 키를 사용하는 `opencode-zen` 또는 다른 공급자를 사용하세요. [OpenCode Zen 약관](https://opencode.ai/docs/zen/). 수동적 읽기(passive read)에서는 메모리 내 비활성화만 적용하고 사본이나 경고를 만들지 않습니다.
+**`opencode-free` 지원이 제거되었습니다.** OpenCode의 업스트림 무료 등급 제한으로 모든 모델이 `403 permission_denied`를 반환하기 때문입니다([#7255](https://github.com/AquilaXk/easyproxy/issues/7255)). 기존 설정을 불러오면 해당 항목과 종속 모델 참조를 메모리에서 비활성화하고 프로세스당 한 번 경고하며 불러올 때 파일은 변경하지 않습니다. 다음 설정 저장 시 해당 항목과 참조가 config.json에서 제거됩니다. 저장 전에 원본 파일을 같은 폴더의 `config.json.pre-opencode-free-removal.bak`에 자동 보관합니다. 해당 이름이 이미 사용 중이면 고유한 이름의 사본을 만듭니다. 바이트가 동일한 독립 사본은 소유자만 접근할 수 있음을 검증한 경우에만 재사용하고 그렇지 않으면 그 옆에 보호된 새 사본을 만듭니다. 기존 파일은 덮어쓰지 않습니다. 첫 로드가 겹치면 동일하게 보호된 사본이 여러 개 남을 수 있습니다. 경고에 복구 사본 경로가 표시됩니다. 다운그레이드 후 복원하려면 이 사본을 config.json 위에 복사하세요. 자동 복사에 실패하면 config.json을 즉시 복사하라는 경고가 표시됩니다. 기본 프로바이더였다면 표준 OpenAI OAuth 경로가 기본값이 됩니다. `opencode-go`, API 키를 사용하는 `opencode-zen` 또는 다른 프로바이더를 사용하세요. [OpenCode Zen 약관](https://opencode.ai/docs/zen/). 수동적 읽기(passive read)에서는 메모리 내 비활성화만 적용하고 사본이나 경고를 만들지 않습니다.
 
 정상 Claude Desktop 할당과 기본값은 유지됩니다. 소스 모델 허용 목록이 비게 되는 규칙은 비활성화되며 주입 모델이 제거되면 네이티브 하위 에이전트 동기화도 비활성화됩니다. 이후 설정을 저장하면 제거된 참조는 다시 기록되지 않고 정상적인 동시 편집은 유지됩니다.
 
@@ -311,9 +310,9 @@ Responses 도구 결과 배열은 텍스트로 변환하고 이미지는 짝이 
 Anthropic 호환 프리셋은 `anthropic` 어댑터(`x-api-key`)를 사용합니다. Xiaomi에는 OpenAI Chat
 프리셋 `xiaomi-mimo`와 토큰 플랜 프리셋 `mimo`도 있습니다. 세 프리셋 모두 기본 모델은 MiMo V2.6이며
 `xiaomi-mimo`에서는 `mimo-v2.6-flash`, 나머지에서는 `mimo-v2.6-pro`를 사용합니다. Xiaomi는
-2026-10-21에 `mimo-v2.5`와 `mimo-v2.5-pro`를 리디렉션 없이 종료하므로, 저장된 V2.5 기본 모델을
+2026-10-21에 `mimo-v2.5`와 `mimo-v2.5-pro`를 리디렉션 없이 종료하므로 저장된 V2.5 기본 모델을
 그전에 바꾸세요. easyproxy가 자동으로 변경하지는 않습니다.
-Volcengine Coding Plan과 Agent Plan은 `openai-responses` 어댑터로 네이티브 Responses 엔드포인트를 사용합니다. 검증된 Ark Coding Plan 도구 연속 호출에서는 직전 턴이 돌려준 Responses `reasoning` 항목을 그대로 다시 보내면 `400 InvalidParameter`가 나므로, Coding Plan 프리셋은 연속 입력을 전달하기 전에 그 항목을 제거합니다. 그 턴의 reasoning 상태는 사라지며 `dropResponsesReasoningItems: false`로 끌 수 있습니다. 이미 `openai-chat`으로 저장된 Coding Plan 설정은 덮어쓰지 않고 Chat 그대로 둡니다. 바꾸려면 `adapter`를 `openai-responses`로, `responsesPath`를 `/responses`로 직접 수정하거나 프리셋을 지우고 다시 추가하세요.
+Volcengine Coding Plan과 Agent Plan은 `openai-responses` 어댑터로 네이티브 Responses 엔드포인트를 사용합니다. 검증된 Ark Coding Plan 도구 연속 호출에서는 직전 턴이 돌려준 Responses `reasoning` 항목을 그대로 다시 보내면 `400 InvalidParameter`가 나므로 Coding Plan 프리셋은 연속 입력을 전달하기 전에 그 항목을 제거합니다. 그 턴의 reasoning 상태는 사라지며 `dropResponsesReasoningItems: false`로 끌 수 있습니다. 이미 `openai-chat`으로 저장된 Coding Plan 설정은 덮어쓰지 않고 Chat 그대로 둡니다. 바꾸려면 `adapter`를 `openai-responses`로, `responsesPath`를 `/responses`로 직접 수정하거나 프리셋을 지우고 다시 추가하세요.
 
 > **Volcengine의 세 가지 과금 경로:** `volcengine`은 종량제 Ark API,
 > `volcengine-coding-plan`은 Coding Plan 할당량, `volcengine-agent-plan`은 Agent Plan
@@ -332,7 +331,7 @@ model id와 안전한 live metadata를 보존합니다. 검색은 256 KiB와 raw
 사용자가 배포한 custom Chute host와 LLM 이외의 API는 custom provider로 설정해야 합니다. 키는
 [Chutes dashboard](https://chutes.ai/auth/start)에서 생성합니다.
 
-**DeepInfra 검색:** 키 기반 OpenAI Chat Completions 제공자인 `deepinfra`는 `openai-chat` 어댑터와
+**DeepInfra 검색:** 키 기반 OpenAI Chat Completions 프로바이더인 `deepinfra`는 `openai-chat` 어댑터와
 Bearer API 키를 사용합니다. registry가 소유하는 DeepInfra 모델 목록 URL에서 `chat` 태그가 있는 행만
 유지하고 슬래시가 포함된 네이티브 모델 ID를 보존합니다. live discovery는 512 KiB 및 raw 512행으로
 제한합니다. 키는 [DeepInfra dashboard](https://deepinfra.com/dash/api_keys)에서 생성합니다.
@@ -393,7 +392,7 @@ key 검증으로 간주합니다. discovery는 `zai-org/GLM-5.3`, `moonshotai/Ki
 id를 Crusoe가 반환한 그대로 유지하고 256 KiB와 raw 256행으로 제한합니다. `is_public: true`이면서 `architecture.modality`가 text 또는 multimodal인 행만 유지하므로 계정 전용 배포와 embedding, 미디어 행은 제외됩니다. reasoning model은 사고 내용을
 Chat Completions의 `reasoning` field로 반환하며 adapter가 이를 읽습니다. `reasoning_effort` 단계(`low`,
 `medium`, `high`)를 받는 것은 `openai/gpt-oss-120b`만이고 다른 reasoning model은 이 field를 on/off
-토글로 취급하므로, provider 전체 effort 단계나 parallel tool call은 광고하지 않습니다. rate limit은
+토글로 취급하므로 provider 전체 effort 단계나 parallel tool call은 광고하지 않습니다. rate limit은
 project와 model 단위로 적용되며(초과 시 429, 공유 deployment 확장 중 503) 신규 계정에는 $5 무료
 크레딧이 제공됩니다. 키는 [Crusoe Cloud console](https://console.crusoecloud.com)의
 Intelligence Foundry > Inference에서 생성합니다.
@@ -530,7 +529,7 @@ model discovery는 이 실험적 어댑터에서 활성화되어 있으며 Curso
 
 Ollama Cloud는 호스팅형(로컬이 아님) Ollama입니다. `https://ollama.com/v1`으로 설정하고 키는
 [ollama.com/settings/keys](https://ollama.com/settings/keys)에서 발급받습니다. easyproxy는 OpenAI 호환
-표면이 아니라 Ollama 자체 REST API(`POST /api/chat`)로 연결하며 모델 목록을 공급자에서 직접
+표면이 아니라 Ollama 자체 REST API(`POST /api/chat`)로 연결하며 모델 목록을 프로바이더에서 직접
 발견하므로 새 Ollama Cloud 모델이 설정 변경 없이 나타납니다. easyproxy는 클라우드
 라인업을 비전 기능에 따라 분류하여 [비전 사이드카](/ko/guides/sidecars/)가 텍스트 전용 모델에만
 작동하도록 합니다. 텍스트 전용 모델(예: `glm-5.2`, `deepseek-v4-flash`, `gpt-oss`, `qwen3-coder`,

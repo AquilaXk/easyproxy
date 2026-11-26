@@ -135,7 +135,7 @@ Codex-forward Daybreak Blue 행도 wire id를 바꾸지 않은 채 Sol의 ladder
   `disabledModels`에 추가하면 해당 selector 행만 숨깁니다.
 - Bare native GPT id는 bare slug입니다. 비활성화하면 나중에 다시 켤 수 있도록 카탈로그 항목은
   유지하면서 bare 행과 해당 모델의 모든 account-selector 복제 행을 숨깁니다.
-- 네이티브 행은 지원되는 정적 집합에서 오므로, 비활성화한 네이티브 모델은 대시보드에 계속 보이고 다시
+- 네이티브 행은 지원되는 정적 집합에서 오므로 비활성화한 네이티브 모델은 대시보드에 계속 보이고 다시
   켤 수 있습니다.
 
 표시 여부 처리 단계는 snapshot 업그레이드 뒤에 실행됩니다. 관리 API는 토글 뒤 카탈로그를 다시 쓰고
@@ -218,7 +218,7 @@ Fast 또는 Default 강제 모드는 Flex 선택을 덮어씁니다. `epx sync` 
 ### Codex 데스크톱에서 Ultra Fast 선택
 
 `service_tier: "ultrafast"`를 지원하는 프로바이더에는 전송 매핑을 한 번 설정하면 됩니다.
-easyproxy가 라우팅 모델의 Codex 기본 속도 메뉴에 **Ultra Fast**를 추가하므로, 동기화할 때마다
+easyproxy가 라우팅 모델의 Codex 기본 속도 메뉴에 **Ultra Fast**를 추가하므로 동기화할 때마다
 `easyproxy-catalog.json`을 직접 수정할 필요가 없습니다. 예를 들어 GPT-6.1 Sol용 API
 프로바이더의 기존 설정에 다음 필드를 병합하세요.
 

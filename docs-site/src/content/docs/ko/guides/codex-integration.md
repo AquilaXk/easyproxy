@@ -9,7 +9,7 @@ easyproxy는 Codex가 읽는 두 가지, 즉 설정(`$CODEX_HOME/config.toml`, �
 
 Pool 모드에서는 선택된 저장 계정이 쿨다운 중이고 사용 가능한 다른 저장 계정이나 복구 probe가
 없을 때, 요청에 포함된 검증된 native Codex 로그인을 사용할 수 있습니다. 상류 거절 후 재시도와
-같은 호출자 검증을 적용하므로, 전송 전에 막힌 새 요청도 이 경로를 사용할 수 있습니다. 기존 모델
+같은 호출자 검증을 적용하므로 전송 전에 막힌 새 요청도 이 경로를 사용할 수 있습니다. 기존 모델
 권한과 main 계정 정책 검사는 유지됩니다. 이 fallback은 저장 계정의 쿨다운을 해제하거나 호출자
 인증을 Pool 선택으로 저장하지 않습니다. 특정 계정에 정확히 고정된 요청은 그 계정에 계속 묶입니다.
 
@@ -45,13 +45,13 @@ fast_mode = true
 두 번째 키는 음성 sideband 오버라이드입니다. Codex는 WebRTC 음성 통화를 `openai_base_url`로 만들지만
 codex 0.146(openai/codex#35830)부터는 `experimental_realtime_ws_base_url`이 없으면 그 통화의 sideband
 WebSocket을 `api.openai.com`에 직접 붙입니다. Pool 모드에서는 통화가 easyproxy가 고른 계정으로
-만들어지므로, 앱 자체 로그인으로 직접 붙는 join은 `realtime websocket handshake failed`(404)로
+만들어지므로 앱 자체 로그인으로 직접 붙는 join은 `realtime websocket handshake failed`(404)로
 실패합니다. 주입된 키는 join을 다시 easyproxy(`GET /v1/live/{callId}`)로 보내고 Pool은 그
 session/thread 쌍에 묶어 둔 계정(프로세스 로컬 바인딩)을 그대로 씁니다. 클라이언트가 직접 만든
 통화는 예외입니다. ChatGPT 음성이 통화를 Codex 스레드로 넘기거나 Codex Desktop이 통화를 직접
-만들면 그 통화는 내 ChatGPT 로그인 소유이고 sideband join만 easyproxy에 도착하므로, easyproxy는
+만들면 그 통화는 내 ChatGPT 로그인 소유이고 sideband join만 easyproxy에 도착하므로 easyproxy는
 그 join을 Pool 계정이 아니라 호출자 자신의 ChatGPT 자격 증명으로 보냅니다. Direct 모드는 두 요청 모두
-호출자의 현재 bearer를 쓰므로, 이 키는 join을 프록시 경로에 붙잡아 두는 역할만 합니다. 이 키는
+호출자의 현재 bearer를 쓰므로 이 키는 join을 프록시 경로에 붙잡아 두는 역할만 합니다. 이 키는
 loopback `openai_base_url` 형태에서만 쓰이고 그 키와 함께 제거되며 사용자가 직접 적은
 `experimental_realtime_ws_base_url`은 덮어쓰지 않습니다.
 
@@ -95,8 +95,7 @@ ChatGPT forward 목적지를 사용하는 내장 `openai` provider로만 전달�
 않습니다. 암호화된 인수, 응답 본문, upstream 오류 상태는 보존합니다.
 
 소유권은 요청을 받아들인 easyproxy API 키 단위로 분리됩니다. 두 키가 같은 ChatGPT 워크스페이스를
-가리키더라도 서로의 세션에 접근할 수 없습니다. 워크스페이스 ID는 사람이 아니라 조직을 가리키므로,
-레지스트리는 업스트림이 실제로 수락한 자격 증명이 담고 있는 사용자 식별자까지 함께 묶습니다. 같은
+가리키더라도 서로의 세션에 접근할 수 없습니다. 워크스페이스 ID는 사람이 아니라 조직을 가리키므로 레지스트리는 업스트림이 실제로 수락한 자격 증명이 담고 있는 사용자 식별자까지 함께 묶습니다. 같은
 사용자의 토큰 갱신은 세션을 이어가지만 같은 워크스페이스의 다른 사용자는 이어받지 못합니다. 수락된
 자격 증명이 사용자 식별자를 증명하지 못하면 정확히 그 자격 증명만 세션을 이어갈 수 있습니다.
 여기서 principal은 요청이 제시한 easyproxy API 키입니다. 원격 바인드는 이미 키를 요구하므로
@@ -108,7 +107,7 @@ context history는 HTTP 403을 반환합니다. **즉 이 relay는 키가 설정
 지금은 추측하지 않고 거부합니다.
 
 relay 작업 전체는 35초 deadline 하나로 묶입니다. 본문을 읽기 전에 시작해서 자격 증명 선택까지
-포함하므로, 멈춘 클라이언트가 처리 슬롯을 붙잡고 있을 수 없습니다. 클라이언트가 끊으면 499,
+포함하므로 멈춘 클라이언트가 처리 슬롯을 붙잡고 있을 수 없습니다. 클라이언트가 끊으면 499,
 deadline이 지나면 504를 반환하며 두 경우 모두 업스트림으로 아무것도 보내지 않습니다.
 
 성공한 ChatGPT 모델 응답은 루트 세션을 실제로 처리한 계정을 크기가 제한된 프로세스 로컬
@@ -140,7 +139,7 @@ backend 콘텐츠가 존재한다는 뜻은 아닙니다. 재시작 후에는 �
 
 ### 내장 이미지 생성 (`image_gen`)
 
-Codex의 내장 `image_gen` 도구는 `/v1/responses`를 거치지 않습니다. codex-rs 확장은 채팅과 같은 ChatGPT bearer 인증을 사용해서 `{base_url}/images/generations`를 직접 POST하며 참조 이미지가 붙어 있으면 `/images/edits`를 POST합니다. 주입된 `base_url`이 easyproxy를 가리키므로, 프록시가 이 호출을 OpenAI upstream으로 전달합니다.
+Codex의 내장 `image_gen` 도구는 `/v1/responses`를 거치지 않습니다. codex-rs 확장은 채팅과 같은 ChatGPT bearer 인증을 사용해서 `{base_url}/images/generations`를 직접 POST하며 참조 이미지가 붙어 있으면 `/images/edits`를 POST합니다. 주입된 `base_url`이 easyproxy를 가리키므로 프록시가 이 호출을 OpenAI upstream으로 전달합니다.
 
 이것은 [Image Bridge](/guides/image-bridge/)와는 별개입니다. Image Bridge는 **Responses** 턴이 호스티드 `image_generation` 도구를 나열하고 선택된 모델이 OpenAI가 아닐 때만 활성화됩니다. 독립적인 `/images/generations` 호출은 이 브리지로 들어가지 않습니다.
 
@@ -213,7 +212,7 @@ $CODEX_HOME/easyproxy-catalog.json
 $CODEX_HOME/models_cache.json
 ```
 
-macOS에서는 명시적 선택, shim, PATH, 기존 설치 경로와 실행 가능한 기본 `codex` 후보 뒤에 `/Applications/ChatGPT.app`, `~/Applications/ChatGPT.app` 순서로 Codex 앱의 번들 CLI를 확인하며 번들의 XML `Info.plist` 식별자가 `com.openai.codex`여야 하고 실행 가능한 저장된 선택을 앱 후보로 자동 교체하지 않습니다. Codex CLI가 전혀 발견되지 않으면 `epx connect status` 준비 상태 뒤의 카탈로그 프로브도 해당 번들 위치를 시도하므로, 앱 번들 CLI만 있는 Child는 `unverified` 대신 지원 추론 수준을 보고합니다. 실행 시에는 아래 검사가 그대로 적용됩니다.
+macOS에서는 명시적 선택, shim, PATH, 기존 설치 경로와 실행 가능한 기본 `codex` 후보 뒤에 `/Applications/ChatGPT.app`, `~/Applications/ChatGPT.app` 순서로 Codex 앱의 번들 CLI를 확인하며 번들의 XML `Info.plist` 식별자가 `com.openai.codex`여야 하고 실행 가능한 저장된 선택을 앱 후보로 자동 교체하지 않습니다. Codex CLI가 전혀 발견되지 않으면 `epx connect status` 준비 상태 뒤의 카탈로그 프로브도 해당 번들 위치를 시도하므로 앱 번들 CLI만 있는 Child는 `unverified` 대신 지원 추론 수준을 보고합니다. 실행 시에는 아래 검사가 그대로 적용됩니다.
 
 실행 시에는 위치와 관계없이 `Codex.app`과 `ChatGPT.app`을 인식하며 이동한 번들, 명시적
 `CODEX_CLI_PATH`·설정 런타임 명령, 심볼릭 링크 별칭에도 같은 검증을 적용합니다. 앱 이름은 검증
@@ -236,8 +235,8 @@ Windows에서 Orca shell은 `CODEX_HOME`과 `ORCA_CODEX_HOME`을 Orca의 번들 
 첫 Responses 이벤트 전에 받은 메타데이터가 우선하며 이후 메타데이터는 본문에 남지만
 이미 확정한 응답 헤더를 바꾸지는 못합니다. 없는 표시를 만들어 붙이거나 사용량 숫자를
 수정하지 않습니다. 상류가 표시를 보내지 않는 경우와 Codex 자체의 사용량 상태 관리는
-별도 문제이므로, 이 변경만으로 조기 압축 해결을 보장하지 않습니다. 클라이언트도
-WebSocket으로 연결하면 상류 응답 전에 연결 승인이 끝나므로, 그 승인 헤더에 표시를
+별도 문제이므로 이 변경만으로 조기 압축 해결을 보장하지 않습니다. 클라이언트도
+WebSocket으로 연결하면 상류 응답 전에 연결 승인이 끝나므로 그 승인 헤더에 표시를
 나중에 추가할 수는 없습니다.
 
 네이티브 ChatGPT forward 요청의 로컬 재생 상태가 만료되었거나 없으면 easyproxy는
@@ -268,8 +267,7 @@ Responses ID의 처리 경로는 이 로컬 재생 규칙과 별개입니다.
 
 routed 목적지에는 모두 같은 복구 신호가 적용됩니다. 프록시가 잃어버린 기록을 대신 볼 수 있는
 것은 네이티브 Responses 패스스루뿐입니다. 체인을 저장해 둔 백엔드로 `previous_response_id`를
-그대로 넘기기 때문입니다. 나머지 wire는 매 턴 요청에 담긴 입력만으로 대화를 다시 구성하므로,
-재생이 실패한 채 전달하면 이번 턴 한 줄만 올라가고 대화가 조용히 사라집니다. 상태를 들고
+그대로 넘기기 때문입니다. 나머지 wire는 매 턴 요청에 담긴 입력만으로 대화를 다시 구성하므로 재생이 실패한 채 전달하면 이번 턴 한 줄만 올라가고 대화가 조용히 사라집니다. 상태를 들고
 있어 보이는 셋도 마찬가지입니다. Devin은 매 턴 전체 대화를 다시 보내고 Cursor의 체크포인트
 참조는 방금 만료된 그 저장소에 있어 없으면 full-replay로 떨어지며 Kiro는 넘겨받은 턴으로
 conversation history를 다시 만듭니다.
@@ -356,7 +354,7 @@ epx sync-cache
 
 `GET /v1/catalog`은 모델 목록을 읽는 데 관리자 토큰이 필요하지 않도록 존재합니다. 읽기 전용(`GET`, `HEAD`)이며 `x-easyproxy-api-key`, bearer 토큰, `x-api-key`를 허용하고 관리 라우트와 완전히 동일한 바이트를 제공합니다. 응답에는 강한 `ETag`가 포함되므로 `If-None-Match`로 다시 보내면 전체 문서 대신 `304`를 받고 `Cache-Control: private, no-cache`가 함께 설정됩니다. 여기서 허용된 데이터 플레인 키는 관리 플레인에서 **아무 권한도** 얻지 못합니다. `/api/catalog`을 비롯한 모든 `/api/*` 라우트는 여전히 관리자 토큰이나 대시보드 세션을 요구합니다.
 
-표시 이름은 **표시 전용이며 재생성 사이에서도 안정적**입니다. 모든 `epx sync`와 catalog refresh는 `config.json`(`customModels` 포함)에서 routed entry를 다시 계산하므로, 설정된 이름이 라우팅 slug로 되돌아가지 않고 다시 적용됩니다. 관리형 service restart도 proxy가 bind된 직후 이 sync를 다시 시도합니다. 예를 들어 offline login 중이라 이 best-effort boot sync가 실패하면, 이전에 저장된 catalog는 유지되고 다음에 성공한 `epx sync`가 설정된 이름을 다시 적용합니다. 진짜 upstream native name(예: `gpt-5.6-sol` → "GPT-5.6-Sol")은 고정된 upstream snapshot에서 오며 custom display name으로 덮어쓰지 않습니다.
+표시 이름은 **표시 전용이며 재생성 사이에서도 안정적**입니다. 모든 `epx sync`와 catalog refresh는 `config.json`(`customModels` 포함)에서 routed entry를 다시 계산하므로 설정된 이름이 라우팅 slug로 되돌아가지 않고 다시 적용됩니다. 관리형 service restart도 proxy가 bind된 직후 이 sync를 다시 시도합니다. 예를 들어 offline login 중이라 이 best-effort boot sync가 실패하면, 이전에 저장된 catalog는 유지되고 다음에 성공한 `epx sync`가 설정된 이름을 다시 적용합니다. 진짜 upstream native name(예: `gpt-5.6-sol` → "GPT-5.6-Sol")은 고정된 upstream snapshot에서 오며 custom display name으로 덮어쓰지 않습니다.
 
 ### 외부 provider manager
 
@@ -383,7 +381,7 @@ Codex에서 model이 빠졌거나 catalog 순서/가시성이 이상해 보이�
 6. **실행 중인 Codex `app-server`** - 오래 살아 있는 Codex `app-server`(Desktop / CLI background host)가 이전 목록을 메모리에 쥐고 있으면 디스크 catalog를 다시 쓰는 것만으로는 부족합니다. `epx sync`와 `epx sync-cache`는 그런 process를 감지하면 경고합니다. `epx sync --restart-codex`는 그 process를 재시작하고 macOS·Linux·Windows에서 Codex 데스크톱 앱을 완전히 종료한 뒤 다시 띄워 선택기가 카탈로그를 다시 읽게 합니다. 데스크톱 앱을 그대로 두려면 `--restart-app-server-only`를 쓰거나 일치하는 `app-server` process를 직접 중지하세요.
 
 :::caution[다른 로컬 writer]
-catalog write(`easyproxy-catalog.json`, `config.toml`)는 easyproxy 내부에서만 원자적입니다. 이것은 두 개의 easyproxy 소유 writer가 경합할 때 반쯤만 써진 파일을 막아줄 뿐입니다. 다른 로컬 process, file watcher, sync agent가 easyproxy가 쓴 뒤에 catalog visibility나 순서를 다시 쓸 가능성은 막지 못합니다. Codex는 별도의 `models_cache.json`을 유지하고 독립적으로 갱신할 수 있으므로, 이 과정에서 `easyproxy-catalog.json`을 다시 쓰지 않고도 보이는 목록이 바뀔 수 있습니다. proxy가 실행 중인데 model이 예상치 않게 바뀌면, 경쟁 writer를 중지하거나 재설정한 뒤 `epx sync`를 실행하세요. 이것은 외부 writer 위험이지, 확인된 easyproxy 결함이 아닙니다.
+catalog write(`easyproxy-catalog.json`, `config.toml`)는 easyproxy 내부에서만 원자적입니다. 이것은 두 개의 easyproxy 소유 writer가 경합할 때 반쯤만 써진 파일을 막아줄 뿐입니다. 다른 로컬 process, file watcher, sync agent가 easyproxy가 쓴 뒤에 catalog visibility나 순서를 다시 쓸 가능성은 막지 못합니다. Codex는 별도의 `models_cache.json`을 유지하고 독립적으로 갱신할 수 있으므로 이 과정에서 `easyproxy-catalog.json`을 다시 쓰지 않고도 보이는 목록이 바뀔 수 있습니다. proxy가 실행 중인데 model이 예상치 않게 바뀌면, 경쟁 writer를 중지하거나 재설정한 뒤 `epx sync`를 실행하세요. 이것은 외부 writer 위험이지, 확인된 easyproxy 결함이 아닙니다.
 :::
 
 ## 프록시 연결 오류

@@ -13,7 +13,7 @@ EasyProxy 데스크톱 앱은 네이티브 트레이와 웹 대시보드를 함�
 
 [최신 릴리스](https://github.com/AquilaXk/easyproxy/releases)에서 `EasyProxy-<version>-macos.dmg`를 다운로드하세요. DMG를 열고 `EasyProxy.app`을 Applications로 드래그합니다. macOS 13 이상이 필요합니다.
 
-릴리스 버전의 `EasyProxy.app`은 Developer ID로 서명되고 Apple 공증을 받으므로, 첫 실행 시에는 대개 다운로드한 앱에 대한 일반 확인만 요청합니다. macOS가 계속 차단하면 **System Settings → Privacy & Security → Open Anyway**를 선택하세요.
+릴리스 버전의 `EasyProxy.app`은 Developer ID로 서명되고 Apple 공증을 받으므로 첫 실행 시에는 대개 다운로드한 앱에 대한 일반 확인만 요청합니다. macOS가 계속 차단하면 **System Settings → Privacy & Security → Open Anyway**를 선택하세요.
 
 #### Homebrew (데스크톱 앱)
 
@@ -25,7 +25,7 @@ brew install --cask easyproxy
 
 - **인앱 업데이트 (`auto_updates`)**: 데스크톱 앱에는 자체 업데이트 기능이 있으며 Cask는 `auto_updates true`를 선언합니다. 특정 Cask를 지정한 `brew upgrade --cask easyproxy` 또는 greedy 업그레이드는 인앱 업데이트로 더 최신 버전이 된 앱을 교체할 수 있습니다. Homebrew로 업그레이드하기 전에 설치된 앱과 Cask의 버전을 확인하세요.
 - **CLI와 백그라운드 서비스**: Cask는 CLI와 프록시 런타임을 포함한 `EasyProxy.app`만 설치합니다. 독립 CLI나 헤드리스 서비스를 위해 npm 또는 릴리스 아카이브로 `epx`를 별도 설치할 수 있으며 두 설치는 `~/.easyproxy` 설정을 공유합니다. 해당 CLI에 서비스를 넘기려면 EasyProxy를 종료하고 별도 CLI를 명시적으로 선택한 다음([Desktop 패키지 런처 핸드오프](/getting-started/installation/)가 활성화되어 있으면 우회) `epx service install`을 실행하세요. [터미널 명령 선택](/ko/guides/desktop-app/#데스크톱-앱과-epx-cli-함께-사용하기)과 [런타임 소유권](/reference/cli/lifecycle/#runtime-ownership)을 참조하세요.
-- **Cask 업그레이드 후 서비스**: Cask의 제거 단계는 별도 CLI의 `com.easyproxy.proxy` launchd 작업과 plist도 제거하여 백그라운드 서비스를 중단할 수 있습니다. 업그레이드 후 EasyProxy를 종료하고 macOS GUI 로그인 세션에서 위처럼 명시적으로 선택한 별도 CLI로 `epx service status`를 실행하세요. 서비스가 없으면 `epx service install`, 설치되어 있지만 로드되지 않았다면 `epx service repair`를 실행한 뒤 `epx service status`로 다시 확인하세요. `epx service install`은 제거된 작업이 아니라 `EPX_BAKE_PORT` 또는 `config.port`에서 포트를 가져옵니다. 서비스 등록 후 둘 중 하나가 바뀌었다면 이전 포트를 가리키는 클라이언트를 갱신하세요. 같은 제거 단계는 Desktop 자체의 Start at Login 항목(`EasyProxy` launchd 작업)도 제거하므로, 사용 중이었다면 EasyProxy에서 **Start at Login**을 다시 켜세요.
+- **Cask 업그레이드 후 서비스**: Cask의 제거 단계는 별도 CLI의 `com.easyproxy.proxy` launchd 작업과 plist도 제거하여 백그라운드 서비스를 중단할 수 있습니다. 업그레이드 후 EasyProxy를 종료하고 macOS GUI 로그인 세션에서 위처럼 명시적으로 선택한 별도 CLI로 `epx service status`를 실행하세요. 서비스가 없으면 `epx service install`, 설치되어 있지만 로드되지 않았다면 `epx service repair`를 실행한 뒤 `epx service status`로 다시 확인하세요. `epx service install`은 제거된 작업이 아니라 `EPX_BAKE_PORT` 또는 `config.port`에서 포트를 가져옵니다. 서비스 등록 후 둘 중 하나가 바뀌었다면 이전 포트를 가리키는 클라이언트를 갱신하세요. 같은 제거 단계는 Desktop 자체의 Start at Login 항목(`EasyProxy` launchd 작업)도 제거하므로 사용 중이었다면 EasyProxy에서 **Start at Login**을 다시 켜세요.
 - **`--zap`을 사용한 데이터 삭제**: `brew uninstall --zap --cask easyproxy`는 `~/.easyproxy`와 `~/.easyproxy-desktop`을 삭제합니다. 이 디렉터리에 있는 CLI와 Desktop의 공유 설정과 상태 데이터도 삭제됩니다. `--zap`을 사용하기 전에 보관할 데이터를 백업하세요. 2.97.0 이전의 Cask 정의에는 이 두 디렉터리가 없었고 Homebrew는 설치할 때 기록된 정의로 제거할 수 있습니다. `--zap` 후 두 디렉터리가 남아 있는지 확인하고 지우려면 직접 삭제하세요.
 
 ### Windows
@@ -148,7 +148,7 @@ PATH CLI도 `epx restart`로 앱의 프록시를 자기 설치의 런타임으�
 
 이 가드는 현재 CLI와 런타임이 제공하는 조기 경고입니다. 이전 버전에는 없을 수 있습니다.
 검사 중 Desktop을 발견했지만 확인을 완료하지 못한 경우에도 작업을 차단합니다. 한 번 차단되면 이후의 불확실한 검사로는
-해제되지 않으며 Desktop 감독이 없다는 사실이 확인되어야 합니다. 앞서 Desktop을
+해제되지 않으며 Desktop 감독이 실행 중이 아님을 확인해야 합니다. 앞서 Desktop을
 발견하지 않았다면 불확실하거나 지원되지 않는 검사는 기존 명령 동작을 유지합니다.
 기록된 소유권에 따른 기존 거부 검사는 별도로 적용됩니다.
 
@@ -184,7 +184,7 @@ macOS 앱에는 EasyProxy WidgetKit 확장이 포함됩니다. 위젯 설정과 
 
 지원되는 Desktop 설치본을 제거하기 전에 대시보드나 트레이의 **Terminal command**를
 열어 **Remove terminal command**를 선택하세요. Desktop은 변경되지 않은 자신의 관리
-설정만 제거합니다. 사용자가 수정한 블록이나 파일은 보존하고 알려 주므로, 앱을 삭제하기
+설정만 제거합니다. 사용자가 수정한 블록이나 파일은 보존하고 알려 주므로 앱을 삭제하기
 전에 해당 문제를 처리하세요. 앱만 직접 제거하면 셸 파일이나 사용자 `Path` 정리가
 보장되지 않습니다.
 

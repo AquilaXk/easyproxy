@@ -50,7 +50,7 @@ epx export --client pi
 
 생성된 Pi provider는 `compat.supportsDeveloperRole`도 `false`로 설정합니다. 그래서 Pi는 시스템 프롬프트를 `developer`가 아닌 `system` 역할로 보냅니다. EasyProxy는 Chat Completions 역할을 받은 그대로 전달하는데, OpenAI 호환 업스트림 중 일부는 `developer`를 400으로 거부합니다. `system`은 모든 업스트림이 받습니다.
 
-모델 id는 프록시의 정규 선택자이므로, 라우팅된 모델은 `provider/model`
+모델 id는 프록시의 정규 선택자이므로 라우팅된 모델은 `provider/model`
 (`anthropic/claude-opus-5`) 형태로 나타나고 네이티브 OpenAI slug는 접두사 없이
 (`gpt-5.6-sol`) 유지됩니다. `name` 접미사인 `(anthropic)`, `(native)`, `(routed)`는
 Pi 선택기에서 같은 이름의 서로 다른 upstream 모델을 구분하게 해줍니다.
@@ -95,7 +95,7 @@ epx export --client pi --json > ~/easyproxy-pi-models.json   # or redirect the b
 
 출력 한도는 카탈로그 또는 생성된 메타데이터의 알려진 모델 한도를 사용합니다. 알 수 없는 경우에만 `32000`을 사용합니다. 출력 한도는 항상 context window 이하로 제한되며 `32000`보다 작은 알려진 한도도 유지됩니다.
 
-`cost`는 의도적으로 생략합니다. 네 가격 필드가 모두 필요하지만 easyproxy에는 라우팅 모델의 가격 데이터가 없으므로, 0을 출력하면 모든 모델이 무료라는 잘못된 의미가 됩니다.
+`cost`는 의도적으로 생략합니다. 네 가격 필드가 모두 필요하지만 easyproxy에는 라우팅 모델의 가격 데이터가 없으므로 0을 출력하면 모든 모델이 무료라는 잘못된 의미가 됩니다.
 
 카탈로그의 effort 단계가 **비어 있지 않을 때** `"reasoning": true`를 출력합니다. 단계가 없거나 명시적으로 비어 있으면 출력하지 않습니다. `thinkingLevelMap`은 대응 대상이 없는 Pi 단계를 `null`로 숨겨 선언되지 않은 값을 제안하거나 보내지 않게 합니다. `max` 없이 `ultra`만 선언되면 Pi의 `max`를 `ultra`에 매핑합니다. 다른 매핑은 Pi 문서에 따라 `thinkingLevelMap`을 직접 편집하세요.
 
@@ -113,5 +113,5 @@ epx export --client pi --json > ~/easyproxy-pi-models.json   # or redirect the b
 ## 요구 사항
 
 실행 중인 easyproxy 프록시(`epx start`)와 설치된 Pi가 필요합니다. `epx export`는
-프록시의 management API를 통해 live catalog를 읽으므로, 빈 모델 목록으로는 config를
+프록시의 management API를 통해 live catalog를 읽으므로 빈 모델 목록으로는 config를
 내보낼 수 없습니다.

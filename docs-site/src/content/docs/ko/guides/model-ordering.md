@@ -1,5 +1,5 @@
 ---
-title: 모델 정렬에 관하여
+title: 모델 정렬
 description: easyproxy가 Codex 모델 선택기와 spawn_agent 모델 override의 순서를 정하는 방식.
 ---
 

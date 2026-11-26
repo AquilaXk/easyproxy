@@ -80,7 +80,7 @@ reasoning effort를 알려 줍니다. v2 요청은 Codex가 제공하는 멀티 
    `defaultProvider` 폴백. [모델 라우팅](/ko/guides/model-routing/)을 참고하세요.
 
 3. **Authenticate** — `oauth` 프로바이더의 경우, easyproxy가 새로 자동 갱신된 access
-   토큰을 bearer 키로 교체하므로, 기존 adapter들은 변경 없이 인증됩니다. ChatGPT/Codex pool
+   토큰을 bearer 키로 교체하므로 기존 adapter들은 변경 없이 인증됩니다. ChatGPT/Codex pool
    계정에서는 `codex/auth-context.ts`가 먼저 계정을 해석하고 필요한 pool credential이 없으면
    passthrough adapter가 계속 진행하지 않습니다.
 

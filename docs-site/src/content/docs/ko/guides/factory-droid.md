@@ -152,7 +152,7 @@ epx doctor
 ```
 
 `--restart-codex`는 일치하는 app-server를 재시작하고 Codex 데스크톱 앱을 완전히 종료한 뒤 다시
-띄우므로, 진행 중인 대화가 끝납니다. 데스크톱 앱을 그대로 두려면 `--restart-app-server-only`를
+띄우므로 진행 중인 대화가 끝납니다. 데스크톱 앱을 그대로 두려면 `--restart-app-server-only`를
 쓰세요. 해당 세션을 끝내거나 저장한 뒤에만 재시작하세요.
 
 ## 전체 경로 검증

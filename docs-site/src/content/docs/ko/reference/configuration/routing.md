@@ -26,7 +26,7 @@ easyproxy는 요청된 model을 다음 순서로 해석합니다:
 8. provider의 설정된 `models` 목록 안의 정확한 model입니다.
 9. `defaultProvider`이며 요청한 model id를 그대로 유지합니다.
 
-비활성화된 provider는 제외합니다. 비활성화된 provider의 명시적 네임스페이스는 다음 규칙으로 넘어가지 않고 실패합니다. 여러 provider에 걸쳐 일치할 수 있는 규칙은 JSON에 적힌 삽입 순서대로 provider 항목을 검사하므로, bare model이 애매할 수 있으면 명시적 네임스페이스를 사용하세요.
+비활성화된 provider는 제외합니다. 비활성화된 provider의 명시적 네임스페이스는 다음 규칙으로 넘어가지 않고 실패합니다. 여러 provider에 걸쳐 일치할 수 있는 규칙은 JSON에 적힌 삽입 순서대로 provider 항목을 검사하므로 bare model이 애매할 수 있으면 명시적 네임스페이스를 사용하세요.
 
 ### 차단된 모델 리디렉션
 

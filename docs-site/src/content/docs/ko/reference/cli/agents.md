@@ -19,7 +19,7 @@ epx agent sidecar web --enabled off
 
 `--enabled off`는 대시보드의 **끔 (Off)** 행과 같은 스위치입니다. EasyProxy는 사이드카를
 실행하지 않고 Codex 통합은 `~/.codex/config.toml`에
-`web_search = "disabled"`를 쓰므로, MCP 검색 서버만 검색 경로로 쓸 수 있습니다.
+`web_search = "disabled"`를 쓰므로 MCP 검색 서버만 검색 경로로 쓸 수 있습니다.
 `--enabled on`은 그 줄을 다시 제거합니다. 저장이 실제로 스위치를 옮기면 명령은 트리거된
 Codex 쪽 쓰기(`--json`에서는 `codexWebSearch`, 그 밖에는 마지막
 `Codex config:` 줄)를 보고하고 쓰기가 불가능했다면 `epx sync`를 안내합니다.
@@ -222,7 +222,7 @@ Grok Build model fence를 관리하고 적용합니다.
 | 플래그 | 동작 |
 | --- | --- |
 | `--client <opencode\|pi\|omp\|hermes\|openclaw\|kimi\|gajae\|dsh\|mcode\|zcode\|prime\|aside\|raycast\|omo\|cline\|kilo\|commandcode\|droid>` | 필수입니다. 클라이언트 설정 형식을 선택합니다. |
-| `--json` | config JSON만 stdout에 출력하므로, redirect가 byte-exact 출력을 캡처합니다. `--out` write note를 포함한 모든 진단 메시지는 stderr로 갑니다. |
+| `--json` | config JSON만 stdout에 출력하므로 redirect가 byte-exact 출력을 캡처합니다. `--out` write note를 포함한 모든 진단 메시지는 stderr로 갑니다. |
 | `--out <path>` | config를 `<path>`에 씁니다. 기존 파일이 있으면 덮어쓰지 않습니다. |
 | `--force` | `--out`이 기존 파일을 덮어쓰도록 허용합니다. |
 
@@ -269,7 +269,7 @@ opencode는 `{env:EASYPROXY_OPENCODE_API_KEY}`를 보간합니다. easyproxy가 
 
 생성된 gjc 연동은 비밀이 아닌 로컬 접속용 값을 사용하므로 환경변수가 필요하지 않습니다. 루프백 전용이며 원격 접속 인증은 설정하지 않습니다.
 
-같은 payload는 `GET /api/client-config`로 제공되고 dashboard의 API 탭에도 렌더링되므로, CLI, API, GUI가 모두 같은 바이트를 사용합니다.
+같은 payload는 `GET /api/client-config`로 제공되고 dashboard의 API 탭에도 렌더링되므로 CLI, API, GUI가 모두 같은 바이트를 사용합니다.
 
 ## 런타임과 설정
 
@@ -278,7 +278,7 @@ opencode는 `{env:EASYPROXY_OPENCODE_API_KEY}`를 보간합니다. easyproxy가 
 헤드리스 런타임 설정, 시작, 동기화, 진단, 업데이트를 관리합니다.
 
 `epx system codex-restart --yes`는 `epx sync --restart-codex`와 같은 모듈로 Codex
-app-server를 재시작합니다. 모델 선택기는 앱 실행 시점에 만들어지므로, 데스크톱 앱은 현재
+app-server를 재시작합니다. 모델 선택기는 앱 실행 시점에 만들어지므로 데스크톱 앱은 현재
 모델 카탈로그가 기록되기 전에 실행된 경우나 이 요청으로 `model_catalog_json` 경로가 바뀐 경우 완전히 종료한 뒤 다시 띄웁니다. 그렇지 않으면
 앱은 열린 채로 자체 app-server를 다시 띄우고 보내지 않은 초안과 대기 중인 승인을 유지합니다.
 앱이나 카탈로그 상태를 읽을 수 없으면 전체 재시작을 수행합니다. 프록시 자체가 Codex 앱 안에서

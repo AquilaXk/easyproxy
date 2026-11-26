@@ -16,7 +16,7 @@ easyproxy는 macOS, Windows, Linux에서 실행됩니다. 대부분의 기능은
 
 ### 운영체제 자격 증명 저장소의 프로바이더 키
 
-세 플랫폼 모두에서 **잠금이 해제된 운영체제 자격 증명 서비스를 사용할 수 있을 때** 지원합니다. macOS는 Keychain, Windows는 Credential Manager, Linux는 libsecret을 사용합니다. 키링이 잠겨 있거나 화면이 없는 세션에서는 잠금 해제된 서비스를 사용할 수 없으므로, easyproxy는 조용히 다른 저장소로 전환하지 않고 사용 불가 상태를 알립니다. 저장 규칙은 [프로바이더](/ko/reference/configuration/providers/) 문서를 참고하세요.
+세 플랫폼 모두에서 **잠금이 해제된 운영체제 자격 증명 서비스를 사용할 수 있을 때** 지원합니다. macOS는 Keychain, Windows는 Credential Manager, Linux는 libsecret을 사용합니다. 키링이 잠겨 있거나 화면이 없는 세션에서는 잠금 해제된 서비스를 사용할 수 없으므로 easyproxy는 조용히 다른 저장소로 전환하지 않고 사용 불가 상태를 알립니다. 저장 규칙은 [프로바이더](/ko/reference/configuration/providers/) 문서를 참고하세요.
 
 ## macOS 전용
 

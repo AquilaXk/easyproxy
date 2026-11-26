@@ -71,7 +71,7 @@ epx config set runtimeRole hub
 epx config set hostname 100.64.0.10
 epx config set corsAllowOrigins '["http://localhost:10100"]'
 
-# 새로 만든 standalone 설정에는 `hub`나 `remoteGui` 객체가 없고, `epx config set`은 없는 부모를
+# 새로 만든 standalone 설정에는 `hub`나 `remoteGui` 객체가 없고 `epx config set`은 없는 부모를
 # 만들어 주지 않습니다. 중첩 경로를 먼저 쓰면 `config parent path not found: hub`로 실패합니다.
 # `runtimeRole`을 설정해도 객체는 생기지 않습니다. 빈 객체를 먼저 만들고 필드를 설정하세요.
 epx config set hub '{}'
@@ -81,7 +81,7 @@ epx config set hub.dataPublicOrigin '"https://hub-name.tailnet-name.ts.net:8443"
 epx config set hub.managementIngress '{"enabled":true,"port":10101}'
 epx config set remoteGui.allowedTailscaleUsers '["operator@example.com"]'
 
-# 포트 하나. 원격 컴퓨터는 100.64.0.10:10100을 자기 키로 호출하고, 허브의 로컬 프로세스는
+# 포트 하나. 원격 컴퓨터는 100.64.0.10:10100을 자기 키로 호출하고 허브의 로컬 프로세스는
 # 같은 포트의 127.0.0.1:10100을 자격 증명 없이 호출합니다.
 epx config set unauthenticatedLoopbackListener '{"enabled":true}'
 
@@ -98,7 +98,7 @@ epx config set hub '{"managementPublicOrigin":"https://hub-name.tailnet-name.ts.
 epx config set remoteGui '{"allowedTailscaleUsers":["operator@example.com"]}'
 ```
 
-이 형태는 객체가 아직 없을 때만 쓰세요. 객체 전체를 설정하면 병합이 아니라 **교체**되므로, 이미 `hub.managementIngress`가 있던 설정에 위 줄을 실행하면 인그레스가 조용히 사라집니다. 기존 설정을 수정할 때는 부모가 이미 있으므로 필드를 하나씩 설정하면 되고 그 경우 다른 값은 건드리지 않습니다.
+이 형태는 객체가 아직 없을 때만 쓰세요. 객체 전체를 설정하면 병합이 아니라 **교체**되므로 이미 `hub.managementIngress`가 있던 설정에 위 줄을 실행하면 인그레스가 조용히 사라집니다. 기존 설정을 수정할 때는 부모가 이미 있으므로 필드를 하나씩 설정하면 되고 그 경우 다른 값은 건드리지 않습니다.
 
 값이 받아들여지는지를 결정하는 두 가지. 값은 먼저 JSON으로 파싱되고 실패하면 원시 문자열로 처리하므로 URL은 `'"https://…"'`처럼 적습니다. 객체, 배열, 불리언, 숫자는 올바른 JSON이어야 합니다. 그리고 `hub`와 `remoteGui`는 strict 스키마라서 오타 난 키는 쓰는 시점에 `schema_invalid: hub.<field>`로 거부됩니다. 효과 없는 설정으로 남지 않습니다. `managementPublicOrigin`과 `dataPublicOrigin`은 경로·쿼리·프래그먼트가 없는 순수 Origin이어야 합니다.
 
@@ -110,7 +110,7 @@ epx config set remoteGui '{"allowedTailscaleUsers":["operator@example.com"]}'
 2. **기존 `service-api-token` 파일.** 이 재사용이 `epx service install`, `epx service repair`, 재시작을 멱등하게 만듭니다. 새로 만들면 이미 교환된 클라이언트 키가 모두 조용히 무효가 됩니다. 재사용하는 파일도 그냥 믿지 않고 다시 검사합니다. 아래 관리자 토큰 단락을 보세요.
 3. **무작위 32바이트(hex) 새 값.** 손으로 하던 단계를 없애는 분기입니다.
 
-명령은 **경로**만 출력하고 값은 절대 출력하지 않습니다. launchd plist와 systemd user unit은 프로세스가 시작할 때 그 보호된 파일을 읽으며 토큰 문자열이 정의 파일에 들어가지 않습니다. 값을 `epx config show`, unit/plist 출력, 스크린샷, 지원 번들에 붙여 넣지 마세요. 포그라운드 `epx start`도 같은 파일을 읽으므로, 토큰을 내보내지 않아도 루프백이 아닌 hostname에 바인드합니다.
+명령은 **경로**만 출력하고 값은 절대 출력하지 않습니다. launchd plist와 systemd user unit은 프로세스가 시작할 때 그 보호된 파일을 읽으며 토큰 문자열이 정의 파일에 들어가지 않습니다. 값을 `epx config show`, unit/plist 출력, 스크린샷, 지원 번들에 붙여 넣지 마세요. 포그라운드 `epx start`도 같은 파일을 읽으므로 토큰을 내보내지 않아도 루프백이 아닌 hostname에 바인드합니다.
 
 **관리자 토큰**은 어디에서 발견되든 거부하며 그 자리에 맞는 해결책을 알려 줍니다. `EASYPROXY_API_AUTH_TOKEN`에 있으면 `unset EASYPROXY_API_AUTH_TOKEN` 후 다시 실행하세요. 재사용하는 `service-api-token` 파일에 있으면(원래 사고의 형태이고 과거에 관리자 토큰을 그 파일에 손으로 붙여 넣은 컴퓨터에서는 여전히 나타날 수 있습니다) 파일을 삭제하고 `epx service repair`를 실행하세요. 변수를 unset하는 것은 파일에 대해 아무 의미가 없습니다. 두 검사는 루프백 단축 경로보다 앞에서 실행되므로 루프백 설치도 검사합니다. 실행 래퍼는 hostname과 무관하게 그 파일을 `EASYPROXY_API_AUTH_TOKEN`으로 읽어 들이고 그것이 부팅 시 관리 API를 닫아 버리는 원인입니다.
 
@@ -122,7 +122,7 @@ epx config set remoteGui '{"allowedTailscaleUsers":["operator@example.com"]}'
 
 `port` 없이 쓰는 `unauthenticatedLoopbackListener: {"enabled": true}`가 *companion* 형태입니다. 공개 리스너가 tailnet 주소에서 쓰는 것과 **같은 포트 번호**로 `127.0.0.1`에 소켓을 하나 더 엽니다. 로컬 통합이 이미 기록하는 주소가 바로 그것이라서, 허브에 새 포트를 가르칠 필요가 없고 원격에 열리는 데이터 표면은 포트 하나로 유지됩니다.
 
-companion 형태는 `hostname`이 루프백도 와일드카드도 아닌 구체 주소일 때만 허용됩니다. `127.0.0.1`, `localhost`, `0.0.0.0`, `::`에서는 공개 리스너가 이미 그 루프백 주소를 쓰고 있으므로, easyproxy가 두 번째 바인드를 실패하게 두지 않고 쓰는 시점과 시작 시점에 충돌을 지목하며 거부합니다. 그런 바인드에서는 리스너 자체가 필요 없습니다. 루프백 바인드는 이미 로컬 호출자를 허용합니다.
+companion 형태는 `hostname`이 루프백도 와일드카드도 아닌 구체 주소일 때만 허용됩니다. `127.0.0.1`, `localhost`, `0.0.0.0`, `::`에서는 공개 리스너가 이미 그 루프백 주소를 쓰고 있으므로 easyproxy가 두 번째 바인드를 실패하게 두지 않고 쓰는 시점과 시작 시점에 충돌을 지목하며 거부합니다. 그런 바인드에서는 리스너 자체가 필요 없습니다. 루프백 바인드는 이미 로컬 호출자를 허용합니다.
 
 두 표면을 서로 다른 포트에 두고 싶다면 기존 *포트 지정* 형태도 그대로 동작합니다.
 
@@ -134,7 +134,7 @@ epx config set unauthenticatedLoopbackListener '{"enabled":true,"port":10104}'
 
 `port`를 지정하면 로컬 통합이 리스너를 따라 `http://127.0.0.1:10104`를 기록합니다. 이 포트는 프록시 포트와 달라야 하고 OS가 자동 할당하지 않습니다. 임시 포트는 재시작 때마다 바뀌는데 이미 실행 중인 app-server는 예전 `base_url`을 들고 있기 때문입니다.
 
-**이 필드를 바꾸면 프록시를 재시작하세요.** 소켓은 시작할 때 한 번 바인드되고 로컬 클라이언트 파일도 그때 결정된 값으로 기록되므로, 실행 중인 허브는 예전 답을 유지합니다. 포트 지정 허브에서는 이것이 `epx claude`가 리스너에 닿는지 `404`를 받는지의 차이입니다. 백그라운드 서비스라면 명령은 항상 재시작하는 `epx service restart`입니다. [macOS 서비스 운영](#macos-서비스-운영)을 보세요. `epx restart`는 다른 명령입니다. 직접 띄운 프록시 프로세스를 재시작하며 서비스 관리자가 감독하는 서비스를 다루지 않습니다.
+**이 필드를 바꾸면 프록시를 재시작하세요.** 소켓은 시작할 때 한 번 바인드되고 로컬 클라이언트 파일도 그때 결정된 값으로 기록되므로 실행 중인 허브는 예전 답을 유지합니다. 포트 지정 허브에서는 이것이 `epx claude`가 리스너에 닿는지 `404`를 받는지의 차이입니다. 백그라운드 서비스라면 명령은 항상 재시작하는 `epx service restart`입니다. [macOS 서비스 운영](#macos-서비스-운영)을 보세요. `epx restart`는 다른 명령입니다. 직접 띄운 프록시 프로세스를 재시작하며 서비스 관리자가 감독하는 서비스를 다루지 않습니다.
 
 ### 허브 자신의 로컬 클라이언트
 
@@ -195,7 +195,7 @@ tailscale serve status   # 매핑 두 개: 443 -> 10101, 8443 -> 10110
 
 **대신 Serve를 루프백 companion 리스너로 보내지 마세요.** companion은 `127.0.0.1:10100`의 실제 소켓이라 매핑은 만들어지지만 아래 함정과 똑같이 실패합니다. companion은 루프백 admission 정책을 적용하므로 `Host` 헤더가 루프백이어야 하는데, Serve는 `Host: hub-name.tailnet-name.ts.net`을 전달합니다. companion은 자기 `Host`가 루프백인 *허브 위의* 프로세스를 위한 것이고 TLS 프런트엔드가 필요한 자격 증명 admission과 `Host` 처리를 갖춘 쪽은 tailnet에 바인드된 리스너입니다. 포워더가 그 리스너를 전달합니다.
 
-Serve가 허용하는 HTTPS 포트는 제한적입니다. 포트가 실제로 매핑되었는지 `tailscale serve status`로 확인하세요. 포워더는 허브와 같은 수명을 갖게 하세요. 백그라운드 셸 작업은 재부팅에서 사라지지만 서비스는 살아나므로, 실행 중이면서 TLS로는 닿지 않는 허브가 남습니다. `epx service install`과 함께 launchd나 systemd로 띄우세요.
+Serve가 허용하는 HTTPS 포트는 제한적입니다. 포트가 실제로 매핑되었는지 `tailscale serve status`로 확인하세요. 포워더는 허브와 같은 수명을 갖게 하세요. 백그라운드 셸 작업은 재부팅에서 사라지지만 서비스는 살아나므로 실행 중이면서 TLS로는 닿지 않는 허브가 남습니다. `epx service install`과 함께 launchd나 systemd로 띄우세요.
 
 그다음 두 Origin을 따로 지정해 연결합니다. 위치 인자 URL이 **데이터** Origin이고(`/readyz`와 `/v1/catalog`를 가져오는 곳), `--management-url`이 pairing과 키 발급에 쓰는 대시보드 Origin입니다. 두 Origin이 같은 포트일 필요는 없습니다.
 
@@ -238,21 +238,21 @@ printf '%s\n' "$pairing_code" | epx connect https://hub-name.tailnet-name.ts.net
 unset pairing_code
 ```
 
-데이터 Origin은 `--data-url` → `hub.dataPublicOrigin` → 바인드 주소 순서로 결정됩니다. 마지막 대체는 바인드가 다른 컴퓨터가 실제로 호출할 수 있는 주소일 때만 쓸 수 있습니다. 루프백이나 와일드카드 바인드에서는 `http://localhost:<port>`가 되어 상대 컴퓨터가 자기 자신을 호출하게 되고 일회용 코드가 헛되게 소모되므로, `invite`는 대신 거부하고 `epx config set hub.dataPublicOrigin` 줄(그리고 이번 초대에만 적용하는 `--data-url` 형태)을 출력합니다. 명시한 `--data-url`이나 `hub.dataPublicOrigin`은 되묻지 않습니다. SSH 터널에서는 루프백 데이터 Origin이 정당합니다.
+데이터 Origin은 `--data-url` → `hub.dataPublicOrigin` → 바인드 주소 순서로 결정됩니다. 마지막 대체는 바인드가 다른 컴퓨터가 실제로 호출할 수 있는 주소일 때만 쓸 수 있습니다. 루프백이나 와일드카드 바인드에서는 `http://localhost:<port>`가 되어 상대 컴퓨터가 자기 자신을 호출하게 되고 일회용 코드가 헛되게 소모되므로 `invite`는 대신 거부하고 `epx config set hub.dataPublicOrigin` 줄(그리고 이번 초대에만 적용하는 `--data-url` 형태)을 출력합니다. 명시한 `--data-url`이나 `hub.dataPublicOrigin`은 되묻지 않습니다. SSH 터널에서는 루프백 데이터 Origin이 정당합니다.
 
-관리 Origin은 `hub.managementPublicOrigin`이며 `invite`에서 `--management-url`은 **덮어쓰기가 아니라 확인**입니다. grant는 설정된 Origin에 묶이고 교환 시 그 값과 비교하므로, 다른 값을 주면 허브가 거부할 코드를 출력하는 대신 두 Origin을 모두 지목하며 거부합니다.
+관리 Origin은 `hub.managementPublicOrigin`이며 `invite`에서 `--management-url`은 **덮어쓰기가 아니라 확인**입니다. grant는 설정된 Origin에 묶이고 교환 시 그 값과 비교하므로 다른 값을 주면 허브가 거부할 코드를 출력하는 대신 두 Origin을 모두 지목하며 거부합니다.
 
-초대가 성공할 때마다 **묶인 브라우저 Origin**도 stderr에 출력합니다. grant는 Origin 하나에 묶이고 원격 `epx connect`는 `Origin: http://localhost:<자기 설정 포트>`를 보내므로, 묶인 Origin이 기본값 `http://localhost:10100`이 아니면 상대 컴퓨터가 그 포트에서 이미 실행 중이어야 합니다. 그렇지 않으면 허브가 교환을 거부하고 코드가 소모됩니다. 출력되는 안내가 어떤 포트인지 알려 주고 대신 기본 Origin을 허용하는 방법도 제시합니다.
+초대가 성공할 때마다 **묶인 브라우저 Origin**도 stderr에 출력합니다. grant는 Origin 하나에 묶이고 원격 `epx connect`는 `Origin: http://localhost:<자기 설정 포트>`를 보내므로 묶인 Origin이 기본값 `http://localhost:10100`이 아니면 상대 컴퓨터가 그 포트에서 이미 실행 중이어야 합니다. 그렇지 않으면 허브가 교환을 거부하고 코드가 소모됩니다. 출력되는 안내가 어떤 포트인지 알려 주고 대신 기본 Origin을 허용하는 방법도 제시합니다.
 
 동작할 수 없는 상태라면 `invite`는 코드를 만들기 **전에** 거부합니다: `runtimeRole`이 `hub`가 아님, `hub.managementPublicOrigin` 없음, 루프백이 아닌 평문 관리 Origin, 잘못된 `--data-url`, 데이터 Origin이 이 컴퓨터의 루프백이 될 상황, attested 프록시가 실행 중이 아님. 전제 조건 하나는 따로 적을 만합니다.
 
-**`corsAllowOrigins`에 참가할 컴퓨터의 로컬 브라우저 Origin이 있어야 합니다.** `epx connect`는 grant를 교환할 때 `Origin: http://localhost:<자기 프록시 포트>`를 보내고 grant는 Origin에 묶이므로, `hub.managementPublicOrigin` 자신이나 `corsAllowOrigins`의 루프백 항목만 일치할 수 있습니다. 둘 다 없으면 `invite`는 0이 아닌 코드로 끝나고 아무것도 발급하지 않으며 정확한 명령을 알려 줍니다.
+**`corsAllowOrigins`에 참가할 컴퓨터의 로컬 브라우저 Origin이 있어야 합니다.** `epx connect`는 grant를 교환할 때 `Origin: http://localhost:<자기 프록시 포트>`를 보내고 grant는 Origin에 묶이므로 `hub.managementPublicOrigin` 자신이나 `corsAllowOrigins`의 루프백 항목만 일치할 수 있습니다. 둘 다 없으면 `invite`는 0이 아닌 코드로 끝나고 아무것도 발급하지 않으며 정확한 명령을 알려 줍니다.
 
 ```bash
 epx config set corsAllowOrigins '["http://localhost:10100"]'
 ```
 
-**참가하는** 컴퓨터의 프록시 포트를 쓰세요. 기본값은 `10100`입니다. 위의 설치 블록에 이미 들어 있습니다. 배열 전체를 설정하면 기존 배열을 교체하므로, 허브에 이미 항목이 있다면 `invite`가 출력하는 줄을 그대로 실행하세요. 그 줄에는 기존 항목과 새 Origin이 함께 들어 있습니다. 현재 값은 `epx config get corsAllowOrigins`로 확인합니다.
+**참가하는** 컴퓨터의 프록시 포트를 쓰세요. 기본값은 `10100`입니다. 위의 설치 블록에 이미 들어 있습니다. 배열 전체를 설정하면 기존 배열을 교체하므로 허브에 이미 항목이 있다면 `invite`가 출력하는 줄을 그대로 실행하세요. 그 줄에는 기존 항목과 새 Origin이 함께 들어 있습니다. 현재 값은 `epx config get corsAllowOrigins`로 확인합니다.
 
 `epx hub invite --json`은 `{ code, expiresAt, dataUrl, managementUrl, command }`를 출력하며 `expiresAt`은 ISO 8601입니다. 코드는 비밀입니다. 일회용이고 수명은 5분이며 허브에서 요청 수를 제한하고 저장하거나 로그·이슈에 붙여 넣으면 안 됩니다. `--clients codex,claude`로 출력된 명령이 어떤 클라이언트 설정을 허브로 향하게 할지 고릅니다.
 
@@ -269,9 +269,9 @@ epx service restart
 # ℹ️  service restarted (launchctl kickstart -k gui/501/com.easyproxy.proxy).
 ```
 
-`unauthenticatedLoopbackListener`, `hostname`, `port`를 바꾼 뒤에 실행할 명령이 이것입니다. kickstart는 eviction 구간을 만들지 않으므로, 예전의 무조건 repair와 달리 장애가 아닙니다.
+`unauthenticatedLoopbackListener`, `hostname`, `port`를 바꾼 뒤에 실행할 명령이 이것입니다. kickstart는 eviction 구간을 만들지 않으므로 예전의 무조건 repair와 달리 장애가 아닙니다.
 
-서브커맨드 없는 `epx service`는 여전히 `restart`가 아니라 `repair`를 고릅니다. "현재 상태로 맞춘다"는 멱등한 동작이고 정상인 허브를 바운스하라는 요청이 아니기 때문입니다. `epx service repair`는 원래 용도, 즉 더 오래된 plist에서 로드된 작업이나 로드되지 않은 작업에 쓰고 정상 작업에서는 계속 아무것도 하지 않는다고 기대하세요.
+서브커맨드 없는 `epx service`는 여전히 `restart`가 아니라 `repair`를 고릅니다. 현재 상태로 맞추는 멱등한 동작이고 정상인 허브를 바운스하라는 요청이 아니기 때문입니다. `epx service repair`는 원래 용도, 즉 더 오래된 plist에서 로드된 작업이나 로드되지 않은 작업에 쓰고 정상 작업에서는 계속 아무것도 하지 않는다고 기대하세요.
 
 `launchctl kickstart -k gui/$(id -u)/com.easyproxy.proxy`를 직접 실행하거나 `epx service stop` 다음 `epx service start`를 실행하는 방법도 여전히 동작하고 실패 경로가 앞의 명령을 대안으로 알려 줍니다. 다만 둘 다 이제 권장 경로는 아닙니다.
 
@@ -403,8 +403,8 @@ services:
 
 인증을 기다리는 동안 정상인 클라이언트를 재시작하라고 안내하지 않습니다. 페어링을 마치면 이전 인증 오류가 캐시에 남아 있어도 대시보드를 새로 읽습니다. 세션이 만료되면 페어링 화면으로 돌아가며 권한 거부는 별도로 안내합니다. 다른 갱신 오류에서는 마지막 데이터를 오래된 정보로 표시하고 재시도할 수 있습니다.
 
-코드 교환은 끝났는데 원격 연결 검증만 일시적으로 실패했다면 페이지를 닫지 말고 **세션 검증 재시도**를 누르세요. 페어링 코드를 다시 쓰지 않고 대기 중인 브라우저 세션을 다시 검증합니다. Cloudflare 챌린지 응답을 받았을 때도 세션은 재시도할 수 있도록 대기 상태로 남습니다. 페어링 교환과 검증 요청은 응답 본문을 읽는 시간까지 포함해 각각 10초가 지나면 시간 초과로 끝나고 입력 폼을 다시 쓸 수 있게 됩니다. 검증이 시간 초과되면 설치된 세션은 **세션 검증 재시도**용으로 대기 상태에 남고 시간 초과 뒤에 도착한 교환 응답은 자격 증명을 설치하지 못합니다. 허브가 HTTP 401 또는 403으로 세션을 확정적으로 거부하면, 대시보드는 이 핸드오프가 아직 현재 세션 상태를 소유하고 있고 그사이 새 로그인, 로그아웃, 대상 변경이 없었을 때만 이전 브라우저 세션을 복원합니다. 이 경우 허브 운영자에게 이 브라우저 주소용 새 코드를 요청하세요. 페어링 교환은 코드를 보내기 전에 현재 세션과 대상의 리비전을 기록하므로, 그 리비전이 바뀐 뒤에 늦게 도착한 응답은 세션을 바꾸지 못합니다. 자동 탐색 bootstrap과 백그라운드 복구도 같은 규칙을 따르며 대상을 바꿨다가 되돌아온 경우도 마찬가지입니다. 둘 다 로그아웃을 덮어쓰지 않습니다. 로그아웃이 진행 중이거나 끝난 뒤에는 새로 명시적으로 로그인하거나 대상을 바꿀 때까지 자동 복구를 하지 않습니다. 복구가 시간 초과되면 그 요청이 여전히 현재 요청이고 취소되지 않았고 자격 증명이 없을 때만 세션을 사용할 수 없다고 알리며 늦게 도착한 bootstrap 결과는 버립니다.
+코드 교환은 끝났는데 원격 연결 검증만 일시적으로 실패했다면 페이지를 닫지 말고 **세션 검증 재시도**를 누르세요. 페어링 코드를 다시 쓰지 않고 대기 중인 브라우저 세션을 다시 검증합니다. Cloudflare 챌린지 응답을 받았을 때도 세션은 재시도할 수 있도록 대기 상태로 남습니다. 페어링 교환과 검증 요청은 응답 본문을 읽는 시간까지 포함해 각각 10초가 지나면 시간 초과로 끝나고 입력 폼을 다시 쓸 수 있게 됩니다. 검증이 시간 초과되면 설치된 세션은 **세션 검증 재시도**용으로 대기 상태에 남고 시간 초과 뒤에 도착한 교환 응답은 자격 증명을 설치하지 못합니다. 허브가 HTTP 401 또는 403으로 세션을 확정적으로 거부하면, 대시보드는 이 핸드오프가 아직 현재 세션 상태를 소유하고 있고 그사이 새 로그인, 로그아웃, 대상 변경이 없었을 때만 이전 브라우저 세션을 복원합니다. 이 경우 허브 운영자에게 이 브라우저 주소용 새 코드를 요청하세요. 페어링 교환은 코드를 보내기 전에 현재 세션과 대상의 리비전을 기록하므로 그 리비전이 바뀐 뒤에 늦게 도착한 응답은 세션을 바꾸지 못합니다. 자동 탐색 bootstrap과 백그라운드 복구도 같은 규칙을 따르며 대상을 바꿨다가 되돌아온 경우도 마찬가지입니다. 둘 다 로그아웃을 덮어쓰지 않습니다. 로그아웃이 진행 중이거나 끝난 뒤에는 새로 명시적으로 로그인하거나 대상을 바꿀 때까지 자동 복구를 하지 않습니다. 복구가 시간 초과되면 그 요청이 여전히 현재 요청이고 취소되지 않았고 자격 증명이 없을 때만 세션을 사용할 수 없다고 알리며 늦게 도착한 bootstrap 결과는 버립니다.
 
 ## Hub 해제
 
-`epx hub disable [--json]`은 hub 전용 설정을 한 번의 검증된 쓰기로 제거합니다. 저장된 키에는 신뢰할 수 있는 발급 출처가 없으므로, 폐기할 키 ID를 먼저 `epx access key list --json`으로 확인하고 `epx hub disable --revoke-clients --client-key <id> [--json]`에 지정합니다. `--client-key`는 반복할 수 있습니다. 이름으로 키를 추측하지 않으며 알 수 없는 ID나 선택 없는 폐기 요청은 변경 전에 거부합니다. 선택하지 않은 키는 유지됩니다. 프록시를 재시작하거나 외부 게시 설정을 변경하지 않습니다. 출력된 재시작 안내와 `tailscale serve status`를 확인하세요. [영문 상세 설명](/guides/remote-hub/#return-a-hub-to-standalone)을 참조하세요.
+`epx hub disable [--json]`은 hub 전용 설정을 한 번의 검증된 쓰기로 제거합니다. 저장된 키에는 신뢰할 수 있는 발급 출처가 없으므로 폐기할 키 ID를 먼저 `epx access key list --json`으로 확인하고 `epx hub disable --revoke-clients --client-key <id> [--json]`에 지정합니다. `--client-key`는 반복할 수 있습니다. 이름으로 키를 추측하지 않으며 알 수 없는 ID나 선택 없는 폐기 요청은 변경 전에 거부합니다. 선택하지 않은 키는 유지됩니다. 프록시를 재시작하거나 외부 게시 설정을 변경하지 않습니다. 출력된 재시작 안내와 `tailscale serve status`를 확인하세요. [영문 상세 설명](/guides/remote-hub/#return-a-hub-to-standalone)을 참조하세요.

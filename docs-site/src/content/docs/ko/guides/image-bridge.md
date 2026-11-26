@@ -5,7 +5,7 @@ description: OpenAI가 아닌 provider를 사용할 때 `image_generation` hoste
 
 ## 개요
 
-Codex를 Claude, Gemini, Grok 같은 OpenAI가 아닌 모델로 라우팅하면 `image_generation` **hosted tool**은 보통 동작하지 않습니다. 이 도구는 OpenAI의 서버 측 실행 환경을 필요로 하기 때문입니다. Image Bridge는 이런 호출을 감지해서 xAI Grok Imagine으로 투명하게 다시 라우팅하므로, 실제로 대화 중인 모델도 이미지를 생성할 수 있습니다.
+Codex를 Claude, Gemini, Grok 같은 OpenAI가 아닌 모델로 라우팅하면 `image_generation` **hosted tool**은 보통 동작하지 않습니다. 이 도구는 OpenAI의 서버 측 실행 환경을 필요로 하기 때문입니다. Image Bridge는 이런 호출을 감지해서 xAI Grok Imagine으로 투명하게 다시 라우팅하므로 실제로 대화 중인 모델도 이미지를 생성할 수 있습니다.
 
 ## 사전 조건
 
