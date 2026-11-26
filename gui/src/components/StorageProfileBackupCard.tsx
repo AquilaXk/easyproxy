@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { readJsonOrThrow } from "../fetch-json";
-import type { TFn } from "../i18n/shared";
+import { useI18n, type TFn } from "../i18n/shared";
+import { uxT } from "../i18n/ux-overhaul-copy";
+import { Notice } from "../ui";
 import "../styles/profile-backup.css";
 
 interface BackupInspectDto {
@@ -28,6 +30,7 @@ export default function StorageProfileBackupCard({
   t: TFn;
   onRestored: () => void;
 }) {
+  const { locale } = useI18n();
   const [exportMode, setExportMode] = useState<"encrypted" | "redacted">("encrypted");
   const [exportPassphrase, setExportPassphrase] = useState("");
   const [exportBusy, setExportBusy] = useState(false);
@@ -167,8 +170,8 @@ export default function StorageProfileBackupCard({
         <p className="m-0 mt-1 text-xs text-fg-muted">{t("storageBackup.subtitle")}</p>
       </div>
 
-      {error && <div className="alert alert-err text-xs" role="alert">{error}</div>}
-      {notice && <div className="alert alert-ok text-xs" role="status">{notice}</div>}
+      {error && <Notice tone="err">{error}</Notice>}
+      {notice && <Notice tone="ok">{notice}</Notice>}
 
       <div className="profile-backup-grid">
         <div className="profile-backup-panel">
@@ -231,11 +234,22 @@ export default function StorageProfileBackupCard({
           <input
             ref={fileInputRef}
             type="file"
+            className="sr-only"
             accept=".json,.epxbackup.json,application/json"
             aria-label={t("storageBackup.selectFile")}
             disabled={restoreBusy}
             onChange={e => { void handleFileChange(e.target.files?.[0] ?? null); }}
           />
+          <div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={restoreBusy}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {t("storageBackup.selectFile")}
+            </button>
+          </div>
           {selectedFileName && <span className="text-xs text-fg-muted"><code>{selectedFileName}</code></span>}
 
           <div className="flex flex-col gap-1">
@@ -256,9 +270,13 @@ export default function StorageProfileBackupCard({
           <p className="m-0 text-xs text-fg-muted">{t("storageBackup.restoreConfirmNote")}</p>
 
           {inspected && (
-            <div className="border border-solid border-line rounded-lg p-2 text-xs flex flex-col gap-1">
+            <div className="border border-solid border-line rounded-card p-2.5 text-xs flex flex-col gap-1">
               <div>
-                <strong>{inspected.mode}</strong> · {inspected.configValidation.ok ? "valid" : inspected.configValidation.error}
+                <strong>
+                  {uxT(locale, inspected.mode === "encrypted" ? "storageBackup.modeEncrypted" : "storageBackup.modeRedacted")}
+                </strong>
+                {" · "}
+                {inspected.configValidation.ok ? uxT(locale, "storageBackup.valid") : inspected.configValidation.error}
               </div>
               <div className="text-fg-muted">
                 {t("storageBackup.inspectSummary", {

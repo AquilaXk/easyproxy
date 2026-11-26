@@ -41,12 +41,12 @@ struct NativeTrayAccountHeader: View {
                 if account.exhausted == true {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                         .imageScale(.small)
-                        .help("A limit window is used up; requests may fail until it resets")
-                        .accessibilityLabel("Limit reached")
+                        .help(NativeTrayL10n.text("tray.account.exhaustedHelp"))
+                        .accessibilityLabel(NativeTrayL10n.text("tray.account.exhausted"))
                 }
                 Spacer(minLength: 6)
                 if pending {
-                    ProgressView().controlSize(.mini).accessibilityLabel("Switching account")
+                    ProgressView().controlSize(.mini).accessibilityLabel(NativeTrayL10n.text("tray.account.switching"))
                 } else if offersUse {
                     Button(NativeTrayL10n.text("tray.account.use"), action: onUse)
                         .buttonStyle(.bordered)
@@ -54,7 +54,7 @@ struct NativeTrayAccountHeader: View {
                         .disabled(busy)
                         .focused($focused)
                         .opacity(hovered || focused ? 1 : 0)
-                        .help("Make this the active account")
+                        .help(NativeTrayL10n.text("tray.account.useHelp"))
                         .accessibilityLabel("\(NativeTrayL10n.text("tray.account.use")) \(account.label)")
                 }
                 if let plan = account.plan { Text(plan).foregroundStyle(.secondary) }
@@ -74,15 +74,15 @@ struct NativeTrayAccountHeader: View {
         .onHover { hovered = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityActions {
-            if offersUse && !busy { Button("Use this account", action: onUse) }
+            if offersUse && !busy { Button(NativeTrayL10n.text("tray.account.useAction"), action: onUse) }
         }
     }
 
     static func blockedText(_ reason: String?) -> String {
         switch reason {
-        case "mainHardLock": return "Blocked by 98% protection"
-        case "validationPending": return "Validation pending"
-        default: return "Paused"
+        case "mainHardLock": return NativeTrayL10n.text("tray.switch.blockedHardLock")
+        case "validationPending": return NativeTrayL10n.text("tray.switch.blockedValidation")
+        default: return NativeTrayL10n.text("tray.switch.blockedPaused")
         }
     }
 }

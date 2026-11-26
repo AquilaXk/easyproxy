@@ -305,7 +305,7 @@ describe("Antigravity v8 gateway UX & polish", () => {
     expect(host.textContent).toContain("USD amount");
 
     await act(async () => { setInputValue(costInput, "12.5"); });
-    const anthropicPill = Array.from(host.querySelectorAll("button")).find(b => b.textContent === "anthropic")!;
+    const anthropicPill = host.querySelector<HTMLButtonElement>('button[data-provider="anthropic"]')!;
     await act(async () => { anthropicPill.click(); });
     const modelsArea = host.querySelector<HTMLTextAreaElement>("#awi-budget-allowed-models")!;
     await act(async () => { setInputValue(modelsArea, "gpt-5, openai/gpt-5.3-codex"); });
@@ -320,6 +320,79 @@ describe("Antigravity v8 gateway UX & polish", () => {
       allowedProviders: ["anthropic", "openai"],
       allowedModels: ["gpt-5", "openai/gpt-5.3-codex"],
     });
+  });
+
+  test("ApiKeyBudgetCard Combobox preserves prefix drafts while typing and commits custom models when availableModels is empty", async () => {
+    const patches: ApiKeyBudgetPatch[] = [];
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ApiKeyBudgetCard
+            entry={{ id: "k-2", name: "Draft Key", prefix: "epx_draft...", createdAt: "2026-10-01T00:00:00Z" }}
+            availableProviders={[]}
+            availableModels={["gpt-5", "gpt-5-mini"]}
+            onSave={async (_id, patch) => {
+              patches.push(patch);
+              return true;
+            }}
+          />
+        </LanguageProvider>,
+      );
+    });
+
+    const combo = host.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+    expect(combo).not.toBeNull();
+    // Selecting an autocomplete candidate with ArrowDown + Enter must commit ONLY the selected option (never double-adding the stale partial prefix).
+    await act(async () => { combo.focus(); setInputValue(combo, "gpt"); });
+    await act(async () => {
+      combo.dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }) as unknown as KeyboardEvent);
+    });
+    await act(async () => {
+      combo.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }) as unknown as KeyboardEvent);
+    });
+    expect(combo.value).toBe("");
+    expect(host.querySelector<HTMLTextAreaElement>("#awi-budget-allowed-models")!.value).toBe("gpt-5-mini");
+    await act(async () => {
+      setInputValue(host.querySelector<HTMLTextAreaElement>("#awi-budget-allowed-models")!, "");
+    });
+
+    // Typing exact prefix "gpt-5" must NOT auto-commit and wipe input before finishing "gpt-5-mini".
+    await act(async () => { setInputValue(combo, "gpt-5"); });
+    expect(combo.value).toBe("gpt-5");
+    await act(async () => { setInputValue(combo, "gpt-5-mini"); });
+    expect(combo.value).toBe("gpt-5-mini");
+    const addBtn = Array.from(host.querySelectorAll("button")).find(b => b.textContent === "Add")!;
+    await act(async () => { addBtn.click(); });
+    expect(combo.value).toBe("");
+    expect(host.querySelector<HTMLTextAreaElement>("#awi-budget-allowed-models")!.value).toContain("gpt-5-mini");
+
+    // Empty availableModels still renders Combobox and permits custom model entry.
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ApiKeyBudgetCard
+            entry={{ id: "k-3", name: "Custom Key", prefix: "epx_custom...", createdAt: "2026-10-01T00:00:00Z" }}
+            availableProviders={[]}
+            availableModels={[]}
+            onSave={async (_id, patch) => {
+              patches.push(patch);
+              return true;
+            }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    const customCombo = host.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+    expect(customCombo).not.toBeNull();
+    await act(async () => { setInputValue(customCombo, "custom/my-model"); });
+    const addBtn2 = Array.from(host.querySelectorAll("button")).find(b => b.textContent === "Add")!;
+    await act(async () => { addBtn2.click(); });
+    expect(host.querySelector<HTMLTextAreaElement>("#awi-budget-allowed-models")!.value).toContain("custom/my-model");
   });
 
   test("GatewayGuardrailsPanel runs Dry-run simulation and displays redacted/compressed preview", async () => {

@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { AudioApiError, connectLiveAudio, transcribeAudio, type AudioErrorCode, type LiveAudioState } from "../../audio-api-client";
 import { IconLink, IconPlay, IconX } from "../../icons";
-import { useT } from "../../i18n/shared";
+import { useI18n, useT } from "../../i18n/shared";
+import { uxT } from "../../i18n/ux-overhaul-copy";
 import { CopyableExample, EndpointUrl } from "../../pages/api-keys-copy";
 import type { AudioApiInfo } from "../../pages/api-keys-utils";
 import { audioSocketExample, audioUploadExample } from "../../audio-api-examples";
@@ -22,13 +23,14 @@ function AudioError({ code }: { code: AudioErrorCode | null }) {
 }
 
 export function DictationPanel({ audio }: { audio?: AudioApiInfo }) {
-  const t = useT();
+  const { t, locale } = useI18n();
   const [key, setKey] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [pending, setPending] = useState(false);
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<AudioErrorCode | null>(null);
   const request = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const fileId = useId();
   const titleId = useId();
   useEffect(() => () => { request.current?.abort(); request.current = null; }, []);
@@ -62,12 +64,30 @@ export function DictationPanel({ audio }: { audio?: AudioApiInfo }) {
       <div className="audio-api-endpoints"><code>{audio.transcriptionModel}</code><EndpointUrl url={audio.transcriptionEndpoint} /></div>
       <form className="audio-api-form" onSubmit={event => { event.preventDefault(); void upload(); }}>
         <AudioKeyInput value={key} onChange={value => { cancel(); setError(null); setKey(value); }} />
-        <label className="audio-api-field" htmlFor={fileId}>
-          <span>{t("audio.file")}</span>
-          <input id={fileId} className="input" type="file" accept="audio/*,.mp4,.webm" onChange={event => {
-            cancel(); setError(null); setText(null); setFile(event.target.files?.[0] ?? null);
-          }} />
-        </label>
+        <div className="audio-api-field">
+          <label htmlFor={fileId}>{t("audio.file")}</label>
+          <input
+            ref={fileInputRef}
+            id={fileId}
+            className="sr-only"
+            type="file"
+            accept="audio/*,.mp4,.webm"
+            onChange={event => {
+              cancel(); setError(null); setText(null); setFile(event.target.files?.[0] ?? null);
+            }}
+          />
+          <div className="flex min-h-[34px] items-center gap-2">
+            <button
+              type="button"
+              className="btn btn-ghost shrink-0"
+              disabled={pending}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uxT(locale, "audio.chooseFile")}
+            </button>
+            {file && <span className="truncate text-xs text-fg-muted"><code>{file.name}</code></span>}
+          </div>
+        </div>
         <div className="audio-api-actions">
           <button className="btn btn-primary" type="submit" disabled={pending || !audio.transcriptionConfigured || !file || !key.trim()}>
             <IconPlay width={16} height={16} aria-hidden="true" />{t(pending ? "audio.transcribing" : "audio.transcribe")}

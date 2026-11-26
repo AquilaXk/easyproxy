@@ -86,7 +86,7 @@
 
 /* ---- buttons: Aceternity primary, quiet neutrals ------------------------- */
 .btn {
-  border-radius: 0.625rem;
+  border-radius: var(--radius-control);
   transition: background-color 0.2s, box-shadow 0.2s, color 0.2s, scale 0.15s;
 }
 .btn:active:not(:disabled) { scale: 0.97; }
@@ -97,6 +97,15 @@
 }
 .btn-primary:hover:not(:disabled) {
   background: color-mix(in oklab, var(--epx-accent) 88%, var(--epx-bg));
+}
+.btn-ghost:not(.btn-icon) {
+  border-color: var(--epx-line-strong);
+  background: light-dark(#ffffff, rgb(255 255 255 / 0.04));
+  color: var(--epx-fg);
+}
+.btn-ghost:not(.btn-icon):hover:not(:disabled) {
+  border-color: light-dark(rgb(15 23 42 / 0.3), rgb(148 163 184 / 0.32));
+  background: var(--epx-surface-2);
 }
 
 /* ---- segmented controls: recessed track, raised selected pill ------------- */
@@ -508,7 +517,7 @@ a:hover { text-decoration-color: var(--epx-highlight); }
 /* text fields, native selects and the custom select trigger (the sidebar language
    picker is a bare text row by design, so it stays out) */
 :is(.input, .select-sm, .select-trigger):not(.lang-toggle *) {
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--epx-line-strong);
   background: light-dark(#ffffff, rgb(255 255 255 / 0.03));
   box-shadow: 0 1px 2px -1px rgb(0 0 0 / 0.12);
@@ -525,8 +534,7 @@ a:hover { text-decoration-color: var(--epx-highlight); }
 }
 :is(.input, .select-sm, .select-trigger):not(.lang-toggle *):focus-visible {
   border-color: var(--epx-highlight);
-  outline: 2px solid var(--epx-highlight);
-  outline-offset: 1px;
+  outline: none;
   box-shadow: 0 0 0 3px var(--epx-highlight-soft);
 }
 .input::placeholder { color: var(--epx-fg-subtle); }

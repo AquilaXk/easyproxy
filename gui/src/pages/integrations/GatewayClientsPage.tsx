@@ -1,8 +1,9 @@
 import { useCallback, useId, useMemo, useState } from "react";
 import { useDataSurface } from "../../data-surface";
 import { DataSurfaceSkeleton } from "../../components/data-surface";
-import { Combobox } from "../../components/ui-v2/combobox";
+import { Combobox, type ComboboxOption } from "../../components/ui-v2/combobox";
 import { useT, type TKey } from "../../i18n/shared";
+import { formatProviderDisplayName } from "../../provider-icons";
 import { Notice } from "../../ui";
 import {
   loadGatewayClients,
@@ -13,6 +14,7 @@ import {
   type GatewayClientId,
   type GatewayClientState,
   type GatewayClientStatus,
+  type GatewayModelOption,
   type GatewayNoteCode,
   type GatewayOverrideCode,
 } from "./gateway-clients-api";
@@ -106,7 +108,7 @@ function GatewayClientCard({
 }: {
   apiBase: string;
   client: GatewayClientStatus;
-  discoveredModels: readonly string[];
+  discoveredModels: readonly GatewayModelOption[];
   onSettled: () => void;
 }) {
   const t = useT();
@@ -122,19 +124,19 @@ function GatewayClientCard({
     return key ? [{ code: note.code, key }] : [];
   });
   const modelOptions = useMemo(() => {
-    const out: string[] = [];
+    const out: ComboboxOption[] = [];
     const seen = new Set<string>();
-    const add = (id: string | undefined) => {
+    const add = (id: string | undefined, provider?: string) => {
       const trimmed = id?.trim();
       if (!trimmed || seen.has(trimmed)) return;
       seen.add(trimmed);
-      out.push(trimmed);
+      out.push(provider ? { value: trimmed, detail: formatProviderDisplayName(provider, t) } : { value: trimmed });
     };
     add(client.defaultModel);
-    for (const id of discoveredModels) add(id);
+    for (const model of discoveredModels) add(model.id, model.provider);
     for (const id of FALLBACK_ANTIGRAVITY_MODELS) add(id);
     return out;
-  }, [client.defaultModel, discoveredModels]);
+  }, [client.defaultModel, discoveredModels, t]);
 
   const run = async (action: GatewayClientAction) => {
     setPending(action);
@@ -168,13 +170,13 @@ function GatewayClientCard({
       </div>
 
       {notes.length > 0 && (
-        <ul className="muted">
+        <ul className="m-0 pl-4 flex flex-col gap-1 text-xs text-fg-muted">
           {notes.map(note => <li key={note.code}>{t(note.key)}</li>)}
         </ul>
       )}
 
       {client.id === "antigravity" && (
-        <div className="stack">
+        <div className="flex flex-col gap-1.5 max-w-[420px]">
           <label className="field-label" htmlFor={modelId}>{t("gatewayClients.model")}</label>
           <Combobox
             id={modelId}
@@ -182,10 +184,11 @@ function GatewayClientCard({
             value={modelDraft ?? client.defaultModel ?? ""}
             onChange={value => setModelDraft(value)}
             options={modelOptions}
+            placeholder={t("cws.target.modelPlaceholder")}
             disabled={pending !== null}
             aria-describedby={hintId}
           />
-          <span id={hintId} className="muted">{t("gatewayClients.modelHint")}</span>
+          <span id={hintId} className="muted text-xs">{t("gatewayClients.modelHint")}</span>
         </div>
       )}
 
@@ -215,7 +218,7 @@ function GatewayClientCard({
 
 interface GatewayClientsSurfaceData {
   clients: GatewayClientStatus[];
-  models: string[];
+  models: GatewayModelOption[];
 }
 
 export default function GatewayClientsPage({ apiBase, active }: { apiBase: string; active: boolean }) {

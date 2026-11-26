@@ -54,7 +54,10 @@ struct NativeTrayUsageView: View {
                                 Text(NativeTrayL10n.text("tray.section.accounts"))
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.secondary)
-                                ForEach(snapshot.providers) { provider in
+                                ForEach(Array(snapshot.providers.enumerated()), id: \.element.id) { index, provider in
+                                    if index > 0 {
+                                        Divider().opacity(0.55)
+                                    }
                                     NativeTrayProviderView(provider: provider, pendingSwitch: store.pendingSwitch) { account in
                                         store.requestSwitch(provider: provider, account: account)
                                     }
@@ -87,14 +90,16 @@ struct NativeTrayUsageView: View {
                                     HStack {
                                         Text(row.label).lineLimit(1).help(row.label)
                                         Spacer(minLength: 8)
-                                        Text("\(NativeTrayFormat.tokens(row.requests)) \(NativeTrayL10n.text("tray.requests").lowercased())")
+                                        Text("\(NativeTrayFormat.tokens(row.requests)) \(NativeTrayL10n.text("tray.requests"))")
                                             .foregroundStyle(.secondary).font(.caption)
                                         Text(NativeTrayFormat.tokens(row.tokens)).monospacedDigit()
                                     }
                                 }
                             }
                         }
-                        let detectedClients = NativeTrayLocalClientDetector.detect(snapshotClients: snapshot.detectedClients)
+                        let detectedClients = NativeTrayLocalClientDetector
+                            .detect(snapshotClients: snapshot.detectedClients)
+                            .filter { $0.installed || $0.connected }
                         if !detectedClients.isEmpty {
                             Divider()
                             NativeTrayDetectedClientsView(clients: detectedClients)
@@ -118,7 +123,7 @@ struct NativeTrayUsageView: View {
                     .disabled(store.snapshot?.refreshing == true && !store.decodeFailed)
                 if let updated = NativeTrayFormat.date(store.snapshot?.updatedAt) {
                     Text(updated, style: .time).font(.caption).foregroundStyle(.secondary)
-                        .help("Last successful update")
+                        .help(NativeTrayL10n.text("tray.updated.help"))
                 }
                 Spacer()
                 Button(NativeTrayL10n.text("tray.openDashboard")) { store.action(3) }
@@ -141,18 +146,18 @@ private struct NativeTrayTotalsView: View {
             row(NativeTrayL10n.text("tray.tokens"), NativeTrayFormat.tokens(totals?.tokens), headline: true)
             row(NativeTrayL10n.text("tray.input"), NativeTrayFormat.tokens(totals?.input))
             if let cached = totals?.cachedPercent {
-                Text("\(Int(cached.rounded()))% \(NativeTrayL10n.text("tray.cached").lowercased())").font(.caption2).foregroundStyle(.secondary)
+                Text("\(Int(cached.rounded()))% \(NativeTrayL10n.text("tray.cached"))").font(.caption2).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             row(NativeTrayL10n.text("tray.output"), NativeTrayFormat.tokens(totals?.output))
             if showCost {
                 row(NativeTrayL10n.text("tray.cost.est"), (totals?.cost?.formatted(.currency(code: "USD")) ?? "—") + (totals?.costIncomplete == true ? "*" : ""))
-                    .help(totals?.costIncomplete == true ? "Some requests have no price or usage. API list-price equivalent, not an actual charge." : "API list-price equivalent, not an actual charge")
+                    .help(NativeTrayL10n.text(totals?.costIncomplete == true ? "tray.cost.incompleteHelp" : "tray.cost.help"))
             }
             row(NativeTrayL10n.text("tray.requests"), NativeTrayFormat.tokens(totals?.requests))
             if let coverage = totals?.coverage, coverage < 100 { row(NativeTrayL10n.text("tray.coverage"), "\(Int(coverage.rounded()))%") }
             if totals?.incomplete == true {
-                Text("Some usage records are unavailable").font(.caption2).foregroundStyle(.secondary)
+                Text(NativeTrayL10n.text("tray.usage.incomplete")).font(.caption2).foregroundStyle(.secondary)
             }
         }.frame(maxWidth: .infinity, alignment: .topLeading)
     }

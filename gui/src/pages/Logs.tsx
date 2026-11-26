@@ -18,7 +18,7 @@ import {
 import type { PlaygroundSeed } from "../lib/playground-client";
 import { modelLabel } from "../model-display";
 import { cn } from "@/lib/utils";
-import { panel, panelBody } from "../components/v2-logs/classes";
+import { panel, panelBody, quietButton } from "../components/v2-logs/classes";
 import { ColumnsMenu } from "../components/v2-logs/columns-menu";
 import { LiveToggle } from "../components/v2-logs/live-toggle";
 import { StatusPill } from "../components/v2-logs/status-pill";
@@ -825,7 +825,7 @@ export default function Logs({
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  className="btn btn-ghost btn-sm"
+                  className={cn(quietButton, "disabled:pointer-events-none disabled:opacity-45")}
                   disabled={filteredLogs.length === 0}
                   onClick={() => triggerTextDownload(
                     "easyproxy-logs.jsonl",
@@ -837,7 +837,7 @@ export default function Logs({
                 </button>
                 <button
                   type="button"
-                  className="btn btn-ghost btn-sm"
+                  className={cn(quietButton, "disabled:pointer-events-none disabled:opacity-45")}
                   disabled={filteredLogs.length === 0}
                   onClick={() => triggerTextDownload(
                     "easyproxy-logs.csv",

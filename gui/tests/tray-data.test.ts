@@ -21,6 +21,18 @@ describe('tray data', () => {
     ] });
     expect(rows.map(row => row.label)).toEqual(['p•••@e•••.com', 'two']);
   });
+  test('Codex __main__ and opaque IDs use friendly main/ordinal labels instead of leaking __main__', () => {
+    const rows = parseAccounts(
+      { accounts: [
+        { id: '__main__', alias: '__main__', email: 'Codex App login', logLabel: 'main' },
+        { id: 'acct_opaque_123', logLabel: 'pdef456' },
+      ] },
+      'codex',
+      index => `Account ${index}`,
+      'Codex App',
+    );
+    expect(rows.map(row => row.label)).toEqual(['Codex App', 'Account 2']);
+  });
   test('reset accepts seconds/milliseconds and rejects missing, invalid and expired observations', () => {
     for (const value of [undefined, null, 0, -1, NaN, Infinity, '2026-10-01', 9e18]) expect(resetTimestamp(value)).toBeNull();
     expect(resetTimestamp(now / 1000)).toBe(now);

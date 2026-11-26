@@ -9,6 +9,8 @@ interface ProxyControlsProps {
   statusLabel: string;
   /** Optional second half of the status line, e.g. how long the proxy has been up. */
   detail?: string | undefined;
+  /** Full un-abbreviated detail text shown in the hover tooltip when `detail` is compact. */
+  detailTitle?: string | undefined;
   /** False when the proxy is not answering (health check failed): the status dot goes neutral. Default true. */
   online?: boolean | undefined;
   stopLabel: string;
@@ -33,6 +35,7 @@ export function ProxyControls({
   label,
   statusLabel,
   detail,
+  detailTitle,
   online = true,
   stopLabel,
   stoppingLabel,
@@ -49,10 +52,12 @@ export function ProxyControls({
   const status = stopping ? stoppingLabel : restarting ? restartingLabel : statusLabel;
   const busy = stopping || restarting;
 
+  const fullDetail = detailTitle ?? detail;
+
   return (
     <div
       className={cn("ui-v2 relative flex h-8 items-center gap-1.5 overflow-hidden px-2", className)}
-      title={detail ? `${status} · ${detail}` : status}
+      title={fullDetail ? `${status} · ${fullDetail}` : status}
     >
       <span className="relative flex min-w-0 flex-1 items-center gap-1.5">
         <span className="grid size-3 shrink-0 place-items-center" aria-hidden>

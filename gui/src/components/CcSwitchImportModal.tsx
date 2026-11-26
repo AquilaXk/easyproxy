@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
+import { IconX } from "../icons";
 import { ModalDialog } from "./ui-v2/modal-dialog";
 
 export interface CcSwitchCandidate {
@@ -221,18 +222,16 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
         </div>
         <button
           type="button"
-          className="btn btn-ghost btn-sm shrink-0"
+          className="btn-icon shrink-0"
+          aria-label={t("common.close")}
           disabled={applying}
           onClick={onClose}
         >
-          {t("common.close")}
+          <IconX aria-hidden="true" />
         </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 px-1 -mx-1 py-0.5 -my-0.5">
-          <div className="rounded-card border border-solid border-line bg-inset p-3 text-xs text-fg-muted">
-            {uxT(locale, "ccSwitch.consentNotice")}
-          </div>
 
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex-1 min-w-[220px] flex flex-col gap-1">
@@ -271,7 +270,11 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
           {preview && (
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="badge badge-muted">{uxT(locale, "ccSwitch.discoveredCount", { count: preview.discovered })}</span>
-              <span className="badge badge-green">{uxT(locale, "ccSwitch.eligibleCount", { count: preview.eligible })}</span>
+              {preview.eligible > 0 ? (
+                <span className="badge badge-green">{uxT(locale, "ccSwitch.eligibleCount", { count: preview.eligible })}</span>
+              ) : (preview.available !== false || preview.discovered > 0) ? (
+                <span className="badge badge-muted">{uxT(locale, "ccSwitch.eligibleCount", { count: preview.eligible })}</span>
+              ) : null}
               {preview.conflicts > 0 && (
                 <span className="badge badge-amber">{uxT(locale, "ccSwitch.conflictCount", { count: preview.conflicts })}</span>
               )}
@@ -319,8 +322,18 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
                         <span className="muted whitespace-nowrap">({candidate.appType})</span>
                       </td>
                       <td className="px-2.5 py-2 align-top whitespace-nowrap"><code>{candidate.adapter}</code></td>
-                      <td className="px-2.5 py-2 align-top font-mono break-all min-w-[160px]">{candidate.baseUrl}</td>
-                      <td className="px-2.5 py-2 align-top break-words [overflow-wrap:anywhere]"><code>{candidate.defaultModel ?? "—"}</code></td>
+                      <td
+                        className="px-2.5 py-2 align-top font-mono break-all max-w-[200px] truncate"
+                        title={candidate.baseUrl}
+                      >
+                        {candidate.baseUrl}
+                      </td>
+                      <td
+                        className="px-2.5 py-2 align-top max-w-[160px] truncate"
+                        title={candidate.defaultModel ?? undefined}
+                      >
+                        <code>{candidate.defaultModel ?? "—"}</code>
+                      </td>
                       <td className="px-2.5 py-2 align-top whitespace-nowrap">
                         <span className={candidate.hasApiKey ? "badge badge-green whitespace-nowrap" : "badge badge-muted whitespace-nowrap"}>
                           {uxT(locale, candidate.hasApiKey ? "ccSwitch.keyDetected" : "ccSwitch.keyless")}
@@ -360,23 +373,27 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
                   <span>{uxT(locale, "ccSwitch.storeInKeychain")}</span>
                 </label>
               )}
-
-              <label className="flex items-start gap-2 rounded-card border border-solid border-line bg-inset p-2.5 text-xs">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 shrink-0"
-                  checked={consentChecked}
-                  disabled={applying}
-                  onChange={e => {
-                    setConsentChecked(e.target.checked);
-                    if (e.target.checked) setError(null);
-                  }}
-                />
-                <span>{uxT(locale, "ccSwitch.consentCheckbox")}</span>
-              </label>
             </div>
           )}
       </div>
+
+      {preview && preview.providers.length > 0 && (
+        <div className="shrink-0 pt-3 mt-1">
+          <label className="flex items-start gap-2 rounded-card border border-solid border-line bg-inset p-2.5 text-xs">
+            <input
+              type="checkbox"
+              className="mt-0.5 shrink-0"
+              checked={consentChecked}
+              disabled={applying}
+              onChange={e => {
+                setConsentChecked(e.target.checked);
+                if (e.target.checked) setError(null);
+              }}
+            />
+            <span>{uxT(locale, "ccSwitch.consentCheckbox")}</span>
+          </label>
+        </div>
+      )}
 
       <div
         className="modal-actions shrink-0 flex-wrap items-center justify-between pt-3 mt-3"

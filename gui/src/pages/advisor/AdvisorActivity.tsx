@@ -45,7 +45,7 @@ export function AdvisorActivityTable({ entries }: { entries: AdvisorActivityEntr
   return (
     <div className="max-h-[480px] overflow-auto rounded-[12px]">
       <table className="pv2-table advisor-activity-table w-full border-collapse text-[13px] text-fg">
-        <thead><tr className="border-b border-solid border-line">
+        <thead><tr className="border-0 border-b border-solid border-line">
           <th scope="col" className={th}>{t("advisor.activity.started")}</th>
           <th scope="col" className={th}>{t("advisor.activity.trigger")}</th>
           <th scope="col" className={th}>{t("advisor.model")}</th>

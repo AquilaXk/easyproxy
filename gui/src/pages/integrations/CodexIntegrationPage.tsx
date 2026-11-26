@@ -6,7 +6,7 @@ import { uxT } from "../../i18n/ux-overhaul-copy";
 import { codexAccountModeState } from "../../codex-multi-state";
 import { ensureOpenAiProvider, openAiAccountProviderState, OpenAiEnableError } from "../../provider-payload";
 import { Notice, Switch } from "../../ui";
-import { cn } from "../../lib/utils";
+import { SegmentedControl } from "../../components/ui-v2/segmented-control";
 import ConsequenceDialog, { type ConsequenceCopy } from "./ConsequenceDialog";
 import IntegrationStateBadge from "./IntegrationStateBadge";
 import { describeRefusal } from "./refusal-copy";
@@ -238,7 +238,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="btn btn-primary btn-sm"
+            className="btn btn-ghost btn-sm"
             disabled={busyKey !== null}
             onClick={() => { void syncCodexConfig(); }}
           >
@@ -269,16 +269,13 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         return (
           <div className="rounded-card border border-solid border-line bg-surface p-4 flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0 flex flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="m-0 text-sm font-semibold text-fg">{t("integrations.codex.title")}</h4>
-                  <IntegrationStateBadge
-                    state={native ? native.state : "unknown"}
-                    installed={native?.installed ?? true}
-                  />
-                </div>
+              <div className="min-w-0 flex flex-wrap items-center gap-2">
+                <IntegrationStateBadge
+                  state={native ? native.state : "unknown"}
+                  installed={native?.installed ?? true}
+                />
                 {native?.configPath && (
-                  <p className="m-0 font-mono text-xs text-fg-muted break-all">{native.configPath}</p>
+                  <span className="font-mono text-xs text-fg-muted break-all">{native.configPath}</span>
                 )}
               </div>
               <Switch
@@ -310,70 +307,50 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
       )}
 
       <div className="rounded-card border border-solid border-line bg-surface p-4 flex flex-col gap-3">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <h4 className="m-0 text-sm font-semibold text-fg">{uxT(locale, "codexRoute.modeTitle")}</h4>
-            <p className="m-0 mt-1 text-xs text-fg-muted">{uxT(locale, "codexRoute.modeDesc")}</p>
-          </div>
-          {(state?.accountMode === "pool" || state?.accountMode === "direct") && (
-            <span className={state.accountMode === "pool" ? "badge badge-blue" : "badge badge-muted"}>
-              {state.accountMode === "pool" ? t("codexAuth.accountModePool") : t("codexAuth.accountModeDirect")}
-            </span>
-          )}
-        </div>
-
         {(state?.accountMode === "absent" || state?.accountMode === "disabled") ? (
-          <div className="flex items-center justify-between gap-3 rounded-control border border-solid border-line bg-inset p-3">
-            <span className="text-xs text-fg-muted">{t("codexAuth.openaiUnavailableDesc")}</span>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm shrink-0"
-              disabled={busyKey !== null}
-              onClick={() => { void enableOpenAi(); }}
-            >
-              {t("codexAuth.enableOpenai")}
-            </button>
+          <div className="flex flex-col gap-2">
+            <div>
+              <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.modeTitle")}</div>
+              <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.modeDesc")}</div>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-control border border-solid border-line bg-inset p-3">
+              <span className="text-xs text-fg-muted">{t("codexAuth.openaiUnavailableDesc")}</span>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm shrink-0"
+                disabled={busyKey !== null}
+                onClick={() => { void enableOpenAi(); }}
+              >
+                {t("codexAuth.enableOpenai")}
+              </button>
+            </div>
           </div>
         ) : (
-          <div
-            role="radiogroup"
-            aria-label={uxT(locale, "codexRoute.modeTitle")}
-            className="grid gap-2 sm:grid-cols-2"
-          >
-            {(["pool", "direct"] as const).map(mode => {
-              const selected = state?.accountMode === mode;
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  disabled={busyKey !== null || state === null || state.accountMode === "invalid"}
-                  onClick={() => { void setAccountMode(mode); }}
-                  className={cn(
-                    "ui-v2 cursor-pointer rounded-control border border-solid p-3 text-left transition-colors",
-                    selected
-                      ? "border-line-strong bg-raised ring-1 ring-highlight"
-                      : "border-line bg-inset hover:border-line-strong",
-                  )}
-                >
-                  <div className="text-sm font-semibold text-fg">
-                    {uxT(locale, mode === "pool" ? "codexRoute.modePool" : "codexRoute.modeDirect")}
-                  </div>
-                  <div className="mt-1 text-xs text-fg-muted">
-                    {uxT(locale, mode === "pool" ? "codexRoute.modePoolHint" : "codexRoute.modeDirectHint")}
-                  </div>
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.modeTitle")}</div>
+              <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.modeDesc")}</div>
+              {(state?.accountMode === "pool" || state?.accountMode === "direct") && (
+                <div className="mt-0.5 text-xs text-fg-subtle">
+                  {uxT(locale, state.accountMode === "direct" ? "codexRoute.modeDirectHint" : "codexRoute.modePoolHint")}
+                </div>
+              )}
+            </div>
+            <SegmentedControl
+              size="sm"
+              aria-label={uxT(locale, "codexRoute.modeTitle")}
+              value={state?.accountMode === "direct" ? "direct" : "pool"}
+              disabled={busyKey !== null || state === null || state.accountMode === "invalid"}
+              onChange={mode => { void setAccountMode(mode); }}
+              items={[
+                { value: "pool", label: uxT(locale, "codexRoute.modePoolShort"), title: uxT(locale, "codexRoute.modePool") },
+                { value: "direct", label: uxT(locale, "codexRoute.modeDirectShort"), title: uxT(locale, "codexRoute.modeDirect") },
+              ]}
+            />
           </div>
         )}
-      </div>
 
-      <div className="rounded-card border border-solid border-line bg-surface p-4 flex flex-col gap-3">
-        <h4 className="m-0 text-sm font-semibold text-fg">{uxT(locale, "codexRoute.switchesTitle")}</h4>
-
-        <div className="flex items-center justify-between gap-3 py-1">
+        <div className="flex items-center justify-between gap-3 border-0 border-t border-solid border-line pt-3">
           <div className="min-w-0">
             <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.autoStart")}</div>
             <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.autoStartHint")}</div>
@@ -386,7 +363,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
           />
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-solid border-line pt-3">
+        <div className="flex items-center justify-between gap-3 border-0 border-t border-solid border-line pt-3">
           <div className="min-w-0">
             <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.desktopAuthless")}</div>
             <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.desktopAuthlessHint")}</div>
@@ -399,7 +376,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
           />
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-solid border-line pt-3">
+        <div className="flex items-center justify-between gap-3 border-0 border-t border-solid border-line pt-3">
           <div className="min-w-0">
             <div className="text-sm font-medium text-fg">{uxT(locale, "codexRoute.accountPicker")}</div>
             <div className="text-xs text-fg-muted">{uxT(locale, "codexRoute.accountPickerHint")}</div>

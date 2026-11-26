@@ -5,6 +5,7 @@ import { useI18n } from "../i18n/shared";
 import { uxT, type UxCopyKey } from "../i18n/ux-overhaul-copy";
 import { readJsonOrThrow } from "../fetch-json";
 import { Notice } from "../ui";
+import { IconGrid, IconKey, IconShuffle } from "../icons";
 import ClientMark from "../components/ClientMark";
 import { DataSurfaceSkeleton } from "../components/data-surface";
 import { INTEGRATION_MARKS } from "../components/integration-marks";
@@ -264,8 +265,14 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
                 onClick={() => selectTab(definition.id, true)}
                 onKeyDown={handleTabKeyDown}
               >
-                {definition.id !== "overview" && definition.id !== "keys" && definition.id !== "sync" && (
-                  <ClientMark src={tabMark(definition.id)} label={t(definition.labelKey)} size={14} />
+                {definition.id === "overview" ? (
+                  <IconGrid size={16} className="shrink-0 opacity-80" aria-hidden="true" />
+                ) : definition.id === "keys" ? (
+                  <IconKey size={16} className="shrink-0 opacity-80" aria-hidden="true" />
+                ) : definition.id === "sync" ? (
+                  <IconShuffle size={16} className="shrink-0 opacity-80" aria-hidden="true" />
+                ) : (
+                  <ClientMark src={tabMark(definition.id)} label={t(definition.labelKey)} size={16} />
                 )}
                 {t(definition.labelKey)}
               </button>

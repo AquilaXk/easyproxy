@@ -281,7 +281,7 @@ describe("Stage 4C /classic/ retirement and bridge/.ui-v2 layer boundary", () =>
     const codexRadios = codexPage!.querySelectorAll('[role="radio"]');
     expect(codexRadios.length).toBe(2);
     for (const radio of codexRadios) {
-      expect(radio.classList.contains("ui-v2")).toBe(true);
+      expect(radio.closest(".ui-v2")).not.toBeNull();
     }
     const codexBordered = codexPage!.querySelectorAll(".border, .border-t");
     expect(codexBordered.length).toBeGreaterThanOrEqual(5);

@@ -27,38 +27,6 @@
   gap: 18px;
 }
 
-.pws-shell-container .pws-rail {
-  padding: 12px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--epx-surface);
-  box-shadow: inset 0 0 0 1px var(--epx-line);
-}
-
-.pws-shell-container .pws-search-input {
-  border-color: var(--epx-line);
-  border-radius: 8px;
-  background: var(--epx-inset);
-  color: var(--epx-fg);
-}
-.pws-shell-container .pws-search-input:focus-visible {
-  outline: 2px solid var(--epx-highlight);
-  outline-offset: 1px;
-}
-
-.pws-shell-container .pws-filter-btn {
-  border-color: var(--epx-line);
-  border-radius: 8px;
-  background: var(--epx-inset);
-  color: var(--epx-fg-muted);
-}
-.pws-shell-container .pws-filter-btn:hover,
-.pws-shell-container .pws-filter-btn--active {
-  background: var(--epx-raised);
-  color: var(--epx-fg);
-  border-color: var(--epx-line-strong);
-}
-
 .pws-shell-container .pws-filter-menu {
   border: 0;
   border-radius: 12px;
@@ -85,13 +53,6 @@
   color: var(--epx-fg-muted);
 }
 
-.pws-shell-container .pws-main {
-  padding: 20px;
-  border-radius: 12px;
-  background: var(--epx-surface);
-  box-shadow: inset 0 0 0 1px var(--epx-line);
-}
-
 .pws-shell-container .pws-dashboard-title,
 .pws-shell-container .pws-detail-title {
   color: var(--epx-fg);
@@ -102,32 +63,12 @@
   color: var(--epx-fg-muted);
 }
 
-.pws-shell-container .pws-dashboard-card {
-  border: 0;
-  border-radius: 10px;
-  background: var(--epx-inset);
-  box-shadow: inset 0 0 0 1px var(--epx-line);
-}
 .pws-shell-container .pws-dashboard-row:hover {
   background: var(--epx-accent-soft);
 }
 .pws-shell-container .pws-dashboard-row--attention {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--epx-warning) 35%, transparent);
   background: color-mix(in oklab, var(--epx-warning) 8%, var(--epx-inset));
-}
-
-.pws-shell-container .pws-detail-tabs {
-  border-bottom-color: var(--epx-line);
-}
-.pws-shell-container .pws-detail-tab {
-  color: var(--epx-fg-muted);
-}
-.pws-shell-container .pws-detail-tab:hover {
-  color: var(--epx-fg);
-}
-.pws-shell-container .pws-detail-tab--active {
-  color: var(--epx-fg);
-  border-bottom-color: var(--epx-highlight);
 }
 
 .pws-shell-container .pws-section-title {
@@ -139,11 +80,17 @@
 .pws-shell-container .pwi-auth-state,
 .pws-shell-container .pwi-auth-optin-row,
 .pws-shell-container .pwi-device-code-wrap,
-.pws-shell-container .pwi-pacing-card,
 .pws-shell-container .pwi-pacing-status span {
   border: 0;
   border-radius: 10px;
   background: var(--epx-inset);
+  box-shadow: inset 0 0 0 1px var(--epx-line);
+}
+
+.pws-shell-container .pwi-pacing-card {
+  border: 0;
+  border-radius: 12px;
+  background: var(--epx-surface);
   box-shadow: inset 0 0 0 1px var(--epx-line);
 }
 

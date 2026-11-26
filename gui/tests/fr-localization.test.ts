@@ -286,6 +286,9 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   "ecoSync.mcpCount",
   // Literal epx:// deep-link URL syntax template with fixed query parameter names.
   "deepLinkImport.urlPlaceholder",
+  // "Pool" (see sidecar.poolA above) and "Direct" are identical in French Codex mode labels.
+  "ux.codexRoute.modePoolShort",
+  "ux.codexRoute.modeDirectShort",
 ]);
 
 function placeholders(value: string): string[] {

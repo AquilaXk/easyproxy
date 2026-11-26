@@ -5,9 +5,11 @@ import { uxT } from "../i18n/ux-overhaul-copy";
 import { formatProviderDisplayName } from "../provider-icons";
 import { openProviderAccounts } from "../protocol-deep-links";
 import { oauthAccountDisplayLabel } from "../provider-workspace/auth";
+import { accountSwitchRequest, maskEmail, type TraySwitchKind } from "../pages/tray-data";
 import type { AccountQuota } from "../codex-quota-utils";
 import { accountQuotaFromReport, freshQuotaReportsFromResponse, type ProviderQuotaReportView } from "../provider-workspace/report";
 import { oauthCredentialSlot } from "../../../src/oauth/credential-siblings";
+import { ProviderIcon } from "./provider-workspace/ProviderRail";
 import QuotaBars from "./QuotaBars";
 import { cn } from "../lib/utils";
 
@@ -46,6 +48,7 @@ interface HubProviderCard {
 async function fetchAllProviderHubData(
   apiBase: string,
   refreshQuotas: boolean,
+  codexAppLabel: string,
   signal?: AbortSignal,
 ): Promise<HubProviderCard[]> {
   try {
@@ -55,7 +58,10 @@ async function fetchAllProviderHubData(
     ]);
     const configJson = await readJsonIfOk<{ providers?: Record<string, HubProviderConfig> }>(configRes);
     const quotasJson = await readJsonIfOk<unknown>(quotasRes);
-    const quotaMap = quotasJson ? freshQuotaReportsFromResponse(quotasJson) : {};
+    const rawReports = quotasJson && typeof quotasJson === "object" && !Array.isArray(quotasJson) && "reports" in quotasJson
+      ? (quotasJson as { reports?: unknown }).reports
+      : quotasJson;
+    const quotaMap = rawReports ? freshQuotaReportsFromResponse(rawReports) : {};
     const providersObj = configJson?.providers;
     if (!providersObj || typeof providersObj !== "object" || Array.isArray(providersObj)) return [];
 
@@ -63,10 +69,16 @@ async function fetchAllProviderHubData(
     const cards = await Promise.all(entries.map(async ([name, row]): Promise<HubProviderCard | null> => {
       const slot = oauthCredentialSlot(name);
       if (name === "openai" && row.authMode === "forward") {
-        const res = await fetch(`${apiBase}/api/codex-auth/accounts`, signal ? { signal } : undefined).catch(() => null);
-        const body = res ? await readJsonIfOk<{ accounts?: Array<Record<string, unknown>>; activeCodexAccountId?: string }>(res) : null;
+        const [accountsRes, activeRes] = await Promise.all([
+          fetch(`${apiBase}/api/codex-auth/accounts`, signal ? { signal } : undefined).catch(() => null),
+          fetch(`${apiBase}/api/codex-auth/active`, signal ? { signal } : undefined).catch(() => null),
+        ]);
+        const body = accountsRes ? await readJsonIfOk<{ accounts?: Array<Record<string, unknown>>; activeCodexAccountId?: string | null }>(accountsRes) : null;
+        const activeBody = activeRes ? await readJsonIfOk<{ activeCodexAccountId?: string | null }>(activeRes) : null;
         const rows = Array.isArray(body?.accounts) ? body.accounts : [];
-        const activeId = body?.activeCodexAccountId;
+        const activeId = activeBody?.activeCodexAccountId !== undefined
+          ? (activeBody.activeCodexAccountId ?? "__main__")
+          : body?.activeCodexAccountId;
         return {
           name,
           kind: "codex",
@@ -76,12 +88,20 @@ async function fetchAllProviderHubData(
           accounts: rows.slice(0, 6).map((acc, idx) => {
             const id = String(acc.id ?? idx);
             const active = activeId ? id === activeId : acc.active === true;
+            const cleanText = (value: unknown): string | undefined => {
+              if (typeof value !== "string") return undefined;
+              const trimmed = value.trim();
+              return trimmed && trimmed !== "__main__" ? trimmed : undefined;
+            };
+            const rawEmail = typeof acc.email === "string" && acc.email.includes("@") ? maskEmail(acc.email) : undefined;
+            const alias = cleanText(acc.alias);
+            const explicitLabel = cleanText(acc.label);
             return {
               id,
-              alias: typeof acc.alias === "string" ? acc.alias : undefined,
-              accountLabel: typeof acc.accountLabel === "string" ? acc.accountLabel : undefined,
-              maskedLabel: typeof acc.maskedLabel === "string" ? acc.maskedLabel : undefined,
-              labelFallback: typeof acc.label === "string" ? acc.label : id,
+              alias,
+              accountLabel: cleanText(acc.accountLabel),
+              maskedLabel: cleanText(acc.maskedLabel) ?? rawEmail,
+              labelFallback: id === "__main__" ? (alias ?? explicitLabel ?? rawEmail ?? codexAppLabel) : explicitLabel,
               active,
               plan: typeof acc.plan === "string" ? acc.plan : null,
               quota: (acc.quota && typeof acc.quota === "object") ? acc.quota as AccountQuota : null,
@@ -133,15 +153,19 @@ async function fetchAllProviderHubData(
           kind: "keys",
           slot: name,
           quotaReport: quotaMap[name],
-          accounts: rows.map((k, idx) => ({
-            id: String(k.id ?? idx),
-            alias: typeof k.label === "string" ? k.label : undefined,
-            maskedLabel: typeof k.masked === "string" ? k.masked : undefined,
-            labelFallback: String(k.label ?? k.masked ?? k.id ?? idx),
-            active: k.active === true,
-            quota: (k.quota && typeof k.quota === "object") ? k.quota as AccountQuota : null,
-            paused: Boolean(k.disabled || k.pauseDetails),
-          })),
+          accounts: rows.map((k, idx) => {
+            const label = typeof k.label === "string" && k.label.trim() ? k.label.trim() : undefined;
+            const masked = typeof k.masked === "string" && k.masked.trim() ? k.masked.trim() : undefined;
+            return {
+              id: String(k.id ?? idx),
+              alias: label,
+              maskedLabel: masked,
+              labelFallback: label ?? masked,
+              active: k.active === true,
+              quota: (k.quota && typeof k.quota === "object") ? k.quota as AccountQuota : null,
+              paused: Boolean(k.disabled || k.pauseDetails),
+            };
+          }),
         };
       }
       return null;
@@ -152,32 +176,33 @@ async function fetchAllProviderHubData(
   }
 }
 
-export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
+export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: { apiBase: string; hideWhenCodexOnly?: boolean }) {
   const { t, locale } = useI18n();
   const [cards, setCards] = useState<HubProviderCard[]>([]);
   const [filter, setFilter] = useState<HubFilter>("all");
   const [refreshing, setRefreshing] = useState(false);
   const [switchingKey, setSwitchingKey] = useState<string | null>(null);
+  const codexAppLabel = t("codexAuth.codexApp");
 
   const reload = useCallback(async (refreshQuotas = false, signal?: AbortSignal) => {
     setRefreshing(refreshQuotas);
     try {
-      const next = await fetchAllProviderHubData(apiBase, refreshQuotas, signal);
+      const next = await fetchAllProviderHubData(apiBase, refreshQuotas, codexAppLabel, signal);
       if (!signal?.aborted) setCards(next);
     } finally {
       if (!signal?.aborted) setRefreshing(false);
     }
-  }, [apiBase]);
+  }, [apiBase, codexAppLabel]);
 
   useEffect(() => {
     const ac = new AbortController();
-    fetchAllProviderHubData(apiBase, false, ac.signal)
+    fetchAllProviderHubData(apiBase, false, codexAppLabel, ac.signal)
       .then(next => {
         if (!ac.signal.aborted) setCards(next);
       })
       .catch(() => undefined);
     return () => ac.abort();
-  }, [apiBase]);
+  }, [apiBase, codexAppLabel]);
 
   const counts = useMemo(() => ({
     all: cards.length,
@@ -196,21 +221,12 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
     if (switchingKey) return;
     setSwitchingKey(opKey);
     try {
-      const url = card.kind === "codex"
-        ? `${apiBase}/api/codex-auth/active`
-        : card.kind === "oauth"
-          ? `${apiBase}/api/oauth/accounts/active`
-          : `${apiBase}/api/providers/keys/active`;
-      const method = card.kind === "codex" ? "POST" : "PUT";
-      const body = card.kind === "codex"
-        ? { accountId }
-        : card.kind === "oauth"
-          ? { provider: card.slot, accountId }
-          : { name: card.name, id: accountId };
-      const res = await fetch(url, {
-        method,
+      const switchKind: TraySwitchKind = card.kind === "codex" ? "codex" : card.kind === "oauth" ? "oauth" : "apiKey";
+      const req = accountSwitchRequest(card.kind === "oauth" ? card.slot : card.name, switchKind, accountId);
+      const res = await fetch(`${apiBase}${req.path}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(req.body),
       });
       if (res.ok) await reload(false);
     } catch {
@@ -221,6 +237,7 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
   };
 
   if (cards.length === 0) return null;
+  if (hideWhenCodexOnly && cards.every(c => c.kind === "codex")) return null;
 
   return (
     <section
@@ -235,7 +252,11 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
           <p className="m-0 mt-0.5 text-xs text-fg-muted">{uxT(locale, "accountsHub.subtitle")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="ui-v2 inline-flex items-center gap-0.5 rounded-[7px] bg-inset p-0.5 ring-1 ring-inset ring-line">
+          <div
+            role="group"
+            aria-label={uxT(locale, "accountsHub.title")}
+            className="ui-v2 inline-flex items-center gap-0.5 rounded-[7px] bg-inset p-0.5 ring-1 ring-inset ring-line"
+          >
             {(["all", "oauth", "keys"] as const).map(tab => (
               <button
                 key={tab}
@@ -257,7 +278,7 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
           </div>
           <button
             type="button"
-            className="btn btn-outline btn-sm"
+            className="btn btn-ghost btn-sm"
             disabled={refreshing}
             onClick={() => { void reload(true); }}
           >
@@ -274,13 +295,14 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
             <article
               key={card.name}
               data-hub-provider={card.name}
-              className="flex flex-col gap-2.5 rounded-control border border-solid border-line bg-inset p-3"
+              className="flex flex-col gap-2.5 rounded-control border border-solid border-line bg-surface p-3"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
+                  <ProviderIcon name={card.name} cls="provider-icon shrink-0" size={18} />
                   <strong className="text-sm text-fg truncate">{formatProviderDisplayName(card.name, t)}</strong>
                   {card.kind === "codex" && card.codexAccountMode && (
-                    <span className={card.codexAccountMode === "pool" ? "badge badge-blue" : "badge badge-muted"}>
+                    <span className={card.codexAccountMode === "pool" ? "badge badge-primary" : "badge badge-muted"}>
                       {card.codexAccountMode === "pool" ? t("codexAuth.accountModePool") : t("codexAuth.accountModeDirect")}
                     </span>
                   )}
@@ -303,7 +325,7 @@ export function AllProviderAccountsHub({ apiBase }: { apiBase: string }) {
               )}
 
               {card.accounts.length > 0 && (
-                <div className="flex flex-col gap-1.5 border-t border-solid border-line pt-2">
+                <div className="flex flex-col gap-1.5 border-0 border-t border-solid border-line pt-2">
                   {card.accounts.map(acc => {
                     const rowLabel = acc.labelFallback ?? oauthAccountDisplayLabel(card.accounts, acc, t);
                     return (

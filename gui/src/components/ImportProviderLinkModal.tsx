@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readJsonOrThrow } from "../fetch-json";
 import { useT } from "../i18n/shared";
+import { IconX } from "../icons";
+import { Notice } from "../ui";
 import { ModalDialog } from "./ui-v2/modal-dialog";
 
 interface DeepLinkPreviewDto {
@@ -118,25 +120,48 @@ export default function ImportProviderLinkModal({
 
   return (
     <ModalDialog onClose={onClose} dismissDisabled={busy} aria-labelledby="import-link-modal-title">
-      <div className="p-4 flex flex-col gap-3 min-w-[340px] max-w-[520px]">
-        <h2 id="import-link-modal-title" className="m-0 text-base font-semibold">
-          {t("deepLinkImport.title")}
-        </h2>
-        <p className="m-0 text-xs text-fg-muted">{t("deepLinkImport.subtitle")}</p>
+      <div className="flex flex-col gap-3 w-full min-w-0 sm:min-w-[340px] max-w-[520px]">
+        <div className="modal-head shrink-0 items-start gap-3">
+          <div className="min-w-0">
+            <h2 id="import-link-modal-title" className="m-0 text-base font-semibold">
+              {t("deepLinkImport.title")}
+            </h2>
+            <p className="m-0 mt-1 text-xs text-fg-muted">{t("deepLinkImport.subtitle")}</p>
+          </div>
+          <button
+            type="button"
+            className="btn-icon shrink-0"
+            aria-label={t("common.close")}
+            disabled={busy}
+            onClick={onClose}
+          >
+            <IconX aria-hidden="true" />
+          </button>
+        </div>
 
         <div className="flex flex-col gap-1">
           <label htmlFor="deep-link-url-input" className="text-xs font-medium">
             {t("deepLinkImport.urlLabel")}
           </label>
-          <input
-            id="deep-link-url-input"
-            type="text"
-            className="input"
-            value={url}
-            disabled={busy}
-            placeholder={t("deepLinkImport.urlPlaceholder")}
-            onChange={e => { setUrl(e.target.value); setPreview(null); setError(null); }}
-          />
+          <div className="flex items-center gap-2">
+            <input
+              id="deep-link-url-input"
+              type="text"
+              className="input flex-1"
+              value={url}
+              disabled={busy}
+              placeholder={t("deepLinkImport.urlPlaceholder")}
+              onChange={e => { setUrl(e.target.value); setPreview(null); setError(null); }}
+            />
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm shrink-0"
+              disabled={busy || !url.trim()}
+              onClick={() => void runPreview()}
+            >
+              {t("deepLinkImport.preview")}
+            </button>
+          </div>
         </div>
 
         <label className="flex items-center gap-2 text-xs">
@@ -167,10 +192,10 @@ export default function ImportProviderLinkModal({
           <span>{t("deepLinkImport.overwrite")}</span>
         </label>
 
-        {error && <div className="alert alert-err text-xs" role="alert">{error}</div>}
+        {error && <Notice tone="err">{error}</Notice>}
 
         {preview && (
-          <div className="border border-solid border-line rounded-lg p-3 text-xs flex flex-col gap-1">
+          <div className="border border-solid border-line rounded-card p-3 text-xs flex flex-col gap-1">
             <div><strong>{preview.name}</strong> · <code>{preview.adapter}</code></div>
             <div className="text-fg-muted break-all"><code>{preview.baseUrl}</code></div>
             <div>
@@ -179,25 +204,17 @@ export default function ImportProviderLinkModal({
                 : t("deepLinkImport.noneKey")}
             </div>
             {preview.requiresPrivateNetworkOptIn && !preview.privateNetworkOptInGranted && (
-              <div className="alert alert-warn text-xs mt-1">{t("deepLinkImport.privateWarning")}</div>
+              <Notice tone="warn">{t("deepLinkImport.privateWarning")}</Notice>
             )}
             {preview.blockedReason && (
-              <div className="text-err text-xs mt-1">{preview.blockedReason}</div>
+              <div className="text-danger text-xs mt-1">{preview.blockedReason}</div>
             )}
           </div>
         )}
 
-        <div className="flex items-center justify-end gap-2 pt-2">
+        <div className="modal-actions pt-2">
           <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onClose}>
             {t("common.cancel")}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={busy || !url.trim()}
-            onClick={() => void runPreview()}
-          >
-            {t("deepLinkImport.preview")}
           </button>
           <button
             type="button"

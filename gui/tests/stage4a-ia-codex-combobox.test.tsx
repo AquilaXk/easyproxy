@@ -334,4 +334,126 @@ describe("Stage 4A Accounts hub, Route -> Codex controls, and GatewayClients Com
     await flushTicks();
     expect(calls.some(c => c.url.endsWith("/api/gateway-clients/antigravity/connect") && c.body?.model === "google-antigravity/gemini-3.8-flash")).toBe(true);
   });
+
+  test("AllProviderAccountsHub uses /api/provider-quotas reports, PUT /api/codex-auth/active, safe __main__/ordinal labels, and hideWhenCodexOnly", async () => {
+    const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+    let activeCodex: string | null = null;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
+      calls.push({ url, method, body });
+      if (url.endsWith("/api/config")) {
+        return Response.json({ providers: { openai: { authMode: "forward", codexAccountMode: "pool" } } });
+      }
+      if (url.includes("/api/provider-quotas")) {
+        return Response.json({ reports: [{ provider: "openai", status: "ok", windows: [{ id: "five_hour", label: "5h", remainingPercent: 80 }] }] });
+      }
+      if (url.endsWith("/api/codex-auth/accounts")) {
+        return Response.json({
+          accounts: [
+            { id: "__main__", email: "Codex App login", logLabel: "main", plan: "plus" },
+            { id: "acct_opaque_xyz", plan: "pro" },
+          ],
+        });
+      }
+      if (url.endsWith("/api/codex-auth/active") && method === "GET") {
+        return Response.json({ activeCodexAccountId: activeCodex });
+      }
+      if (url.endsWith("/api/codex-auth/active") && method === "PUT") {
+        activeCodex = (body?.accountId as string) ?? "__main__";
+        return Response.json({ ok: true, activeCodexAccountId: activeCodex === "__main__" ? null : activeCodex });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <AllProviderAccountsHub apiBase="http://127.0.0.1:10100" />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    expect(host.textContent).toContain("Codex App");
+    expect(host.textContent).toContain("Account 2");
+    expect(host.textContent).not.toContain("__main__");
+    expect(host.textContent).not.toContain("acct_opaque_xyz");
+
+    const switchBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Set active")!;
+    await act(async () => { switchBtn.click(); });
+    await flushTicks();
+    expect(calls.some(c => c.url.endsWith("/api/codex-auth/active") && c.method === "PUT" && c.body?.accountId === "acct_opaque_xyz")).toBe(true);
+
+    // Switching back to __main__ preserves "__main__" string (never sends null).
+    const backBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Set active")!;
+    await act(async () => { backBtn.click(); });
+    await flushTicks();
+    expect(calls.some(c => c.url.endsWith("/api/codex-auth/active") && c.method === "PUT" && c.body?.accountId === "__main__")).toBe(true);
+
+    // hideWhenCodexOnly suppresses standalone hub when only Codex exists.
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <AllProviderAccountsHub apiBase="http://127.0.0.1:10100" hideWhenCodexOnly />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    expect(host.querySelector('[data-hub-provider="openai"]')).toBeNull();
+  });
+
+  test("GatewayClientsPage filters disabled/superseded models and prioritizes antigravity/google/anthropic", async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/gateway-clients")) {
+        return Response.json({
+          clients: [{ id: "antigravity", label: "Antigravity", state: "disconnected", files: [], overrides: [], notes: [] }],
+        });
+      }
+      if (url.endsWith("/api/models")) {
+        return Response.json({
+          models: [
+            { id: "openai/gpt-5", provider: "openai" },
+            { id: "google-antigravity/disabled-m", provider: "google-antigravity", disabled: true },
+            { id: "google-antigravity/superseded-m", provider: "google-antigravity", superseded: true },
+            { id: "google-antigravity/gemini-3.8-pro", provider: "google-antigravity" },
+            { id: "anthropic/claude-4-5", provider: "anthropic" },
+          ],
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <GatewayClientsPage apiBase="http://127.0.0.1:10100" active />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    const comboInput = host.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+    await act(async () => { comboInput.focus(); });
+    await flushTicks();
+    const options = [...host.querySelectorAll('[role="option"]')].map(el => el.textContent ?? "");
+    expect(options.some(text => text.includes("disabled-m"))).toBe(false);
+    expect(options.some(text => text.includes("superseded-m"))).toBe(false);
+    const agyIdx = options.findIndex(text => text.includes("google-antigravity/gemini-3.8-pro"));
+    const antIdx = options.findIndex(text => text.includes("anthropic/claude-4-5"));
+    const oaiIdx = options.findIndex(text => text.includes("openai/gpt-5"));
+    expect(agyIdx).toBeGreaterThanOrEqual(0);
+    expect(agyIdx).toBeLessThan(antIdx);
+    expect(antIdx).toBeLessThan(oaiIdx);
+  });
 });

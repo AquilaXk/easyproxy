@@ -50,11 +50,12 @@ export function railStatusCls(item: WorkspaceItem): string {
   return "providers-workspace-rail-status providers-workspace-rail-status--warning";
 }
 
-export function ProviderIcon({ name, adapter, baseUrl, cls }: {
+export function ProviderIcon({ name, adapter, baseUrl, cls = "provider-icon", size }: {
   name: string;
   adapter?: string;
   baseUrl?: string;
-  cls: string;
+  cls?: string;
+  size?: number;
 }) {
   const t = useT();
   const src = providerIconSrc(name, { adapter, baseUrl });
@@ -73,16 +74,19 @@ export function ProviderIcon({ name, adapter, baseUrl, cls }: {
   const tileClass = paint === "plate" ? `${cls} provider-icon--plate`
     : paint === "dark-plate" ? `${cls} provider-icon--plate-dark`
     : cls;
+  const boxStyle = size ? { width: size, height: size } : undefined;
+  const innerSize = size ? Math.max(10, Math.round(size * 0.65)) : undefined;
+  const imgStyle = innerSize ? { width: innerSize, height: innerSize } : undefined;
   return (
-    <span className={tileClass}>
+    <span className={tileClass} style={boxStyle}>
       {src && paint === "mask" ? (
         <span
           className="provider-icon-mask"
-          style={{ maskImage: `url(${src})`, WebkitMaskImage: `url(${src})` }}
+          style={{ ...imgStyle, maskImage: `url(${src})`, WebkitMaskImage: `url(${src})` }}
           aria-hidden="true"
         />
       ) : src ? (
-        <img src={src} alt="" aria-hidden="true" />
+        <img src={src} alt="" style={imgStyle} aria-hidden="true" />
       ) : (
         <ProviderFallbackMark name={name} label={formatProviderDisplayName(name, t)} />
       )}

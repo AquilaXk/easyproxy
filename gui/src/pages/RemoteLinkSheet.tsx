@@ -143,7 +143,7 @@ export function RemoteLinkSheet({
     <dialog ref={sheetRef} aria-labelledby="remote-link-sheet-title" onCancel={event => { event.preventDefault(); onClose(); }}
       {...backdropDismiss}
       className="remote-link-sheet m-auto max-h-[min(800px,calc(100dvh-24px))] w-[min(620px,calc(100vw-24px))] flex-col overflow-hidden rounded-[14px] border-0 bg-bg text-fg shadow-lg ring-1 ring-line backdrop:bg-black/40 open:flex">
-      <header className="flex shrink-0 flex-col gap-3 border-b border-solid border-line bg-surface px-5 pt-4 pb-3.5">
+      <header className="flex shrink-0 flex-col gap-3 border-0 border-b border-solid border-line bg-surface px-5 pt-4 pb-3.5">
           <div className="flex items-start justify-between gap-3">
             <h3 id="remote-link-sheet-title" className="m-0 text-[16px] leading-6 font-semibold tracking-[-0.015em]">{isChildFlow ? t("remoteLink.findHome.title") : t("link.sheetTitle")}</h3>
             <IconButton label={t("link.close")} onClick={onClose}><IconX /></IconButton>
@@ -209,7 +209,7 @@ export function RemoteLinkSheet({
             </div>
           )}
         </div>
-      <footer className="flex shrink-0 justify-end gap-2 border-t border-solid border-line bg-surface px-5 py-3"><Button variant="ghost" onClick={onClose}>{t("link.cancel")}</Button></footer>
+      <footer className="flex shrink-0 justify-end gap-2 border-0 border-t border-solid border-line bg-surface px-5 py-3"><Button variant="ghost" onClick={onClose}>{t("link.cancel")}</Button></footer>
     </dialog>
   );
 }

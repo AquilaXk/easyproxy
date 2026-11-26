@@ -3,6 +3,7 @@ import { readJsonIfOk } from "../../fetch-json";
 import { confirmAction } from "../../action-dialogs";
 import { useI18n } from "../../i18n/shared";
 import { uxT } from "../../i18n/ux-overhaul-copy";
+import { IconEye, IconEyeOff } from "../../icons";
 import { Select } from "../../ui";
 import type { WorkspaceItem } from "./types";
 
@@ -98,6 +99,7 @@ export function ProviderEgressAndKeychainSection({
 }: Props) {
   const { locale } = useI18n();
   const [proxyInput, setProxyInput] = useState("");
+  const [showProxy, setShowProxy] = useState(false);
   const [noProxyInput, setNoProxyInput] = useState(() => formatNoProxyValue(item.noProxy));
   const [hasProxy, setHasProxy] = useState(item.hasProxy === true);
   const [proxyLabel, setProxyLabel] = useState(item.proxyLabel ?? "");
@@ -294,23 +296,35 @@ export function ProviderEgressAndKeychainSection({
           <h3 id="pwi-egress-title">{uxT(locale, "providerEgress.title")}</h3>
           <p>{uxT(locale, "providerEgress.desc")}</p>
         </div>
-        <span className={hasProxy ? "badge badge-blue" : "badge badge-muted"}>
+        <span className={hasProxy ? "badge badge-primary" : "badge badge-muted"}>
           {hasProxy ? (proxyLabel || uxT(locale, "providerEgress.proxyConfigured")) : uxT(locale, "providerEgress.proxyDirect")}
         </span>
       </div>
 
-      <div className="pwi-pacing-grid">
+      <div className="grid gap-3 sm:grid-cols-2">
         <label className="pwi-settings-field">
           <span className="pwi-settings-label">{uxT(locale, "providerEgress.proxyLabel")}</span>
-          <input
-            className="input font-mono"
-            type="password"
-            autoComplete="off"
-            value={proxyInput}
-            onChange={e => setProxyInput(e.target.value)}
-            placeholder={hasProxy ? uxT(locale, "providerEgress.proxyReplacePlaceholder") : "http://127.0.0.1:7890"}
-            disabled={egressSaving}
-          />
+          <div className="relative flex items-center">
+            <input
+              className="input w-full pr-9 font-mono"
+              type={showProxy ? "text" : "password"}
+              autoComplete="off"
+              value={proxyInput}
+              onChange={e => setProxyInput(e.target.value)}
+              placeholder={hasProxy ? uxT(locale, "providerEgress.proxyReplacePlaceholder") : "http://127.0.0.1:7890"}
+              disabled={egressSaving}
+            />
+            <button
+              type="button"
+              className="btn-icon absolute right-1"
+              aria-label={uxT(locale, showProxy ? "providerEgress.hideProxy" : "providerEgress.showProxy")}
+              aria-pressed={showProxy}
+              disabled={egressSaving}
+              onClick={() => setShowProxy(prev => !prev)}
+            >
+              {showProxy ? <IconEyeOff size={15} aria-hidden="true" /> : <IconEye size={15} aria-hidden="true" />}
+            </button>
+          </div>
         </label>
         <label className="pwi-settings-field">
           <span className="pwi-settings-label">{uxT(locale, "providerEgress.noProxyLabel")}</span>
@@ -351,7 +365,7 @@ export function ProviderEgressAndKeychainSection({
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="btn btn-outline btn-sm"
+          className="btn btn-ghost btn-sm"
           disabled={egressSaving}
           onClick={() => { void saveEgress(); }}
         >
@@ -378,7 +392,7 @@ export function ProviderEgressAndKeychainSection({
       </div>
 
       {supportsKeychain && keychainState && (
-        <div className="flex flex-col gap-2 pt-2 border-t border-solid border-line">
+        <div className="flex flex-col gap-2 pt-2 border-0 border-t border-solid border-line">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <span className="pwi-settings-label">{uxT(locale, "providerEgress.keychainTitle")}</span>
@@ -397,7 +411,7 @@ export function ProviderEgressAndKeychainSection({
             {(keychainState.store === "plaintext" || keychainState.store === "mixed") && (
               <button
                 type="button"
-                className="btn btn-outline btn-sm"
+                className="btn btn-ghost btn-sm"
                 disabled={keychainBusy || !keychainState.keychainAvailable}
                 onClick={() => { void handleKeychainAction("store"); }}
               >
@@ -427,7 +441,7 @@ export function ProviderEgressAndKeychainSection({
       )}
 
       {isCanonicalOpenAi && (
-        <div className="flex flex-col gap-1.5 pt-2 border-t border-solid border-line">
+        <div className="flex flex-col gap-1.5 pt-2 border-0 border-t border-solid border-line">
           <span className="pwi-settings-label">{uxT(locale, "providerEgress.historySlimTitle")}</span>
           <Select
             fullWidth

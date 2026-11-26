@@ -8,6 +8,17 @@
    rejects unclassed fields, so this is the safety net, not the plan).
    ============================================================================ */
 
+/* Prevent Tailwind v4 single-side hairline borders + .border-solid from reviving
+   3px UA medium border widths on unstyled sides outside .ui-v2. */
+:where(
+  .border, .border-t, .border-r, .border-b, .border-l, .border-x, .border-y,
+  .\*\:border-t > *, .\*\:border-r > *, .\*\:border-b > *, .\*\:border-l > *,
+  .divide-y > :not(:last-child), .divide-x > :not(:last-child)
+) {
+  border-width: 0;
+  border-style: solid;
+}
+
 :where(
   input:not([type]),
   input:is([type="text"], [type="number"], [type="search"], [type="email"], [type="url"],
@@ -19,7 +30,7 @@
   min-height: 34px;
   padding: 7px 10px;
   border: 1px solid var(--epx-line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background-color: light-dark(#ffffff, rgb(255 255 255 / 0.03));
   color: var(--epx-fg);
   font: inherit;

@@ -163,17 +163,23 @@ for code in ["en", "ko", "ja", "zh-Hans", "zh-Hant", "de", "fr", "pt", "ru", "tr
     let connectedLabel = NativeTrayL10n.text("tray.client.connected", locale: loc)
     let refreshLabel = NativeTrayL10n.text("tray.action.refresh", locale: loc)
     let providerUnavailable = NativeTrayL10n.text("tray.provider.unavailable", locale: loc)
+    let usageIncomplete = NativeTrayL10n.text("tray.usage.incomplete", locale: loc)
+    let blockedHardLock = NativeTrayL10n.text("tray.switch.blockedHardLock", locale: loc)
     let resetLine = NativeTrayL10n.formatted("tray.reset.in", "12m", locale: loc)
     check(!accountsTitle.isEmpty && accountsTitle != "tray.section.accounts", "Locale \(code) translates accounts title")
     check(!connectedLabel.isEmpty && connectedLabel != "tray.client.connected", "Locale \(code) translates client status")
     check(!refreshLabel.isEmpty && refreshLabel != "tray.action.refresh", "Locale \(code) translates refresh action")
     check(!providerUnavailable.isEmpty && providerUnavailable != "tray.provider.unavailable", "Locale \(code) translates provider unavailable notice")
+    check(!usageIncomplete.isEmpty && usageIncomplete != "tray.usage.incomplete", "Locale \(code) translates usage incomplete notice")
+    check(!blockedHardLock.isEmpty && blockedHardLock != "tray.switch.blockedHardLock", "Locale \(code) translates blocked notice")
     check(resetLine.contains("12m"), "Locale \(code) formats reset countdown")
 }
 check(NativeTrayL10n.text("tray.section.accounts", locale: Locale(identifier: "ko")) != NativeTrayL10n.text("tray.section.accounts", locale: Locale(identifier: "en")),
       "Korean localization differs from English")
 
 let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent("epx-tray-detect-\(UUID().uuidString)", isDirectory: true)
+try FileManager.default.createDirectory(at: tempHome.appendingPathComponent(".codex"), withIntermediateDirectories: true)
+try #"model_provider = "easyproxy""#.write(to: tempHome.appendingPathComponent(".codex/config.toml"), atomically: true, encoding: .utf8)
 try FileManager.default.createDirectory(at: tempHome.appendingPathComponent(".antigravity"), withIntermediateDirectories: true)
 try #"{"gateway":{"url":"http://127.0.0.1:10100"}}"#.write(to: tempHome.appendingPathComponent(".antigravity/settings.json"), atomically: true, encoding: .utf8)
 try FileManager.default.createDirectory(at: tempHome.appendingPathComponent(".claude"), withIntermediateDirectories: true)
@@ -181,9 +187,30 @@ try #"{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}"#.write(to: tem
 defer { try? FileManager.default.removeItem(at: tempHome) }
 
 let detectedLocal = NativeTrayLocalClientDetector.detect(homeDirectory: tempHome)
-check(detectedLocal.count == 3, "Local passive detector returns Antigravity, Claude, and Cursor")
-check(detectedLocal[0].id == "antigravity" && detectedLocal[0].connected && detectedLocal[0].state == "connected", "Antigravity passive detection sees connected gateway")
-check(detectedLocal[1].id == "claude" && detectedLocal[1].installed && !detectedLocal[1].connected && detectedLocal[1].state == "detected", "Claude passive detection sees local install without gateway")
-check(detectedLocal[2].id == "cursor" && !detectedLocal[2].installed && detectedLocal[2].state == "notDetected", "Cursor passive detection reports notDetected when absent")
+check(detectedLocal.count == 4, "Local passive detector returns Codex, Antigravity, Claude, and Cursor")
+check(detectedLocal[0].id == "codex" && detectedLocal[0].connected && detectedLocal[0].state == "connected", "Codex passive detection sees model_provider easyproxy")
+check(detectedLocal[1].id == "antigravity" && detectedLocal[1].connected && detectedLocal[1].state == "connected", "Antigravity passive detection sees connected gateway")
+check(detectedLocal[2].id == "claude" && detectedLocal[2].installed && !detectedLocal[2].connected && detectedLocal[2].state == "detected", "Claude passive detection sees local install without gateway")
+check(detectedLocal[3].id == "cursor" && !detectedLocal[3].installed && detectedLocal[3].state == "notDetected", "Cursor passive detection reports notDetected when absent")
+
+// Explicit empty host snapshot must NOT fall back to passive disk probing.
+let explicitEmpty = NativeTrayLocalClientDetector.detect(homeDirectory: tempHome, snapshotClients: [])
+check(explicitEmpty.isEmpty, "Explicit empty host snapshot overrides passive disk scan")
+
+// Negative localhost test: unrelated loopback ports must NOT falsely mark clients connected.
+let negHome = FileManager.default.temporaryDirectory.appendingPathComponent("epx-tray-neg-\(UUID().uuidString)", isDirectory: true)
+try FileManager.default.createDirectory(at: negHome.appendingPathComponent(".codex"), withIntermediateDirectories: true)
+try "model_provider = \"openai\"\n[model_providers.local]\nbase_url = \"http://localhost:8080/v1\"\n".write(to: negHome.appendingPathComponent(".codex/config.toml"), atomically: true, encoding: .utf8)
+try FileManager.default.createDirectory(at: negHome.appendingPathComponent(".antigravity"), withIntermediateDirectories: true)
+try #"{"gateway":{"url":"http://localhost:8080"}}"#.write(to: negHome.appendingPathComponent(".antigravity/settings.json"), atomically: true, encoding: .utf8)
+try FileManager.default.createDirectory(at: negHome.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+try #"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:4000"}}"#.write(to: negHome.appendingPathComponent(".claude/settings.json"), atomically: true, encoding: .utf8)
+try FileManager.default.createDirectory(at: negHome.appendingPathComponent(".cursor"), withIntermediateDirectories: true)
+try #"{"mcpServers":{"local":{"url":"http://localhost:3000/v1"}}}"#.write(to: negHome.appendingPathComponent(".cursor/mcp.json"), atomically: true, encoding: .utf8)
+defer { try? FileManager.default.removeItem(at: negHome) }
+
+let negLocal = NativeTrayLocalClientDetector.detect(homeDirectory: negHome)
+check(negLocal.count == 4 && negLocal.allSatisfy { $0.installed && !$0.connected && $0.state == "detected" },
+      "Unrelated localhost/127.0.0.1 configs remain detected, never connected")
 
 print("PASS: \(assertions) native tray contract/formatting assertions")

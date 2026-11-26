@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useI18n } from "../../i18n/shared";
 import { uxT } from "../../i18n/ux-overhaul-copy";
+import { formatProviderDisplayName } from "../../provider-icons";
 import type { ApiKeyEntry } from "../../pages/api-keys-utils";
 import { Combobox } from "../ui-v2/combobox";
 
@@ -79,7 +80,7 @@ export function ApiKeyBudgetCard({
   availableModels?: readonly string[];
   onSave: (id: string, patch: ApiKeyBudgetPatch) => Promise<boolean>;
 }) {
-  const { locale } = useI18n();
+  const { t, locale } = useI18n();
   const [rpmEdit, setRpmEdit] = useState<string | null>(null);
   const [dailyReqEdit, setDailyReqEdit] = useState<string | null>(null);
   const [dailyTokEdit, setDailyTokEdit] = useState<string | null>(null);
@@ -196,12 +197,13 @@ export function ApiKeyBudgetCard({
   };
 
   const addModelFromPicker = (picked: string) => {
-    setModelQuickPick(picked);
-    const trimmed = picked.trim();
-    if (!trimmed || !availableModels.includes(trimmed)) return;
-    if (!parsedModelsDraft.includes(trimmed)) {
-      setModelsTextEdit([...parsedModelsDraft, trimmed].join(", "));
+    const tokens = picked.split(",").map(item => item.trim()).filter(Boolean);
+    if (tokens.length === 0) return;
+    const next = [...parsedModelsDraft];
+    for (const token of tokens) {
+      if (!next.includes(token)) next.push(token);
     }
+    setModelsTextEdit(next.join(", "));
     setModelQuickPick("");
   };
 
@@ -248,7 +250,7 @@ export function ApiKeyBudgetCard({
         {dirty && <span className="badge badge-amber">{uxT(locale, "budget.unsaved")}</span>}
       </div>
       <p className="muted mb-3 text-[13px]">{uxT(locale, "budget.subtitle")}</p>
-      <p className="mb-3 rounded-lg border border-solid border-border-subtle bg-surface-2 px-3 py-2 text-xs text-fg-muted" role="note">
+      <p className="mb-3 rounded-card border border-solid border-line bg-surface px-3 py-2 text-xs text-fg-muted" role="note">
         {uxT(locale, "budget.loopbackNotice")}
       </p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -335,11 +337,12 @@ export function ApiKeyBudgetCard({
                     aria-pressed={selected}
                     disabled={busy}
                     onClick={() => toggleProvider(provider)}
+                    data-provider={provider}
                     className={selected
                       ? "btn btn-sm border border-solid border-[var(--epx-highlight)] bg-[var(--epx-accent-soft)] text-[var(--epx-highlight)]"
                       : "btn btn-ghost btn-sm border border-solid border-line text-fg-muted"}
                   >
-                    {provider}
+                    {formatProviderDisplayName(provider, t)}
                   </button>
                 );
               })}
@@ -352,16 +355,43 @@ export function ApiKeyBudgetCard({
           <label htmlFor="awi-budget-allowed-models" className="text-xs font-medium text-fg-muted">
             {uxT(locale, "budget.allowedModelsLabel")}
           </label>
-          {availableModels.length > 0 && (
+          <div
+            className="flex items-center gap-2"
+            onKeyDown={e => {
+              if (e.defaultPrevented) return;
+              if (e.key === "Enter" || e.key === ",") {
+                const candidate = modelQuickPick.trim();
+                if (!candidate) return;
+                e.preventDefault();
+                addModelFromPicker(candidate);
+              }
+            }}
+          >
             <Combobox
+              className="flex-1"
               value={modelQuickPick}
-              onChange={addModelFromPicker}
+              onChange={next => {
+                if (next.includes(",")) {
+                  addModelFromPicker(next);
+                } else {
+                  setModelQuickPick(next);
+                }
+              }}
+              onSelect={addModelFromPicker}
               options={availableModels.filter(id => !parsedModelsDraft.includes(id))}
               placeholder={uxT(locale, "playground.modelPlaceholder")}
               aria-label={uxT(locale, "budget.allowedModelsLabel")}
               disabled={busy}
             />
-          )}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm shrink-0"
+              disabled={busy || !modelQuickPick.trim()}
+              onClick={() => addModelFromPicker(modelQuickPick)}
+            >
+              {t("subagentsV2.add")}
+            </button>
+          </div>
           <textarea
             id="awi-budget-allowed-models"
             className="input min-h-[64px] font-mono text-xs"

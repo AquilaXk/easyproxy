@@ -250,24 +250,24 @@ export default function GatewayGuardrailsPanel({
     <div className="flex flex-col gap-4 p-4">
       {readOnly && <p className="m-0 text-xs text-fg-muted">{uxT(locale, "guardrails.readOnlyHint")}</p>}
 
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
-        <div className="rounded-control bg-inset px-3 py-2">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-card border border-solid border-line bg-line sm:grid-cols-5">
+        <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statScanned")}</div>
           <div className="text-sm font-semibold tabular-nums">{stats.scannedRequests.toLocaleString()}</div>
         </div>
-        <div className="rounded-control bg-inset px-3 py-2">
+        <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statDetections")}</div>
           <div className="text-sm font-semibold tabular-nums">{stats.secretDetections.toLocaleString()}</div>
         </div>
-        <div className="rounded-control bg-inset px-3 py-2">
+        <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statBlocks")}</div>
           <div className="text-sm font-semibold tabular-nums">{stats.secretBlocks.toLocaleString()}</div>
         </div>
-        <div className="rounded-control bg-inset px-3 py-2">
+        <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statCompressed")}</div>
           <div className="text-sm font-semibold tabular-nums">{stats.compressedToolOutputs.toLocaleString()}</div>
         </div>
-        <div className="rounded-control bg-inset px-3 py-2">
+        <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statSavedChars")}</div>
           <div className="text-sm font-semibold tabular-nums">{stats.savedChars.toLocaleString()}</div>
         </div>
@@ -309,53 +309,55 @@ export default function GatewayGuardrailsPanel({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="guardrails-min-chars" className="text-xs font-medium text-fg-muted">
-            {uxT(locale, "guardrails.minChars")}
-          </label>
-          <input
-            id="guardrails-min-chars"
-            type="number"
-            min={512}
-            max={500_000}
-            className="input"
-            value={minChars}
-            disabled={readOnly || saving || !compressionEnabled}
-            onChange={e => setMinCharsOverride(e.target.value)}
-          />
+      {compressionEnabled && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="guardrails-min-chars" className="text-xs font-medium text-fg-muted">
+              {uxT(locale, "guardrails.minChars")}
+            </label>
+            <input
+              id="guardrails-min-chars"
+              type="number"
+              min={512}
+              max={500_000}
+              className="input"
+              value={minChars}
+              disabled={readOnly || saving}
+              onChange={e => setMinCharsOverride(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="guardrails-head-chars" className="text-xs font-medium text-fg-muted">
+              {uxT(locale, "guardrails.headChars")}
+            </label>
+            <input
+              id="guardrails-head-chars"
+              type="number"
+              min={0}
+              max={100_000}
+              className="input"
+              value={headChars}
+              disabled={readOnly || saving}
+              onChange={e => setHeadCharsOverride(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="guardrails-tail-chars" className="text-xs font-medium text-fg-muted">
+              {uxT(locale, "guardrails.tailChars")}
+            </label>
+            <input
+              id="guardrails-tail-chars"
+              type="number"
+              min={0}
+              max={100_000}
+              className="input"
+              value={tailChars}
+              disabled={readOnly || saving}
+              onChange={e => setTailCharsOverride(e.target.value)}
+            />
+          </div>
         </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="guardrails-head-chars" className="text-xs font-medium text-fg-muted">
-            {uxT(locale, "guardrails.headChars")}
-          </label>
-          <input
-            id="guardrails-head-chars"
-            type="number"
-            min={0}
-            max={100_000}
-            className="input"
-            value={headChars}
-            disabled={readOnly || saving || !compressionEnabled}
-            onChange={e => setHeadCharsOverride(e.target.value)}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="guardrails-tail-chars" className="text-xs font-medium text-fg-muted">
-            {uxT(locale, "guardrails.tailChars")}
-          </label>
-          <input
-            id="guardrails-tail-chars"
-            type="number"
-            min={0}
-            max={100_000}
-            className="input"
-            value={tailChars}
-            disabled={readOnly || saving || !compressionEnabled}
-            onChange={e => setTailCharsOverride(e.target.value)}
-          />
-        </div>
-      </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <button
@@ -373,73 +375,78 @@ export default function GatewayGuardrailsPanel({
         )}
       </div>
 
-      <section className="flex flex-col gap-2.5 rounded-card border border-solid border-line bg-inset p-3.5" aria-labelledby="guardrails-dryrun-title">
-        <div className="flex flex-col gap-0.5">
-          <h4 id="guardrails-dryrun-title" className="m-0 text-[13px] font-semibold text-fg">
-            {uxT(locale, "guardrails.dryRunTitle")}
-          </h4>
-          <p className="m-0 text-xs text-fg-muted">{uxT(locale, "guardrails.dryRunDesc")}</p>
-        </div>
-        <label htmlFor="guardrails-dryrun-input" className="text-xs font-medium text-fg-muted">
-          {uxT(locale, "guardrails.dryRunInputLabel")}
-        </label>
-        <textarea
-          id="guardrails-dryrun-input"
-          className="input min-h-[84px] font-mono text-xs"
-          rows={3}
-          maxLength={MAX_DRY_RUN_INPUT_CHARS}
-          placeholder={uxT(locale, "guardrails.dryRunPlaceholder")}
-          value={dryRunText}
-          onChange={e => setDryRunText(e.target.value)}
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="btn btn-outline btn-sm"
-            disabled={dryRunBusy || !dryRunText.trim()}
-            onClick={() => { void handleDryRun(); }}
-          >
-            {dryRunBusy ? uxT(locale, "guardrails.dryRunRunning") : uxT(locale, "guardrails.dryRunRun")}
-          </button>
-          {dryRunError && <span role="alert" className="text-xs text-danger">{dryRunError}</span>}
-        </div>
-        {dryRunResult && (
-          <div className="flex flex-col gap-2 rounded-control border border-solid border-line bg-surface p-3" aria-live="polite">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={dryRunResult.blocked ? "badge badge-red" : (dryRunResult.redactions > 0 || dryRunResult.compressedItems > 0) ? "badge badge-amber" : "badge badge-muted"}>
-                {dryRunResult.blocked
-                  ? uxT(locale, "guardrails.dryRunBlocked")
-                  : dryRunResult.redactions > 0
-                    ? uxT(locale, "guardrails.dryRunRedacted")
-                    : uxT(locale, "guardrails.dryRunPassed")}
-              </span>
-              <span className="text-xs text-fg-muted tabular-nums">
-                {uxT(locale, "guardrails.dryRunSummary", {
-                  matches: dryRunResult.matches,
-                  redactions: dryRunResult.redactions,
-                  compressed: dryRunResult.compressedItems,
-                  saved: dryRunResult.savedChars,
-                  original: dryRunResult.originalChars,
-                  output: dryRunResult.outputChars,
-                })}
-              </span>
-            </div>
-            {dryRunResult.findings.length > 0 && (
-              <div className="font-mono text-xs text-fg-muted">
-                {uxT(locale, "guardrails.dryRunFindings", { list: dryRunResult.findings.join(", ") })}
-              </div>
-            )}
-            {dryRunResult.previewText.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium text-fg-subtle">{uxT(locale, "guardrails.dryRunPreviewLabel")}</span>
-                <pre className="m-0 max-h-48 overflow-auto rounded-control border border-solid border-line bg-bg p-2.5 font-mono text-xs whitespace-pre-wrap break-words text-fg">
-                  {dryRunResult.previewText}
-                </pre>
-              </div>
-            )}
+      <details className="rounded-card border border-solid border-line bg-surface">
+        <summary className="cursor-pointer px-3.5 py-2.5 text-[13px] font-semibold text-fg select-none">
+          {uxT(locale, "guardrails.dryRunTitle")}
+        </summary>
+        <section className="flex flex-col gap-2.5 border-0 border-t border-solid border-line p-3.5" aria-labelledby="guardrails-dryrun-title">
+          <div className="flex flex-col gap-0.5">
+            <h4 id="guardrails-dryrun-title" className="m-0 text-[13px] font-semibold text-fg">
+              {uxT(locale, "guardrails.dryRunTitle")}
+            </h4>
+            <p className="m-0 text-xs text-fg-muted">{uxT(locale, "guardrails.dryRunDesc")}</p>
           </div>
-        )}
-      </section>
+          <label htmlFor="guardrails-dryrun-input" className="text-xs font-medium text-fg-muted">
+            {uxT(locale, "guardrails.dryRunInputLabel")}
+          </label>
+          <textarea
+            id="guardrails-dryrun-input"
+            className="input min-h-[84px] font-mono text-xs"
+            rows={3}
+            maxLength={MAX_DRY_RUN_INPUT_CHARS}
+            placeholder={uxT(locale, "guardrails.dryRunPlaceholder")}
+            value={dryRunText}
+            onChange={e => setDryRunText(e.target.value)}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={dryRunBusy || !dryRunText.trim()}
+              onClick={() => { void handleDryRun(); }}
+            >
+              {dryRunBusy ? uxT(locale, "guardrails.dryRunRunning") : uxT(locale, "guardrails.dryRunRun")}
+            </button>
+            {dryRunError && <span role="alert" className="text-xs text-danger">{dryRunError}</span>}
+          </div>
+          {dryRunResult && (
+            <div className="flex flex-col gap-2 rounded-control border border-solid border-line bg-inset p-3" aria-live="polite">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={dryRunResult.blocked ? "badge badge-red" : (dryRunResult.redactions > 0 || dryRunResult.compressedItems > 0) ? "badge badge-amber" : "badge badge-muted"}>
+                  {dryRunResult.blocked
+                    ? uxT(locale, "guardrails.dryRunBlocked")
+                    : dryRunResult.redactions > 0
+                      ? uxT(locale, "guardrails.dryRunRedacted")
+                      : uxT(locale, "guardrails.dryRunPassed")}
+                </span>
+                <span className="text-xs text-fg-muted tabular-nums">
+                  {uxT(locale, "guardrails.dryRunSummary", {
+                    matches: dryRunResult.matches,
+                    redactions: dryRunResult.redactions,
+                    compressed: dryRunResult.compressedItems,
+                    saved: dryRunResult.savedChars,
+                    original: dryRunResult.originalChars,
+                    output: dryRunResult.outputChars,
+                  })}
+                </span>
+              </div>
+              {dryRunResult.findings.length > 0 && (
+                <div className="font-mono text-xs text-fg-muted">
+                  {uxT(locale, "guardrails.dryRunFindings", { list: dryRunResult.findings.join(", ") })}
+                </div>
+              )}
+              {dryRunResult.previewText.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] font-medium text-fg-subtle">{uxT(locale, "guardrails.dryRunPreviewLabel")}</span>
+                  <pre className="m-0 max-h-48 overflow-auto rounded-control border border-solid border-line bg-bg p-2.5 font-mono text-xs whitespace-pre-wrap break-words text-fg">
+                    {dryRunResult.previewText}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      </details>
     </div>
   );
 }

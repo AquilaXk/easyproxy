@@ -15,6 +15,7 @@ interface SegmentedControlProps<V extends string> {
   onChange: (value: V) => void;
   "aria-label": string;
   size?: "sm" | "md";
+  disabled?: boolean;
   className?: string;
 }
 
@@ -30,6 +31,7 @@ export function SegmentedControl<V extends string>({
   onChange,
   "aria-label": ariaLabel,
   size = "md",
+  disabled = false,
   className,
 }: SegmentedControlProps<V>) {
   // Shared-layout id for the sliding thumb, unique per control instance.
@@ -38,6 +40,7 @@ export function SegmentedControl<V extends string>({
   const active = Math.max(0, items.findIndex(item => item.value === value));
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return;
     const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
     if (!step && e.key !== "Home" && e.key !== "End") return;
     e.preventDefault();
@@ -50,9 +53,11 @@ export function SegmentedControl<V extends string>({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
+      aria-disabled={disabled || undefined}
       onKeyDown={onKeyDown}
       className={cn(
         "ui-v2 relative inline-flex items-center gap-0.5 rounded-control bg-surface p-0.5 ring-1 ring-inset ring-line",
+        disabled && "opacity-60",
         className,
       )}
     >
@@ -68,10 +73,12 @@ export function SegmentedControl<V extends string>({
               aria-checked={selected}
               aria-label={item.title}
               title={item.title}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => onChange(item.value)}
+              disabled={disabled}
+              tabIndex={disabled ? -1 : selected ? 0 : -1}
+              onClick={() => { if (!disabled) onChange(item.value); }}
               className={cn(
-                "relative inline-flex cursor-pointer items-center justify-center rounded-[calc(var(--radius-control)-2px)] font-medium",
+                "relative inline-flex items-center justify-center rounded-[calc(var(--radius-control)-2px)] font-medium",
+                disabled ? "cursor-not-allowed" : "cursor-pointer",
                 "transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-highlight",
                 "[&_svg]:size-3.5",
                 // Track padding is 2px a side, so the track is exactly one control height.

@@ -192,14 +192,60 @@ fn parse_accounts(body: &Value, kind: Option<AccountSwitchKind>) -> Option<Vec<V
     let active = ["activeAccountId", "activeId", "activeCodexAccountId"]
         .iter()
         .find_map(|key| body[key].as_str());
+    fn non_main(value: Option<&str>) -> Option<&str> {
+        value
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && *v != "__main__")
+    }
     rows.iter().enumerate().map(|(index,row)| {
         let id = row["id"].as_str()?;
         let oauth = kind == Some(AccountSwitchKind::OAuth);
-        let email = if oauth { None } else { row["email"].as_str().map(mask_email) };
+        let email = if oauth {
+            None
+        } else {
+            row["email"]
+                .as_str()
+                .filter(|v| v.contains('@'))
+                .map(mask_email)
+        };
+        let safe_log_label = non_main(row["logLabel"].as_str()).filter(|v| {
+            let opaque_codex = kind == Some(AccountSwitchKind::Codex)
+                && (*v == "main"
+                    || *v == id
+                    || (v.len() == 7
+                        && v.starts_with('p')
+                        && v[1..].bytes().all(|b| b.is_ascii_hexdigit())));
+            !opaque_codex
+        });
         let label = if oauth {
             [row["alias"].as_str(), row["maskedLabel"].as_str()]
                 .into_iter().flatten().map(str::trim).find(|v| !v.is_empty())
                 .map(str::to_owned).unwrap_or_else(|| format!("Account {}", index + 1))
+        } else if kind == Some(AccountSwitchKind::Codex) {
+            if id == "__main__" {
+                [
+                    non_main(row["alias"].as_str()),
+                    non_main(row["label"].as_str()),
+                    email.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .next()
+                .unwrap_or("Codex App")
+                .to_owned()
+            } else {
+                [
+                    non_main(row["alias"].as_str()),
+                    non_main(row["label"].as_str()),
+                    email.as_deref(),
+                    safe_log_label,
+                ]
+                .into_iter()
+                .flatten()
+                .next()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("Account {}", index + 1))
+            }
         } else {
             [row["alias"].as_str(),row["label"].as_str(),email.as_deref(),row["logLabel"].as_str(),Some(id)]
                 .into_iter().flatten().find(|v| !v.is_empty()).unwrap_or(id).to_owned()
@@ -315,6 +361,18 @@ mod tests {
             assert_eq!(rows[0]["email"], "p•••@e•••.com");
             assert_eq!(rows[0]["accountId"], "id");
         }
+    }
+
+    #[test]
+    fn codex_main_and_opaque_accounts_never_leak_main_or_hash_labels() {
+        let body = json!({"accounts":[
+            {"id":"__main__","alias":"__main__","email":"Codex App login","logLabel":"main"},
+            {"id":"acct_opaque_123","logLabel":"pdef456"}
+        ]});
+        let rows = super::parse_accounts(&body, Some(AccountSwitchKind::Codex)).unwrap();
+        assert_eq!(rows[0]["label"], "Codex App");
+        assert!(rows[0]["email"].is_null());
+        assert_eq!(rows[1]["label"], "Account 2");
     }
 
     #[test]

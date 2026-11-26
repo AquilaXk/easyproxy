@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
+import { IconChevron, IconX } from "../../icons";
 import { I18nContext, getActiveLocale } from "../../i18n/shared";
 import { uxT } from "../../i18n/ux-overhaul-copy";
 
@@ -13,6 +14,7 @@ export interface ComboboxProps {
   id?: string;
   value: string;
   onChange: (value: string) => void;
+  onSelect?: (value: string) => void;
   options: readonly (string | ComboboxOption)[];
   placeholder?: string;
   disabled?: boolean;
@@ -45,6 +47,7 @@ export function Combobox({
   id,
   value,
   onChange,
+  onSelect,
   options,
   placeholder,
   disabled = false,
@@ -102,14 +105,17 @@ export function Combobox({
 
   const selectOption = useCallback((nextValue: string) => {
     onChange(nextValue);
+    onSelect?.(nextValue);
     setOpen(false);
     setFilterActive(false);
     setActiveIndex(-1);
-  }, [onChange]);
+  }, [onChange, onSelect]);
 
   const activeOptionId = showPopup && activeIndex >= 0 && activeIndex < filtered.length
     ? optionIdPrefix + String(activeIndex)
     : undefined;
+
+  const canClear = !required && !disabled && value.length > 0;
 
   return (
     <div ref={rootRef} className={cn("relative w-full min-w-0", className)}>
@@ -128,7 +134,7 @@ export function Combobox({
         spellCheck={false}
         required={required}
         disabled={disabled}
-        className={cn("input w-full", inputClassName)}
+        className={cn("input w-full", canClear ? "pr-14" : "pr-8", inputClassName)}
         placeholder={placeholder}
         value={value}
         onFocus={() => {
@@ -182,6 +188,7 @@ export function Combobox({
           }
           if (e.key === "Enter" && showPopup && activeIndex >= 0 && activeIndex < filtered.length) {
             e.preventDefault();
+            e.stopPropagation();
             selectOption(filtered[activeIndex]!.value);
             return;
           }
@@ -202,11 +209,34 @@ export function Combobox({
           }
         }}
       />
+      <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center gap-1">
+        {canClear && (
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label={uxT(locale, "combobox.clear")}
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => {
+              onChange("");
+              setFilterActive(false);
+              setActiveIndex(-1);
+            }}
+            className="pointer-events-auto inline-flex size-5 cursor-pointer appearance-none items-center justify-center rounded border-0 bg-transparent p-0 text-fg-subtle transition-colors hover:bg-surface-2 hover:text-fg"
+          >
+            <IconX size={12} aria-hidden="true" />
+          </button>
+        )}
+        <IconChevron
+          size={14}
+          className={cn("rotate-90 text-fg-subtle transition-transform", showPopup && "-rotate-90")}
+          aria-hidden="true"
+        />
+      </span>
       {showPopup && (
         <ul
           id={listboxId}
           role="listbox"
-          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 m-0 max-h-60 list-none overflow-y-auto rounded-panel border border-solid border-line-strong bg-raised p-1 shadow-lg"
+          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 m-0 max-h-52 list-none overflow-y-auto rounded-panel border border-solid border-line-strong bg-raised p-1 shadow-lg"
         >
           {filtered.length === 0 ? (
             <li

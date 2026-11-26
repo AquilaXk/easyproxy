@@ -84,7 +84,7 @@ export function ConnectPairingForm({
   };
 
   return <section className="connect-pairing flex min-w-0 flex-col gap-3 rounded-[12px] bg-surface p-4 font-sans text-fg ring-1 ring-line" aria-labelledby="connect-pairing-title">
-    <div className="flex flex-col gap-1 border-b border-solid border-line pb-3">
+    <div className="flex flex-col gap-1 border-0 border-b border-solid border-line pb-3">
       <h2 id="connect-pairing-title" className="m-0 text-[15px] leading-6 font-semibold tracking-[-0.01em]">{t(local ? "connection.pairing.code" : "connection.pairing.title")}</h2>
       <p className="m-0 text-[13px] leading-5 text-fg-muted">{!local && <>{t("connection.pairing.hub")}: </>}<code className="font-mono text-fg">{target.serverOrigin}</code></p>
     </div>

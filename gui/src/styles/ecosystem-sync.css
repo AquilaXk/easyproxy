@@ -1,3 +1,4 @@
+@layer legacy {
 .eco-sync-page {
   display: flex;
   flex-direction: column;
@@ -31,7 +32,6 @@
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  text-transform: capitalize;
 }
 
 .eco-sync-badge {
@@ -43,8 +43,8 @@
 }
 
 .eco-sync-badge--ok {
-  border-color: var(--epx-accent);
-  color: var(--epx-accent);
+  border-color: color-mix(in oklab, var(--epx-success) 38%, transparent);
+  color: var(--epx-success);
 }
 
 .eco-sync-list {
@@ -74,6 +74,12 @@
   gap: 12px;
 }
 
+.eco-sync-row > label:not(.eco-sync-check),
+.eco-sync-row > span:first-child {
+  min-width: 110px;
+  color: var(--epx-fg-muted);
+}
+
 .eco-sync-check {
   display: inline-flex;
   align-items: center;
@@ -96,4 +102,5 @@
   border: 1px solid var(--epx-line);
   border-radius: 8px;
   padding: 8px 12px;
+}
 }

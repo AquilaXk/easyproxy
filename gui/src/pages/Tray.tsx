@@ -140,7 +140,16 @@ export default function Tray({ resolveApiBase = resolveTrayApiBase }: TrayProps 
                     payload.activeCodexAccountId = selection.activeCodexAccountId ?? '__main__';
                   } catch { /* Missing selection is unknown, never inferred from quota. */ }
                 }
-                return { name: source.name, switchKind: source.switchKind, accounts: parseAccounts(payload, source.switchKind, index => t('pws.accountOrdinal', { count: index })) };
+                return {
+                  name: source.name,
+                  switchKind: source.switchKind,
+                  accounts: parseAccounts(
+                    payload,
+                    source.switchKind,
+                    index => t('pws.accountOrdinal', { count: index }),
+                    t('codexAuth.codexApp'),
+                  ),
+                };
               }
               catch { return { name: source.name, switchKind: source.switchKind, accounts: [], unavailable: true }; }
             }));

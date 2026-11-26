@@ -106,7 +106,7 @@ export default function CodexSet({ apiBase, machineApiBase = apiBase, connected 
           aria-labelledby="codex-set-tab-multiauth"
           hidden={tab !== "multiauth"}
         >
-          <AllProviderAccountsHub key={targetKey ?? apiBase} apiBase={apiBase} />
+          <AllProviderAccountsHub key={targetKey ?? apiBase} apiBase={apiBase} hideWhenCodexOnly />
           <CodexSetMultiauth apiBase={apiBase} targetKey={targetKey} />
         </div>
       )}

@@ -54,18 +54,38 @@ function exhausted(quota: Record<string, unknown>, plan: string | undefined): bo
   return windows.some(value => typeof value === 'number' && Number.isFinite(value) && value >= 100);
 }
 
-export function parseAccounts(value: unknown, kind?: TraySwitchKind | null, ordinal?: (index: number) => string): TrayAccount[] {
+export function parseAccounts(
+  value: unknown,
+  kind?: TraySwitchKind | null,
+  ordinal?: (index: number) => string,
+  mainLabel?: string,
+): TrayAccount[] {
   const body = object(value);
   const rows = body.accounts ?? body.keys;
   if (!Array.isArray(rows)) throw new Error('Invalid account roster');
   return rows.map((raw, index) => {
     const row = object(raw);
     if (typeof row.id !== 'string') throw new Error('Invalid account identifier');
-    const email = kind === 'oauth' ? undefined : typeof row.email === 'string' ? maskEmail(row.email) : undefined;
-    const label = kind === 'oauth'
-      ? [row.alias, row.maskedLabel].find(item => typeof item === 'string' && item.trim()) as string | undefined
-      : [row.alias, row.label, email, row.logLabel, row.id].find(item => typeof item === 'string' && item.trim()) as string;
-    const displayLabel = label?.trim() || (kind === 'oauth' ? ordinal?.(index + 1) : undefined);
+    const rawEmail = typeof row.email === 'string' && row.email.includes('@') ? maskEmail(row.email) : undefined;
+    const email = kind === 'oauth' ? undefined : rawEmail;
+    const nonMain = (value: unknown): string | undefined => {
+      if (typeof value !== 'string') return undefined;
+      const trimmed = value.trim();
+      return trimmed && trimmed !== '__main__' ? trimmed : undefined;
+    };
+    const safeLogLabel = nonMain(row.logLabel);
+    const opaqueLogLabel = safeLogLabel && (safeLogLabel === 'main' || /^p[a-f0-9]{6}$/i.test(safeLogLabel) || safeLogLabel === row.id)
+      ? undefined
+      : safeLogLabel;
+    const isMain = row.id === '__main__';
+    const label = isMain
+      ? [nonMain(row.alias), nonMain(row.label), email, mainLabel ?? 'Codex App'].find(Boolean) as string
+      : kind === 'oauth'
+        ? [nonMain(row.alias), nonMain(row.maskedLabel)].find(Boolean) as string | undefined
+        : ordinal
+          ? [nonMain(row.alias), nonMain(row.label), email, opaqueLogLabel].find(Boolean) as string | undefined
+          : [nonMain(row.alias), nonMain(row.label), email, safeLogLabel, row.id].find(Boolean) as string;
+    const displayLabel = label?.trim() || ordinal?.(index + 1);
     if (!displayLabel) throw new Error('Missing account label');
     const quota = row.quotaUnavailable === true || row.quotaMode === 'unsupported' || !row.quota ? null : object(row.quota) as unknown as AccountQuota;
     const plan = typeof row.plan === 'string' ? row.plan : undefined;

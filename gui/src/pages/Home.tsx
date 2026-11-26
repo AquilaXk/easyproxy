@@ -163,14 +163,11 @@ export default function Home({
   return (
     <div className="ui-v2 flex flex-col gap-6 font-sans text-fg">
       <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-[12px] font-medium text-fg-subtle">{t("shellV2.navHome")}</span>
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="relative inline-flex size-3 shrink-0" aria-hidden>
-              <span className={cn("relative size-3 rounded-full", authBlocked ? "bg-warning" : !online ? "bg-danger" : !failuresKnown || failures.length ? "bg-warning" : "bg-success")} />
-            </span>
-            <h1 className="m-0 text-title font-semibold tracking-[-0.025em] text-balance">{headline}</h1>
-          </div>
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="relative inline-flex size-3 shrink-0" aria-hidden>
+            <span className={cn("relative size-3 rounded-full", authBlocked ? "bg-warning" : !online ? "bg-danger" : !failuresKnown || failures.length ? "bg-warning" : "bg-success")} />
+          </span>
+          <h1 className="m-0 text-title font-semibold tracking-[-0.025em] text-balance">{headline}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {authBlocked && (
@@ -180,24 +177,6 @@ export default function Home({
             >
               {uxT(locale, "auth.enterAdminToken")}
             </Button>
-          )}
-          {guardrails.data?.outboundSecretGuard?.mode && (
-            <button
-              type="button"
-              onClick={() => navigate("dashboard", "proxy-guardrails")}
-              className="inline-flex h-[var(--epx-control-h)] cursor-pointer items-center gap-1.5 rounded-control border border-line bg-surface px-3 text-[13px] font-medium text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
-            >
-              {uxT(locale, "guardrails.homePill", {
-                mode: uxT(
-                  locale,
-                  guardrails.data.outboundSecretGuard.mode === "redact"
-                    ? "guardrails.modeRedact"
-                    : guardrails.data.outboundSecretGuard.mode === "block"
-                      ? "guardrails.modeBlock"
-                      : "guardrails.modeOff",
-                ),
-              })}
-            </button>
           )}
           {onOpenPlayground && (
             <Button variant="outline" onClick={onOpenPlayground}>
@@ -217,7 +196,6 @@ export default function Home({
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
             {endpoint && (
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <span className="shrink-0 text-xs font-medium text-fg-subtle">{uxT(locale, "playground.endpoint")}</span>
                 <div
                   role="group"
                   aria-label={uxT(locale, "home.protocolToggleAria")}
@@ -276,9 +254,27 @@ export default function Home({
               <button
                 type="button"
                 onClick={() => navigate("providers")}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-raised px-2.5 py-0.5 text-xs text-fg-muted ring-1 ring-inset ring-line transition-colors hover:text-fg"
+                className="inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-full bg-raised px-2.5 text-xs text-fg-muted ring-1 ring-inset ring-line transition-colors hover:text-fg"
               >
                 <span>{uxT(locale, "home.defaultRoute", { provider: formatProviderDisplayName(defaultProvider, t) })}</span>
+              </button>
+            )}
+            {guardrails.data?.outboundSecretGuard?.mode && (
+              <button
+                type="button"
+                onClick={() => navigate("dashboard", "proxy-guardrails")}
+                className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-full bg-raised px-2.5 text-xs text-fg-muted ring-1 ring-inset ring-line transition-colors hover:text-fg"
+              >
+                {uxT(locale, "guardrails.homePill", {
+                  mode: uxT(
+                    locale,
+                    guardrails.data.outboundSecretGuard.mode === "redact"
+                      ? "guardrails.modeRedact"
+                      : guardrails.data.outboundSecretGuard.mode === "block"
+                        ? "guardrails.modeBlock"
+                        : "guardrails.modeOff",
+                  ),
+                })}
               </button>
             )}
           </div>

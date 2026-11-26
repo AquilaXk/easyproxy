@@ -44,17 +44,29 @@ struct NativeTrayProviderView: View {
                     }
                     ForEach(account.windows) { window in
                         let resetLabel = NativeTrayFormat.reset(window.resetAt)
-                        HStack(spacing: 8) {
-                            Text(window.label).lineLimit(1).frame(width: 96, alignment: .leading)
-                            Text(NativeTrayFormat.percentText(window.value))
-                                .monospacedDigit().frame(width: 36, alignment: .trailing)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(window.label)
+                                    .font(.caption)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Spacer(minLength: 8)
+                                if resetLabel != "—" {
+                                    Text(NativeTrayL10n.formatted("tray.reset.in", resetLabel))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                        .lineLimit(1)
+                                }
+                                Text(NativeTrayFormat.percentText(window.value))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .monospacedDigit()
+                            }
+                            .help(window.resetDate?.formatted(date: .complete, time: .standard) ?? NativeTrayL10n.text("tray.reset.unavailable"))
                             NativeTrayQuotaBar(window: window)
-                            Text(resetLabel == "—" ? "—" : NativeTrayL10n.formatted("tray.reset.in", resetLabel))
-                                .monospacedDigit()
-                                .lineLimit(1)
-                                .frame(minWidth: 78, alignment: .trailing)
-                                .help(window.resetDate?.formatted(date: .complete, time: .standard) ?? "Reset time unavailable")
-                        }.font(.caption2).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -108,18 +120,26 @@ struct NativeTrayChartView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if chart.series.isEmpty {
-                Text("No usage measurements").foregroundStyle(.secondary)
+                Text(NativeTrayL10n.text("tray.chart.empty")).foregroundStyle(.secondary)
             } else {
                 Chart {
                     ForEach(chart.series) { series in
                         ForEach(Array(series.points.enumerated()), id: \.offset) { index, point in
                             let date = Date(timeIntervalSince1970: chart.start + Double(index) * chart.bucketSeconds)
                             if style == "stackedBar" {
-                                BarMark(x: .value("Time", date), y: .value("Tokens", max(0, point)), stacking: .standard)
-                                    .foregroundStyle(by: .value("Series", series.id))
+                                BarMark(
+                                    x: .value(NativeTrayL10n.text("tray.chart.time"), date),
+                                    y: .value(NativeTrayL10n.text("tray.tokens"), max(0, point)),
+                                    stacking: .standard
+                                )
+                                    .foregroundStyle(by: .value(NativeTrayL10n.text("tray.chart.series"), series.id))
                             } else {
-                                LineMark(x: .value("Time", date), y: .value("Tokens", max(0, point)), series: .value("Series", series.id))
-                                    .foregroundStyle(by: .value("Series", series.id))
+                                LineMark(
+                                    x: .value(NativeTrayL10n.text("tray.chart.time"), date),
+                                    y: .value(NativeTrayL10n.text("tray.tokens"), max(0, point)),
+                                    series: .value(NativeTrayL10n.text("tray.chart.series"), series.id)
+                                )
+                                    .foregroundStyle(by: .value(NativeTrayL10n.text("tray.chart.series"), series.id))
                             }
                         }
                     }
@@ -146,7 +166,7 @@ struct NativeTrayChartView: View {
                 .chartForegroundStyleScale(domain: chart.series.map(\.id), range: chart.series.indices.map { palette[$0 % palette.count] })
                 .chartLegend(.hidden)
                 .frame(height: 130)
-                .accessibilityLabel("Usage timeline")
+                .accessibilityLabel(NativeTrayL10n.text("tray.section.chart"))
                 LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 5) {
                     ForEach(Array(chart.series.enumerated()), id: \.element.id) { index, series in
                         HStack(spacing: 5) {
@@ -157,7 +177,7 @@ struct NativeTrayChartView: View {
                 }
             }
             if chart.incomplete {
-                Text("Some usage records are unavailable").font(.caption2).foregroundStyle(.secondary)
+                Text(NativeTrayL10n.text("tray.usage.incomplete")).font(.caption2).foregroundStyle(.secondary)
             }
         }
     }

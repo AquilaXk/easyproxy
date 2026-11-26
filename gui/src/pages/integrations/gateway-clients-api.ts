@@ -48,7 +48,18 @@ export async function loadGatewayClients(apiBase: string, signal?: AbortSignal):
   }
 }
 
-export async function loadGatewayModelOptions(apiBase: string, signal?: AbortSignal): Promise<string[]> {
+export interface GatewayModelOption {
+  id: string;
+  provider?: string;
+}
+
+const GATEWAY_PROVIDER_PRIORITY: Record<string, number> = {
+  "google-antigravity": 0,
+  google: 1,
+  anthropic: 2,
+};
+
+export async function loadGatewayModelOptions(apiBase: string, signal?: AbortSignal): Promise<GatewayModelOption[]> {
   try {
     const response = await fetch(`${apiBase}/api/models`, { signal });
     const body = await readJsonIfOk<unknown>(response);
@@ -57,20 +68,34 @@ export async function loadGatewayModelOptions(apiBase: string, signal?: AbortSig
       : body && typeof body === "object" && Array.isArray((body as { models?: unknown }).models)
         ? (body as { models: unknown[] }).models
         : [];
-    const out: string[] = [];
-    const seen = new Set<string>();
+    const byId = new Map<string, GatewayModelOption>();
     for (const item of list) {
-      const id = typeof item === "string"
-        ? item.trim()
-        : item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string"
-          ? (item as { id: string }).id.trim()
-          : "";
-      if (id && !seen.has(id)) {
-        seen.add(id);
-        out.push(id);
+      if (item && typeof item === "object") {
+        const record = item as { id?: unknown; provider?: unknown; namespaced?: unknown; disabled?: unknown; superseded?: unknown };
+        if (record.disabled === true || record.superseded === true) continue;
+        const id = typeof record.id === "string" ? record.id.trim() : "";
+        if (!id) continue;
+        const explicitProvider = typeof record.provider === "string" ? record.provider.trim() : "";
+        const namespaced = typeof record.namespaced === "string" ? record.namespaced.trim() : "";
+        const inferredProvider = explicitProvider || (namespaced.includes("/") ? namespaced.slice(0, namespaced.indexOf("/")) : "");
+        const prev = byId.get(id);
+        const nextPriority = GATEWAY_PROVIDER_PRIORITY[inferredProvider] ?? 99;
+        const prevPriority = prev ? (GATEWAY_PROVIDER_PRIORITY[prev.provider ?? ""] ?? 99) : 100;
+        if (!prev || nextPriority < prevPriority) {
+          byId.set(id, inferredProvider ? { id, provider: inferredProvider } : { id });
+        }
+      } else if (typeof item === "string") {
+        const id = item.trim();
+        if (!id || byId.has(id)) continue;
+        const slash = id.indexOf("/");
+        const provider = slash > 0 ? id.slice(0, slash) : "";
+        byId.set(id, provider ? { id, provider } : { id });
       }
     }
-    return out;
+    return [...byId.values()].sort((a, b) => (
+      (GATEWAY_PROVIDER_PRIORITY[a.provider ?? ""] ?? 99)
+      - (GATEWAY_PROVIDER_PRIORITY[b.provider ?? ""] ?? 99)
+    ));
   } catch {
     return [];
   }

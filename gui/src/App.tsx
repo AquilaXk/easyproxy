@@ -400,8 +400,13 @@ export default function App() {
   // loaded from this proxy.
   const proxyOnline = proxyHealthOnline(healthPoll.data, healthPoll.error);
   const uptime = proxyOnline ? healthPoll.data?.uptime ?? null : null;
-  // The sidebar row is narrow, so it shows the time alone; the status word is its tooltip.
-  const uptimeLabel = uptime === null ? undefined : t("shellV2.uptimeValue", { h: String(Math.floor(uptime / 3600)), m: String(Math.floor((uptime % 3600) / 60)) });
+  // The sidebar row is narrow, so it displays a fixed-width compact uptime while keeping the full text in the tooltip.
+  const uptimeFullLabel = uptime === null ? undefined : t("shellV2.uptimeValue", { h: String(Math.floor(uptime / 3600)), m: String(Math.floor((uptime % 3600) / 60)) });
+  const uptimeCompactLabel = uptime === null
+    ? undefined
+    : uptime < 3600
+      ? uxT(locale, "shell.uptimeMinutes", { m: Math.floor(uptime / 60) })
+      : uxT(locale, "shell.uptimeHoursMinutes", { h: Math.floor(uptime / 3600), m: Math.floor((uptime % 3600) / 60) });
 
   const [stopping, setStopping] = useState(false);
 
@@ -727,7 +732,8 @@ export default function App() {
             label={t("dash.actions")}
             statusLabel={t(proxyOnline ? "dash.online" : "dash.offline")}
             online={proxyOnline}
-            detail={uptimeLabel}
+            detail={uptimeCompactLabel}
+            detailTitle={uptimeFullLabel}
             stopLabel={t(targets.connected ? "connection.disconnect" : "dash.stop")}
             stoppingLabel={t("dash.stopping")}
             restartLabel={t("dash.codexRestart")}

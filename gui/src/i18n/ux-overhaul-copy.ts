@@ -321,7 +321,18 @@ export type UxExtraKey =
   | "codexRoute.syncNow"
   | "codexRoute.synced"
   | "codexRoute.saved"
-  | "codexRoute.saveFailed";
+  | "codexRoute.saveFailed"
+  | "combobox.clear"
+  | "providerEgress.showProxy"
+  | "providerEgress.hideProxy"
+  | "storageBackup.modeEncrypted"
+  | "storageBackup.modeRedacted"
+  | "storageBackup.valid"
+  | "shell.uptimeMinutes"
+  | "shell.uptimeHoursMinutes"
+  | "codexRoute.modePoolShort"
+  | "codexRoute.modeDirectShort"
+  | "audio.chooseFile";
 
 export function uxT(locale: Locale, key: UxCopyKey, vars?: Record<string, string | number>): string {
   const sliceKey = `ux.${key}` as TKey;

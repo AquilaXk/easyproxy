@@ -197,7 +197,7 @@ export function LogsFilterBar({
             options={LOG_PROTOCOL_MODE_FILTERS.map(mode => ({ value: mode, label: t(protocolModeFilterKey(mode)) }))} />
         </label>
 
-        <div className={fieldLabel}>
+        <div className={cn(fieldLabel, "sm:col-span-2")}>
           <span>{uxT(locale, "logs.durationLabel")}</span>
           <div
             role="group"

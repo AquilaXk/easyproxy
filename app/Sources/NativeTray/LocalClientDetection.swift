@@ -23,10 +23,11 @@ public enum NativeTrayLocalClientDetector {
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         snapshotClients: [NativeTrayDetectedClient]? = nil
     ) -> [NativeTrayDetectedClient] {
-        if let snapshotClients, !snapshotClients.isEmpty {
+        if let snapshotClients {
             return snapshotClients
         }
         return [
+            detectCodex(home: homeDirectory),
             detectAntigravity(home: homeDirectory),
             detectClaude(home: homeDirectory),
             detectCursor(home: homeDirectory),
@@ -49,12 +50,46 @@ public enum NativeTrayLocalClientDetector {
         return data.flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    private static func looksEasyProxyRouted(_ content: String) -> Bool {
+    private static func hasEasyProxyMarker(_ content: String) -> Bool {
         let lower = content.lowercased()
-        return lower.contains("127.0.0.1")
-            || lower.contains("localhost:")
-            || lower.contains("easyproxy")
-            || lower.contains("easyproxy-managed")
+        return lower.contains("easyproxy")
+            || lower.contains("127.0.0.1:10100")
+            || lower.contains("localhost:10100")
+            || lower.contains("[::1]:10100")
+    }
+
+    private static func hasCodexEasyProxyMarker(_ content: String) -> Bool {
+        let lower = content.lowercased()
+        if lower.contains("easyproxy-managed") {
+            return true
+        }
+        for rawLine in content.split(whereSeparator: \.isNewline) {
+            let line = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            let key = line[..<eq].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard key == "model_provider" else { continue }
+            let val = line[line.index(after: eq)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            if val.lowercased() == "easyproxy" {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func detectCodex(home: URL) -> NativeTrayDetectedClient {
+        let dir = home.appendingPathComponent(".codex", isDirectory: true)
+        var installed = FileManager.default.fileExists(atPath: dir.path)
+        var connected = false
+        if let text = readBounded(dir.appendingPathComponent("config.toml")) {
+            installed = true
+            if hasCodexEasyProxyMarker(text) {
+                connected = true
+            }
+        }
+        return makeClient(id: "codex", label: "Codex", installed: installed, connected: connected)
     }
 
     private static func detectAntigravity(home: URL) -> NativeTrayDetectedClient {
@@ -63,7 +98,7 @@ public enum NativeTrayLocalClientDetector {
         var connected = false
         if let text = readBounded(dir.appendingPathComponent("settings.json")) {
             installed = true
-            if looksEasyProxyRouted(text), text.contains("gateway") {
+            if hasEasyProxyMarker(text), text.contains("gateway") {
                 connected = true
             }
         }
@@ -82,7 +117,7 @@ public enum NativeTrayLocalClientDetector {
         for url in candidates {
             if let text = readBounded(url) {
                 installed = true
-                if looksEasyProxyRouted(text), (text.contains("ANTHROPIC_BASE_URL") || text.contains("anthropic")) {
+                if hasEasyProxyMarker(text), text.contains("ANTHROPIC_BASE_URL") {
                     connected = true
                 }
             }
@@ -102,8 +137,11 @@ public enum NativeTrayLocalClientDetector {
         for url in candidates {
             if let text = readBounded(url) {
                 installed = true
-                if looksEasyProxyRouted(text),
-                   (text.contains("openai") || text.contains("overrideOpenAiBaseUrl") || text.contains("/v1")) {
+                let lower = text.lowercased()
+                if hasEasyProxyMarker(text),
+                   (text.contains("overrideOpenAiBaseUrl")
+                    || lower.contains("easyproxy-loopback")
+                    || lower.contains("easyproxy")) {
                     connected = true
                 }
             }
