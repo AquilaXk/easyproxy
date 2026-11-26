@@ -250,12 +250,14 @@ export function ProviderEgressAndKeychainSection({
 
   const handleKeychainAction = async (action: "store" | "restore") => {
     if (apiBase === undefined || keychainBusy) return;
+    const startProviderKey = `${apiBase}::${item.name}`;
+    const targetName = item.name;
     if (action === "restore") {
       const ok = await confirmAction({
         message: uxT(locale, "providerEgress.keychainRestoreConfirm"),
         tone: "danger",
       });
-      if (!ok) return;
+      if (!ok || prevProviderKeyRef.current !== startProviderKey) return;
     }
     setKeychainBusy(true);
     setKeychainMsg(null);
@@ -263,14 +265,17 @@ export function ProviderEgressAndKeychainSection({
       const res = await fetch(`${apiBase}/api/providers/keychain`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: item.name, action }),
+        body: JSON.stringify({ name: targetName, action }),
       });
+      if (prevProviderKeyRef.current !== startProviderKey) return;
       if (!res.ok) {
         const data = await res.json().catch(() => null) as { error?: string } | null;
+        if (prevProviderKeyRef.current !== startProviderKey) return;
         setKeychainMsg({ ok: false, text: data?.error ?? uxT(locale, "providerEgress.saveFailed") });
         return;
       }
       await loadLiveDetails();
+      if (prevProviderKeyRef.current !== startProviderKey) return;
       setKeychainMsg({
         ok: true,
         text: action === "store"
@@ -279,14 +284,16 @@ export function ProviderEgressAndKeychainSection({
       });
       onRefreshConfig?.();
     } catch {
+      if (prevProviderKeyRef.current !== startProviderKey) return;
       setKeychainMsg({ ok: false, text: uxT(locale, "providerEgress.saveFailed") });
     } finally {
-      setKeychainBusy(false);
+      if (prevProviderKeyRef.current === startProviderKey) setKeychainBusy(false);
     }
   };
 
   const handleHistorySlimChange = async (value: "off" | "codex") => {
     if (apiBase === undefined || historySlimSaving) return;
+    const startProviderKey = `${apiBase}::${item.name}`;
     setHistorySlimSaving(true);
     setHistorySlimMsg(null);
     try {
@@ -296,6 +303,7 @@ export function ProviderEgressAndKeychainSection({
         body: JSON.stringify({ upstreamHistorySlim: value }),
       });
       const updated = await readJsonIfOk<{ upstreamHistorySlim?: "off" | "codex" }>(res);
+      if (prevProviderKeyRef.current !== startProviderKey) return;
       if (!res.ok || !updated) {
         setHistorySlimMsg({ ok: false, text: uxT(locale, "providerEgress.saveFailed") });
         return;
@@ -304,9 +312,10 @@ export function ProviderEgressAndKeychainSection({
       setHistorySlimMsg({ ok: true, text: uxT(locale, "providerEgress.saved") });
       onRefreshConfig?.();
     } catch {
+      if (prevProviderKeyRef.current !== startProviderKey) return;
       setHistorySlimMsg({ ok: false, text: uxT(locale, "providerEgress.saveFailed") });
     } finally {
-      setHistorySlimSaving(false);
+      if (prevProviderKeyRef.current === startProviderKey) setHistorySlimSaving(false);
     }
   };
 

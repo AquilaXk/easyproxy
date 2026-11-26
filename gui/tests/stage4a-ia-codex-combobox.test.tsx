@@ -595,4 +595,56 @@ describe("Stage 4A Accounts hub, Route -> Codex controls, and GatewayClients Com
     expect(patchCalls).toHaveLength(0);
     expect(directRadio.getAttribute("aria-checked")).toBe("false");
   });
+
+  test("AllProviderAccountsHub surfaces switch failures via role=alert and prefers alias over fallback label", async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/config")) {
+        return Response.json({
+          providers: {
+            openai: { adapter: "openai-responses", authMode: "forward", codexAccountMode: "pool" },
+          },
+        });
+      }
+      if (url.endsWith("/api/provider-quotas")) {
+        return Response.json([]);
+      }
+      if (url.endsWith("/api/codex-auth/accounts")) {
+        return Response.json({
+          activeCodexAccountId: "cdx-1",
+          accounts: [
+            { id: "cdx-1", alias: "Preferred Alias", label: "Legacy Label", active: true },
+            { id: "cdx-2", alias: "Secondary", label: "Secondary Legacy", active: false },
+          ],
+        });
+      }
+      if (url.endsWith("/api/codex-auth/active") && init?.method === "PUT") {
+        return Response.json({ error: "Account cooldown active" }, { status: 409 });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <AllProviderAccountsHub apiBase="http://127.0.0.1:10100" />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    expect(host.textContent).toContain("Preferred Alias");
+    expect(host.textContent).not.toContain("Legacy Label");
+
+    const switchBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Set active")!;
+    await act(async () => { switchBtn.click(); });
+    await flushTicks();
+
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("Account cooldown active");
+  });
 });

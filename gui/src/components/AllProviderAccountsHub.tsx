@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { readJsonIfOk } from "../fetch-json";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
@@ -106,7 +106,7 @@ async function fetchAllProviderHubData(
             alias,
             accountLabel: cleanText(acc.accountLabel),
             maskedLabel: cleanText(acc.maskedLabel) ?? rawEmail,
-            labelFallback: id === "__main__" ? (alias ?? explicitLabel ?? rawEmail ?? codexAppLabel) : explicitLabel,
+            labelFallback: id === "__main__" ? (alias ?? explicitLabel ?? rawEmail ?? codexAppLabel) : (alias ?? explicitLabel),
             active,
             plan: typeof acc.plan === "string" ? acc.plan : null,
             quota: (acc.quota && typeof acc.quota === "object") ? acc.quota as AccountQuota : null,
@@ -208,15 +208,25 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
   const [filter, setFilter] = useState<HubFilter>("all");
   const [refreshing, setRefreshing] = useState(false);
   const [switchingKey, setSwitchingKey] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
   const codexAppLabel = t("codexAuth.codexApp");
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const reload = async (refreshQuotas = false, signal?: AbortSignal) => {
     setRefreshing(refreshQuotas);
+    setSwitchError(null);
     try {
       const next = await fetchAllProviderHubData(apiBase, refreshQuotas, codexAppLabel, signal);
-      if (!signal?.aborted) setCards(next);
+      if (mountedRef.current && !signal?.aborted) setCards(next);
     } finally {
-      if (!signal?.aborted) setRefreshing(false);
+      if (mountedRef.current && !signal?.aborted) setRefreshing(false);
     }
   };
 
@@ -246,6 +256,7 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
     const opKey = `${card.name}:${accountId}`;
     if (switchingKey) return;
     setSwitchingKey(opKey);
+    setSwitchError(null);
     try {
       const switchKind: TraySwitchKind = card.kind === "codex" ? "codex" : card.kind === "oauth" ? "oauth" : "apiKey";
       const req = accountSwitchRequest(card.kind === "oauth" ? card.slot : card.name, switchKind, accountId);
@@ -254,11 +265,20 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req.body),
       });
-      if (res.ok) await reload(false);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        if (mountedRef.current) {
+          setSwitchError(body?.error ?? t("codexAuth.switchFailed"));
+        }
+        return;
+      }
+      await reload(false);
     } catch {
-      // Non-fatal; keep existing state.
+      if (mountedRef.current) {
+        setSwitchError(t("codexAuth.switchFailed"));
+      }
     } finally {
-      setSwitchingKey(null);
+      if (mountedRef.current) setSwitchingKey(null);
     }
   };
 
@@ -312,6 +332,12 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
           </button>
         </div>
       </div>
+
+      {switchError && (
+        <div role="alert" className="text-xs text-danger">
+          {switchError}
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-2">
         {visibleCards.map(card => {

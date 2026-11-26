@@ -682,7 +682,7 @@ role, `tool_use_id` 없는 `tool_result`, id/name 없는 `tool_use`, name 없는
 
 **토큰 계산:** Anthropic 출력은 `input_tokens`에서 `cached_tokens`와 `cache_write_tokens`를 빼고
 각각 `cache_read_input_tokens`와 `cache_creation_input_tokens`로 노출합니다. 요청 로그는 이를 다시
-포괄적인 `inputTokens`로 매핑하며 읽기는 `cachedInputTokens`와 `cacheReadInputTokens`에 모두,
+전체 `inputTokens`로 매핑하며 읽기는 `cachedInputTokens`와 `cacheReadInputTokens`에 모두,
 쓰기는 `cacheCreationInputTokens`에 기록합니다. Usage 페이지는 캐시 적중과 캐시 생성을 따로 보여 줍니다.
 
 **count_tokens:** 라우팅 모델은 직렬화한 system + messages + tools를 바탕으로 근삿값을 사용합니다.

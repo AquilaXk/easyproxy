@@ -1,46 +1,19 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { Window } from "happy-dom";
 import { act, StrictMode } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
+import CodexDesktopCompatibility from "../src/pages/codex-desktop-compatibility";
 import { clearClientResourceStoresForTests } from "../src/client-resource";
 import { resetApiAuthFetchForTests, SESSION_CHANGED_EVENT } from "../src/api";
 
-// `/classic/` is a partial overlay: `gui/classic/src` wins for a file it holds and every other
-// relative import resolves inside `gui/src`, exactly as vite.classic.config.ts decides it. The page
-// is resolved through that overlay here; importing either edition's file directly would prove
-// nothing about the bundle the proxy serves at /classic/.
-const CLASSIC_ROOT = join(import.meta.dir, "../classic/src");
-const SHARED_ROOT = join(import.meta.dir, "../src");
-Bun.plugin({
-  name: "classic-overlay-for-tests",
-  setup(build) {
-    build.onLoad({ filter: /gui[\\/]classic[\\/]src[\\/].*\.tsx$/ }, ({ path }) => {
-      const contents = readFileSync(path, "utf8").replace(/(from\s+["'])(\.[^"']+)(["'])/g, (_match, prefix: string, specifier: string, quote: string) => {
-        const shared = join(SHARED_ROOT, path.slice(CLASSIC_ROOT.length + 1), "..", specifier);
-        for (const suffix of [".ts", ".tsx", "/index.ts", "/index.tsx"]) {
-          const candidate = shared + suffix;
-          const classic = join(CLASSIC_ROOT, candidate.slice(SHARED_ROOT.length + 1));
-          if (existsSync(classic)) return prefix + classic.replaceAll("\\", "/") + quote;
-          if (existsSync(candidate)) return prefix + candidate.replaceAll("\\", "/") + quote;
-        }
-        throw new Error(`Cannot resolve classic import ${specifier} from ${path}`);
-      });
-      return { contents, loader: "tsx" };
-    });
-  },
-});
-
-const CodexDesktopCompatibility = (await import("../classic/src/pages/codex-desktop-compatibility")).default;
 const keys = ["document", "window", "navigator", "localStorage", "sessionStorage", "IS_REACT_ACT_ENVIRONMENT", "__APP_VERSION__"] as const;
 let previous: Record<string, unknown>, page: Window, root: Root | undefined;
 const originalFetch = globalThis.fetch;
 beforeEach(() => {
   clearClientResourceStoresForTests(); resetApiAuthFetchForTests();
   previous = Object.fromEntries(keys.map(key => [key, Reflect.get(globalThis, key)]));
-  page = new Window({ url: "http://localhost/classic/#codex-set/desktop" });
+  page = new Window({ url: "http://localhost/#codex-set/desktop" });
   page.localStorage.setItem("epx-lang", "en");
   for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true,
     value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "__APP_VERSION__" ? "0.0.0-test" : Reflect.get(page, key) });
@@ -57,10 +30,10 @@ type Call = { path: string; method: string; body?: unknown };
 const GRANT = "epx_pair_" + "A".repeat(43);
 
 /**
- * The management server this page must talk to after #8427: Desktop mutation authority comes from a
- * one-use grant spent through POST /authorization, and every certificate/runtime/settings mutation
- * answers 403 desktop_authorization_required until that scope exists. No fixture performs real OS
- * trust work: the certificate state is a JSON field, not a trusted root.
+ * Desktop mutation authority comes from a one-use grant spent through POST /authorization,
+ * and every certificate/runtime/settings mutation answers 403 desktop_authorization_required
+ * until that scope exists. No fixture performs real OS trust work: the certificate state is a
+ * JSON field, not a trusted root.
  */
 function desktopServer(options: { supported?: boolean; rememberedSession?: boolean; authorize?: boolean; expireAfterAuthorize?: boolean; refuseSettingsWrite?: boolean; refuseCertificateAction?: boolean } = {}) {
   const calls: Call[] = [];
@@ -108,7 +81,7 @@ function button(container: HTMLElement, text: string): HTMLButtonElement {
 /** Fails as a contract violation, not a null dereference, when the page has no step-up at all. */
 function stepUpInput(container: HTMLElement): HTMLInputElement {
   const input = container.querySelector('input[type="password"]');
-  if (!input) throw new Error("the classic /classic/ page does not offer the Desktop one-use grant step-up");
+  if (!input) throw new Error("the Desktop compatibility page does not offer the Desktop one-use grant step-up");
   return input as HTMLInputElement;
 }
 function alerts(container: HTMLElement): string[] {
@@ -130,7 +103,7 @@ async function paste(container: HTMLElement, value: string) {
 }
 async function submit(container: HTMLElement) {
   const form = container.querySelector("form");
-  if (!form) throw new Error("the classic /classic/ page has no step-up form to submit");
+  if (!form) throw new Error("the Desktop compatibility page has no step-up form to submit");
   await act(async () => { form.dispatchEvent(new page.Event("submit", { bubbles: true, cancelable: true })); });
 }
 async function armTrust(container: HTMLElement) {
@@ -139,7 +112,7 @@ async function armTrust(container: HTMLElement) {
   await act(async () => button(container, "Confirm action").click());
 }
 
-test("the classic overlay gives remembered sessions private-window recovery", async () => {
+test("remembered sessions get private-window recovery instead of the grant form", async () => {
   const server = desktopServer({ rememberedSession: true });
   const container = await mount();
   expect(container.textContent).toContain("private browser window");
@@ -147,12 +120,12 @@ test("the classic overlay gives remembered sessions private-window recovery", as
   expect(posts(server.calls)).toHaveLength(0);
 });
 
-test("the classic overlay offers the Desktop step-up and a consumed grant enables a trust mutation", async () => {
+test("offers the Desktop step-up and a consumed grant enables a trust mutation", async () => {
   const server = desktopServer();
   const container = await mount();
 
-  // A plain pairing form is dead weight here: it mints an ordinary session, which #8427's server
-  // refuses for Desktop mutation. /classic/ must ask for the one-use Desktop code.
+  // A plain pairing form is dead weight here: it mints an ordinary session, which the server
+  // refuses for Desktop mutation. The page must ask for the one-use Desktop code.
   expect(container.textContent).toContain("epx gui pair --desktop --origin");
   expect(container.textContent).not.toContain("epx gui pair --origin");
   stepUpInput(container);
@@ -256,7 +229,7 @@ test("a settings write refused for a stale step-up drops the panel's authority a
   const refused = posts(server.calls).filter(call => call.path.endsWith("/desktop-compatibility/settings"));
   expect(refused).toHaveLength(1);
   expect(toggle.disabled).toBe(true);
-  expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
   expect(button(container, "Register trust").disabled).toBe(true);
   expect(stepUpInput(container).disabled).toBe(false);
   expect(alerts(container).some(text => text.includes("desktop_authorization_required"))).toBe(true);
@@ -283,7 +256,6 @@ test("a certificate mutation refused at confirmation drops the consent and the a
   expect(stepUpInput(container).disabled).toBe(false);
   expect(alerts(container).some(text => text.includes("desktop_authorization_required"))).toBe(true);
 });
-
 
 test("unsupported authorization explains a possible local bind recovery without offering a grant", async () => {
   const server = desktopServer({ supported: false });

@@ -257,23 +257,23 @@ export default function GatewayGuardrailsPanel({
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-card border border-solid border-line bg-line sm:grid-cols-5">
         <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statScanned")}</div>
-          <div className="text-sm font-semibold tabular-nums">{stats.scannedRequests.toLocaleString()}</div>
+          <div className="text-sm font-semibold tabular-nums">{stats.scannedRequests.toLocaleString(locale)}</div>
         </div>
         <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statDetections")}</div>
-          <div className="text-sm font-semibold tabular-nums">{stats.secretDetections.toLocaleString()}</div>
+          <div className="text-sm font-semibold tabular-nums">{stats.secretDetections.toLocaleString(locale)}</div>
         </div>
         <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statBlocks")}</div>
-          <div className="text-sm font-semibold tabular-nums">{stats.secretBlocks.toLocaleString()}</div>
+          <div className="text-sm font-semibold tabular-nums">{stats.secretBlocks.toLocaleString(locale)}</div>
         </div>
         <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statCompressed")}</div>
-          <div className="text-sm font-semibold tabular-nums">{stats.compressedToolOutputs.toLocaleString()}</div>
+          <div className="text-sm font-semibold tabular-nums">{stats.compressedToolOutputs.toLocaleString(locale)}</div>
         </div>
         <div className="bg-surface px-3 py-2">
           <div className="text-xs text-fg-subtle">{uxT(locale, "guardrails.statSavedChars")}</div>
-          <div className="text-sm font-semibold tabular-nums">{stats.savedChars.toLocaleString()}</div>
+          <div className="text-sm font-semibold tabular-nums">{stats.savedChars.toLocaleString(locale)}</div>
         </div>
       </div>
 
@@ -384,12 +384,10 @@ export default function GatewayGuardrailsPanel({
           {uxT(locale, "guardrails.dryRunTitle")}
         </summary>
         <section className="flex flex-col gap-2.5 border-0 border-t border-solid border-line p-3.5" aria-labelledby="guardrails-dryrun-title">
-          <div className="flex flex-col gap-0.5">
-            <h4 id="guardrails-dryrun-title" className="m-0 text-[13px] font-semibold text-fg">
-              {uxT(locale, "guardrails.dryRunTitle")}
-            </h4>
-            <p className="m-0 text-xs text-fg-muted">{uxT(locale, "guardrails.dryRunDesc")}</p>
-          </div>
+          <h4 id="guardrails-dryrun-title" className="sr-only">
+            {uxT(locale, "guardrails.dryRunTitle")}
+          </h4>
+          <p className="m-0 text-xs text-fg-muted">{uxT(locale, "guardrails.dryRunDesc")}</p>
           <label htmlFor="guardrails-dryrun-input" className="text-xs font-medium text-fg-muted">
             {uxT(locale, "guardrails.dryRunInputLabel")}
           </label>

@@ -667,4 +667,79 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     await act(async () => { afterBoxes[0]!.click(); }); // toggle allowPrivateNetwork
     expect(host.querySelector("table.tbl")).toBeNull();
   });
+
+  test("ProviderEgressAndKeychainSection drops stale keychain store response after provider switch", async () => {
+    let releaseKeychainPost!: (res: Response) => void;
+    let refreshCalls = 0;
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/providers")) {
+        return Response.json([
+          { name: "alpha", hasProxy: false },
+          { name: "beta", hasProxy: false },
+        ]);
+      }
+      if (url.includes("/api/providers/keychain?name=alpha")) {
+        return Response.json({ name: "alpha", store: "plaintext", keychainAvailable: true });
+      }
+      if (url.includes("/api/providers/keychain?name=beta")) {
+        return Response.json({ name: "beta", store: "keychain", keychainAvailable: true });
+      }
+      if (url.endsWith("/api/providers/keychain") && method === "POST") {
+        return await new Promise<Response>(resolve => {
+          releaseKeychainPost = resolve;
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            item={{ name: "alpha", authMode: "key", adapter: "openai" } as never}
+            isCanonicalOpenAi={false}
+            onRefreshConfig={() => { refreshCalls += 1; }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    const storeBtn = [...host.querySelectorAll("button")].find(b => b.textContent?.includes("Keychain"))!;
+    await act(async () => { storeBtn.click(); });
+    expect(typeof releaseKeychainPost).toBe("function");
+
+    // Switch provider while POST is still in flight.
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            item={{ name: "beta", authMode: "key", adapter: "openai" } as never}
+            isCanonicalOpenAi={false}
+            onRefreshConfig={() => { refreshCalls += 1; }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    await act(async () => {
+      releaseKeychainPost(Response.json({ ok: true }));
+    });
+    await flushTicks();
+
+    expect(refreshCalls).toBe(0);
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(host.textContent).not.toContain("Credentials moved to OS Keychain");
+  });
 });

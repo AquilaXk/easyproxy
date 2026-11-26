@@ -286,7 +286,7 @@ CLI 명령은 Anthropic OAuth 계정을 id 또는 유일한 alias로 일시 정�
 | `POST /api/providers` | 검증된 provider 하나를 추가하거나 교체하고 선택적으로 기본 provider로 설정합니다 | 400 잘못되었거나 위험한 대상 또는 구성; 409 namespace 충돌 |
 | `PATCH /api/providers?name=...` | 허용된 provider 필드(병합되는 `headers` 블록 포함), enabled/default 상태, 또는 OpenAI account mode를 업데이트합니다 | 400 잘못된 필드 또는 전환; 404 알 수 없는 provider |
 | `DELETE /api/providers?name=...` | provider를 삭제하고 가능하면 기본 provider를 재지정합니다 | 404 알 수 없는 provider; 409 `last_provider`; 409 `provider_has_dependent_combos` |
-| `POST /api/providers/test?name=...` | 제한된 live provider connectivity/model-discovery 탐색을 수행합니다 | 404 알 수 없는 provider; 실패는 보통 `ok: false` 증거로 반환됩니다 |
+| `POST /api/providers/test?name=...` | 제한된 live provider connectivity/model-discovery 탐색을 실행합니다 | 404 알 수 없는 provider; 실패는 보통 `ok: false` 증거로 반환됩니다 |
 | `GET /api/provider-quotas` | provider quota 보고서를 읽습니다. `refresh=1`은 새로 고침을 강제합니다 | — |
 | `GET, PUT /api/provider-context-caps` | 전역, 모든 provider, 또는 하나의 provider context cap을 읽거나 업데이트합니다 | 400 잘못된 요청; 404 알 수 없는 provider |
 | `GET /api/provider-presets` | 런타임 registry에서 파생된 GUI provider preset을 반환합니다 | — |

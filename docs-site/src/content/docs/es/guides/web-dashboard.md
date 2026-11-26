@@ -89,18 +89,6 @@ Ningún comando de la CLI imprime el token. `epx doctor` solo informa si hay una
 
 El dashboard en `localhost` obtiene su propia sesión y no debería pedir un token. Si no puede iniciar una sesión, la causa es la dirección utilizada: el proxy no reconoció la solicitud como loopback. Abre la dirección exacta que muestra el proxy al iniciar, normalmente `http://127.0.0.1:<port>`, y usa ese host y puerto en lugar de una IP de la red local o un alias.
 
-<a id="classic-dashboard"></a>
-
-## Dashboard clásico
-
-El diseño nuevo abre Inicio y agrupa páginas en **Uso diario**, **Configuración** y **Ajustes avanzados**. El anterior sigue en `/classic/`, por ejemplo `http://127.0.0.1:10100/classic/`.
-
-- Cambia mediante el reloj **Dashboard clásico** al pie de la barra lateral; allí **Nuevo dashboard** permite volver.
-- El navegador recuerda la elección; abrir `/` y Desktop la respetan. El desplegable de bandeja siempre usa el nuevo.
-- El clásico modifica las mismas opciones del proxy, pero las páginas y opciones posteriores al rediseño solo existen en el nuevo.
-
-Las filas descritas en [Distribución del dashboard](#dashboard-layout) corresponden al clásico.
-
 <a id="dashboard-layout"></a>
 
 ## Diseño de panel

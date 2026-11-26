@@ -9,7 +9,7 @@ description: 증분 vacuum을 제한된 범위에서 실행해 Codex 진단 로�
 
 ## 공간 회수의 동작
 
-EasyProxy는 다음 오프라인 유지관리 작업을 정해진 한도 안에서 수행합니다.
+EasyProxy는 다음 오프라인 유지관리 작업을 정해진 한도 안에서 실행합니다.
 
 1. Codex의 실제 `sqlite_home`에서 정식 `logs_2.sqlite`를 찾습니다.
 2. 파일의 정체성과 알려진 Codex 로그 스키마를 확인합니다.
@@ -20,7 +20,7 @@ EasyProxy는 다음 오프라인 유지관리 작업을 정해진 한도 안에�
 7. `PRAGMA auto_vacuum`이 이미 `INCREMENTAL`인지 확인합니다.
 8. 유지관리 전에 `PRAGMA quick_check`를 실행합니다.
 9. 전체 WAL 체크포인트를 실행하고 사용 중이거나 완료되지 않은 체크포인트는 거부합니다.
-10. 제한된 크기의 `PRAGMA incremental_vacuum(N)` 배치를 실행하고 배치마다 체크포인트를 수행합니다.
+10. 제한된 크기의 `PRAGMA incremental_vacuum(N)` 배치를 실행하고 배치마다 체크포인트합니다.
 11. 유지관리 후 `PRAGMA quick_check`를 다시 실행합니다.
 12. 작업 전후의 데이터베이스 크기, WAL 크기, 페이지 수, freelist와 회수 가능 바이트 수를 보고합니다.
 

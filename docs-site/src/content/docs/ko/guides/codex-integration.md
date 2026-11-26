@@ -285,7 +285,7 @@ routed 경로에서 custom 도구를 function으로 낮췄는데 증분 결과�
 
 ## 모델 카탈로그 동기화
 
-Codex는 디스크의 카탈로그(`$CODEX_HOME/easyproxy-catalog.json`이 기본값)에 있는 모델을 보여줍니다. 시작 시와 `epx sync` 시 easyproxy는 다음을 수행합니다.
+Codex는 디스크의 카탈로그(`$CODEX_HOME/easyproxy-catalog.json`이 기본값)에 있는 모델을 보여줍니다. 시작할 때와 `epx sync`를 실행할 때 easyproxy는 다음 순서로 처리합니다.
 
 1. 원본 카탈로그를 `~/.easyproxy/catalog-backup.json`에 한 번 **백업**합니다(그래서 featuring도 되돌릴 수 있습니다).
 2. 적격한 provider의 live model catalog를 **가져옵니다**(약 5분 캐시, `modelCacheTtlMs` 기본값 `300000`; 마지막 정상 목록, 그다음 설정된 `models[]`로 fallback). Forward auth에는 model endpoint가 없고 Cursor는 `/models` 대신 `GetUsableModels` RPC를 사용합니다.

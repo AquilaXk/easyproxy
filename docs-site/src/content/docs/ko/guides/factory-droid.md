@@ -86,7 +86,7 @@ Droid를 실행하기 전에 요청 전체를 검증해야 합니다. input part
 }
 ```
 
-허용된 요청에 대해 브리지는 다음 작업을 수행합니다.
+허용된 요청에 대해 브리지는 다음 순서로 처리합니다.
 
 1. 허용된 Responses `input`을 프롬프트로 변환합니다.
 2. `droid exec --model <id> --output-format json <prompt>`를 실행합니다.

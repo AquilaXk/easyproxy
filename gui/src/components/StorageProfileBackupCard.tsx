@@ -56,9 +56,15 @@ export default function StorageProfileBackupCard({
     link.href = url;
     link.download = [`easyproxy-profile-${mode}-${stamp}`, "epxbackup", "json"].join(".");
     document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      const timer = setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      if (typeof timer === "object" && timer !== null && "unref" in timer && typeof (timer as { unref?: () => void }).unref === "function") {
+        (timer as { unref: () => void }).unref();
+      }
+    }
   };
 
   const handleExport = async () => {
@@ -238,7 +244,11 @@ export default function StorageProfileBackupCard({
             accept=".json,.epxbackup.json,application/json"
             aria-label={t("storageBackup.selectFile")}
             disabled={restoreBusy}
-            onChange={e => { void handleFileChange(e.target.files?.[0] ?? null); }}
+            onChange={e => {
+              const file = e.target.files?.[0] ?? null;
+              e.currentTarget.value = "";
+              void handleFileChange(file);
+            }}
           />
           <div>
             <button

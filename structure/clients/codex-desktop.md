@@ -102,31 +102,29 @@ remembered-admin session before it reads the body: that cookie carries the durab
 it proves possession rather than the operator's presence at this machine. A Desktop grant never
 mints pairing, a general session or data-key disclosure authority.
 The certificate response carries request-specific `mutationAuthorized` metadata. The local
-dashboard uses `gui/src/pages/desktop-compatibility-authorization.tsx` for the Desktop grant
-exchange through `authorizeDesktop` in `gui/src/desktop-compatibility-api.ts`: POST consumes the
-grant on `/api/codex/desktop-compatibility/authorization`, then GET on that same endpoint verifies
+dashboard mounts `gui/src/pages/desktop-compatibility-authorization.tsx` inside
+`gui/src/pages/codex-desktop-compatibility.tsx` so the page offers the Desktop grant rather than the
+ordinary pairing form, which cannot issue Desktop scope, and resolves the grant exchange through
+`authorizeDesktop` in `gui/src/desktop-compatibility-api.ts`: POST consumes the grant on
+`/api/codex/desktop-compatibility/authorization`, then GET on that same endpoint verifies
 Desktop scope. The existing browser session and credentials are retained before refreshing status
 and enabling actions. Authorization never submits a certificate/runtime mutation or changes auto-start.
-Both dashboard editions mount that same component: the classic overlay in
-`gui/classic/src/pages/codex-desktop-compatibility.tsx` resolves the step-up from `gui/src` through the
-overlay plugin, so `/classic/` offers the Desktop grant rather than the ordinary pairing form, which
-cannot issue Desktop scope. Either edition treats a `desktop_authorization_required` refusal of a
-certificate, runtime or startup-setting write as lost scope: the open confirmation closes, the
-actions and the auto-start switch disable, and the step-up becomes available again.
+A `desktop_authorization_required` refusal of a certificate, runtime or startup-setting write is
+treated as lost scope: the open confirmation closes, the actions and the auto-start switch disable,
+and the step-up becomes available again.
 Machine-session changes discard pending consent and disable actions until fresh authority is read.
 The startup-setting child synchronously aborts its own in-flight operation on a machine-session
 change and rejects late completions by generation. An interrupted preference operation stays
 uncertain until a fresh settings GET, independently of refreshed certificate authorization.
-`gui/tests/desktop-compatibility-panel.test.tsx`, `gui/tests/classic-desktop-compatibility-authorization.test.tsx`
-(which resolves the page through the classic overlay, not either file directly) and
-`tests/server/management-desktop-compatibility-routes.test.ts` cover the UI and real
+`gui/tests/desktop-compatibility-panel.test.tsx`, `gui/tests/desktop-compatibility-authorization.test.tsx`
+and `tests/server/management-desktop-compatibility-routes.test.ts` cover the UI and real
 Desktop grant boundary for both loopback-issued and locally paired sessions.
 
 `epx gui pair --desktop --origin <dashboard-origin>` uses the attested runtime and private-home
 one-use intent through a separately signed pairing path. `/api/codex/desktop-compatibility/authorization`
 consumes that purpose only for the existing current browser session. After common management admission,
 GET returns HTTP 200 with `ok: true`, `supported`, `authorized` and `rememberedSession`, including absent or unsupported
-Desktop scope. Both editions hide the grant form for a remembered session and direct the operator to a private browser window on the same local origin; its fresh loopback session has separate credentials. POST returns HTTP 200 with `ok: true`, `authorized: true` on success, 400 for malformed
+Desktop scope. The dashboard hides the grant form for a remembered session and directs the operator to a private browser window on the same local origin; its fresh loopback session has separate credentials. POST returns HTTP 200 with `ok: true`, `authorized: true` on success, 400 for malformed
 JSON/body shape, or 403 `desktop_authorization_required` for a refused grant exchange.
 The scope expires after at most five minutes without renewal and disappears with session revocation,
 eviction, restart or an observed role/listener change. It changes neither pairing issuance nor key
