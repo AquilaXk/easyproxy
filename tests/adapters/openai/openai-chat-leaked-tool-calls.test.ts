@@ -255,4 +255,70 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
     expect(toolCallsFrom(bufferedXml)).toEqual([{ id: "call_1", name: "ping", arguments: "{}" }]);
     expect(visible(bufferedXml)).toBe("");
   });
+
+  test("streamed <function name=...> opener tolerates space, tab, LF, and CRLF across arbitrary chunk splits", async () => {
+    const cases: Array<{ name: string; xml: string; chunks: string[]; expectedName: string; expectedArgs: string }> = [
+      {
+        name: "tab separator in single chunk",
+        xml: `Before\n<function\tname="ping"/>`,
+        chunks: [`Before\n<function\tname="ping"/>`],
+        expectedName: "ping",
+        expectedArgs: "{}",
+      },
+      {
+        name: "newline separator split across opener and attribute",
+        xml: `Before\n<function\nname="ping"/>`,
+        chunks: ["Before\n<function", `\nname="ping"/>`],
+        expectedName: "ping",
+        expectedArgs: "{}",
+      },
+      {
+        name: "CRLF + indentation with parameters split mid-tag",
+        xml: `<function\r\n  name="get_weather"><parameter\tname="city">Seoul</parameter><parameter\nname="days">2</parameter></function>`,
+        chunks: [
+          "<function",
+          "\r\n  name=\"get_weather\">",
+          "<parameter\tname=\"city\">Seoul</parameter>",
+          "<parameter\nname=\"days\">2</parameter></function>",
+        ],
+        expectedName: "get_weather",
+        expectedArgs: JSON.stringify({ city: "Seoul", days: 2 }),
+      },
+      {
+        name: "char-by-char stream with newline before name",
+        xml: `Check:<function\nname='ping' />`,
+        chunks: [...`Check:<function\nname='ping' />`],
+        expectedName: "ping",
+        expectedArgs: "{}",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const events = await runChat({
+        mode: "streamed",
+        model: "qwen3-coder-30b",
+        chunks: testCase.chunks,
+        provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+      });
+      expect(toolCallsFrom(events), testCase.name).toEqual([
+        { id: "call_1", name: testCase.expectedName, arguments: testCase.expectedArgs },
+      ]);
+      expect(visible(events), testCase.name).toBe(testCase.xml.startsWith("Before\n") ? "Before\n" : testCase.xml.startsWith("Check:") ? "Check:" : "");
+    }
+
+    // Ordinary prose `<function>` or fenced/inlined `<function\nname=...>` must fail closed and stay visible.
+    const prose = "Use <function> or <function_name> helper.";
+    const fenced = "```xml\n<function\nname=\"ping\"/>\n```";
+    const inlined = "Syntax: `<function\tname=\"ping\"/>`";
+    for (const content of [prose, fenced, inlined]) {
+      const events = await runChat({
+        mode: "streamed",
+        model: "qwen3-coder-30b",
+        chunks: [content.slice(0, 10), content.slice(10)],
+        provider: { leakedToolCallModels: ["qwen3-coder-30b"] },
+      });
+      expect(toolCallsFrom(events)).toEqual([]);
+      expect(visible(events)).toBe(content);
+    }
+  });
 });

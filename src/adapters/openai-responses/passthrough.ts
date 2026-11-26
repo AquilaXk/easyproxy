@@ -313,6 +313,12 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
       // Shared HTTP/WS outbound projection, including concrete combo/fallback destinations.
       if (isOpenAiOperatedResponsesDestination(provider)) {
         outBody = repairUrlCitationAnnotations(stripProviderInputItemMetadata(outBody));
+        if (
+          parsed._stripConfigurationUpdateItems === true
+          || isConfigurationUpdateUnsupportedMemoized(destinationHostOfUrl(url), parsed.modelId)
+        ) {
+          outBody = stripCanonicalOnlyInputItems(outBody);
+        }
       }
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         if (provider.preserveResponsesMessageMetadata !== true) {
@@ -332,11 +338,6 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         if (!isOpenAiOperatedResponsesDestination(provider)) {
           if (parsed._compactionRequest !== true && isPlainObject(outBody)) outBody = frameCompactionHistory(outBody);
           outBody = stripCanonicalOnlyTopLevelFields(outBody);
-          outBody = stripCanonicalOnlyInputItems(outBody);
-        } else if (
-          parsed._stripConfigurationUpdateItems === true
-          || isConfigurationUpdateUnsupportedMemoized(destinationHostOfUrl(url), parsed.modelId)
-        ) {
           outBody = stripCanonicalOnlyInputItems(outBody);
         }
         // Meta already captured discoveries from the original current-turn slice.

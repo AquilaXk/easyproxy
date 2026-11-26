@@ -513,6 +513,14 @@ const STREAM_OPENERS = [
   "<tool_calls>",
 ] as const;
 
+const XML_FUNCTION_PREFIX = "<function";
+
+function startsWithXmlFunctionOpener(text: string, pos: number): boolean {
+  if (!text.startsWith(XML_FUNCTION_PREFIX, pos)) return false;
+  const next = text[pos + XML_FUNCTION_PREFIX.length];
+  return next !== undefined && /\s/.test(next);
+}
+
 function partialOpenerStart(text: string, enableXml: boolean): number {
   const tailStart = Math.max(0, text.length - 32);
   const tail = text.slice(tailStart);
@@ -550,7 +558,7 @@ function findFirstLeakedOpener(text: string, ctx: TextContext, enableHarmony: bo
       if (enableXml && (
         text.startsWith("<antml:function_calls>", pos)
         || text.startsWith("<antml:invoke", pos)
-        || text.startsWith("<function ", pos)
+        || startsWithXmlFunctionOpener(text, pos)
         || text.startsWith("<function_calls>", pos)
         || text.startsWith("<tool_calls>", pos)
       )) {

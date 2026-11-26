@@ -13,7 +13,17 @@ import {
 } from "../../src/adapters/openai-responses/config-update-fallback";
 import { parseRequest } from "../../src/responses/parser";
 import { handleResponses } from "../../src/server/responses/core";
-import { codexWsActualSentFrame, recordCodexWsActualSentFrame } from "../../src/server/responses/codex-ws-wire";
+import {
+  codexWsActualSentFrame,
+  isCodexWsPreOutputRefusal,
+  recordCodexWsActualSentFrame,
+  restoreCodexWsPreOutputRefusal,
+} from "../../src/server/responses/codex-ws-wire";
+import { codexWsPool } from "../../src/server/responses/codex-ws-pool";
+import { setCodexWsIncrementalUpload } from "../../src/server/responses/codex-ws-incremental";
+import { codexWsUpstreamFetch } from "../../src/server/responses/ws-upstream";
+import { refusedConfigurationUpdateStrip } from "../../src/server/responses/core-opaque-recovery";
+import { setCodexWsReuseAcrossTurns } from "../../src/config/codex-ws-reuse-setting";
 import type { EpxConfig, EpxProviderConfig } from "../../src/types";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
@@ -389,5 +399,354 @@ describe("Phase 1-A: perMessageEffort extensions and 400 recovery", () => {
     expect(res2.status).toBe(400);
     expect(body2).toContain("per-turn effort");
     expect(body2).not.toContain("request_send_budget_exhausted");
+  });
+});
+
+describe("Phase 1-A: mocked WebSocket delta frame refusal & configuration_update recovery", () => {
+  const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
+  const PROXY_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"];
+  const answerItem = { type: "message", role: "assistant", content: [{ type: "output_text", text: "ws reply 1" }] };
+
+  async function withMockedWs<T>(
+    responder: (socket: {
+      frames: Array<Record<string, any>>;
+      emit: (payload: unknown) => void;
+    }, frame: Record<string, any>, rawText: string) => void,
+    run: (sockets: Array<{ frames: Array<Record<string, any>>; texts: string[] }>) => Promise<T>,
+  ): Promise<T> {
+    const originalWs = globalThis.WebSocket;
+    const savedEnv = Object.fromEntries(PROXY_KEYS.map(key => [key, process.env[key]]));
+    for (const key of PROXY_KEYS) delete process.env[key];
+
+    class MockSocket extends EventTarget {
+      static instances: MockSocket[] = [];
+      readyState = 0;
+      frames: Array<Record<string, any>> = [];
+      texts: string[] = [];
+      constructor(_url: string, _options?: unknown) {
+        super();
+        MockSocket.instances.push(this);
+        queueMicrotask(() => {
+          this.readyState = 1;
+          this.dispatchEvent(new Event("open"));
+        });
+      }
+      emit(payload: unknown) {
+        this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(payload) }));
+      }
+      send(text: string) {
+        const parsed = JSON.parse(text) as Record<string, any>;
+        this.frames.push(parsed);
+        this.texts.push(text);
+        queueMicrotask(() => responder(this, parsed, text));
+      }
+      close() {
+        if (this.readyState === 3) return;
+        this.readyState = 3;
+        this.dispatchEvent(new Event("close"));
+      }
+      ref() {}
+      unref() {}
+    }
+
+    globalThis.WebSocket = MockSocket as unknown as typeof WebSocket;
+    setCodexWsIncrementalUpload(true);
+    setCodexWsReuseAcrossTurns(true);
+    resetConfigurationUpdateCapabilityMemoForTests();
+
+    try {
+      return await run(MockSocket.instances);
+    } finally {
+      codexWsPool.dispose();
+      setCodexWsIncrementalUpload(false);
+      setCodexWsReuseAcrossTurns(false);
+      resetConfigurationUpdateCapabilityMemoForTests();
+      globalThis.WebSocket = originalWs;
+      for (const key of PROXY_KEYS) {
+        if (savedEnv[key] === undefined) delete process.env[key];
+        else process.env[key] = savedEnv[key];
+      }
+    }
+  }
+
+  test("codexWsExchange resolveRefusal records exact sent WS delta frame and keeps 5xx refusal fail-closed against 400 config strip", async () => {
+    const releaseSpendHome = acquireOwnedSpendHome();
+    try {
+      await withMockedWs((socket, frame) => {
+        if (!frame.previous_response_id) {
+          socket.emit({ type: "response.created", response: { id: "resp_ws_1", status: "in_progress", output: [] } });
+          socket.emit({ type: "response.completed", response: { id: "resp_ws_1", status: "completed", output: [answerItem] } });
+          return;
+        }
+        // Hold opened via empty response.created, then trigger resolveRefusal with a 503 overload refusal.
+        socket.emit({ type: "response.created", response: { id: "resp_ws_2", status: "in_progress", output: [] } });
+        socket.emit({
+          type: "error",
+          status: 503,
+          error: { type: "server_error", code: "server_is_overloaded", message: "overloaded after empty created" },
+        });
+      }, async (sockets) => {
+        const noFallback = (async () => { throw new Error("unexpected SSE fallback"); }) as typeof fetch;
+        const makeInit = (input: unknown[], turnId: string): RequestInit => ({
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer ws-fixture-token",
+            "chatgpt-account-id": "ws-fixture-acct",
+            "thread-id": "ws-thread-resolve-refusal",
+          },
+          body: JSON.stringify({
+            model: "gpt-5.6-sol",
+            stream: true,
+            store: false,
+            reasoning: { effort: "high" },
+            client_metadata: { thread_id: "ws-thread-resolve-refusal", turn_id: turnId },
+            input,
+          }),
+        });
+
+        const turn1Input = [userMsg("turn 1")];
+        const res1 = await codexWsUpstreamFetch(
+          CODEX_URL, makeInit(turn1Input, "t1"), noFallback, "1.4.4",
+          undefined, undefined, undefined, undefined, undefined,
+          { maxMs: 5_000, until: Number.MAX_SAFE_INTEGER },
+          undefined, undefined, "principal:ws-caller", undefined, "openai",
+        );
+        expect(res1.status).toBe(200);
+        expect(await res1.text()).toContain("response.completed");
+
+        // Turn 2 sends a delta frame [cfgUpdate, userMsg("turn 2")] while full history has cfgUpdate at index 2.
+        const turn2Input = [userMsg("turn 1"), answerItem, cfgUpdate, userMsg("turn 2")];
+        const projection = await codexWsUpstreamFetch(
+          CODEX_URL, makeInit(turn2Input, "t2"), noFallback, "1.4.4",
+          undefined, undefined, undefined, undefined, undefined,
+          { maxMs: 5_000, until: Number.MAX_SAFE_INTEGER },
+          undefined, undefined, "principal:ws-caller", undefined, "openai",
+        );
+        expect(projection.status).toBe(503);
+        expect(isCodexWsPreOutputRefusal(projection)).toBe(true);
+        const recorded = codexWsActualSentFrame(projection);
+        expect(recorded).toBeDefined();
+        expect(recorded).toBe(sockets[0]!.texts[1]);
+        const recordedJson = JSON.parse(recorded!) as { previous_response_id?: string; input: Array<{ type: string }> };
+        expect(recordedJson.previous_response_id).toBe("resp_ws_1");
+        expect(recordedJson.input).toEqual([cfgUpdate, userMsg("turn 2")]);
+
+        // 503 pre-output refusal must fail closed in refusedConfigurationUpdateStrip without setting 1h memo.
+        expect(await refusedConfigurationUpdateStrip(
+          projection,
+          new AbortController().signal,
+          { attempted: false },
+          { outboundBody: JSON.stringify({ input: turn2Input }), outboundUrl: CODEX_URL, modelId: "gpt-5.6-sol" },
+        )).toBe(false);
+        expect(isConfigurationUpdateUnsupportedMemoized("chatgpt.com", "gpt-5.6-sol")).toBe(false);
+
+        const restored = restoreCodexWsPreOutputRefusal(projection);
+        expect(restored.status).toBe(200);
+        expect(await restored.text()).toContain("server_is_overloaded");
+      });
+    } finally {
+      releaseSpendHome();
+    }
+  });
+
+  test("handleResponses recovers WS delta frame input[0] configuration_update 400, retries without it, and memoizes for Turn 3", async () => {
+    const releaseSpendHome = acquireOwnedSpendHome();
+    try {
+      await withMockedWs((socket, frame) => {
+        const items = Array.isArray(frame.input) ? frame.input as Array<Record<string, unknown>> : [];
+        const cfgIdx = items.findIndex(item => item.type === "configuration_update");
+        if (cfgIdx !== -1) {
+          socket.emit({
+            type: "error",
+            status: 400,
+            error: {
+              message: `Invalid value: 'configuration_update' at input[${cfgIdx}].type`,
+              type: "invalid_request_error",
+              param: `input[${cfgIdx}].type`,
+              code: "invalid_value",
+            },
+          });
+          return;
+        }
+        const id = `resp_ws_${socket.frames.length}`;
+        const isTurn2 = items.some(item =>
+          Array.isArray(item.content)
+          && item.content.some((part: any) => part?.text === "turn 2"));
+        const replyText = isTurn2 ? "ws reply 2" : "ws reply 1";
+        socket.emit({ type: "response.created", response: { id, status: "in_progress", output: [] } });
+        socket.emit({
+          type: "response.completed",
+          response: {
+            id,
+            status: "completed",
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: replyText }] }],
+          },
+        });
+      }, async (sockets) => {
+        const config = {
+          port: 0,
+          defaultProvider: "openai",
+          apiKeys: [{ id: "ws-caller", name: "ws-caller", key: "epx_data_" + "d".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" }],
+          providers: {
+            openai: {
+              adapter: "openai-responses",
+              baseUrl: "https://chatgpt.com/backend-api/codex",
+              authMode: "forward",
+              codexAccountMode: "direct",
+            },
+          },
+        } as unknown as EpxConfig;
+
+        const sendTurn = (input: unknown[], turnId: string) => handleResponses(new Request("http://localhost/v1/responses", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer ws-fixture-token",
+            "chatgpt-account-id": "ws-fixture-acct",
+            "thread-id": "ws-thread-config-update",
+          },
+          body: JSON.stringify({
+            model: "openai/gpt-5.6-sol",
+            stream: true,
+            store: false,
+            reasoning: { effort: "high" },
+            client_metadata: { thread_id: "ws-thread-config-update", turn_id: turnId },
+            input,
+          }),
+        }), config, { model: "", provider: "" }, {
+          codexWsRuntimeIdentity: "1.4.4",
+          admission: { kind: "configured", source: "dedicated", keyId: "ws-caller", contextPrincipalId: "ws-caller" },
+        });
+
+        // Turn 1: seeds WS incremental prefix on socket 0.
+        const r1 = await sendTurn([userMsg("turn 1")], "t1");
+        expect(r1.status).toBe(200);
+        expect(await r1.text()).toContain("response.completed");
+        expect(sockets).toHaveLength(1);
+
+        // Turn 2: full history has cfgUpdate at input[2], but WS delta frame sends [cfgUpdate, userMsg("turn 2")] so cfgUpdate is input[0].
+        const turn2Input = [userMsg("turn 1"), answerItem, cfgUpdate, userMsg("turn 2")];
+        const r2 = await sendTurn(turn2Input, "t2");
+        expect(r2.status).toBe(200);
+        expect(await r2.text()).toContain("response.completed");
+
+        // Socket 0 got full create (turn 1) + rejected delta frame (input[0] === cfgUpdate).
+        expect(sockets[0]!.frames).toHaveLength(2);
+        expect(sockets[0]!.frames[1]!.previous_response_id).toBe("resp_ws_1");
+        expect(sockets[0]!.frames[1]!.input).toEqual([cfgUpdate, userMsg("turn 2")]);
+
+        // Recovery stripped cfgUpdate and succeeded on Socket 1 (full create without cfgUpdate).
+        expect(sockets).toHaveLength(2);
+        expect(sockets[1]!.frames).toHaveLength(1);
+        expect(sockets[1]!.frames[0]!.input).toEqual([userMsg("turn 1"), answerItem, userMsg("turn 2")]);
+        expect(isConfigurationUpdateUnsupportedMemoized("chatgpt.com", "gpt-5.6-sol")).toBe(true);
+
+        // Turn 3: memoized capability strips cfgUpdate proactively, so Socket 1 stays alive and sends a clean delta!
+        const answer2Item = { type: "message", role: "assistant", content: [{ type: "output_text", text: "ws reply 2" }] };
+        const turn3Input = [userMsg("turn 1"), answerItem, userMsg("turn 2"), answer2Item, cfgUpdate, userMsg("turn 3")];
+        const r3 = await sendTurn(turn3Input, "t3");
+        expect(r3.status).toBe(200);
+        expect(await r3.text()).toContain("response.completed");
+        expect(sockets).toHaveLength(2);
+        expect(sockets[1]!.frames).toHaveLength(2);
+        expect(sockets[1]!.frames[1]!.previous_response_id).toBe("resp_ws_1");
+        expect(sockets[1]!.frames[1]!.input).toEqual([userMsg("turn 3")]);
+      });
+    } finally {
+      releaseSpendHome();
+    }
+  });
+
+  test("WS delta frame 400 targeting effort enum or non-configuration_update input[1] fails closed in refusedConfigurationUpdateStrip", async () => {
+    const releaseSpendHome = acquireOwnedSpendHome();
+    try {
+      await withMockedWs((socket, frame) => {
+        if (!frame.previous_response_id) {
+          socket.emit({ type: "response.created", response: { id: "resp_ws_neg", status: "in_progress", output: [] } });
+          socket.emit({ type: "response.completed", response: { id: "resp_ws_neg", status: "completed", output: [answerItem] } });
+          return;
+        }
+        const turnId = (frame.client_metadata as { turn_id?: string } | undefined)?.turn_id;
+        socket.emit({
+          type: "error",
+          status: 400,
+          error: turnId === "t-enum"
+            ? {
+                type: "invalid_request_error",
+                param: "input[0].reasoning.effort",
+                code: "unsupported_value",
+                message: "Unsupported value: 'xhigh' for reasoning.effort. Supported values are: 'low', 'medium', 'high'.",
+              }
+            : {
+                type: "invalid_request_error",
+                param: "input[1]",
+                code: "invalid_value",
+                message: "Invalid message item at input[1]",
+              },
+        });
+      }, async () => {
+        const noFallback = (async () => { throw new Error("unexpected SSE fallback"); }) as typeof fetch;
+        const makeInit = (input: unknown[], turnId: string): RequestInit => ({
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer ws-fixture-token",
+            "chatgpt-account-id": "ws-fixture-acct",
+            "thread-id": "ws-thread-neg",
+          },
+          body: JSON.stringify({
+            model: "gpt-5.6-sol",
+            stream: true,
+            store: false,
+            reasoning: { effort: "high" },
+            client_metadata: { thread_id: "ws-thread-neg", turn_id: turnId },
+            input,
+          }),
+        });
+
+        await (await codexWsUpstreamFetch(
+          CODEX_URL, makeInit([userMsg("turn 1")], "t1"), noFallback, "1.4.4",
+          undefined, undefined, undefined, undefined, undefined, undefined,
+          undefined, undefined, "principal:ws-caller", undefined, "openai",
+        )).text();
+
+        const turn2Input = [userMsg("turn 1"), answerItem, cfgUpdate, userMsg("turn 2")];
+        const enumRejection = await codexWsUpstreamFetch(
+          CODEX_URL, makeInit(turn2Input, "t-enum"), noFallback, "1.4.4",
+          undefined, undefined, undefined, undefined, undefined, undefined,
+          undefined, undefined, "principal:ws-caller", undefined, "openai",
+        );
+        expect(enumRejection.status).toBe(400);
+        expect(await refusedConfigurationUpdateStrip(
+          enumRejection,
+          new AbortController().signal,
+          { attempted: false },
+          { outboundBody: JSON.stringify({ input: turn2Input }), outboundUrl: CODEX_URL, modelId: "gpt-5.6-sol" },
+        )).toBe(false);
+
+        // Seed again on a fresh socket and reject input[1] (user message, not configuration_update).
+        await (await codexWsUpstreamFetch(
+          CODEX_URL, makeInit([userMsg("turn 1")], "t1-b"), noFallback, "1.4.4",
+          undefined, undefined, undefined, undefined, undefined, undefined,
+          undefined, undefined, "principal:ws-caller", undefined, "openai",
+        )).text();
+        const userItemRejection = await codexWsUpstreamFetch(
+          CODEX_URL, makeInit(turn2Input, "t-user"), noFallback, "1.4.4",
+          undefined, undefined, undefined, undefined, undefined, undefined,
+          undefined, undefined, "principal:ws-caller", undefined, "openai",
+        );
+        expect(userItemRejection.status).toBe(400);
+        expect(await refusedConfigurationUpdateStrip(
+          userItemRejection,
+          new AbortController().signal,
+          { attempted: false },
+          { outboundBody: JSON.stringify({ input: turn2Input }), outboundUrl: CODEX_URL, modelId: "gpt-5.6-sol" },
+        )).toBe(false);
+        expect(isConfigurationUpdateUnsupportedMemoized("chatgpt.com", "gpt-5.6-sol")).toBe(false);
+      });
+    } finally {
+      releaseSpendHome();
+    }
   });
 });
