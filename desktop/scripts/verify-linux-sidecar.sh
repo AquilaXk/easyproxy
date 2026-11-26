@@ -21,6 +21,7 @@ else
   echo "AppImage target does not exist: $target" >&2
   exit 1
 fi
+image="$(cd "$(dirname "$image")" && pwd)/$(basename "$image")"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 cd "$scratch"

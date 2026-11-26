@@ -20,6 +20,7 @@ else
   echo ".deb target does not exist: $target" >&2
   exit 1
 fi
+package="$(cd "$(dirname "$package")" && pwd)/$(basename "$package")"
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -53,9 +54,12 @@ if [ "$desktop_hosts" -lt 1 ]; then
 fi
 
 mkdir "$scratch/home"
-timeout 30s env EASYPROXY_HOME="$scratch/home" "$sidecar" --version
-timeout 15s env HOME="$scratch/home" EASYPROXY_HOME="$scratch/home/easyproxy" \
-  "$sidecar" __keyring-load-check > "$scratch/keyring.json"
+(
+  cd "$scratch"
+  timeout 30s env EASYPROXY_HOME="$scratch/home" "$sidecar" --version
+  timeout 15s env HOME="$scratch/home" EASYPROXY_HOME="$scratch/home/easyproxy" \
+    "$sidecar" __keyring-load-check > "$scratch/keyring.json"
+)
 python3 - "$scratch/keyring.json" <<'PY'
 import json, pathlib, sys
 value = json.loads(pathlib.Path(sys.argv[1]).read_text())

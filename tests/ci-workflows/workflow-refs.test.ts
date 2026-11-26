@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -284,5 +285,69 @@ describe("GitHub workflow and action reference integrity", () => {
     expect(res.status).toBe(0);
     expect(res.stderr).toContain("Preserving compiled epx bytes");
     expect(readFileSync(appDirEpx)).toEqual(payload);
+  });
+
+  test.skipIf(process.platform === "win32")("verify-linux-sidecar resolves relative bundle directory before entering scratch dir", () => {
+    const work = mkdtempSync(join(tmpdir(), "epx-sidecar-rel-"));
+    tempDirs.push(work);
+    const fakeRepo = join(work, "repo");
+    const fakeBin = join(work, "bin");
+    const scriptDst = join(fakeRepo, "desktop", "scripts", "verify-linux-sidecar.sh");
+    const binariesDir = join(fakeRepo, "desktop", "src-tauri", "binaries");
+    const preparedEpx = join(binariesDir, "epx-x86_64-unknown-linux-gnu");
+    const relBundleDir = join(fakeRepo, "rel-appimage");
+    const mockAppImage = join(relBundleDir, "EasyProxy_0.1.0_amd64.AppImage");
+    const fixtureRoot = join(work, "extracted-fixture");
+    const fixtureBin = join(fixtureRoot, "usr", "bin", "epx");
+    const fixtureKeyring = join(fixtureRoot, "usr", "lib", "EasyProxy", "keyring", "keyring.linux-x64-gnu.node");
+    const fixtureNativeDir = join(fixtureRoot, "usr", "lib", "EasyProxy", "native-bin", "linux-x64");
+    const fixtureChild = join(fixtureNativeDir, "epx-child");
+
+    mkdirSync(join(fakeRepo, "desktop", "scripts"), { recursive: true });
+    mkdirSync(binariesDir, { recursive: true });
+    mkdirSync(relBundleDir, { recursive: true });
+    mkdirSync(fakeBin, { recursive: true });
+    mkdirSync(join(fixtureRoot, "usr", "bin"), { recursive: true });
+    mkdirSync(join(fixtureRoot, "usr", "lib", "EasyProxy", "keyring"), { recursive: true });
+    mkdirSync(fixtureNativeDir, { recursive: true });
+
+    copyFileSync(repoPath("desktop", "scripts", "verify-linux-sidecar.sh"), scriptDst);
+    chmodSync(scriptDst, 0o755);
+
+    const epxScript = "#!/usr/bin/env bash\nif [ \"${1:-}\" = \"--version\" ]; then\n  echo \"0.1.0\"\n  exit 0\nfi\nif [ \"${1:-}\" = \"__keyring-load-check\" ]; then\n  echo '{\"schema\":\"epx-keyring-load/1\",\"available\":true}'\n  exit 0\nfi\nexit 1\n";
+    writeFileSync(preparedEpx, epxScript);
+    chmodSync(preparedEpx, 0o755);
+    writeFileSync(fixtureBin, epxScript);
+    chmodSync(fixtureBin, 0o755);
+    writeFileSync(fixtureKeyring, "addon");
+    const childBytes = Buffer.from("#!/usr/bin/env bash\nexit 0\n");
+    writeFileSync(fixtureChild, childBytes);
+    chmodSync(fixtureChild, 0o755);
+    const childHash = createHash("sha256").update(childBytes).digest("hex");
+    writeFileSync(join(fixtureNativeDir, "SHA256SUMS"), `${childHash}  epx-child\n`);
+
+    writeFileSync(
+      mockAppImage,
+      `#!/usr/bin/env bash\nset -euo pipefail\nif [ "\${1:-}" = "--appimage-extract" ]; then\n  cp -R "${fixtureRoot}" ./squashfs-root\n  exit 0\nfi\nexit 1\n`,
+    );
+    chmodSync(mockAppImage, 0o755);
+
+    const timeoutShim = join(fakeBin, "timeout");
+    writeFileSync(timeoutShim, "#!/usr/bin/env bash\nshift\nexec \"$@\"\n");
+    chmodSync(timeoutShim, 0o755);
+
+    const shaShim = join(fakeBin, "sha256sum");
+    writeFileSync(
+      shaShim,
+      "#!/usr/bin/env python3\nimport hashlib, pathlib, sys\nif sys.argv[1:] == ['-c', 'SHA256SUMS']:\n  for line in pathlib.Path('SHA256SUMS').read_text().splitlines():\n    digest, name = line.split(None, 1)\n    actual = hashlib.sha256(pathlib.Path(name.strip()).read_bytes()).hexdigest()\n    assert actual == digest, f'{actual} != {digest}'\nelse:\n  for path in sys.argv[1:]:\n    print(f\"{hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()}  {path}\")\n",
+    );
+    chmodSync(shaShim, 0o755);
+
+    const res = spawnSync("bash", ["desktop/scripts/verify-linux-sidecar.sh", "rel-appimage"], {
+      cwd: fakeRepo,
+      env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+      encoding: "utf8",
+    });
+    expect(res.status, res.stderr).toBe(0);
   });
 });
