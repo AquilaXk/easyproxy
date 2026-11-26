@@ -576,6 +576,7 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile
           bun install --cwd gui --frozen-lockfile
+          bun install --cwd desktop
           bun run build:gui
           bun run build:epx-child
           bun run build:remote-workspace-helper
@@ -761,6 +762,25 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare Tauri bundle configuration
+        shell: bash
+        env:
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          bun -e '
+            import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+            import { resolve } from "node:path";
+            const cfg = process.env.TAURI_BUNDLE_CONFIG_PATH || resolve(process.env.RUNNER_TEMP!, "easyproxy-tauri-config.json");
+            const data = existsSync(cfg) ? JSON.parse(readFileSync(cfg, "utf8")) : {};
+            if (process.env.DRY_RUN === "true" && process.env.HAS_UPDATER_KEY !== "true") {
+              data.bundle = { ...(data.bundle ?? {}), createUpdaterArtifacts: false };
+            }
+            writeFileSync(cfg, JSON.stringify(data));
+            appendFileSync(process.env.GITHUB_ENV!, `TAURI_BUNDLE_CONFIG_PATH=${cfg}\n`);
+          '
+
       - name: Build desktop bundles
         if: runner.os != 'Linux'
         working-directory: desktop
@@ -774,7 +794,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           MACOS_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: bunx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "${{ runner.os == 'macOS' && env.TAURI_BUNDLE_CONFIG_PATH || '{}' }}"
+        run: bunx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
 
       - name: Verify macOS app runtime and Mach-O signatures
         if: runner.os == 'macOS'
@@ -799,6 +819,9 @@ jobs:
             codesign -dvvv "$app" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID"
           fi
           bash desktop/scripts/verify-macos-runtime.sh "$app"
+          if [ "${DRY_RUN:-}" = "true" ] && [ ! -f "${app}.tar.gz" ]; then
+            tar -C "$(dirname "$app")" -czf "${app}.tar.gz" "$(basename "$app")"
+          fi
 
       - name: Locate the Windows installer for signing
         id: windows-msi
@@ -875,7 +898,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          bunx tauri build --ci --target ${{ matrix.target }} --bundles appimage
+          set -euo pipefail
+          shim_dir="${RUNNER_TEMP}/patchelf-shim"
+          mkdir -p "$shim_dir"
+          chmod +x "${GITHUB_WORKSPACE}/desktop/scripts/appimage-patchelf.py"
+          ln -sf "${GITHUB_WORKSPACE}/desktop/scripts/appimage-patchelf.py" "$shim_dir/patchelf"
+          PATH="$shim_dir:$PATH" bunx tauri build --ci --target ${{ matrix.target }} --bundles appimage --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
           mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/appimage
           cp -r "${CARGO_TARGET_DIR}/${{ matrix.target }}/release/bundle/appimage/." src-tauri/target/${{ matrix.target }}/release/bundle/appimage/
 
@@ -887,7 +915,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          bunx tauri build --ci --target ${{ matrix.target }} --bundles deb
+          set -euo pipefail
+          bunx tauri build --ci --target ${{ matrix.target }} --bundles deb --config "${{ env.TAURI_BUNDLE_CONFIG_PATH }}"
           mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/deb
           cp -r "${CARGO_TARGET_DIR}/${{ matrix.target }}/release/bundle/deb/." src-tauri/target/${{ matrix.target }}/release/bundle/deb/
 
