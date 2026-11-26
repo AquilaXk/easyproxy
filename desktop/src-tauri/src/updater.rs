@@ -1543,7 +1543,7 @@ mod tests {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             static TEST_BUSY: AtomicBool = AtomicBool::new(false);
-            let powershell = windows_powershell_path();
+            let powershell = super::windows_powershell_path();
 
             let temp_fast = TempMsiFile::create_with_bytes_limit(b"msi", 64).unwrap();
             let temp_fast_path = temp_fast.path.clone();
