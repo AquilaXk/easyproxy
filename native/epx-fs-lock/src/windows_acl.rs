@@ -16,6 +16,7 @@ pub type HLOCAL = *mut c_void;
 pub type LPVOID = *mut c_void;
 pub type PSID = *mut c_void;
 pub type PACL = *mut Acl;
+#[allow(non_camel_case_types)]
 pub type PSECURITY_DESCRIPTOR = *mut c_void;
 
 pub const ACL_REVISION: DWORD = 2;
