@@ -7,9 +7,10 @@
 <a href="https://easyproxy.me/zh-tw/reference/client-support/">查看所有支援的工具 →</a></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/easyproxy"><img src="https://img.shields.io/npm/v/easyproxy?color=cb3837&label=npm&logo=npm" alt="npm 版本"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/easyproxy?color=blue" alt="授權"></a>
-  <img src="https://img.shields.io/node/v/easyproxy?logo=node.js&label=node" alt="Node 版本">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI 狀態"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?include_prereleases&label=release" alt="最新版本"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="授權: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node 18 以上">
 </p>
 
 ```bash
@@ -18,10 +19,13 @@ epx start
 ```
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="下載 macOS 版 (.dmg)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Windows-.msi-24292f?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0zIDNoOC41djguNUgzem05LjUgMEgyMXY4LjVoLTguNXpNMyAxMi41aDguNVYyMUgzem05LjUgMEgyMVYyMWgtOC41eiIvPjwvc3ZnPg==" alt="下載 Windows 版 (.msi)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="下載 Linux 版 (.AppImage)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.deb-24292f?logo=debian&logoColor=white" alt="下載 Linux 版 (.deb)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="下載 Windows 版 (.msi)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="下載 macOS Apple Silicon 版 (.dmg)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="下載 Linux 版 (.AppImage)"></a>
+  <br>
+  <sub><a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">全部發行檔案與校驗和</a></sub>
 </p>
 
 <table>
@@ -121,11 +125,12 @@ epx start                         # 代理 + 儀表板位於 localhost:10100
 
 | 平台 | 檔案 | 說明 |
 |---|---|---|
-| macOS 14+（Apple Silicon 與 Intel） | `EasyProxy-<version>-macos.dmg` | 通用建置；在設定 Apple Developer ID 簽章與公證前為未簽章版本（macOS Gatekeeper 可能需 **右鍵 → 打開**） |
+| macOS 14+（Apple Silicon） | `EasyProxy-<version>-macos-arm64.dmg` | 設定 Apple Developer ID 憑證後會進行簽章與公證；在此之前為未簽章版本（macOS Gatekeeper 可能需 **右鍵 → 打開**） |
+| macOS 14+（Intel） | `EasyProxy-<version>-macos-x64.dmg` | 獨立 Intel x64 建置；未簽章時適用相同 Gatekeeper 說明 |
 | Windows（x64） | `EasyProxy-<version>-windows-x64.msi` | 正透過 SignPath Foundation 推出程式碼簽章（[程式碼簽章政策](https://easyproxy.me/zh-tw/reference/code-signing/)）；在版本簽章之前，SmartScreen 會詢問一次，選擇 **More info → Run anyway** |
 | Linux（x86_64） | `EasyProxy-<version>-linux-x86_64.AppImage` 或 `-linux-amd64.deb` | 系統匣需要支援 AppIndicator 的桌面環境 |
 
-每個檔案在發行頁面上都附有 `.sha256`。在 macOS 14+ 上，應用程式還附帶
+每個檔案在發行頁面上都附有 `.sha256`，且不含版本號的安裝檔別名（`EasyProxy-macos-arm64.dmg`、`EasyProxy-macos-x64.dmg`、`EasyProxy-windows-x64.msi`、`EasyProxy-linux-x86_64.AppImage`、`EasyProxy-linux-amd64.deb`）在 `/releases/latest` 指向同一批經過驗證的建置產物。在 macOS 14+ 上，應用程式還附帶
 WidgetKit 擴充套件，可顯示代理狀態、今日用量與供應商配額；它所呈現的快照模型位於
 [`app/`](../app)（`MenuBarCore`）。若要自行建置應用程式，先在儲存庫根目錄執行
 `bun install && bun run build:gui`，再於
@@ -235,7 +240,7 @@ epx init      # 互動式設定：寫入 ~/.easyproxy/config.json 並接上 Code
 
 | 作業系統 | 狀態 | 服務管理員 | 桌面應用程式（Beta） |
 |---|---|---|---|
-| macOS (arm64 / x64) | 完整支援 | launchd | 通用 `.dmg` |
+| macOS (arm64 / x64) | 完整支援 | launchd | `arm64` / `x64` `.dmg` |
 | Linux (x64 / arm64) | 完整支援 | systemd（使用者單元） | x86_64 `.AppImage` / `.deb` |
 | Windows (x64) | 完整支援 | Task Scheduler（隱藏）／可選原生服務（`--native`、WinSW） | x64 `.msi` |
 
@@ -449,6 +454,10 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 easyproxy 是獨立的社群維護專案，**與 OpenAI、Anthropic 或其他任何供應商無關，也未獲其背書。**
 
 部分供應商——尤其是 Anthropic（Claude）——可能會暫停或限制經第三方代理路由 API 流量的帳號。**使用風險自負（UAYOR）。** 連線供應商前，請先查其服務條款，確認是否允許代理式存取。上游供應商對帳號採取的任何處置，easyproxy 維護者概不負責。
+
+## 回饋
+
+使用時若遇到問題或異常，請在 [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) 回報，或參閱[說明文件](https://easyproxy.me/zh-tw/)。
 
 ## 授權
 

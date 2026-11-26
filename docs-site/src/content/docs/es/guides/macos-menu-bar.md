@@ -9,7 +9,7 @@ El elemento de la barra de menús forma parte de EasyProxy Desktop. Muestra el u
 
 ## Instalar
 
-Descarga `EasyProxy-<version>-macos.dmg` de la [última versión](https://github.com/AquilaXk/easyproxy/releases), abre el DMG y arrastra `EasyProxy.app` a Aplicaciones. La aplicación requiere macOS 13 o posterior; el widget, macOS 14 o posterior.
+Descarga `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) o `EasyProxy-<version>-macos-x64.dmg` (Intel) de la [última versión](https://github.com/AquilaXk/easyproxy/releases), abre el DMG y arrastra `EasyProxy.app` a Aplicaciones. La aplicación requiere macOS 13 o posterior; el widget, macOS 14 o posterior.
 
 <a id="first-launch"></a>
 

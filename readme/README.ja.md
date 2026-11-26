@@ -7,9 +7,10 @@
 <a href="https://easyproxy.me/ja/reference/client-support/">対応ツールをすべて見る →</a></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/easyproxy"><img src="https://img.shields.io/npm/v/easyproxy?color=cb3837&label=npm&logo=npm" alt="npm version"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/easyproxy?color=blue" alt="license"></a>
-  <img src="https://img.shields.io/node/v/easyproxy?logo=node.js&label=node" alt="node version">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI ステータス"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?include_prereleases&label=release" alt="最新リリース"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="ライセンス: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node 18 以上">
 </p>
 
 ```bash
@@ -18,10 +19,13 @@ epx start
 ```
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="macOS 版をダウンロード (.dmg)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Windows-.msi-24292f?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0zIDNoOC41djguNUgzem05LjUgMEgyMXY4LjVoLTguNXpNMyAxMi41aDguNVYyMUgzem05LjUgMEgyMVYyMWgtOC41eiIvPjwvc3ZnPg==" alt="Windows 版をダウンロード (.msi)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Linux 版をダウンロード (.AppImage)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.deb-24292f?logo=debian&logoColor=white" alt="Linux 版をダウンロード (.deb)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Windows 版をダウンロード (.msi)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="macOS Apple Silicon 版をダウンロード (.dmg)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Linux 版をダウンロード (.AppImage)"></a>
+  <br>
+  <sub><a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">すべてのリリースファイルとチェックサム</a></sub>
 </p>
 
 <table>
@@ -121,11 +125,12 @@ epx start                         # プロキシとダッシュボードが loca
 
 | プラットフォーム | ファイル | 備考 |
 |---|---|---|
-| macOS 14 以降（Apple Silicon と Intel） | `EasyProxy-<version>-macos.dmg` | ユニバーサルビルド。Apple Developer ID 署名と公証が設定されるまで未署名配布（macOS Gatekeeper では **右クリック → 開く** が必要な場合があります） |
+| macOS 14 以降（Apple Silicon） | `EasyProxy-<version>-macos-arm64.dmg` | Apple Developer ID 証明書が設定されている場合は署名・公証されます。未署名時は macOS Gatekeeper で **右クリック → 開く** が必要な場合があります |
+| macOS 14 以降（Intel） | `EasyProxy-<version>-macos-x64.dmg` | Intel x64 向けビルドです。未署名時の Gatekeeper の扱いは同様です |
 | Windows（x64） | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation によるコード署名を導入中（[コード署名ポリシー](https://easyproxy.me/ja/reference/code-signing/)）。署名前のリリースでは SmartScreen が一度だけ確認するので、**詳細情報 → 実行**を選択 |
 | Linux（x86_64） | `EasyProxy-<version>-linux-x86_64.AppImage` または `-linux-amd64.deb` | トレイには AppIndicator 対応のデスクトップが必要 |
 
-リリースページでは各ファイルの横に `.sha256` があります。macOS 14 以降では、プロキシの状態、
+リリースページでは各ファイルの横に `.sha256` があり、バージョン表記なしのインストーラー名（`EasyProxy-macos-arm64.dmg`、`EasyProxy-macos-x64.dmg`、`EasyProxy-windows-x64.msi`、`EasyProxy-linux-x86_64.AppImage`、`EasyProxy-linux-amd64.deb`）も `/releases/latest` で同じ検証済みビルドを指します。macOS 14 以降では、プロキシの状態、
 今日の使用量、プロバイダーのクォータを表示する WidgetKit 拡張も付属します。表示に使う
 スナップショットモデルは [`app/`](../app)（`MenuBarCore`）にあります。アプリを自分でビルドするには、
 リポジトリのルートで `bun install && bun run build:gui` を実行し、
@@ -242,7 +247,7 @@ epx init      # 対話式セットアップ: ~/.easyproxy/config.json を書き�
 
 | OS | 状態 | サービスマネージャー | デスクトップアプリ（ベータ版） |
 |---|---|---|---|
-| macOS (arm64 / x64) | 完全対応 | launchd | ユニバーサル `.dmg` |
+| macOS (arm64 / x64) | 完全対応 | launchd | `arm64` / `x64` `.dmg` |
 | Linux (x64 / arm64) | 完全対応 | systemd (user unit) | x86_64 `.AppImage` / `.deb` |
 | Windows (x64) | 完全対応 | タスクスケジューラ（非表示）/ 任意のネイティブサービス（`--native`、WinSW） | x64 `.msi` |
 
@@ -471,6 +476,10 @@ easyproxy はコミュニティが維持する独立したプロジェクトで�
 プロバイダーとも提携しておらず、承認も受けていません。**
 
 一部のプロバイダー、とくに Anthropic (Claude) は、サードパーティのプロキシ経由で API トラフィックを流すアカウントを停止または制限することがあります。**自己責任でご利用ください (UAYOR)。** プロバイダーを接続する前に、その利用規約でプロキシ経由のアクセスが認められているか確認してください。easyproxy のメンテナーは、アップストリームのプロバイダーが取ったアカウント処分について責任を負いません。
+
+## フィードバック
+
+不具合や気づいた点があれば [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) からご報告いただくか、[ドキュメント](https://easyproxy.me/ja/)をご確認ください。
 
 ## ライセンス
 

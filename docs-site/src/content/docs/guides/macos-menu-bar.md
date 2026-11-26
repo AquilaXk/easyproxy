@@ -7,7 +7,7 @@ The macOS menu bar item is part of the EasyProxy desktop app. It shows usage fro
 
 ## Install
 
-Download `EasyProxy-<version>-macos.dmg` from the [latest release](https://github.com/AquilaXk/easyproxy/releases). Open the DMG and drag `EasyProxy.app` to Applications. The desktop app requires macOS 13 or later; its widget requires macOS 14 or later.
+Download `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) or `EasyProxy-<version>-macos-x64.dmg` (Intel) from the [latest release](https://github.com/AquilaXk/easyproxy/releases). Open the DMG and drag `EasyProxy.app` to Applications. The desktop app requires macOS 13 or later; its widget requires macOS 14 or later.
 
 ## First launch
 

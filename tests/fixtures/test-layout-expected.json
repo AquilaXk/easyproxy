@@ -861,5 +861,7 @@
   "api-key-budget-holds.test.ts": "server",
   "embeddings-endpoint.test.ts": "server",
   "telemetry-otlp-tracing.test.ts": "server",
-  "provider-egress-and-cc-switch-routes.test.ts": "server"
+  "provider-egress-and-cc-switch-routes.test.ts": "server",
+  "workflow-refs.test.ts": "ci-workflows",
+  "release-guards.test.ts": "ci-workflows"
 }

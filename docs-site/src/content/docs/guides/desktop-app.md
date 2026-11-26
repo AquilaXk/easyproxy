@@ -13,7 +13,7 @@ The desktop app is a local shell around that dashboard and its bundled runtime.
 
 ### macOS
 
-Download `EasyProxy-<version>-macos.dmg` from the
+Download `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) or `EasyProxy-<version>-macos-x64.dmg` (Intel) from the
 [latest release](https://github.com/AquilaXk/easyproxy/releases). Open the DMG and drag
 `EasyProxy.app` to Applications. The app requires macOS 13 or later.
 
@@ -339,7 +339,7 @@ on that proxy instead.
 
 Updates are verified with the
 project's signed updater public key before installation. On macOS, in-app updates download
-`EasyProxy-<version>-macos.app.tar.gz`; the DMG is for the first installation.
+`EasyProxy-<version>-macos-arm64.app.tar.gz` or `EasyProxy-<version>-macos-x64.app.tar.gz`; the DMG is for the first installation.
 The release manifest is generated only when the updater key secret is configured and then
 requires all four platforms to be signed.
 

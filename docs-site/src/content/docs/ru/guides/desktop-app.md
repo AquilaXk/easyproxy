@@ -14,7 +14,7 @@ description: Установка и использование настольно
 
 ### macOS
 
-Загрузите `EasyProxy-<version>-macos.dmg` из
+Загрузите `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) или `EasyProxy-<version>-macos-x64.dmg` (Intel) из
 [последнего выпуска](https://github.com/AquilaXk/easyproxy/releases). Откройте DMG и перетащите
 `EasyProxy.app` в Applications. Для приложения требуется macOS 13 или новее.
 
@@ -122,7 +122,7 @@ CLI подтвердил отсутствие прокси; неопределё
 
 Перед установкой обновления
 проверяются подписанным открытым ключом обновлений проекта. На macOS обновления внутри приложения
-загружают `EasyProxy-<version>-macos.app.tar.gz`; DMG предназначен для первой установки.
+загружают `EasyProxy-<version>-macos-arm64.app.tar.gz` или `EasyProxy-<version>-macos-x64.app.tar.gz`; DMG предназначен для первой установки.
 Манифест выпуска создаётся только при наличии секрета ключа обновлений и в таком случае
 требует подписи всех четырёх платформ.
 

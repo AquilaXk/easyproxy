@@ -7,7 +7,7 @@ macOS menü çubuğu öğesi, EasyProxy masaüstü uygulamasının parçasıdır
 
 ## Kurulum
 
-[Son sürümden](https://github.com/AquilaXk/easyproxy/releases) `EasyProxy-<version>-macos.dmg` dosyasını indirin. DMG'yi açıp `EasyProxy.app` uygulamasını Applications klasörüne sürükleyin. Masaüstü uygulaması macOS 13 veya yenisini, widget ise macOS 14 veya yenisini gerektirir.
+[Son sürümden](https://github.com/AquilaXk/easyproxy/releases) Apple Silicon için `EasyProxy-<version>-macos-arm64.dmg` veya Intel için `EasyProxy-<version>-macos-x64.dmg` dosyasını indirin. DMG'yi açıp `EasyProxy.app` uygulamasını Applications klasörüne sürükleyin. Masaüstü uygulaması macOS 13 veya yenisini, widget ise macOS 14 veya yenisini gerektirir.
 
 ## İlk açılış
 

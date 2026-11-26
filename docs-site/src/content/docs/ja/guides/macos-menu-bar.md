@@ -7,7 +7,7 @@ macOS のメニューバー項目は EasyProxy デスクトップアプリの一
 
 ## インストール
 
-[最新リリース](https://github.com/AquilaXk/easyproxy/releases)から `EasyProxy-<version>-macos.dmg` をダウンロードします。DMG を開き、`EasyProxy.app` を Applications にドラッグします。デスクトップアプリには macOS 13 以降、ウィジェットには macOS 14 以降が必要です。
+[最新リリース](https://github.com/AquilaXk/easyproxy/releases)から `EasyProxy-<version>-macos-arm64.dmg`（Apple Silicon）または `EasyProxy-<version>-macos-x64.dmg`（Intel）をダウンロードします。DMG を開き、`EasyProxy.app` を Applications にドラッグします。デスクトップアプリには macOS 13 以降、ウィジェットには macOS 14 以降が必要です。
 
 ## 初回起動
 

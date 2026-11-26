@@ -7,7 +7,7 @@ L’élément de barre de menus macOS fait partie de l’application de bureau E
 
 ## Installation
 
-Téléchargez `EasyProxy-<version>-macos.dmg` depuis la [dernière version](https://github.com/AquilaXk/easyproxy/releases). Ouvrez le DMG et faites glisser `EasyProxy.app` vers Applications. L’application de bureau nécessite macOS 13 ou une version ultérieure ; son widget nécessite macOS 14 ou une version ultérieure.
+Téléchargez `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) ou `EasyProxy-<version>-macos-x64.dmg` (Intel) depuis la [dernière version](https://github.com/AquilaXk/easyproxy/releases). Ouvrez le DMG et faites glisser `EasyProxy.app` vers Applications. L’application de bureau nécessite macOS 13 ou une version ultérieure ; son widget nécessite macOS 14 ou une version ultérieure.
 
 ## Premier lancement
 

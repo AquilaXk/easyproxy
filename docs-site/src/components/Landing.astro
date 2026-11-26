@@ -107,7 +107,7 @@ const fr = {
 	'Download for Linux': 'Télécharger pour Linux',
 	'Download EasyProxy': 'Télécharger EasyProxy',
 	'The desktop app bundles the proxy, the dashboard and a tray. Beta.': 'L’app de bureau regroupe le proxy, le tableau de bord et une icône de barre d’état. Bêta.',
-	'Universal · Apple Silicon and Intel · macOS 13+ · .dmg': 'Universel · Apple Silicon et Intel · macOS 13+ · .dmg',
+	'Apple Silicon and Intel · macOS 13+ · .dmg': 'Apple Silicon et Intel · macOS 13+ · .dmg',
 	'Installer not code-signed yet': 'Programme d’installation pas encore signé',
 	'.deb package': 'Paquet .deb',
 	'Recommended for your system': 'Recommandé pour votre système',
@@ -196,7 +196,7 @@ const es: Record<keyof typeof fr, string> = {
 	"Download for Linux": "Descargar para Linux",
 	"Download EasyProxy": "Descargar EasyProxy",
 	"The desktop app bundles the proxy, the dashboard and a tray. Beta.": "La aplicación de escritorio incluye el proxy, el dashboard y una bandeja. Versión beta.",
-	"Universal · Apple Silicon and Intel · macOS 13+ · .dmg": "Universal · Apple Silicon e Intel · macOS 13+ · .dmg",
+	"Apple Silicon and Intel · macOS 13+ · .dmg": "Apple Silicon e Intel · macOS 13+ · .dmg",
 	"Installer not code-signed yet": "El instalador aún no tiene firma de código",
 	".deb package": "Paquete .deb",
 	"Recommended for your system": "Recomendado para tu sistema",
@@ -408,9 +408,10 @@ const docsMap = [
 			<article class="lp-dl-card" data-platform="macos">
 				<svg class="lp-dl-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={siApple.path} /></svg>
 				<h3>macOS</h3>
-				<p class="lp-dl-meta">{t('Universal · Apple Silicon and Intel · macOS 13+ · .dmg', '유니버설 · Apple Silicon 및 Intel · macOS 13+ · .dmg', 'Universal · Apple Silicon 与 Intel · macOS 13+ · .dmg', 'Universal · Apple Silicon и Intel · macOS 13+ · .dmg', 'ユニバーサル · Apple Silicon と Intel · macOS 13+ · .dmg', 'Universal · Apple Silicon 與 Intel · macOS 13+ · .dmg', 'Evrensel · Apple Silicon ve Intel · macOS 13+ · .dmg')}</p>
+				<p class="lp-dl-meta">{t('Apple Silicon and Intel · macOS 13+ · .dmg', 'Apple Silicon 및 Intel · macOS 13+ · .dmg', 'Apple Silicon 与 Intel · macOS 13+ · .dmg', 'Apple Silicon и Intel · macOS 13+ · .dmg', 'Apple Silicon と Intel · macOS 13+ · .dmg', 'Apple Silicon 與 Intel · macOS 13+ · .dmg', 'Apple Silicon ve Intel · macOS 13+ · .dmg')}</p>
 				<div class="lp-dl-actions">
-					<a class="lp-dl-btn" data-lp-asset="dmg" href="https://github.com/AquilaXk/easyproxy/releases/latest"><svg class="lp-dl-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={icons.download} /></svg>{t('Download', '다운로드', '下载', 'Скачать', 'ダウンロード', '下載', 'İndir')}<span class="lp-dl-btn-fmt">.dmg</span></a>
+					<a class="lp-dl-btn" data-lp-asset="dmg-arm64" href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><svg class="lp-dl-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={icons.download} /></svg>{t('Download', '다운로드', '下载', 'Скачать', 'ダウンロード', '下載', 'İndir')}<span class="lp-dl-btn-fmt">arm64 .dmg</span></a>
+					<a class="lp-dl-alt" data-lp-asset="dmg-x64" href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">Intel (x64) .dmg</a>
 				</div>
 				<p class="lp-dl-reco">{t('Recommended for your system', '내 시스템에 맞는 버전', '为你的系统推荐', 'Рекомендуется для вашей системы', 'お使いのシステムにおすすめ', '為你的系統推薦', 'Sisteminiz için önerilir')}</p>
 			</article>
@@ -420,7 +421,7 @@ const docsMap = [
 				<p class="lp-dl-meta">x64 · .msi</p>
 				<p class="lp-dl-note">{t('Installer not code-signed yet', '설치 파일은 아직 코드 서명 전입니다', '安装程序尚未进行代码签名', 'Установщик пока не имеет цифровой подписи', 'インストーラーはまだコード署名されていません', '安裝程式尚未進行程式碼簽署', 'Yükleyici henüz kod imzalı değil')}</p>
 				<div class="lp-dl-actions">
-					<a class="lp-dl-btn" data-lp-asset="msi" href="https://github.com/AquilaXk/easyproxy/releases/latest"><svg class="lp-dl-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={icons.download} /></svg>{t('Download', '다운로드', '下载', 'Скачать', 'ダウンロード', '下載', 'İndir')}<span class="lp-dl-btn-fmt">.msi</span></a>
+					<a class="lp-dl-btn" data-lp-asset="msi" href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><svg class="lp-dl-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={icons.download} /></svg>{t('Download', '다운로드', '下载', 'Скачать', 'ダウンロード', '下載', 'İndir')}<span class="lp-dl-btn-fmt">.msi</span></a>
 				</div>
 				<p class="lp-dl-reco">{t('Recommended for your system', '내 시스템에 맞는 버전', '为你的系统推荐', 'Рекомендуется для вашей системы', 'お使いのシステムにおすすめ', '為你的系統推薦', 'Sisteminiz için önerilir')}</p>
 			</article>
@@ -429,8 +430,8 @@ const docsMap = [
 				<h3>Linux</h3>
 				<p class="lp-dl-meta">x86_64 · .AppImage</p>
 				<div class="lp-dl-actions">
-					<a class="lp-dl-btn" data-lp-asset="appimage" href="https://github.com/AquilaXk/easyproxy/releases/latest"><svg class="lp-dl-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={icons.download} /></svg>{t('Download', '다운로드', '下载', 'Скачать', 'ダウンロード', '下載', 'İndir')}<span class="lp-dl-btn-fmt">.AppImage</span></a>
-					<a class="lp-dl-alt" data-lp-asset="deb" href="https://github.com/AquilaXk/easyproxy/releases/latest">{t('.deb package', '.deb 패키지', '.deb 软件包', 'Пакет .deb', '.deb パッケージ', '.deb 套件', '.deb paketi')}</a>
+					<a class="lp-dl-btn" data-lp-asset="appimage" href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><svg class="lp-dl-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={icons.download} /></svg>{t('Download', '다운로드', '下载', 'Скачать', 'ダウンロード', '下載', 'İndir')}<span class="lp-dl-btn-fmt">.AppImage</span></a>
+					<a class="lp-dl-alt" data-lp-asset="deb" href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">{t('.deb package', '.deb 패키지', '.deb 软件包', 'Пакет .deb', '.deb パッケージ', '.deb 套件', '.deb paketi')}</a>
 				</div>
 				<p class="lp-dl-reco">{t('Recommended for your system', '내 시스템에 맞는 버전', '为你的系统推荐', 'Рекомендуется для вашей системы', 'お使いのシステムにおすすめ', '為你的系統推薦', 'Sisteminiz için önerilir')}</p>
 			</article>
@@ -1018,10 +1019,11 @@ const docsMap = [
 		.then((res) => (res.ok ? res.json() : Promise.reject(res.status)))
 		.then((release: { tag_name?: string; assets?: { name?: string; browser_download_url?: string }[] }) => {
 			const patterns: Record<string, RegExp> = {
-				dmg: /-macos\.dmg$/,
-				msi: /-windows-x64\.msi$/,
-				appimage: /-linux-x86_64\.AppImage$/,
-				deb: /-linux-amd64\.deb$/,
+				'dmg-arm64': /^EasyProxy-\d+\.\d+\.\d+.*-macos-arm64\.dmg$/,
+				'dmg-x64': /^EasyProxy-\d+\.\d+\.\d+.*-macos-x64\.dmg$/,
+				msi: /^EasyProxy-\d+\.\d+\.\d+.*-windows-x64\.msi$/,
+				appimage: /^EasyProxy-\d+\.\d+\.\d+.*-linux-x86_64\.AppImage$/,
+				deb: /^EasyProxy-\d+\.\d+\.\d+.*-linux-amd64\.deb$/,
 			};
 			for (const asset of release.assets ?? []) {
 				const key = Object.keys(patterns).find((k) => asset.name && patterns[k].test(asset.name));

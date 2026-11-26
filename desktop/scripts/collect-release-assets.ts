@@ -15,6 +15,7 @@ export interface BundleSpec {
   kind: BundleKind;
   dir: string;
   name: string;
+  convenienceAlias?: boolean;
 }
 
 export const bundlesByTarget: Record<string, BundleSpec[]> = {
@@ -23,17 +24,19 @@ export const bundlesByTarget: Record<string, BundleSpec[]> = {
     { kind: "app.tar.gz", dir: "macos", name: "macos.app.tar.gz" },
   ],
   "aarch64-apple-darwin": [
-    { kind: "dmg", dir: "dmg", name: "macos-arm64.dmg" },
+    { kind: "dmg", dir: "dmg", name: "macos-arm64.dmg", convenienceAlias: true },
     { kind: "app.tar.gz", dir: "macos", name: "macos-arm64.app.tar.gz" },
   ],
   "x86_64-apple-darwin": [
-    { kind: "dmg", dir: "dmg", name: "macos-x64.dmg" },
+    { kind: "dmg", dir: "dmg", name: "macos-x64.dmg", convenienceAlias: true },
     { kind: "app.tar.gz", dir: "macos", name: "macos-x64.app.tar.gz" },
   ],
-  "x86_64-pc-windows-msvc": [{ kind: "msi", dir: "msi", name: "windows-x64.msi" }],
+  "x86_64-pc-windows-msvc": [
+    { kind: "msi", dir: "msi", name: "windows-x64.msi", convenienceAlias: true },
+  ],
   "x86_64-unknown-linux-gnu": [
-    { kind: "appimage", dir: "appimage", name: "linux-x86_64.AppImage" },
-    { kind: "deb", dir: "deb", name: "linux-amd64.deb" },
+    { kind: "appimage", dir: "appimage", name: "linux-x86_64.AppImage", convenienceAlias: true },
+    { kind: "deb", dir: "deb", name: "linux-amd64.deb", convenienceAlias: true },
   ],
 };
 
@@ -90,6 +93,17 @@ export function collectReleaseAssets(options: CollectReleaseAssetsOptions): stri
     const checksum = `${destination}.sha256`;
     writeFileSync(checksum, `${digest}  ${destinationName}\n`);
     written.push(checksum);
+
+    if (bundle.convenienceAlias) {
+      const aliasName = `EasyProxy-${bundle.name}`;
+      const aliasDestination = join(output, aliasName);
+      copyFileSync(destination, aliasDestination);
+      written.push(aliasDestination);
+
+      const aliasChecksum = `${aliasDestination}.sha256`;
+      writeFileSync(aliasChecksum, `${digest}  ${aliasName}\n`);
+      written.push(aliasChecksum);
+    }
   }
   return written;
 }

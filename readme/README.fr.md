@@ -7,9 +7,10 @@
 <a href="https://easyproxy.me/fr/reference/client-support/">Voir tous les outils pris en charge →</a></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/easyproxy"><img src="https://img.shields.io/npm/v/easyproxy?color=cb3837&label=npm&logo=npm" alt="version npm"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/easyproxy?color=blue" alt="licence"></a>
-  <img src="https://img.shields.io/node/v/easyproxy?logo=node.js&label=node" alt="version de Node">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="statut CI"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?include_prereleases&label=release" alt="dernière version"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="licence : MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node >= 18">
 </p>
 
 ```bash
@@ -18,10 +19,13 @@ epx start
 ```
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Télécharger pour macOS (.dmg)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Windows-.msi-24292f?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0zIDNoOC41djguNUgzem05LjUgMEgyMXY4LjVoLTguNXpNMyAxMi41aDguNVYyMUgzem05LjUgMEgyMVYyMWgtOC41eiIvPjwvc3ZnPg==" alt="Télécharger pour Windows (.msi)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Télécharger pour Linux (.AppImage)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.deb-24292f?logo=debian&logoColor=white" alt="Télécharger pour Linux (.deb)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Télécharger pour Windows (.msi)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="Télécharger pour macOS Apple Silicon (.dmg)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Télécharger pour Linux (.AppImage)"></a>
+  <br>
+  <sub><a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">Tous les fichiers et sommes de contrôle</a></sub>
 </p>
 
 <table>
@@ -122,11 +126,12 @@ correspondant à votre plateforme sur la page de la [dernière version publiée]
 
 | Plateforme | Fichier | Remarques |
 |---|---|---|
-| macOS 14+ (Apple Silicon et Intel) | `EasyProxy-<version>-macos.dmg` | Compilation universelle ; non signée tant que la signature Apple Developer ID et la notarisation ne sont pas configurées (Gatekeeper peut exiger **Clic droit → Ouvrir**) |
+| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Signée avec Apple Developer ID et notarisée dès que les identifiants sont configurés ; sinon non signée (Gatekeeper peut exiger **Clic droit → Ouvrir**) |
+| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Build x64 distinct ; même remarque Gatekeeper si non signé |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Signature du code via SignPath Foundation en cours de déploiement ([politique de signature du code](https://easyproxy.me/fr/reference/code-signing/)) ; tant qu’une version n’est pas signée, SmartScreen demande une confirmation : choisissez **Informations complémentaires → Exécuter quand même** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` ou `-linux-amd64.deb` | La barre d'état nécessite un environnement de bureau compatible AppIndicator |
 
-Chaque fichier est accompagné d'un `.sha256` sur la page de la version. Sous macOS 14+, l'application embarque
+Chaque fichier est accompagné d'un `.sha256` sur la page de la version, et des noms de fichiers sans numéro de version (`EasyProxy-macos-arm64.dmg`, `EasyProxy-macos-x64.dmg`, `EasyProxy-windows-x64.msi`, `EasyProxy-linux-x86_64.AppImage`, `EasyProxy-linux-amd64.deb`) pointent vers les mêmes builds vérifiés sur `/releases/latest`. Sous macOS 14+, l'application embarque
 également une extension WidgetKit qui affiche l'état du proxy, l'utilisation du jour et les quotas des
 fournisseurs ; le modèle de données des instantanés qu'elle affiche se trouve dans [`app/`](../app)
 (`MenuBarCore`). Pour compiler l'application vous-même, exécutez
@@ -245,7 +250,7 @@ s'il est inaccessible). `epx status` / `epx doctor` / `epx health` indiquent l'�
 
 | Système d'exploitation | État | Gestionnaire de services | Application de bureau (bêta) |
 |---|---|---|---|
-| macOS (arm64 / x64) | Entièrement pris en charge | launchd | `.dmg` universel |
+| macOS (arm64 / x64) | Entièrement pris en charge | launchd | `arm64` / `x64` `.dmg` |
 | Linux (x64 / arm64) | Entièrement pris en charge | systemd (unité utilisateur) | x86_64 `.AppImage` / `.deb` |
 | Windows (x64) | Entièrement pris en charge | Planificateur de tâches (masqué) / service natif en option (`--native`, WinSW) | x64 `.msi` |
 
@@ -475,6 +480,10 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 easyproxy est un projet indépendant maintenu par la communauté et **n'est affilié ni à OpenAI, ni à Anthropic, ni à aucun autre fournisseur, et n'est approuvé par aucun d'eux**.
 
 Certains fournisseurs — notamment Anthropic (Claude) — peuvent suspendre ou restreindre les comptes qui acheminent le trafic API par des proxys tiers. **Utilisation à vos propres risques (UAYOR).** Avant de connecter un fournisseur, consultez ses conditions d'utilisation pour vérifier que l'accès par proxy est autorisé. Les mainteneurs d'easyproxy ne sont pas responsables des mesures prises sur les comptes par les fournisseurs en amont.
+
+## Retours
+
+Si vous rencontrez un problème ou un comportement inattendu, ouvrez un ticket sur [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) ou consultez la [documentation](https://easyproxy.me/fr/).
 
 ## Licence
 

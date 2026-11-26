@@ -92,7 +92,7 @@ jobs:
           role: runtime
 
       - name: Cache Bun packages
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
@@ -119,6 +119,8 @@ jobs:
           bun scripts/release-version-sources.ts check
           bun scripts/generate-update-trust-root.ts --check
           bun run structure:check
+          bun run skill:surface:check
+          bun run docs:clients:check
           bun run typecheck
           bun run typecheck:tsc
           bun run privacy:scan
@@ -156,6 +158,22 @@ jobs:
             echo "source_sha=${source_sha}"
             echo "is_tag_push=${is_tag_push}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Verify signing and updater credentials
+        env:
+          DRY_RUN: ${{ steps.meta.outputs.dry_run }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        run: bun scripts/ci/verify-release-credentials.ts
 
   package-standalone:
     name: standalone (${{ matrix.label }})
@@ -223,7 +241,7 @@ jobs:
           role: runtime
 
       - name: Cache Bun packages
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ matrix.label }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
@@ -539,7 +557,12 @@ jobs:
             librsvg2-dev \
             libdbus-1-dev \
             patchelf \
-            file
+            file \
+            xvfb \
+            openbox \
+            wmctrl \
+            xdotool \
+            dbus-x11
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -561,7 +584,7 @@ jobs:
           role: runtime
 
       - name: Cache Bun packages
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ matrix.label }}-${{ hashFiles('bun.lock', 'gui/bun.lock') }}
@@ -936,7 +959,7 @@ jobs:
           mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/deb
           cp -r "${CARGO_TARGET_DIR}/${{ matrix.target }}/release/bundle/deb/." src-tauri/target/${{ matrix.target }}/release/bundle/deb/
 
-      - name: Verify Linux sidecar and keyring inside AppImage
+      - name: Verify Linux sidecar and keyring inside AppImage and deb
         if: runner.os == 'Linux'
         env:
           DESKTOP_TARGET: ${{ matrix.target }}
@@ -951,6 +974,25 @@ jobs:
             exit 1
           fi
           bash desktop/scripts/verify-linux-sidecar.sh "$appimage_dir"
+          deb_dir="desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle/deb"
+          bash desktop/scripts/verify-linux-deb.sh "$deb_dir"
+
+      - name: Run headless Linux packaged desktop E2E
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          DESKTOP_TARGET: ${{ matrix.target }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          bundle_root="desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle"
+          report_path="${RUNNER_TEMP}/linux-packaged-e2e.json"
+          xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- sh -c '
+            openbox >/dev/null 2>&1 &
+            OB_PID=$!
+            trap "kill $OB_PID 2>/dev/null || true" EXIT
+            bun desktop/scripts/linux-packaged-e2e.ts --bundle-root "$1" --report "$2" --version "$3"
+          ' sh "$bundle_root" "$report_path" "$VERSION"
 
       - name: Collect desktop release assets
         shell: bash
@@ -1126,27 +1168,76 @@ jobs:
             --windows-signing-outcomes dist/windows-signing-outcomes \
             --release-receipt dist/verify/release-receipt.json
 
-      - name: Create or update GitHub Release
+      - name: Publish GitHub Release atomically
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
           TAG: ${{ needs.verify.outputs.release_tag }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
           SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
           IS_TAG_PUSH: ${{ needs.verify.outputs.is_tag_push }}
         run: |
-          set -euo pipefail
-          flags=(--notes-file dist/release-notes.md)
-          if [ "$IS_TAG_PUSH" = "true" ]; then
-            flags+=(--verify-tag)
-          else
-            flags+=(--target "$SOURCE_SHA")
-          fi
-          if [ "$PRERELEASE" = "true" ]; then
-            flags+=(--prerelease)
-          fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/release/* --clobber
-            gh release edit "$TAG" --notes-file dist/release-notes.md
-          else
-            gh release create "$TAG" dist/release/* --title "EasyProxy ${TAG}" "${flags[@]}"
-          fi
+          bun scripts/ci/publish-github-release.ts \
+            --repo "$GITHUB_REPOSITORY" \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --sha "$SOURCE_SHA" \
+            --dir dist/release \
+            --receipt dist/verify/release-receipt.json \
+            --notes dist/release-notes.md
+
+  post-release-check:
+    name: post-release verification
+    needs: [verify, publish-release]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: runtime
+
+      - name: Verify live published release and updater feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          TAG: ${{ needs.verify.outputs.release_tag }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+          REQUIRE_MANIFEST: ${{ needs.verify.outputs.dry_run != 'true' || secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: bun scripts/ci/post-release-check.ts
+
+  release-timing:
+    name: release timing summary
+    needs: [verify, package-standalone, package-desktop, verify-release, publish-release, post-release-check]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: runtime
+
+      - name: Write release step timing summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/ci/release-timing-report.ts

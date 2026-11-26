@@ -11,7 +11,7 @@ EasyProxy 桌面应用将原生托盘与 web 仪表盘结合。其内置 CLI 会
 
 ### macOS
 
-从[最新版本](https://github.com/AquilaXk/easyproxy/releases)下载 `EasyProxy-<version>-macos.dmg`。打开 DMG，将 `EasyProxy.app` 拖入“应用程序”。应用要求 macOS 13 或更高版本。
+从[最新版本](https://github.com/AquilaXk/easyproxy/releases)下载 `EasyProxy-<version>-macos-arm64.dmg`（Apple Silicon）或 `EasyProxy-<version>-macos-x64.dmg`（Intel）。打开 DMG，将 `EasyProxy.app` 拖入“应用程序”。应用要求 macOS 13 或更高版本。
 
 发布版 `EasyProxy.app` 使用 Developer ID 签名，并经过 Apple 公证，因此首次启动时，macOS 通常只会显示下载应用的标准确认提示。如果仍被阻止，请使用 **System Settings → Privacy & Security → Open Anyway**。
 
@@ -83,7 +83,7 @@ sudo apt install ./EasyProxy-<version>-linux-amd64.deb
 
 在桌面应用中，选择仪表盘的更新按钮即可打开应用更新页面。你可以在那里重新检查、安装待处理的已签名更新，或返回仪表盘。托盘菜单也提供相同的安装操作。如果安装失败，更新仍可重试。即使 Linux 桌面没有托盘图标，也可以使用此页面。普通浏览器仪表盘则管理该代理的包安装。
 
-安装更新前，会使用项目已签名的更新器公钥进行验证。在 macOS 上，应用内更新会下载 `EasyProxy-<version>-macos.app.tar.gz`；DMG 用于首次安装。只有配置了更新器密钥 secret，才会生成发布清单；生成时要求四个平台都完成签名。
+安装更新前，会使用项目已签名的更新器公钥进行验证。在 macOS 上，应用内更新会下载 `EasyProxy-<version>-macos-arm64.app.tar.gz` 或 `EasyProxy-<version>-macos-x64.app.tar.gz`；DMG 用于首次安装。只有配置了更新器密钥 secret，才会生成发布清单；生成时要求四个平台都完成签名。
 
 在 Windows 上也可以不打开应用窗口进行更新，例如通过 SSH。以运行 EasyProxy 的 Windows 账户打开具有管理员权限的终端，运行安装目录中的 `epx.exe`：`"C:\Program Files\EasyProxy\epx.exe" update --desktop`（如果安装在其他位置，请相应调整文件夹）。服务、以 SYSTEM 运行的计划任务或其他账户使用各自的 EasyProxy 主目录，找不到这个代理，会让它继续运行旧版本。它检查与托盘相同的已发布版本，使用相同的更新器密钥验证 MSI，任何不一致都会拒绝，然后静默安装，并重启仍在运行旧版本的代理，使新版本开始响应。`--check` 只报告状态，`--json` 输出机器可读的结果。退出码 0 表示完成或已是最新；1 表示没有安装任何内容；2 表示更新已安装但旧代理仍在运行（或需要先重启 Windows）；3 表示安装程序未在时限内结束。从其他安装启动的代理永远不会被停止。如果你手动安装了 MSI，`epx status` 会提示已安装版本比正在运行的代理更新，并显示此命令。
 

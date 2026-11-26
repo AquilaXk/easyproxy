@@ -11,7 +11,7 @@ Kontrol paneli çözümlenen yerel proxy uç noktasından sunulur (varsayılan p
 
 ### macOS
 
-[Son sürümden](https://github.com/AquilaXk/easyproxy/releases) `EasyProxy-<version>-macos.dmg` dosyasını indirin. DMG'yi açın ve `EasyProxy.app` uygulamasını Applications klasörüne sürükleyin. Uygulama macOS 13 veya daha yenisini gerektirir.
+[Son sürümden](https://github.com/AquilaXk/easyproxy/releases) Apple Silicon için `EasyProxy-<version>-macos-arm64.dmg` veya Intel için `EasyProxy-<version>-macos-x64.dmg` dosyasını indirin. DMG'yi açın ve `EasyProxy.app` uygulamasını Applications klasörüne sürükleyin. Uygulama macOS 13 veya daha yenisini gerektirir.
 
 `EasyProxy.app` sürüm derlemeleri Developer ID ile imzalanır ve Apple tarafından noterleştirilir. Dolayısıyla ilk açılışta macOS normalde yalnızca indirilen uygulamalar için standart onayı ister. macOS yine de engellerse **System Settings → Privacy & Security → Open Anyway** yolunu kullanın.
 
@@ -79,7 +79,7 @@ Tauri güncelleyici yeni bir uygulama sürümü bulduğunda macOS menü çubuğu
 
 Masaüstü uygulamasında, kontrol panelindeki güncelleme düğmesi uygulamanın güncelleme sayfasını açar. Buradan yeniden denetleyebilir, bekleyen imzalı güncellemeyi kurabilir veya kontrol paneline dönebilirsiniz. Aynı kurulum işlemi tepsi menüsünde de bulunur. Kurulum başarısız olursa güncelleme yeniden denenmek üzere tutulur. Bu sayfa, masaüstünde tepsi simgesi bulunmayan Linux'ta da çalışır. Normal bir tarayıcı kontrol paneli bunun yerine o proxy'nin paket kurulumunu yönetir.
 
-Güncellemeler kurulmadan önce projenin imzalı güncelleyici açık anahtarıyla doğrulanır. macOS'ta uygulama içi güncellemeler `EasyProxy-<version>-macos.app.tar.gz` dosyasını indirir; DMG ilk kurulum içindir. Sürüm bildirimi yalnızca güncelleyici anahtar sırrı yapılandırıldığında üretilir ve o durumda dört platformun tamamının imzalanmasını gerektirir.
+Güncellemeler kurulmadan önce projenin imzalı güncelleyici açık anahtarıyla doğrulanır. macOS'ta uygulama içi güncellemeler `EasyProxy-<version>-macos-arm64.app.tar.gz` veya `EasyProxy-<version>-macos-x64.app.tar.gz` dosyasını indirir; DMG ilk kurulum içindir. Sürüm bildirimi yalnızca güncelleyici anahtar sırrı yapılandırıldığında üretilir ve o durumda dört platformun tamamının imzalanmasını gerektirir.
 
 Windows'ta uygulama penceresi olmadan da güncelleyebilirsiniz; örneğin SSH üzerinden. Kurulumun kendi `epx.exe` dosyasını EasyProxy'i çalıştıran Windows hesabıyla açılmış, yönetici yetkili bir terminalde çalıştırın: `"C:\Program Files\EasyProxy\epx.exe" update --desktop` (başka bir klasöre kurduysanız yolu değiştirin). Bir hizmet, SYSTEM olarak çalışan zamanlanmış bir görev veya başka bir hesap kendi EasyProxy ana dizinini kullanır, bu proxy'yi bulamaz ve eski sürümde bırakır. Komut tepsi menüsüyle aynı yayımlanmış sürümü denetler, MSI'yı aynı güncelleyici anahtarıyla doğrular ve herhangi bir uyuşmazlıkta reddeder, arayüzsüz kurar, ardından hâlâ eski sürümü çalıştıran proxy'yi yeniden başlatarak yeni sürümün yanıt vermesini sağlar. `--check` yalnızca durumu bildirir, `--json` makine tarafından okunabilir bir sonuç yazar. Çıkış kodu 0 tamamlandı ya da zaten güncel, 1 hiçbir şey kurulmadı, 2 güncelleme kuruldu ama eski proxy hâlâ çalışıyor (veya önce Windows yeniden başlatılmalı), 3 kurucu zamanında bitmedi demektir. Başka bir kurulumdan başlatılmış bir proxy asla durdurulmaz. MSI'yı elle kurduysanız `epx status`, kurulu sürümün çalışan proxy'den yeni olduğunu söyler ve bu komutu gösterir.
 

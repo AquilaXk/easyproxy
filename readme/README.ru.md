@@ -7,9 +7,10 @@
 <a href="https://easyproxy.me/ru/reference/client-support/">Все поддерживаемые инструменты →</a></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/easyproxy"><img src="https://img.shields.io/npm/v/easyproxy?color=cb3837&label=npm&logo=npm" alt="версия npm"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/easyproxy?color=blue" alt="лицензия"></a>
-  <img src="https://img.shields.io/node/v/easyproxy?logo=node.js&label=node" alt="версия Node">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="статус CI"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?include_prereleases&label=release" alt="последний релиз"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="лицензия: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node >= 18">
 </p>
 
 ```bash
@@ -18,10 +19,13 @@ epx start
 ```
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="Скачать для macOS (.dmg)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Windows-.msi-24292f?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0zIDNoOC41djguNUgzem05LjUgMEgyMXY4LjVoLTguNXpNMyAxMi41aDguNVYyMUgzem05LjUgMEgyMVYyMWgtOC41eiIvPjwvc3ZnPg==" alt="Скачать для Windows (.msi)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Скачать для Linux (.AppImage)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.deb-24292f?logo=debian&logoColor=white" alt="Скачать для Linux (.deb)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Скачать для Windows (.msi)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="Скачать для macOS Apple Silicon (.dmg)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Скачать для Linux (.AppImage)"></a>
+  <br>
+  <sub><a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">Все файлы и контрольные суммы</a></sub>
 </p>
 
 <table>
@@ -122,11 +126,12 @@ epx start                         # прокси + панель управлен
 
 | Платформа | Файл | Примечания |
 |---|---|---|
-| macOS 14+ (Apple Silicon и Intel) | `EasyProxy-<version>-macos.dmg` | Универсальная сборка; не подписана до настройки Apple Developer ID и нотариализации (в Gatekeeper выберите **ПКМ → Открыть**) |
+| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Подписана Developer ID и нотариализована при наличии учётных данных Apple; без них остаётся неподписанной (в Gatekeeper выберите **ПКМ → Открыть**) |
+| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Отдельная сборка для Intel x64; те же требования Gatekeeper при отсутствии подписи |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Подпись кода через SignPath Foundation внедряется ([политика подписи кода](https://easyproxy.me/ru/reference/code-signing/)); пока релиз не подписан, SmartScreen спросит один раз — выберите **Подробнее → Выполнить в любом случае** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` или `-linux-amd64.deb` | Для трея нужен рабочий стол с поддержкой AppIndicator |
 
-Рядом с каждым файлом на странице релиза есть `.sha256`. На macOS 14+ приложение также
+Рядом с каждым файлом на странице релиза есть `.sha256`, а имена установщиков без версии (`EasyProxy-macos-arm64.dmg`, `EasyProxy-macos-x64.dmg`, `EasyProxy-windows-x64.msi`, `EasyProxy-linux-x86_64.AppImage`, `EasyProxy-linux-amd64.deb`) в `/releases/latest` ведут на те же проверенные сборки. На macOS 14+ приложение также
 поставляется с расширением WidgetKit, которое показывает состояние прокси, расход за
 сегодня и квоты провайдеров; модель снимков, которую оно отображает, находится в
 [`app/`](../app) (`MenuBarCore`). Чтобы собрать приложение самостоятельно, выполните
@@ -248,7 +253,7 @@ epx init      # интерактивная настройка: пишет ~/.eas
 
 | ОС | Статус | Менеджер служб | Настольное приложение (бета) |
 |---|---|---|---|
-| macOS (arm64 / x64) | Полная поддержка | launchd | Универсальный `.dmg` |
+| macOS (arm64 / x64) | Полная поддержка | launchd | `arm64` / `x64` `.dmg` |
 | Linux (x64 / arm64) | Полная поддержка | systemd (пользовательский unit) | `.AppImage` / `.deb` для x86_64 |
 | Windows (x64) | Полная поддержка | Task Scheduler (скрыто) / опциональная нативная служба (`--native`, WinSW) | `.msi` для x64 |
 
@@ -482,6 +487,10 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 easyproxy — независимый проект, поддерживаемый сообществом; он **не аффилирован с OpenAI, Anthropic или каким-либо другим провайдером и не одобрен ими**.
 
 Некоторые провайдеры — в частности Anthropic (Claude) — могут приостанавливать или ограничивать аккаунты, которые направляют API-трафик через сторонние прокси. **Используйте на свой страх и риск (UAYOR).** Прежде чем подключать провайдера, изучите его Terms of Service и убедитесь, что доступ через прокси разрешён. Мейнтейнеры easyproxy не несут ответственности за какие-либо действия вышестоящих провайдеров в отношении аккаунтов.
+
+## Обратная связь
+
+Если что-то работает не так или требует доработки, откройте задачу в [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) или загляните в [документацию](https://easyproxy.me/ru/).
 
 ## Лицензия
 

@@ -7,7 +7,7 @@ description: Используйте значок настольного прил
 
 ## Установка
 
-Загрузите `EasyProxy-<version>-macos.dmg` из [последнего выпуска](https://github.com/AquilaXk/easyproxy/releases). Откройте DMG и перетащите `EasyProxy.app` в Applications. Для настольного приложения требуется macOS 13 или новее, а для виджета — macOS 14 или новее.
+Загрузите `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) или `EasyProxy-<version>-macos-x64.dmg` (Intel) из [последнего выпуска](https://github.com/AquilaXk/easyproxy/releases). Откройте DMG и перетащите `EasyProxy.app` в Applications. Для настольного приложения требуется macOS 13 или новее, а для виджета — macOS 14 или новее.
 
 ## Первый запуск
 

@@ -7,7 +7,7 @@ macOS 메뉴 막대 항목은 EasyProxy 데스크톱 앱에 포함됩니다. 로
 
 ## 설치
 
-[최신 릴리스](https://github.com/AquilaXk/easyproxy/releases)에서 `EasyProxy-<version>-macos.dmg`를 다운로드하세요. DMG를 열고 `EasyProxy.app`을 Applications로 드래그합니다. 데스크톱 앱은 macOS 13 이상, 위젯은 macOS 14 이상이 필요합니다.
+[최신 릴리스](https://github.com/AquilaXk/easyproxy/releases)에서 Apple Silicon용 `EasyProxy-<version>-macos-arm64.dmg` 또는 Intel용 `EasyProxy-<version>-macos-x64.dmg`를 다운로드하세요. DMG를 열고 `EasyProxy.app`을 Applications로 드래그합니다. 데스크톱 앱은 macOS 13 이상, 위젯은 macOS 14 이상이 필요합니다.
 
 ## 첫 실행
 

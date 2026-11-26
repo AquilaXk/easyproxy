@@ -6,13 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repoPath } from "../helpers/repo-root";
 import {
+  DESKTOP_CONVENIENCE_INSTALLERS,
   expectedReleaseAssets,
   releaseMatrixTargets,
   STANDALONE_CONVENIENCE_ARCHIVES,
   verifyReleaseAssets,
 } from "../../desktop/scripts/verify-release-assets";
 import { platformFiles } from "../../desktop/scripts/updater-manifest";
-import { bundlesByTarget } from "../../desktop/scripts/collect-release-assets";
+import { bundlesByTarget, collectReleaseAssets } from "../../desktop/scripts/collect-release-assets";
 import {
   standaloneArchiveName,
   standaloneTargets as sharedStandaloneTargets,
@@ -123,6 +124,9 @@ function setupMockReleaseBundle(options: {
       const filename = `EasyProxy-${options.version}-${bundle.name}`;
       const payload = Buffer.from(`desktop:${target}:${bundle.name}:${options.version}`);
       writeCheckedAsset(releaseDir, filename, payload);
+      if (options.includeConvenience !== false && bundle.convenienceAlias) {
+        writeCheckedAsset(releaseDir, `EasyProxy-${bundle.name}`, payload);
+      }
       if (options.requireSignatures && updaterSuffixes.has(bundle.name)) {
         if (options.omitDebSig && bundle.name === "linux-amd64.deb") continue;
         let sig = signer.signPayload(payload, filename);
@@ -193,6 +197,10 @@ describe("release workflow and per-arch macOS packaging contracts", () => {
     const assets = expectedReleaseAssets({ version: "2.99.0", desktopTargets, requireSignatures: true });
 
     for (const alias of STANDALONE_CONVENIENCE_ARCHIVES) {
+      expect(assets).toContain(alias);
+      expect(assets).toContain(`${alias}.sha256`);
+    }
+    for (const alias of DESKTOP_CONVENIENCE_INSTALLERS) {
       expect(assets).toContain(alias);
       expect(assets).toContain(`${alias}.sha256`);
     }
@@ -302,6 +310,40 @@ describe("release workflow and per-arch macOS packaging contracts", () => {
         requireSignatures: false,
       }),
     ).toThrow("Comment signature verification failed");
+  });
+
+  test("collectReleaseAssets emits versioned installers, convenience aliases, and matching SHA-256 sidecars", () => {
+    const root = createTempDir("epx-collect-assets-");
+    const bundleRoot = join(root, "bundle");
+    const outDir = join(root, "out");
+    mkdirSync(join(bundleRoot, "dmg"), { recursive: true });
+    mkdirSync(join(bundleRoot, "macos"), { recursive: true });
+    const dmgBytes = Buffer.from("arm64-dmg-payload");
+    const appTarBytes = Buffer.from("arm64-app-tar-payload");
+    writeFileSync(join(bundleRoot, "dmg", "EasyProxy_2.99.0_aarch64.dmg"), dmgBytes);
+    writeFileSync(join(bundleRoot, "macos", "EasyProxy.app.tar.gz"), appTarBytes);
+    writeFileSync(join(bundleRoot, "macos", "EasyProxy.app.tar.gz.sig"), "fake-sig\n");
+
+    collectReleaseAssets({
+      version: "2.99.0",
+      target: "aarch64-apple-darwin",
+      out: outDir,
+      bundleRoot,
+    });
+
+    expect(readFileSync(join(outDir, "EasyProxy-2.99.0-macos-arm64.dmg"))).toEqual(dmgBytes);
+    expect(readFileSync(join(outDir, "EasyProxy-macos-arm64.dmg"))).toEqual(dmgBytes);
+    const dmgDigest = sha256Hex(dmgBytes);
+    expect(readFileSync(join(outDir, "EasyProxy-2.99.0-macos-arm64.dmg.sha256"), "utf8")).toBe(
+      `${dmgDigest}  EasyProxy-2.99.0-macos-arm64.dmg\n`,
+    );
+    expect(readFileSync(join(outDir, "EasyProxy-macos-arm64.dmg.sha256"), "utf8")).toBe(
+      `${dmgDigest}  EasyProxy-macos-arm64.dmg\n`,
+    );
+    expect(readFileSync(join(outDir, "EasyProxy-2.99.0-macos-arm64.app.tar.gz.sig"), "utf8")).toBe("fake-sig\n");
+    expect(() =>
+      readFileSync(join(outDir, "EasyProxy-macos-arm64.app.tar.gz")),
+    ).toThrow();
   });
 });
 

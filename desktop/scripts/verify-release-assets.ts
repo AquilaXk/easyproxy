@@ -50,6 +50,14 @@ export const STANDALONE_CONVENIENCE_ARCHIVES = [
   "easyproxy-windows-x64.zip",
 ] as const;
 
+export const DESKTOP_CONVENIENCE_INSTALLERS = [
+  "EasyProxy-macos-arm64.dmg",
+  "EasyProxy-macos-x64.dmg",
+  "EasyProxy-windows-x64.msi",
+  "EasyProxy-linux-x86_64.AppImage",
+  "EasyProxy-linux-amd64.deb",
+] as const;
+
 /**
  * The expected file set, derived from the producer tables rather than restated.
  * Signatures are required only for the assets the updater actually signs — the
@@ -78,6 +86,10 @@ export function expectedReleaseAssets(options: {
       expected.push(asset, `${asset}.sha256`);
       if (options.requireSignatures && updaterSuffixes.has(bundle.name)) {
         expected.push(`${asset}.sig`);
+      }
+      if (bundle.convenienceAlias) {
+        const alias = `EasyProxy-${bundle.name}`;
+        expected.push(alias, `${alias}.sha256`);
       }
     }
   }

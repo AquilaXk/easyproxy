@@ -7,7 +7,7 @@ macOS 選單列項目是 EasyProxy 桌面應用程式的一部分。它顯示本
 
 ## 安裝
 
-從[最新版本](https://github.com/AquilaXk/easyproxy/releases)下載 `EasyProxy-<version>-macos.dmg`。開啟 DMG 並將 `EasyProxy.app` 拖到 Applications。桌面應用程式需要 macOS 13 或更新版本；widget 需要 macOS 14 或更新版本。
+從[最新版本](https://github.com/AquilaXk/easyproxy/releases)下載 `EasyProxy-<version>-macos-arm64.dmg`（Apple Silicon）或 `EasyProxy-<version>-macos-x64.dmg`（Intel）。開啟 DMG 並將 `EasyProxy.app` 拖到 Applications。桌面應用程式需要 macOS 13 或更新版本；widget 需要 macOS 14 或更新版本。
 
 ## 首次啟動
 

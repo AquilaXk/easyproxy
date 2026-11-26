@@ -7,7 +7,7 @@ macOS 菜单栏项目是 EasyProxy 桌面应用的一部分。它显示来自本
 
 ## 安装
 
-从[最新版本](https://github.com/AquilaXk/easyproxy/releases)下载 `EasyProxy-<version>-macos.dmg`。打开 DMG，将 `EasyProxy.app` 拖入“应用程序”。桌面应用要求 macOS 13 或更高版本；widget 要求 macOS 14 或更高版本。
+从[最新版本](https://github.com/AquilaXk/easyproxy/releases)下载 `EasyProxy-<version>-macos-arm64.dmg`（Apple Silicon）或 `EasyProxy-<version>-macos-x64.dmg`（Intel）。打开 DMG，将 `EasyProxy.app` 拖入“应用程序”。桌面应用要求 macOS 13 或更高版本；widget 要求 macOS 14 或更高版本。
 
 ## 首次启动
 

@@ -1,0 +1,104 @@
+name: Dependency Audit
+
+on:
+  pull_request:
+    paths:
+      - package.json
+      - bun.lock
+      - gui/package.json
+      - gui/bun.lock
+      - desktop/package.json
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - .github/workflows/dependency-audit.yml
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - bun.lock
+      - gui/package.json
+      - gui/bun.lock
+      - desktop/package.json
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - .github/workflows/dependency-audit.yml
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-bun:
+    name: audit-bun
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: runtime
+
+      - name: Run high-severity Bun dependency audit
+        run: bun run audit:high
+
+  audit-cargo:
+    name: audit-cargo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_AUDIT_VERSION: "0.23.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          profile: minimal
+
+      - name: Restore cargo-audit
+        id: tool
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ env.CARGO_AUDIT_VERSION }}
+
+      - name: Install cargo-audit
+        if: steps.tool.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version "$CARGO_AUDIT_VERSION" --locked
+
+      - name: Save cargo-audit
+        if: steps.tool.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ steps.tool.outputs.cache-primary-key }}
+
+      - name: Audit every tracked Cargo.lock
+        run: |
+          set -euo pipefail
+          status=0
+          fetch=""
+          while IFS= read -r lock; do
+            echo "::group::cargo audit $lock"
+            cargo audit --file "$lock" $fetch || status=1
+            echo "::endgroup::"
+            fetch="--no-fetch"
+          done < <(git ls-files '*Cargo.lock')
+          exit "$status"

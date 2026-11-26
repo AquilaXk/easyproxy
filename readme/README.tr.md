@@ -7,9 +7,10 @@
 <a href="https://easyproxy.me/tr/reference/client-support/">Desteklenen tüm araçları görün →</a></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/easyproxy"><img src="https://img.shields.io/npm/v/easyproxy?color=cb3837&label=npm&logo=npm" alt="npm sürümü"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/easyproxy?color=blue" alt="lisans"></a>
-  <img src="https://img.shields.io/node/v/easyproxy?logo=node.js&label=node" alt="node sürümü">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI durumu"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?include_prereleases&label=release" alt="son sürüm"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="lisans: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node 18 ve üzeri">
 </p>
 
 ```bash
@@ -18,10 +19,13 @@ epx start
 ```
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/macOS-.dmg-24292f?logo=apple&logoColor=white" alt="macOS için indir (.dmg)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Windows-.msi-24292f?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0zIDNoOC41djguNUgzem05LjUgMEgyMXY4LjVoLTguNXpNMyAxMi41aDguNVYyMUgzem05LjUgMEgyMVYyMWgtOC41eiIvPjwvc3ZnPg==" alt="Windows için indir (.msi)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.AppImage-24292f?logo=linux&logoColor=white" alt="Linux için indir (.AppImage)"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/badge/Linux-.deb-24292f?logo=debian&logoColor=white" alt="Linux için indir (.deb)"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Windows için indir (.msi)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-arm64.dmg"><img src="../assets/download-macos.svg" alt="macOS Apple Silicon için indir (.dmg)"></a>
+  &nbsp;
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-x86_64.AppImage"><img src="../assets/download-linux.svg" alt="Linux için indir (.AppImage)"></a>
+  <br>
+  <sub><a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">Tüm sürüm dosyaları ve sağlama toplamları</a></sub>
 </p>
 
 <table>
@@ -122,11 +126,12 @@ başlatır; kontrol paneli proxy bağlantı noktasında kalır (başka bir tane 
 
 | Platform | Dosya | Notlar |
 |---|---|---|
-| macOS 14+ (Apple Silicon ve Intel) | `EasyProxy-<version>-macos.dmg` | Evrensel derleme; Apple Developer ID imzalama ve noter onayı yapılandırılana kadar imzasız (macOS Gatekeeper için **Sağ tık → Aç** gerekebilir) |
+| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Apple Developer ID kimlik bilgileri yapılandırıldığında imzalanır ve noter onayından geçer; aksi durumda imzasızdır (macOS Gatekeeper için **Sağ tık → Aç** gerekebilir) |
+| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Ayrı Intel x64 derlemesi; imzasız olduğunda aynı Gatekeeper notu geçerlidir |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation ile kod imzalama kullanıma alınıyor ([kod imzalama politikası](https://easyproxy.me/tr/reference/code-signing/)); bir sürüm imzalanana kadar SmartScreen bir kez sorar, **Diğer bilgiler → Yine de çalıştır** seçin |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` veya `-linux-amd64.deb` | Menü çubuğu simgesi AppIndicator destekli bir masaüstü gerektirir |
 
-Her dosyanın yanında sürüm sayfasında bir `.sha256` bulunur. macOS 14 ve üzerinde uygulama ayrıca
+Her dosyanın yanında sürüm sayfasında bir `.sha256` bulunur ve sürüm numarası içermeyen dosya adları (`EasyProxy-macos-arm64.dmg`, `EasyProxy-macos-x64.dmg`, `EasyProxy-windows-x64.msi`, `EasyProxy-linux-x86_64.AppImage`, `EasyProxy-linux-amd64.deb`) `/releases/latest` üzerinde aynı doğrulanmış derlemeleri gösterir. macOS 14 ve üzerinde uygulama ayrıca
 proxy durumunu, bugünkü kullanımı ve sağlayıcı kotalarını gösteren bir WidgetKit uzantısıyla gelir;
 görüntülediği anlık görüntü modeli [`app/`](../app) dizinindedir (`MenuBarCore`). Uygulamayı kendiniz
 derlemek için depo kökünde `bun install && bun run build:gui`, ardından `desktop/` içinde macOS'ta
@@ -245,7 +250,7 @@ ulaşamadıklarında sıfırdan farklı bir kodla çıkar). `epx status` / `epx 
 
 | İşletim sistemi | Durum | Servis yöneticisi | Masaüstü uygulaması (beta) |
 |---|---|---|---|
-| macOS (arm64 / x64) | Tam destekleniyor | launchd | Evrensel `.dmg` |
+| macOS (arm64 / x64) | Tam destekleniyor | launchd | `arm64` / `x64` `.dmg` |
 | Linux (x64 / arm64) | Tam destekleniyor | systemd (kullanıcı birimi) | x86_64 `.AppImage` / `.deb` |
 | Windows (x64) | Tam destekleniyor | Görev Zamanlayıcı (gizli) / isteğe bağlı yerel servis (`--native`, WinSW) | x64 `.msi` |
 
@@ -478,6 +483,10 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 easyproxy bağımsız, toplulukça sürdürülen bir projedir ve **OpenAI, Anthropic ya da başka herhangi bir sağlayıcıyla bağlantılı değildir, onlar tarafından onaylanmamıştır**.
 
 Bazı sağlayıcılar — özellikle Anthropic (Claude) — API trafiğini üçüncü taraf bir proxy üzerinden geçiren hesapları askıya alabilir ya da kısıtlayabilir. **Kullanım riski size aittir (UAYOR).** Bir sağlayıcıyı bağlamadan önce, proxy tabanlı erişime izin verildiğini doğrulamak için hizmet koşullarını inceleyin. easyproxy bakımcıları, yukarı akış sağlayıcılarının aldığı hesap kararlarından sorumlu değildir.
+
+## Geri bildirim
+
+İş akışınızda sorun çıkarsa veya bir hata fark ederseniz [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) üzerinden bildirin ya da [belgelere](https://easyproxy.me/tr/) göz atın.
 
 ## Lisans
 
