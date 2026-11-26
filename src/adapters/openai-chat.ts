@@ -800,8 +800,9 @@ export function createOpenAIChatAdapter(provider: EpxProviderConfig): ProviderAd
         const references = reconcileStructuredToolCalls(structuredCalls, answerText, /(?:^|[/-])mimo-v2(?:\.|$)/i.test(lastRequestedModelId ?? ""));
         structuredCalls.forEach((call, index) => { call.delta.arguments = references[index]!.argumentsText; });
         const stopReason = stopReasonFor(choice.finish_reason);
+        const beforeBare = events.length;
         reconcileStandaloneBareToolCallEvents(events, contentStart, contentEnd, references, budget, lastRequestedModelId, freeformTools, name => toolNames.restore(name));
-        reconcileLeakedToolCallEvents(events, contentStart, contentEnd, references, budget, leakedToolOptions, stopReason);
+        reconcileLeakedToolCallEvents(events, contentStart, contentEnd + (events.length - beforeBare), references, budget, leakedToolOptions, stopReason);
         events.push({
           type: "done",
           usage,

@@ -260,12 +260,22 @@ function isPublicIpv6Host(host: string): boolean {
   if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0xffff) {
     return isPublicIpv4Tuple((h[6]! >> 8) & 0xff, h[6]! & 0xff, (h[7]! >> 8) & 0xff);
   }
+  // IPv4-translated ::ffff:0:a.b.c.d
+  if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0xffff && h[5] === 0) {
+    return isPublicIpv4Tuple((h[6]! >> 8) & 0xff, h[6]! & 0xff, (h[7]! >> 8) & 0xff);
+  }
   // NAT64 64:ff9b::/96
   if (h[0] === 0x0064 && h[1] === 0xff9b && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0) {
     return isPublicIpv4Tuple((h[6]! >> 8) & 0xff, h[6]! & 0xff, (h[7]! >> 8) & 0xff);
   }
   const first = h[0]!;
-  if (first === 0x2001 && h[1] === 0x0db8) return false; // documentation 2001:db8::/32
+  if (first === 0x2002) return false; // 6to4 2002::/16 (can tunnel private/loopback IPv4)
+  if (first === 0x2001) {
+    if (h[1] === 0x0000) return false; // Teredo 2001::/32
+    if (h[1] === 0x0002 && h[2] === 0x0000) return false; // benchmarking 2001:2::/48
+    if (h[1] !== undefined && h[1] >= 0x0010 && h[1] <= 0x002f) return false; // ORCHID 2001:10::/28, 2001:20::/28
+    if (h[1] === 0x0db8) return false; // documentation 2001:db8::/32
+  }
   return first >= 0x2000 && first <= 0x3fff; // only global unicast 2000::/3
 }
 

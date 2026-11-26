@@ -272,12 +272,13 @@ export function formatAdapterTerminalUpstreamErrorResponse(
     denialMessage,
     logCtx,
   });
-  if (isShortOpenRouterInFlightBudget402({
-    status: upstreamResponse.status,
-    code: normalized.code,
-    type: normalized.type,
-    retryAfter: upstreamRetryAfter,
-  })) {
+  if (stampShortOpenRouterInFlightBudget402(logCtx, upstreamResponse.status, errorText, upstreamRetryAfter)
+    || isShortOpenRouterInFlightBudget402({
+      status: upstreamResponse.status,
+      code: normalized.code,
+      type: normalized.type,
+      retryAfter: upstreamRetryAfter,
+    })) {
     logCtx.causeHint = "rate-limit";
   }
   options.onCompactionRecoveryAdapterEvent?.({
@@ -371,7 +372,7 @@ export function stripFlexServiceTierForStandardRetry(
   }
 }
 
-function extractStructuredErrorEnvelope(rawText: string): { code?: string; type?: string; reason?: string; message?: string } {
+function extractStructuredErrorEnvelope(rawText: string): { code?: string; rootCode?: string; type?: string; reason?: string; message?: string } {
   const trimmed = rawText.trim();
   const body = trimmed.replace(/^Provider error \d{3}:\s*/i, "");
   try {
@@ -388,6 +389,7 @@ function extractStructuredErrorEnvelope(rawText: string): { code?: string; type?
       const str = (v: unknown) => (typeof v === "string" ? v : undefined);
       return {
         code: str(primary.code) ?? str(root.code),
+        rootCode: str(root.code),
         type: str(primary.type) ?? str(root.type),
         reason: str(primary.reason) ?? str(root.reason),
         message: str(primary.message) ?? str(root.message) ?? (typeof root.detail === "string" ? root.detail : undefined) ?? trimmed,
@@ -442,6 +444,7 @@ export async function isShortOpenRouterInFlightBudget402Response(
   return isShortOpenRouterInFlightBudget402({
     status: 402,
     code: env.code,
+    rootCode: env.rootCode,
     type: env.type,
     message: env.message,
     retryAfter,
@@ -461,6 +464,7 @@ export function stampShortOpenRouterInFlightBudget402(
   if (!isShortOpenRouterInFlightBudget402({
     status: 402,
     code: env.code,
+    rootCode: env.rootCode,
     type: env.type,
     message: env.message,
     retryAfter,
@@ -566,13 +570,19 @@ export async function recoverPassthroughEffortAndConfigRepairs<F>(params: {
       modelId: parsed.modelId,
     })) {
     configRepairGuard.attempted = true;
+    const prevStripConfigUpdate = parsed._stripConfigurationUpdateItems;
+    const prevRawBody = parsed._rawBody;
     parsed._stripConfigurationUpdateItems = true;
     parsed._rawBody = stripCanonicalOnlyInputItems(parsed._rawBody);
     const refusal = reserveRetrySpend ? await retainPacedRetryResponse(upstreamResponse, signal)
       : comboAttempt ? upstreamResponse : undefined;
     if (!refusal) try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
     const result = await rebuildAndRefetch("reasoning-effort-downgrade", refusal);
-    if (result && typeof result === "object" && "failed" in result) return { kind: "return", response: result.failed };
+    if (result && typeof result === "object" && "failed" in result) {
+      parsed._stripConfigurationUpdateItems = prevStripConfigUpdate;
+      parsed._rawBody = prevRawBody;
+      return { kind: "return", response: result.failed };
+    }
     if (refusal && refusal !== result) try { void refusal.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
     return { kind: "continue", response: result };
   }

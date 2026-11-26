@@ -212,6 +212,7 @@ export async function consumeComboFailure(
   const shortInFlight402 = isShortOpenRouterInFlightBudget402({
     status: response.status,
     code: upstreamCode ?? upstreamRootCode,
+    rootCode: upstreamRootCode,
     type: upstreamType,
     retryAfter: cooldownRetryAfter ?? effectiveRetryAfter,
     now,

@@ -36,6 +36,7 @@ export interface UpstreamConditionEvidence {
   status: number;
   type?: string;
   code?: string;
+  rootCode?: string;
   reason?: string;
   message?: string;
   retryAfter?: string | null;
@@ -123,7 +124,7 @@ export function parseShortRetryAfterMs(
  */
 export function isShortOpenRouterInFlightBudget402(evidence: UpstreamConditionEvidence): boolean {
   if (evidence.status !== 402) return false;
-  const tokens = [token(evidence.code), token(evidence.type), token(evidence.reason)];
+  const tokens = [token(evidence.code), token(evidence.rootCode), token(evidence.type), token(evidence.reason)];
   if (!tokens.includes(OPENROUTER_IN_FLIGHT_BUDGET_CODE)) return false;
   return parseShortRetryAfterMs(evidence.retryAfter, evidence.retryAfterMs, evidence.now) !== undefined;
 }

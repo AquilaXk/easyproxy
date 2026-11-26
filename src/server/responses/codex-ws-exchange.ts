@@ -328,6 +328,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         ? payload.error
         : record(payload.response) ? payload.response.error : undefined;
       const projection = new Response(JSON.stringify({ error: refusalErrorBody(source) }), { status, headers });
+      recordCodexWsActualSentFrame(projection, frameText);
       markCodexWsPreludeProjection(projection);
       markCodexWsStage(projection, stage);
       const observed = Boolean(metadata && onQuota);

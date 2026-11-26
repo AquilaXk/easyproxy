@@ -220,4 +220,39 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
     expect(parsed.providers.gw!.leakedToolCallModels).toEqual(["qwen3-coder"]);
     expect(routedProviderConfig("gw", parsed.providers.gw!).leakedToolCallModels).toEqual(["qwen3-coder"]);
   });
+
+  test("recovers leaked Harmony and XML tool calls even when inline <think> produces reasoning_raw_delta events", async () => {
+    const harmonyWithThink = `<think>Need weather first.</think>\nCheck: <|channel|>commentary to=functions.get_weather<|message|>{"city":"Tokyo"}<|call|>`;
+    for (const mode of ["buffered", "streamed"] as const) {
+      const events = await runChat({
+        mode,
+        model: "openai/gpt-oss-120b",
+        provider: { inlineThinkTagModels: ["openai/gpt-oss-120b"] },
+        chunks: mode === "buffered"
+          ? [harmonyWithThink]
+          : ["<think>Need weather first.</think>\nCheck: ", "<|channel|>commentary to=functions.get_weather", "<|message|>{\"city\":\"Tokyo\"}<|call|>"],
+      });
+      const thinking = events
+        .filter((e): e is Extract<AdapterEvent, { type: "reasoning_raw_delta" }> => e.type === "reasoning_raw_delta")
+        .map(e => e.text)
+        .join("");
+      expect(thinking).toContain("Need weather first.");
+      expect(toolCallsFrom(events)).toEqual([{ id: "call_1", name: "get_weather", arguments: "{\"city\":\"Tokyo\"}" }]);
+      expect(visible(events)).toBe("\nCheck: ");
+    }
+
+    const xmlWithThink = `<think>Invoke ping</think><antml:invoke name="ping"></antml:invoke>`;
+    const bufferedXml = await runChat({
+      mode: "buffered",
+      model: "qwen3-coder",
+      chunks: [xmlWithThink],
+      provider: {
+        inlineThinkTagModels: ["qwen3-coder"],
+        leakedToolCallModels: ["qwen3-coder"],
+      },
+    });
+    expect(bufferedXml.some(e => e.type === "reasoning_raw_delta")).toBe(true);
+    expect(toolCallsFrom(bufferedXml)).toEqual([{ id: "call_1", name: "ping", arguments: "{}" }]);
+    expect(visible(bufferedXml)).toBe("");
+  });
 });

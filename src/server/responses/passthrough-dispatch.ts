@@ -1226,6 +1226,9 @@ export async function preparePassthroughExchange(
             claimAmbiguousResend: recovery === "empty-completion" ? undefined : claimPreHeaderResend },
         );
       } catch (err) {
+        if (preserveFailureResponse && err instanceof SendBudgetExhaustedError && !options.abortSignal?.aborted && !req.signal.aborted) {
+          return { failed: preserveFailureResponse };
+        }
         return { failed: transportFailureResponse(err, replay) };
       } finally {
         // A no-op once the permit was used or once onSendsConsumed settled it; it only refunds

@@ -350,4 +350,44 @@ describe("Phase 1-A: perMessageEffort extensions and 400 recovery", () => {
     expect(isConfigurationUpdateUnsupportedMemoized("chatgpt.com", "gpt-5.6-sol", t0 + 1000)).toBe(true);
     expect(isConfigurationUpdateUnsupportedMemoized("chatgpt.com", "gpt-5.6-sol", t0 + CONFIGURATION_UPDATE_CAPABILITY_TTL_MS + 1)).toBe(false);
   });
+
+  test("pre-output Anthropic perMessageEffort 400 preserves real 400 error when 1-send budget blocks resend", async () => {
+    const { createRequestExecutionBudget } = await import("../../src/lib/request-execution-budget");
+    const config = { providers: { "anthropic-key": provider() } } as unknown as EpxConfig;
+    replies.push(
+      () => new Response(anthropicTextSse("ok 1", { read: 0, write: 1000 }), { headers: { "content-type": "text/event-stream" } }),
+      () => new Response(JSON.stringify({
+        type: "error",
+        error: { type: "invalid_request_error", message: "output_config.effort requires a model that supports per-turn effort; this model does not" },
+      }), { status: 400, headers: { "content-type": "application/json" } }),
+    );
+    const input1 = [userMsg("start")];
+    const r1 = await turn(config, "anthropic-key/claude-sonnet-5-5", input1, "high", { "x-codex-turn-metadata": NEW_META });
+    expect(r1.status).toBe(200);
+
+    const budget = createRequestExecutionBudget({
+      maxTotalModelSends: 1,
+      baseSendAllowance: 1,
+      finalRecoveryAllowance: 0,
+      maxAlternateTargetSends: 0,
+      maxTargetTransitions: 0,
+    }, "per-msg-effort-one-send");
+    const input2 = [...input1, ...outputItemsOf(r1.text), userMsg("lower")];
+    const res2 = await handleResponses(new Request("http://localhost/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "anthropic-key/claude-sonnet-5-5",
+        input: input2,
+        stream: true,
+        reasoning: { effort: "low" },
+        prompt_cache_key: "thread-p1a",
+      }),
+    }), config, { model: "", provider: "" }, { sendBudget: budget });
+    const body2 = await res2.text();
+    expect(sent).toHaveLength(2); // turn 1 + turn 2 only; budget refused resend
+    expect(res2.status).toBe(400);
+    expect(body2).toContain("per-turn effort");
+    expect(body2).not.toContain("request_send_budget_exhausted");
+  });
 });

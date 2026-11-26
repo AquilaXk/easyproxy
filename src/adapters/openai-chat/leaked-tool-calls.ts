@@ -434,6 +434,23 @@ export function recoverLeakedToolCallsFromText(
   };
 }
 
+function removeTextRangesInSpan(
+  piece: string,
+  spanStart: number,
+  removed: readonly { start: number; end: number }[],
+): string {
+  const spanEnd = spanStart + piece.length;
+  const local: Array<{ start: number; end: number }> = [];
+  for (const range of removed) {
+    if (range.end <= spanStart || range.start >= spanEnd) continue;
+    local.push({
+      start: Math.max(0, range.start - spanStart),
+      end: Math.min(piece.length, range.end - spanStart),
+    });
+  }
+  return removeTextRanges(piece, local);
+}
+
 /** Buffered response reconciliation companion to `reconcileStandaloneBareToolCallEvents`. */
 export function reconcileLeakedToolCallEvents(
   events: AdapterEvent[],
@@ -446,16 +463,34 @@ export function reconcileLeakedToolCallEvents(
 ): void {
   if (!options || references.length > 0 || stopReason !== undefined) return;
   const segment = events.slice(contentStart, contentEnd);
-  if (segment.some(event => event.type !== "text_delta")) return;
-  const answerText = segment.map(event => (event.type === "text_delta" ? event.text : "")).join("");
-  if (Buffer.byteLength(answerText, "utf8") > MAX_TURN_RECOVERY_BYTES) return;
+  if (segment.some(event => event.type === "tool_call_start")) return;
+  const textParts: string[] = [];
+  let answerTextLength = 0;
+  const spans = new Map<number, { start: number; end: number }>();
+  for (let i = 0; i < segment.length; i += 1) {
+    const event = segment[i]!;
+    if (event.type !== "text_delta") continue;
+    const start = answerTextLength;
+    answerTextLength += event.text.length;
+    spans.set(i, { start, end: answerTextLength });
+    textParts.push(event.text);
+  }
+  const answerText = textParts.join("");
+  if (answerText.length === 0 || Buffer.byteLength(answerText, "utf8") > MAX_TURN_RECOVERY_BYTES) return;
   let seq = 0;
   const result = recoverLeakedToolCallsFromText(answerText, options, () => `call_${++seq}`);
   if (result.overflowed || result.calls.length === 0) return;
 
   const replacement: AdapterEvent[] = [];
-  if (result.remainingText.length > 0) {
-    replacement.push({ type: "text_delta", text: result.remainingText });
+  for (let i = 0; i < segment.length; i += 1) {
+    const event = segment[i]!;
+    if (event.type !== "text_delta") {
+      replacement.push(event);
+      continue;
+    }
+    const span = spans.get(i)!;
+    const cleaned = removeTextRangesInSpan(event.text, span.start, result.removedRanges);
+    if (cleaned.length > 0) replacement.push({ type: "text_delta", text: cleaned });
   }
   for (const call of result.calls) {
     budget.reserveTransient(Buffer.byteLength(call.arguments, "utf8"), { kind: "live_transient" }).release();

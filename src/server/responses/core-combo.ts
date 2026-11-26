@@ -1829,6 +1829,7 @@ export async function executeComboResponses(
     const failureReason = localDeadline ? undefined : classifyUpstreamCondition({
       status: failure.response.status,
       code: failure.upstreamCode ?? failure.upstreamRootCode,
+      rootCode: failure.upstreamRootCode,
       type: failure.upstreamType,
       message: failure.upstreamMessage,
       retryAfter: failure.retryAfter,
@@ -1842,6 +1843,7 @@ export async function executeComboResponses(
     // Legacy privacy mode is specific to the serving account.
     const failureCooldownScope = localDeadline || xaiPrivacyRefusal || isPolicyCandidateRefusal(failure.response) ? "none" : comboFailureCooldownScope(failure.response.status, failure.classificationText, {
       code: failure.upstreamCode ?? failure.upstreamRootCode,
+      rootCode: failure.upstreamRootCode,
       type: failure.upstreamType,
       retryAfter: failure.retryAfter,
       malformedResponseFormat: failure.malformedResponseFormat,

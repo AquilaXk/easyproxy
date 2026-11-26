@@ -60,7 +60,7 @@ function passthroughConfig(): EpxConfig {
           { id: "k2", key: "test-key-flex-2" },
         ],
         models: ["gpt-5.4"],
-        transientRetries: { attempts: 3 },
+        transientRetryOn5xx: { enabled: true, attempts: 3 },
         fetch: (input: RequestInfo | URL, init?: RequestInit) => fixtureFetch(input, init),
       },
       "openai-chat-flex": {
@@ -76,7 +76,7 @@ function passthroughConfig(): EpxConfig {
         models: ["gpt-5.4"],
         chatServiceTier: true,
         supportsServiceTier: true,
-        transientRetries: { attempts: 3 },
+        transientRetryOn5xx: { enabled: true, attempts: 3 },
         fetch: (input: RequestInfo | URL, init?: RequestInit) => fixtureFetch(input, init),
       },
       openrouter: {
@@ -446,5 +446,131 @@ describe("Phase 1-C short OpenRouter openrouter_in_flight_budget 402 separation"
     expect(response.status).toBe(402);
     expect(isComboTargetInCooldown("or-short-402", { provider: "openrouter", model: "openai/gpt-5.4" })).toBe(true);
     expect(isComboTargetInCooldown("or-short-402", { provider: "openrouter", model: "anthropic/claude-sonnet-4.6" })).toBe(true);
+  });
+
+  test("combo and passthrough recognize root openrouter_in_flight_budget even when nested error.code is numeric 402 or '402'", async () => {
+    for (const nestedCode of [402, "402"] as const) {
+      clearComboTargetCooldowns();
+      const sends = captureUpstream((_index, _url, body) => {
+        if (body.model === "openai/gpt-5.4") {
+          return Response.json({
+            code: "openrouter_in_flight_budget",
+            error: {
+              code: nestedCode,
+              message: "Temporary in-flight spend limit exceeded",
+            },
+          }, { status: 402, headers: { "retry-after": "5" } });
+        }
+        return responsesOk(`resp-after-${String(nestedCode)}`);
+      });
+
+      const directLogCtx: RequestLogContext = { model: "", provider: "" };
+      const directResp = await handleResponses(
+        responsesReq("openrouter/openai/gpt-5.4"),
+        passthroughConfig(),
+        directLogCtx,
+      );
+      await directResp.text();
+      expect(directResp.status).toBe(402);
+      expect(directLogCtx.causeHint).toBe("rate-limit");
+
+      const comboLogCtx: RequestLogContext = { model: "", provider: "" };
+      const comboResp = await handleResponses(
+        responsesReq("combo/or-short-402"),
+        passthroughConfig(),
+        comboLogCtx,
+      );
+      await comboResp.text();
+      expect(comboResp.status).toBe(200);
+      expect(sends.filter(s => s.body.model === "anthropic/claude-sonnet-4.6")).toHaveLength(1);
+      expect(isComboTargetInCooldown("or-short-402", { provider: "openrouter", model: "openai/gpt-5.4" })).toBe(true);
+      expect(isComboTargetInCooldown("or-short-402", { provider: "openrouter", model: "anthropic/claude-sonnet-4.6" })).toBe(false);
+    }
+  });
+
+  test("adapter flex_unavailable preserves original upstream refusal when send budget prevents resend", async () => {
+    const sends = captureUpstream(() => Response.json({
+      error: { code: "flex_unavailable", message: "Flex lane capacity temporarily exceeded" },
+    }, { status: 429 }));
+
+    const cfg = passthroughConfig();
+    const budget = createRequestExecutionBudget({
+      maxTotalModelSends: 1,
+      baseSendAllowance: 1,
+      finalRecoveryAllowance: 0,
+      maxAlternateTargetSends: 0,
+      maxTargetTransitions: 0,
+    }, "adapter-flex-budget-one");
+
+    const logCtx: RequestLogContext = { model: "", provider: "" };
+    const response = await handleResponses(
+      responsesReq("openai-chat-flex/gpt-5.4", { service_tier: "flex" }),
+      cfg,
+      logCtx,
+      { sendBudget: budget },
+    );
+    const body = await response.text();
+    expect(sends).toHaveLength(1);
+    expect(response.status).toBe(429);
+    expect(body).toContain("Flex lane capacity temporarily exceeded");
+    expect(body).not.toContain("request_send_budget_exhausted");
+  });
+
+  test("adapter combo flex_unavailable preserves upstream 429 when transientRetryOn5xx.attempts=1 blocks resend", async () => {
+    const sends = captureUpstream((_index, url, body) => {
+      if (url.includes("api.openai.com")) {
+        expect(body.service_tier).toBe("flex");
+        return Response.json({
+          error: { code: "flex_unavailable", message: "Flex lane capacity temporarily exceeded" },
+        }, { status: 429 });
+      }
+      return responsesOk("ok-backup");
+    });
+
+    const cfg = passthroughConfig();
+    cfg.providers["openai-chat-flex"]!.transientRetryOn5xx = { enabled: true, attempts: 1 };
+    cfg.combos = {
+      ...cfg.combos,
+      "chat-flex-combo": {
+        targets: [
+          { provider: "openai-chat-flex", model: "gpt-5.4" },
+          { provider: "backup", model: "gpt-5.4" },
+        ],
+      },
+    };
+
+    const logCtx: RequestLogContext = { model: "", provider: "" };
+    const response = await handleResponses(
+      responsesReq("combo/chat-flex-combo", { service_tier: "flex" }),
+      cfg,
+      logCtx,
+    );
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(body).toContain("ok-backup");
+    // Child 1 sent only once with flex, then combo hopped cleanly to backup.
+    expect(sends.filter(s => s.url.includes("api.openai.com"))).toHaveLength(1);
+    expect(sends.some(s => s.url.includes("backup.example.test"))).toBe(true);
+  });
+
+  test("adapter single-target 503 flex_unavailable preserves upstream 503 when transientRetryOn5xx.attempts=1 blocks resend", async () => {
+    const sends = captureUpstream(() => Response.json({
+      error: { code: "service_tier_capacity_exceeded", message: "Flex pool exhausted upstream" },
+    }, { status: 503 }));
+
+    const cfg = passthroughConfig();
+    cfg.providers["openai-chat-flex"]!.transientRetryOn5xx = { enabled: true, attempts: 1 };
+
+    const logCtx: RequestLogContext = { model: "", provider: "" };
+    const response = await handleResponses(
+      responsesReq("openai-chat-flex/gpt-5.4", { service_tier: "flex" }),
+      cfg,
+      logCtx,
+    );
+    const body = await response.text();
+    expect(sends).toHaveLength(1);
+    expect(response.status).toBe(503);
+    expect(body).toContain("Flex pool exhausted upstream");
+    expect(body).not.toContain("request_send_budget_exhausted");
   });
 });

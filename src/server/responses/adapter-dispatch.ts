@@ -18,6 +18,7 @@ import { classifyAnthropic429 } from "../../oauth/anthropic-rate-limit-policy";
 import { authorizeResendForRecovery } from "../../lib/request-resend-gate";
 import { ambiguousResendAllowanceFor, selfContainedResponsesBody } from "./reset-replay";
 import { transientSendCapFor, type ResponsesSendBudget } from "./request-send-budget";
+import { CODEX_TEXT_GUARDED_BUDGET_POLICY } from "../../lib/request-execution-budget";
 import { sanitizeNonReplayableUpstreamError } from "./non-replayable-error";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import { providerConnectTimeoutMs, providerStallTimeoutSec, resolveConnectTimeoutMs, resolveStallTimeoutMs } from "../../stall-timeout";
@@ -357,7 +358,11 @@ export async function prepareAdapterExchange(
   };
   const reserveCompactRetrySpend = () => sendBudgetState.compactHandoffSendCeiling !== undefined
     && sendBudgetState.adapterSendBudget?.spendEnforced === true;
-  const genericRefetchCountsSends = () => !!sendBudgetState.workflowRootId || options.comboAttempt === true || sendBudgetState.adapterSendBudget?.spendEnforced === true
+  const callerBoundedBudget = sendBudgetState.adapterSendBudget !== undefined && (
+    sendBudgetState.adapterSendBudget.explicitSendCeiling !== undefined
+    || sendBudgetState.adapterSendBudget.policy.maxTotalModelSends < CODEX_TEXT_GUARDED_BUDGET_POLICY.maxTotalModelSends
+  );
+  const genericRefetchCountsSends = () => !!sendBudgetState.workflowRootId || options.comboAttempt === true || callerBoundedBudget || sendBudgetState.adapterSendBudget?.spendEnforced === true
     || transientRetryPolicyFor(route.provider) !== null || resetReplayPolicyFor(route.provider) !== null
     || !!anthropicInstance || billingPoolRequest || recoveryFlags.billingRecoveryActive || autoPauseEnabled || imageRecovery !== undefined;
   let handoffPermit: ResponsesSendBudget["pendingHopPermit"];
@@ -493,11 +498,11 @@ export async function prepareAdapterExchange(
           reserveRetrySpend: reserveCompactRetrySpend,
           flexTierSent: hasOutboundFlexServiceTier(builtInitialRequest.body, parsed),
           offlineWait: options.comboAttempt ? undefined : createProviderOfflineResendWait(route.providerName, route.provider, builtInitialRequest.url, config.offlineResendWaitSec),
-          ...(sendBudgetState.workflowRootId || sendBudgetState.adapterSendBudget?.spendEnforced || options.comboDispatchPermit || transientPolicy || resetPolicy || compactPrepaid || options.comboAttempt
+          ...(sendBudgetState.workflowRootId || sendBudgetState.adapterSendBudget?.spendEnforced || options.comboDispatchPermit || callerBoundedBudget || transientPolicy || resetPolicy || compactPrepaid || options.comboAttempt
             || anthropicInstance || billingPoolRequest || autoPauseEnabled || imageRecovery
             ? {
               // A pending compaction permit already booked this leg's first physical send.
-              ...(transientPolicy || resetPolicy || compactPrepaid || options.comboAttempt || anthropicInstance || autoPauseEnabled
+              ...(transientPolicy || resetPolicy || compactPrepaid || options.comboAttempt || callerBoundedBudget || anthropicInstance || autoPauseEnabled
                 ? {
                   attempts: Math.min(initialSendCap,
                     sendBudgetState.initialSendAllowance(initialSendCap) + (compactPrepaid ? 1 : 0)),
@@ -946,20 +951,28 @@ export async function prepareAdapterExchange(
         );
         if (hop.allowed) {
           perMessageEffortRepairGuard.attempted = true;
+          const refusal = (options.comboAttempt || reserveCompactRetrySpend() || callerBoundedBudget || sendBudgetState.workflowRootId !== undefined)
+            ? await retainFailureResponse()
+            : undefined;
           invalidateSameTargetRequest();
-          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+          if (!refusal) {
+            try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+          }
           sendBudgetState.pendingHopPermit = hop.permit;
           let result: Response | { failed: Response };
           try {
             result = await rebuildAndRefetch("reasoning-effort-downgrade", () => {
               if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError();
-            });
+            }, refusal);
           } finally {
             sendBudgetState.pendingHopPermit = undefined;
           }
           if ("failed" in result) {
             hop.permit?.release();
             return result.failed;
+          }
+          if (refusal && refusal !== result) {
+            try { void refusal.body?.cancel().catch(() => {}); } catch { /* already closed */ }
           }
           upstreamResponse = result;
           continue recovery;
@@ -1073,8 +1086,12 @@ export async function prepareAdapterExchange(
         }
       }
 
+      const flexConfiguredPolicy = transientRetryPolicyFor(route.provider);
+      const flexConfiguredExhausted = flexConfiguredPolicy !== null
+        && transientSendCapFor(flexConfiguredPolicy.attempts, sendBudgetState.targetSendsUsed) === 0;
       if (
         !flexTierDowngradeGuard.attempted
+        && !flexConfiguredExhausted
         && !isNonReplayableResponse(upstreamResponse)
         && await isFlexUnavailableRefusal(
           upstreamResponse,
@@ -1092,21 +1109,40 @@ export async function prepareAdapterExchange(
         );
         if (hop.allowed) {
           flexTierDowngradeGuard.attempted = true;
+          const prevTierDecision = parsed.options.tierDecision;
+          const prevServiceTier = parsed.options.serviceTier;
+          const prevRawBody = parsed._rawBody;
+          const refusal = (
+            options.comboAttempt
+            || reserveCompactRetrySpend()
+            || callerBoundedBudget
+            || sendBudgetState.workflowRootId !== undefined
+          )
+            ? await retainFailureResponse()
+            : undefined;
           stripFlexServiceTierForStandardRetry(parsed);
           invalidateSameTargetRequest();
-          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+          if (!refusal) {
+            try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+          }
           sendBudgetState.pendingHopPermit = hop.permit;
           let result: Response | { failed: Response };
           try {
             result = await rebuildAndRefetch("flex-tier-downgrade", () => {
               if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError();
-            });
+            }, refusal);
           } finally {
             sendBudgetState.pendingHopPermit = undefined;
           }
           if ("failed" in result) {
+            parsed.options.tierDecision = prevTierDecision;
+            parsed.options.serviceTier = prevServiceTier;
+            parsed._rawBody = prevRawBody;
             hop.permit?.release();
             return result.failed;
+          }
+          if (refusal && refusal !== result) {
+            try { void refusal.body?.cancel().catch(() => {}); } catch { /* already closed */ }
           }
           upstreamResponse = result;
           continue recovery;

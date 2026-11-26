@@ -1524,6 +1524,7 @@ export function comboFailureCooldownScope(
   message: string,
   options?: {
     code?: string | number | null;
+    rootCode?: string | null;
     type?: string | null;
     retryAfter?: string | null;
     malformedResponseFormat?: boolean;
@@ -1538,6 +1539,7 @@ export function comboFailureCooldownScope(
   if (isShortOpenRouterInFlightBudget402({
     status,
     code: rawCode ?? undefined,
+    rootCode: options?.rootCode ?? undefined,
     type: options?.type ?? undefined,
     retryAfter: options?.retryAfter,
   })) {
