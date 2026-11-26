@@ -129,7 +129,7 @@ epx start                         # 프록시 + 대시보드: localhost:10100
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation을 통해 코드 서명을 도입하고 있습니다 ([코드 서명 정책](https://easyproxy.me/ko/reference/code-signing/)). 서명되기 전 릴리스는 SmartScreen이 한 번 물으면 **추가 정보 → 실행**을 선택하세요 |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` 또는 `-linux-amd64.deb` | 트레이는 AppIndicator를 지원하는 데스크톱이 필요합니다 |
 
-릴리스 페이지에서 모든 파일 옆에 `.sha256` 체크섬이 함께 올라가며, 버전 번호 없는 파일 이름(`EasyProxy-macos-arm64.dmg`, `EasyProxy-macos-x64.dmg`, `EasyProxy-windows-x64.msi`, `EasyProxy-linux-x86_64.AppImage`, `EasyProxy-linux-amd64.deb`)도 `/releases/latest`에서 같은 빌드를 바로 내려받을 수 있습니다. macOS 14 이상에서는 프록시 상태,
+릴리스 페이지에서 모든 파일 옆에 `.sha256` 체크섬이 함께 올라갑니다. 버전 번호 없는 파일 이름(`EasyProxy-macos-arm64.dmg`, `EasyProxy-macos-x64.dmg`, `EasyProxy-windows-x64.msi`, `EasyProxy-linux-x86_64.AppImage`, `EasyProxy-linux-amd64.deb`)도 `/releases/latest`에서 같은 빌드를 바로 내려받을 수 있습니다. macOS 14 이상에서는 프록시 상태,
 오늘의 사용량, 프로바이더 쿼터를 보여 주는 WidgetKit 확장도 함께 설치됩니다. 위젯이 그리는
 스냅샷 모델은 [`app/`](../app)의 `MenuBarCore`에 있습니다. 앱을 직접 빌드하려면 저장소 루트에서
 `bun install && bun run build:gui`를 실행한 다음,
