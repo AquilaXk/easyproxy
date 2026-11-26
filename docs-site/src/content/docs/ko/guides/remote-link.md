@@ -38,7 +38,7 @@ Host devbox
 
 ## 이 컴퓨터를 Child로 연결하기
 
-Home의 프로바이더를 사용할 컴퓨터에서 다음을 진행합니다.
+Home의 프로바이더를 사용할 컴퓨터에서 다음 순서를 따릅니다.
 
 1. 대시보드에서 `#remote`를 열고 Remote Link를 켭니다.
 2. **Child**를 선택합니다. SSH 호스트 목록이 열립니다.
@@ -175,7 +175,7 @@ Home이 그 Child를 직접 업데이트할 수 없으면 행에 대신 무엇�
 
 카탈로그 전파는 기본으로 켜져 있습니다. Home의 카탈로그가 바뀌면(카탈로그 자동 새로 고침이 변경을 보고하거나 5분마다 하는 확인이 대시보드나 관리 API의 편집을 발견하면) Home은 편집이 끝나도록 60초를 기다립니다(첫 변경 후 최대 5분). 그다음 사용자의 조작 없이 대상 Child마다 백그라운드 SSH 세션을 열고 `epx link sync`와 같은 고정된 `epx sync --expect-link`를 실행합니다. Codex 재시작은 켜지 않는 한 하지 않습니다(아래 `childCodexRestart`). Home이 시작한 링크이고 터널이 연결되어 있고 다른 작업이 실행 중이지 않으며 이 Home이 그 Child에서 마지막으로 실행한 동기화가 변경보다 이전인 Child가 대상입니다. 카탈로그를 내려받기만 한 Child는 여전히 뒤처진 것으로 봅니다. 모델 요청을 중계 중인 Child는 Codex 설정이 이미 Home과 같고 그 설정을 적용한 뒤 EasyProxy 클라이언트 런타임이 재시작된 경우에만 동기화합니다. 그렇지 않으면 동기화가 그 런타임을 재시작하기 때문입니다. 그렇지 않으면 유휴 상태가 된 뒤 동기화합니다. 실패한 동기화는 5분 뒤 다시 시도하며 간격은 두 배씩 늘어 최대 6시간이 됩니다. 2.93.0보다 오래된 Child는 다른 버전을 보고할 때까지 다시 시도하지 않습니다. 이 작업들은 다른 작업과 똑같이 표시되며 `trigger: "auto"`가 붙습니다. 링크가 없는 Home에서는 이 중 어느 것도 실행되지 않습니다.
 
-전파로 고쳐지는 것은 Child의 카탈로그 파일입니다. Child에서 이미 실행 중인 Codex app-server는 재시작할 때까지 불러온 목록을 그대로 씁니다. `epx link restart-codex --link-id <id> --yes` 또는 `epx sync --restart-children`을 사용하거나 `epx link policy --child-codex-restart app-server-when-idle`로 Home이 app-server를 재시작하게 하세요. Home은 동기화가 실행될 때 여전히 유휴 상태인 Child에서만 이를 수행합니다. 이 설정은 다음 자동 동기화부터 적용되며 카탈로그가 이미 최신인 Child는 동기화되지 않으므로 재시작도 되지 않습니다. 그런 Child는 직접 재시작하세요.
+전파로 고쳐지는 것은 Child의 카탈로그 파일입니다. Child에서 이미 실행 중인 Codex app-server는 재시작할 때까지 불러온 목록을 그대로 씁니다. `epx link restart-codex --link-id <id> --yes` 또는 `epx sync --restart-children`을 사용하거나 `epx link policy --child-codex-restart app-server-when-idle`로 Home이 app-server를 재시작하게 하세요. Home은 동기화가 실행될 때 여전히 유휴 상태인 Child만 재시작합니다. 이 설정은 다음 자동 동기화부터 적용되며 카탈로그가 이미 최신인 Child는 동기화되지 않으므로 재시작도 되지 않습니다. 그런 Child는 직접 재시작하세요.
 
 정책은 Home의 `<configDir>/link/child-policy.json`에 저장되며 `config.json`에는 들어가지 않습니다.
 

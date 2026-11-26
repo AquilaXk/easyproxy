@@ -33,7 +33,12 @@ try {
       <section className="quota-summary-bar"><QuotaSummaryChips rows={rows} t={t} locale="en" /></section>
     );
   `);
-  const build = await Bun.build({ entrypoints: [entry], target: "browser", minify: true });
+  const build = await Bun.build({
+    entrypoints: [entry],
+    target: "browser",
+    minify: true,
+    define: { "import.meta.env.PROD": "true" },
+  });
   if (!build.success) throw new AggregateError(build.logs, "Browser fixture failed to bundle");
   const js = await build.outputs.find(file => file.path.endsWith(".js"))!.text();
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>${styles.join("\n")}</style>

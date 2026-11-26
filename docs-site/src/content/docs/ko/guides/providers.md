@@ -140,7 +140,7 @@ Google 도구 선언은 선택된 엔드포인트 클래스에 맞춰 컴파일�
 않습니다. `reject-lossy`에서는 제약을 지우는 Vertex 또는 Cloud Code Assist 복구가 동일하게 내용이 없는
 `google-tool-schema-repair`를 기록하고 변경 전송 없이 원래 400을 반환합니다. 정책을 생략하거나
 `compatible`이면 복구된 요청을 이전과 같이 다시 전송합니다. 직접 AI Studio는
-이 복구를 수행하지 않습니다. 네이티브 출력 스키마는 두 정책 경로 모두의 대상이 아닙니다.
+이 복구를 적용하지 않습니다. 네이티브 출력 스키마는 두 정책 경로 모두의 대상이 아닙니다.
 [디버그 명령어 참고 문서](/ko/reference/cli/agents/)도 확인하세요.
 
 
@@ -206,7 +206,7 @@ Kiro 로그인에는 Kiro CLI가 필요합니다. Unix에서는 `curl -fsSL http
 - **명시적 가져오기 전용:** easyproxy는 DeepSeek Harness의 설치 및 로그인 여부(`~/.dsh/.credentials.yaml`)를 감지하지만 사용자의 명시적 명령(`epx login dsh-account` 또는 웹 대시보드에서 가져오기 클릭) 없이 토큰을 자동 복사, 가져오기 또는 사용하지 않습니다.
 - **DSH 자격 증명 저장소 읽기 전용:** easyproxy는 `~/.dsh/.credentials.yaml`을 엄격히 읽기 전용으로 취급합니다. easyproxy는 DeepSeek Harness에 속한 어떠한 파일도 쓰기, 수정, 삭제하거나 권한을 변경하지 않습니다.
 - **격리된 자격 증명 복사본 및 로그아웃:** 가져오기 시 easyproxy는 DeepSeek의 신뢰할 수 있는 ID 엔드포인트(`/auth-api/v0/users/current`)에서 토큰을 검증하고 자체 복사본을 easyproxy 인증 저장소에 저장합니다. easyproxy에서 로그아웃하거나 계정을 삭제해도 easyproxy 로컬 복사본만 삭제되며 업스트림 원격 세션 로그아웃을 트리거하거나 DeepSeek Harness Desktop에서 로그아웃되지 않습니다.
-- **백그라운드 토큰 자동 갱신 없음 및 401 재가져오기:** DSH 세션 부여에는 자동 백그라운드 갱신 엔드포인트가 없습니다. 업스트림에서 HTTP 401(`ACCOUNT_TOKEN_INVALID`)을 반환하면 easyproxy는 계정을 `needsReauth`로 표시하고 라우팅을 중단합니다. 액세스를 복원하려면 사용자가 `epx login dsh-account`로 명시적 재가져오기를 수행해야 합니다.
+- **백그라운드 토큰 자동 갱신 없음 및 401 재가져오기:** DSH 세션 부여에는 자동 백그라운드 갱신 엔드포인트가 없습니다. 업스트림에서 HTTP 401(`ACCOUNT_TOKEN_INVALID`)을 반환하면 easyproxy는 계정을 `needsReauth`로 표시하고 라우팅을 중단합니다. 액세스를 복원하려면 사용자가 `epx login dsh-account`로 명시적으로 다시 가져와야 합니다.
 - **서드파티 면책 조항:** easyproxy는 서드파티 클라이언트의 세션 부여 재사용에 대한 DeepSeek의 공식 보증이나 승인을 주장하지 않습니다.
 
 ## 3. API 키 카탈로그
@@ -358,7 +358,7 @@ Provider API 프리셋(`commandcode`)은 현재 설정된 활성 키를 전송�
 Bearer 헤더를 사용하는 Chat Completions를 쓰지만 `claude-*` ID에는 `x-api-key`를 사용하는
 Anthropic Messages를 씁니다. Command Code가 해당 모델을 `/provider/v1/messages`에서만 제공하기
 때문입니다. 다른 엔드포인트에 `commandcode`라는 이름을 재사용한 프로바이더는 자체 통신 방식을
-유지합니다. OAuth 프리셋(`command-code`)은 저장된 계정 bearer로 인증된 모델 검색을 수행하고
+유지합니다. OAuth 프리셋(`command-code`)은 저장된 계정 bearer로 인증된 모델 검색을 실행하고
 `/alpha/generate`에서 생성 결과를 NDJSON으로 스트리밍합니다. 게이트웨이가 실제 도구 호출과 중복된
 MiMo 도구 호출 마크업을 텍스트로 되돌리면 해당 마크업을 제거합니다. MiMo 모델에서 선언된 도구 호출이
 완전하지만 대응하는 네이티브 호출이 없다면, 정상 종료된 뒤에만 이를 복원합니다. 중단되거나 필터링된

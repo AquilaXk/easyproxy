@@ -34,7 +34,7 @@ description: 리스너, 원격 접근, admission 키, 타임아웃, 저장소, �
 | `images?` | `EpxImagesConfig` | automatic OpenAI selection | Codex `image_gen`용 독립형 Images 릴레이 옵션입니다. |
 | `telemetry?` | `EpxTelemetryConfig` | 사용자 고지 후 기본 켜짐 | 익명 일일 사용 텔레메트리 동의 상태(`decision`, `decidedAt`, `noticeShownAt`)입니다. 사람이 고지를 보거나 동의하기 전에는 아무것도 전송하지 않습니다. `EPX_TELEMETRY=0` 또는 `DO_NOT_TRACK=1`로 재정의할 수 있습니다. [Telemetry (`telemetry`)](#telemetry-telemetry) 및 [텔레메트리 및 개인정보](/ko/guides/telemetry/)를 참고하세요. |
 
-오래된 개발 빌드가 백업 지원이 생기기 전에 resume-history 메타데이터를 바꿨다면, native-provider 복구를 강제로 수행하려면 `epx recover-history --legacy-openai --yes`를 실행합니다.
+오래된 개발 빌드가 백업 지원이 생기기 전에 resume-history 메타데이터를 바꿨다면 native-provider 복구를 강제로 실행하려면 `epx recover-history --legacy-openai --yes`를 실행합니다.
 이 명령은 정상적인 dedicated-provider history를 포함해 사용자 메시지가 있는 모든 `easyproxy` row를 재태깅합니다. 실행하기 전에 lifecycle reference의 전체 범위 경고를 확인하세요.
 
 ### 네이티브 Chat 시간 초과와 완료

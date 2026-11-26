@@ -281,6 +281,12 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
                   setSourcePath(e.target.value);
                   invalidateScannedPreview();
                 }}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !loading && !applying) {
+                    e.preventDefault();
+                    void runPreview();
+                  }
+                }}
                 placeholder={uxT(locale, "ccSwitch.sourcePlaceholder")}
                 disabled={loading || applying}
               />

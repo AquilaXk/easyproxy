@@ -137,7 +137,21 @@ export function ProviderEgressAndKeychainSection({
     if (snapshot.historySlim) setHistorySlim(snapshot.historySlim);
   }, []);
 
-  const loadLiveDetails = useCallback(async (signal?: AbortSignal) => {
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const prevProviderKeyRef = useRef(`${apiBase ?? ""}::${item.name}`);
+  const latestItemRef = useRef(item);
+  useEffect(() => {
+    latestItemRef.current = item;
+  });
+
+  const loadLiveDetails = useCallback(async (expectedProviderKey: string, signal?: AbortSignal) => {
     if (apiBase === undefined) return;
     const snapshot = await fetchLiveDetailsSnapshot(
       apiBase,
@@ -146,14 +160,9 @@ export function ProviderEgressAndKeychainSection({
       isCanonicalOpenAi,
       signal,
     );
-    if (!signal?.aborted) applySnapshot(snapshot);
+    if (!mountedRef.current || signal?.aborted || prevProviderKeyRef.current !== expectedProviderKey) return;
+    applySnapshot(snapshot);
   }, [apiBase, applySnapshot, isCanonicalOpenAi, item.name, supportsKeychain]);
-
-  const prevProviderKeyRef = useRef(`${apiBase ?? ""}::${item.name}`);
-  const latestItemRef = useRef(item);
-  useEffect(() => {
-    latestItemRef.current = item;
-  });
 
   useEffect(() => {
     const providerKey = `${apiBase ?? ""}::${item.name}`;
@@ -274,8 +283,8 @@ export function ProviderEgressAndKeychainSection({
         setKeychainMsg({ ok: false, text: data?.error ?? uxT(locale, "providerEgress.saveFailed") });
         return;
       }
-      await loadLiveDetails();
-      if (prevProviderKeyRef.current !== startProviderKey) return;
+      await loadLiveDetails(startProviderKey);
+      if (!mountedRef.current || prevProviderKeyRef.current !== startProviderKey) return;
       setKeychainMsg({
         ok: true,
         text: action === "store"

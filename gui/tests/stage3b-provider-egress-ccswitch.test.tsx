@@ -742,4 +742,131 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     expect(host.querySelector('[role="status"]')).toBeNull();
     expect(host.textContent).not.toContain("Credentials moved to OS Keychain");
   });
+
+  test("CcSwitchImportModal triggers preview when pressing Enter in sourcePath input", async () => {
+    let previewCalls = 0;
+    let lastPreviewPath = "";
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/providers/cc-switch/preview") && init?.method === "POST") {
+        previewCalls += 1;
+        lastPreviewPath = String((JSON.parse(String(init.body ?? "{}")) as { sourcePath?: string }).sourcePath ?? "");
+        return Response.json({
+          sourcePath: lastPreviewPath || "/tmp/cc.json",
+          allowPrivateNetwork: false,
+          providers: [],
+          totalFound: 0,
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <CcSwitchImportModal apiBase="http://127.0.0.1:10100" onClose={() => undefined} onChanged={() => undefined} />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    expect(previewCalls).toBe(1);
+
+    const sourceInput = host.querySelector<HTMLInputElement>("input.input")!;
+    await act(async () => {
+      setInputValue(sourceInput, "/tmp/enter-preview.json");
+    });
+    await act(async () => {
+      sourceInput.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flushTicks();
+
+    expect(previewCalls).toBe(2);
+    expect(lastPreviewPath).toBe("/tmp/enter-preview.json");
+  });
+
+  test("ProviderEgressAndKeychainSection drops late loadLiveDetails snapshot after provider switch", async () => {
+    let releaseAlphaReload!: (res: Response) => void;
+    let alphaKeychainGets = 0;
+    let refreshCalls = 0;
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/providers")) {
+        return Response.json([
+          { name: "alpha", hasProxy: false },
+          { name: "beta", hasProxy: false },
+        ]);
+      }
+      if (url.includes("/api/providers/keychain?name=alpha")) {
+        alphaKeychainGets += 1;
+        if (alphaKeychainGets === 1) {
+          return Response.json({ name: "alpha", store: "plaintext", keychainAvailable: true });
+        }
+        return await new Promise<Response>(resolve => {
+          releaseAlphaReload = resolve;
+        });
+      }
+      if (url.includes("/api/providers/keychain?name=beta")) {
+        return Response.json({ name: "beta", store: "keychain", keychainAvailable: true });
+      }
+      if (url.endsWith("/api/providers/keychain") && method === "POST") {
+        return Response.json({ ok: true });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            item={{ name: "alpha", authMode: "key", adapter: "openai" } as never}
+            isCanonicalOpenAi={false}
+            onRefreshConfig={() => { refreshCalls += 1; }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    const storeBtn = [...host.querySelectorAll("button")].find(b => b.textContent?.includes("Keychain"))!;
+    await act(async () => { storeBtn.click(); });
+    await flushTicks();
+    expect(typeof releaseAlphaReload).toBe("function");
+
+    // Switch to beta while alpha's post-save loadLiveDetails is still pending.
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            item={{ name: "beta", authMode: "key", adapter: "openai" } as never}
+            isCanonicalOpenAi={false}
+            onRefreshConfig={() => { refreshCalls += 1; }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    expect(host.textContent).toContain("OS Keychain");
+
+    await act(async () => {
+      releaseAlphaReload(Response.json({ name: "alpha", store: "plaintext", keychainAvailable: true }));
+    });
+    await flushTicks();
+
+    expect(refreshCalls).toBe(0);
+    expect(host.textContent).toContain("OS Keychain");
+    expect(host.querySelector('[role="status"]')).toBeNull();
+  });
 });

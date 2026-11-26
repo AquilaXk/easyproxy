@@ -151,17 +151,19 @@ export default function GatewayGuardrailsPanel({
 
   const handleSave = async () => {
     if (readOnly || saving) return;
-    const min = Number(minChars.trim());
-    const head = Number(headChars.trim());
-    const tail = Number(tailChars.trim());
-    if (
-      !Number.isSafeInteger(min) || min < 512 || min > 500_000
-      || !Number.isSafeInteger(head) || head < 0 || head > 100_000
-      || !Number.isSafeInteger(tail) || tail < 0 || tail > 100_000
-    ) {
+    const parsedMin = Number(minChars.trim());
+    const parsedHead = Number(headChars.trim());
+    const parsedTail = Number(tailChars.trim());
+    const minValid = Number.isSafeInteger(parsedMin) && parsedMin >= 512 && parsedMin <= 500_000;
+    const headValid = Number.isSafeInteger(parsedHead) && parsedHead >= 0 && parsedHead <= 100_000;
+    const tailValid = Number.isSafeInteger(parsedTail) && parsedTail >= 0 && parsedTail <= 100_000;
+    if (compressionEnabled && (!minValid || !headValid || !tailValid)) {
       setStatus({ ok: false, text: uxT(locale, "guardrails.saveFailed") });
       return;
     }
+    const min = minValid ? parsedMin : (data?.toolOutputCompression.minChars ?? 12_000);
+    const head = headValid ? parsedHead : (data?.toolOutputCompression.headChars ?? 4_000);
+    const tail = tailValid ? parsedTail : (data?.toolOutputCompression.tailChars ?? 4_000);
     setSaving(true);
     setStatus(null);
     try {
@@ -179,6 +181,11 @@ export default function GatewayGuardrailsPanel({
           },
         }),
       });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null) as { error?: string } | null;
+        setStatus({ ok: false, text: errBody?.error ?? uxT(locale, "guardrails.saveFailed") });
+        return;
+      }
       const updated = await readJsonIfOk<GuardrailsPayload>(res);
       if (!updated) {
         setStatus({ ok: false, text: uxT(locale, "guardrails.saveFailed") });

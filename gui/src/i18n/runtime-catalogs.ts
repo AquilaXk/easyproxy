@@ -30,10 +30,12 @@ export function hasAnyLoadedCatalog(): boolean {
 
 declare const require: ((id: string) => unknown) | undefined;
 
-// In Bun test / dev mode (!import.meta.env.PROD), populate all catalogs synchronously
-// so helpers and synchronous DOM tests reading non-English locales work immediately.
-// Vite statically substitutes import.meta.env.PROD === true and drops this branch.
-if (!import.meta.env.PROD && typeof require === "function") {
+// In Bun test / dev mode, populate all catalogs synchronously so helpers and synchronous DOM
+// tests reading non-English locales work immediately. Guard typeof import.meta.env for non-Vite
+// browser bundles (e.g. Bun.build test fixtures); Vite folds import.meta.env.PROD === true.
+const isProdRuntime = typeof import.meta.env !== "undefined" && import.meta.env.PROD;
+
+if (!isProdRuntime && typeof require === "function") {
   const mod = require("./catalogs") as { DICTS: Record<Locale, Dict> };
   Object.assign(LOADED_CATALOGS, mod.DICTS);
 }
@@ -103,7 +105,7 @@ export function resetRuntimeCatalogsForTests(loader: ((locale: Locale) => Promis
   IN_FLIGHT_CATALOGS.clear();
   lastLoadedDict = null;
   catalogImporterOverrideForTests = loader;
-  if (!loader && !import.meta.env.PROD && typeof require === "function") {
+  if (!loader && !isProdRuntime && typeof require === "function") {
     const mod = require("./catalogs") as { DICTS: Record<Locale, Dict> };
     Object.assign(LOADED_CATALOGS, mod.DICTS);
   }

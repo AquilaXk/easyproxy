@@ -529,4 +529,68 @@ describe("Antigravity v8 gateway UX & polish", () => {
     expect(loadCalls).toBe(1);
     expect(host.querySelector<HTMLInputElement>("#guardrails-min-chars")!.value).toBe("25000");
   });
+
+  test("GatewayGuardrailsPanel ignores hidden invalid compression drafts when disabled and surfaces PUT error messages", async () => {
+    let putBodies: Array<Record<string, unknown>> = [];
+    let failNextPut = false;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/gateway-guardrails") && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
+        putBodies.push(body);
+        if (failNextPut) {
+          return Response.json({ error: "custom guardrail error" }, { status: 400 });
+        }
+        return Response.json({
+          ...body,
+          stats: { scannedRequests: 0, secretDetections: 0, secretBlocks: 0, compressedToolOutputs: 0, savedChars: 0 },
+        });
+      }
+      return Response.json({
+        outboundSecretGuard: { mode: "redact" },
+        toolOutputCompression: { enabled: true, minChars: 12000, headChars: 4000, tailChars: 4000, stripAnsi: false },
+        stats: { scannedRequests: 0, secretDetections: 0, secretBlocks: 0, compressedToolOutputs: 0, savedChars: 0 },
+      });
+    }) as unknown as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<LanguageProvider><GatewayGuardrailsPanel apiBase="http://127.0.0.1:8787" /></LanguageProvider>);
+      await new Promise(r => setTimeout(r, 15));
+    });
+
+    const minCharsInput = host.querySelector<HTMLInputElement>("#guardrails-min-chars")!;
+    await act(async () => { setInputValue(minCharsInput, "10"); });
+
+    // Disable tool output compression so hidden invalid minChars must fall back cleanly on save.
+    const switches = [...host.querySelectorAll<HTMLButtonElement>('button[role="switch"]')];
+    await act(async () => { switches[0]!.click(); });
+    expect(host.querySelector("#guardrails-min-chars")).toBeNull();
+
+    const saveBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Save guardrails")!;
+    await act(async () => {
+      saveBtn.click();
+      await new Promise(r => setTimeout(r, 15));
+    });
+
+    expect(putBodies).toHaveLength(1);
+    expect(putBodies[0]!.toolOutputCompression).toEqual({
+      enabled: false,
+      minChars: 12000,
+      headChars: 4000,
+      tailChars: 4000,
+      stripAnsi: false,
+    });
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Gateway guardrails saved.");
+
+    failNextPut = true;
+    await act(async () => {
+      saveBtn.click();
+      await new Promise(r => setTimeout(r, 15));
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("custom guardrail error");
+  });
 });

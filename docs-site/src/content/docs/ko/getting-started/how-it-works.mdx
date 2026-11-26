@@ -82,7 +82,7 @@ reasoning effort를 알려 줍니다. v2 요청은 Codex가 제공하는 멀티 
 3. **Authenticate** — `oauth` 프로바이더의 경우, easyproxy가 새로 자동 갱신된 access
    토큰을 bearer 키로 교체하므로 기존 adapter들은 변경 없이 인증됩니다. ChatGPT/Codex pool
    계정에서는 `codex/auth-context.ts`가 먼저 계정을 해석하고 필요한 pool credential이 없으면
-   passthrough adapter가 계속 진행하지 않습니다.
+   passthrough adapter가 계속 이어가지 않습니다.
 
 4. **Vision sidecar(선택)** — 라우팅된 모델이 `provider.noVisionModels`에 나열되어 있고
    요청에 이미지가 포함된 경우, easyproxy는 설정된 ChatGPT vision sidecar로 각 이미지를 설명한
@@ -95,7 +95,7 @@ reasoning effort를 알려 줍니다. v2 요청은 Codex가 제공하는 멀티 
 
 6. **Web-search sidecar(선택)** — Codex가 호스팅 `web_search`를 활성화했지만 라우팅된 모델이
    OpenAI가 아닌 경우, easyproxy는 합성 `web_search` function tool을 노출하고 모델을 작은
-   에이전트 루프로 실행하면서 기본값인 `gpt-5.6-luna`를 ChatGPT 로그인으로 호출해 실제 검색을 수행하고
+   에이전트 루프로 실행하면서 기본값인 `gpt-5.6-luna`를 ChatGPT 로그인으로 호출해 실제 검색을 실행하고
    그 결과를 tool result로 다시 주입합니다.
 
 7. **Compact(요청 시)** — Codex v1은 `POST /v1/responses/compact`를 호출하고 v2는 Responses

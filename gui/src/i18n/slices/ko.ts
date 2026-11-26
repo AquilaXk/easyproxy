@@ -20,7 +20,7 @@ export const shellV2CopyKo = {
   "shellV2.stepAutostart": "자동 시작 켜기", "shellV2.stepAutostartHint": "컴퓨터를 다시 시작한 뒤에도 easyproxy가 자동으로 실행되도록 설정합니다.", "shellV2.stepAutostartDesktop": "로그인 시 시작 켜기",
   "shellV2.stepAutostartDesktopHint": "EasyProxy 앱 메뉴에서 '로그인 시 시작'이 켜져 있는지 확인하세요. 로그인할 때 앱이 열리며 프록시도 계속 동작합니다.", "shellV2.stepOpen": "열기", "shellV2.recentErrors": "최근 오류",
   "shellV2.noErrors": "최근 24시간 동안 실패한 요청이 없습니다.", "shellV2.viewAll": "모두 보기", "shellV2.setupTitle": "easyproxy 설정하기",
-  "shellV2.setupIntro": "easyproxy를 설치하거나 새 도구를 연결할 때 한 번 진행하는 초기 설정입니다. 완료한 단계는 표시되며 언제든 다시 열 수 있습니다.", "shellV2.setupApps": "앱 연결", "shellV2.setupAppsHint": "Codex, Claude Code, Claude Desktop, Grok, Cursor 외 20여 개 도구.",
+  "shellV2.setupIntro": "easyproxy를 설치하거나 새 도구를 연결할 때 한 번 거치는 초기 설정입니다. 완료한 단계는 표시되며 언제든 다시 열 수 있습니다.", "shellV2.setupApps": "앱 연결", "shellV2.setupAppsHint": "Codex, Claude Code, Claude Desktop, Grok, Cursor 외 20여 개 도구.",
   "shellV2.setupApiKeys": "다른 앱용 API 키", "shellV2.setupApiKeysHint": "OpenAI 호환 앱에 API 키와 바로 쓸 수 있는 구성을 발급합니다.", "shellV2.setupRemote": "다른 컴퓨터에서 쓰기",
   "shellV2.setupRemoteHint": "여러 컴퓨터가 하나의 easyproxy를 공유하도록 연결합니다.", "shellV2.badgeDone": "완료", "shellV2.badgeTodo": "할 일",
   "shellV2.badgeOptional": "선택", "shellV2.advancedTitle": "고급 설정", "shellV2.advancedIntro": "대부분의 환경에서는 기본값으로 충분한 세부 설정입니다. 각 카드에서 기능과 변경 시점을 확인할 수 있습니다.",
@@ -74,7 +74,7 @@ export const accountProbeCopyKo = {
 } as const;
 export const codexCliUpdateCopyKo = {
   "codexCliUpdate.tab": "Codex CLI", "codexCliUpdate.title": "Codex CLI 업데이트", "codexCliUpdate.description": "EasyProxy가 사용하는 Codex CLI 설치 상태를 확인하고 업데이트합니다. EasyProxy 업데이트와는 별개이며 Codex 데스크톱 앱은 수정하지 않습니다.",
-  "codexCliUpdate.connectedUnavailable": "Codex CLI 업데이트는 이 프록시를 실행하는 컴퓨터에서 진행합니다. 해당 컴퓨터에서 대시보드를 열어 Codex CLI를 확인하거나 업데이트하세요.", "codexCliUpdate.check": "업데이트 확인", "codexCliUpdate.checking": "확인하는 중…",
+  "codexCliUpdate.connectedUnavailable": "Codex CLI 업데이트는 이 프록시가 실행 중인 컴퓨터에서 처리합니다. 해당 컴퓨터에서 대시보드를 열어 Codex CLI를 확인하거나 업데이트하세요.", "codexCliUpdate.check": "업데이트 확인", "codexCliUpdate.checking": "확인하는 중…",
   "codexCliUpdate.checkHint": "확인은 읽기 전용으로 동작하며 설치 상태와 npm 레지스트리만 조회하고 아무것도 변경하지 않습니다.", "codexCliUpdate.fieldProvenance": "설치 방식", "codexCliUpdate.fieldManaged": "EasyProxy 관리",
   "codexCliUpdate.fieldInstalled": "설치된 버전", "codexCliUpdate.fieldTarget": "받을 수 있는 버전", "codexCliUpdate.fieldSession": "Codex 세션",
   "codexCliUpdate.fieldLocation": "위치", "codexCliUpdate.fieldCommand": "설치 명령", "codexCliUpdate.yes": "예",

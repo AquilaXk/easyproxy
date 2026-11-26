@@ -29,7 +29,7 @@ const entry = await readFile(assetPath(entryPath), "utf8");
 // Follow the dependency indices for App, rather than guessing App-*.css from a
 // directory glob (which could silently select stale files or miss shared chunks).
 const dependencies = entry.match(/m\.f\|\|\(m\.f=(\[[^\]]+\])/)?.[1];
-const appIndices = entry.match(/import\([`"']\.\/App-[^`"']+\.js[`"']\),__vite__mapDeps\((\[[\d,\s]+\])/)?.[1];
+const appIndices = entry.match(/import\([`"']\.\/App-[^`"']+\.js[`"']\)(?:\.then\([^)]*\))?,\s*__vite__mapDeps\((\[[\d,\s]+\])/)?.[1];
 if (!dependencies || !appIndices) throw new Error("Cannot resolve Vite lazy App CSS dependency order; update the harness for the new bundle format.");
 const dependencyPaths = JSON.parse(dependencies) as string[];
 const appDependencies = (JSON.parse(appIndices) as number[]).map(i => {

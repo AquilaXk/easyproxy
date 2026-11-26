@@ -262,7 +262,7 @@ epx config set corsAllowOrigins '["http://localhost:10100"]'
 
 `epx service install`과 `epx service repair`는 실행 중인 허브에 다시 실행해도 안전합니다. repair는 plist를 먼저 렌더링해 비교합니다. 렌더링 결과가 디스크의 바이트와 같고 토큰 파일도 그대로이며 `launchctl print`가 그 plist에서 로드된 작업을 보고하면 repair는 `0600`을 다시 확인하고 설치 상태를 갱신한 뒤 `service is already loaded from the current plist; nothing to do.`를 출력하고 끝냅니다. launchd를 전혀 건드리지 않습니다. 이전 빌드는 정상 작업도 무조건 bootout해서 진단 명령이 장애가 되었습니다.
 
-**항상 재시작하는 명령은 `epx service restart`입니다.** 이제 `repair`의 별칭이 아닙니다. 같은 갱신을 수행하고 그 결과 아무것도 reload되지 않았다면 — 위의 정상·무변경 경우 — 이미 로드된 작업을 `launchctl kickstart -k`로 제자리에서 재시작하고 `launchctl print`로 작업이 살아 있는지 다시 확인한 뒤 한 줄을 출력합니다.
+**항상 재시작하는 명령은 `epx service restart`입니다.** 이제 `repair`의 별칭이 아닙니다. 같은 갱신 절차를 밟고 그 결과 아무것도 reload되지 않았다면 — 위의 정상·무변경 경우 — 이미 로드된 작업을 `launchctl kickstart -k`로 제자리에서 재시작하고 `launchctl print`로 작업이 살아 있는지 다시 확인한 뒤 한 줄을 출력합니다.
 
 ```bash
 epx service restart

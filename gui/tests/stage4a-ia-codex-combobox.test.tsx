@@ -647,4 +647,56 @@ describe("Stage 4A Accounts hub, Route -> Codex controls, and GatewayClients Com
     const alert = host.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("Account cooldown active");
   });
+
+  test("AllProviderAccountsHub preserves existing cards and shows alert when Refresh quotas fails", async () => {
+    let configFails = false;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/config")) {
+        if (configFails) return Response.json({ error: "Upstream unavailable" }, { status: 500 });
+        return Response.json({
+          providers: {
+            openai: { adapter: "openai-responses", authMode: "forward", codexAccountMode: "pool" },
+          },
+        });
+      }
+      if (url.endsWith("/api/provider-quotas")) return Response.json([]);
+      if (url.includes("/api/provider-quotas?refresh=1")) {
+        return Response.json({ error: "Refresh failed" }, { status: 500 });
+      }
+      if (url.endsWith("/api/codex-auth/accounts")) {
+        return Response.json({
+          activeCodexAccountId: "cdx-1",
+          accounts: [{ id: "cdx-1", alias: "Primary Pool", active: true }],
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <AllProviderAccountsHub apiBase="http://127.0.0.1:10100" />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    expect(host.querySelector('section[aria-labelledby="accounts-hub-title"]')).not.toBeNull();
+    expect(host.textContent).toContain("Primary Pool");
+
+    configFails = true;
+    const refreshBtn = [...host.querySelectorAll("button")].find(b => b.textContent === "Refresh quotas")!;
+    await act(async () => { refreshBtn.click(); });
+    await flushTicks();
+
+    expect(host.querySelector('section[aria-labelledby="accounts-hub-title"]')).not.toBeNull();
+    expect(host.textContent).toContain("Primary Pool");
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("Last refresh failed; showing the previous reading");
+  });
 });

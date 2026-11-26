@@ -48,12 +48,14 @@ interface HubProviderCard {
   accounts: HubAccountRow[];
 }
 
+type HubFetchResult = { ok: true; cards: HubProviderCard[] } | { ok: false };
+
 async function fetchAllProviderHubData(
   apiBase: string,
   refreshQuotas: boolean,
   codexAppLabel: string,
   signal?: AbortSignal,
-): Promise<HubProviderCard[]> {
+): Promise<HubFetchResult> {
   try {
     const [configRes, quotasRes] = await Promise.all([
       fetch(`${apiBase}/api/config`, signal ? { signal } : undefined),
@@ -66,7 +68,7 @@ async function fetchAllProviderHubData(
       : quotasJson;
     const quotaMap = rawReports ? freshQuotaReportsFromResponse(rawReports) : {};
     const providersObj = configJson?.providers;
-    if (!providersObj || typeof providersObj !== "object" || Array.isArray(providersObj)) return [];
+    if (!providersObj || typeof providersObj !== "object" || Array.isArray(providersObj)) return { ok: false };
 
     const entries = Object.entries(providersObj).filter(([, row]) => row && row.disabled !== true);
     const cards = await Promise.all(entries.map(async ([name, row]): Promise<HubProviderCard | null> => {
@@ -196,9 +198,9 @@ async function fetchAllProviderHubData(
       }
       return null;
     }));
-    return cards.filter((card): card is HubProviderCard => card !== null);
+    return { ok: true, cards: cards.filter((card): card is HubProviderCard => card !== null) };
   } catch {
-    return [];
+    return { ok: false };
   }
 }
 
@@ -223,8 +225,13 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
     setRefreshing(refreshQuotas);
     setSwitchError(null);
     try {
-      const next = await fetchAllProviderHubData(apiBase, refreshQuotas, codexAppLabel, signal);
-      if (mountedRef.current && !signal?.aborted) setCards(next);
+      const result = await fetchAllProviderHubData(apiBase, refreshQuotas, codexAppLabel, signal);
+      if (!mountedRef.current || signal?.aborted) return;
+      if (result.ok) {
+        setCards(result.cards);
+      } else if (refreshQuotas) {
+        setSwitchError(t("quotaSummary.refreshFailed"));
+      }
     } finally {
       if (mountedRef.current && !signal?.aborted) setRefreshing(false);
     }
@@ -233,8 +240,8 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
   useEffect(() => {
     const ac = new AbortController();
     fetchAllProviderHubData(apiBase, false, codexAppLabel, ac.signal)
-      .then(next => {
-        if (!ac.signal.aborted) setCards(next);
+      .then(result => {
+        if (mountedRef.current && !ac.signal.aborted && result.ok) setCards(result.cards);
       })
       .catch(() => undefined);
     return () => ac.abort();

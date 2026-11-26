@@ -20,7 +20,7 @@ if (!cssFile.startsWith(`${dist}${sep}`)) throw new Error("Built CSS must stay i
 const css = await readFile(cssFile, "utf8");
 const logo = `data:image/png;base64,${(await readFile(join(dist, "logo.png"))).toString("base64")}`;
 const brand = `<button type="button" class="brand brand-home" aria-label="Home"><span class="brand-logo"></span><span class="name">easyproxy</span><span class="ver">v2.56.0</span></button>`;
-const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style><style>.brand-logo { mask-image:url("${logo}"); -webkit-mask-image:url("${logo}"); }</style></head><body><div class="app"><header class="mobile-topbar"><button class="menu-toggle" aria-label="Menu">☰</button>${brand}<div class="mobile-topbar-actions"><button class="sidebar-orb" aria-label="Stop">⏻</button><button class="sidebar-orb" aria-label="Restart">↻</button></div></header><aside class="sidebar open"><div class="drawer-head">${brand}<button class="menu-toggle drawer-close" aria-label="Close">×</button></div></aside><main class="main"></main></div></body></html>`;
+const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style><style>.brand-logo { mask-image:url("${logo}"); -webkit-mask-image:url("${logo}"); }</style></head><body><div class="app"><header class="mobile-topbar"><button class="menu-toggle" aria-label="Menu">☰</button>${brand}<div class="mobile-topbar-actions"><button class="sidebar-orb" aria-label="Stop">⏻</button><button class="sidebar-orb" aria-label="Restart">↻</button></div></header><aside class="sidebar open"><div class="drawer-head">${brand}<button class="menu-toggle drawer-close" aria-label="Close">×</button></div><nav></nav><div class="sidebar-foot"><div class="sidebar-github-row"><a class="sidebar-link sidebar-github-link" href="#github"><svg width="16" height="16" aria-hidden="true"></svg> GitHub</a><span class="sidebar-version" title="v2.56.0">v2.56.0</span><div class="sidebar-github-actions"><button type="button" class="sidebar-orb" aria-label="Update">↓</button></div></div></div></aside><main class="main"></main></div></body></html>`;
 const profile = await mkdtemp(join(tmpdir(), "epx-sidebar-chrome-"));
 const browser = Bun.spawn([chrome, "--headless", "--disable-gpu", "--disable-background-networking",
   "--no-first-run", "--no-default-browser-check", "--remote-debugging-address=127.0.0.1",
@@ -88,10 +88,28 @@ try {
       await evaluate(`(() => {
         document.documentElement.dataset.theme = ${JSON.stringify(theme)};
         document.documentElement.style.setProperty("--text-subtitle", ${JSON.stringify(wideFont ? "18px" : "16px")});
-        document.querySelectorAll(".ver").forEach(el => { el.textContent = ${JSON.stringify(`v${version}`)}; });
+        document.querySelectorAll(".ver, .sidebar-version").forEach(el => { el.textContent = ${JSON.stringify(`v${version}`)}; });
       })()`);
       const geometry = await evaluate<{ ok: boolean; [key: string]: unknown }>(`(() => {
         const box = el => { const r = el.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:r.width, height:r.height }; };
+        const overlaps = (a, b) => a.width > 0 && b.width > 0 && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+        if (window.innerWidth >= 761) {
+          const row = document.querySelector(".sidebar-github-row");
+          const badge = document.querySelector(".sidebar-version");
+          const link = document.querySelector(".sidebar-github-link");
+          const actions = document.querySelector(".sidebar-github-actions");
+          const b = box(badge), r = box(row), l = box(link), a = box(actions);
+          const range = document.createRange(); range.selectNodeContents(badge);
+          const text = [...range.getClientRects()].map(rect => ({left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom}));
+          const visible = b.width > 0 && b.height > 0 && text.length > 0;
+          const bounded = b.left >= r.left - .5 && b.right <= r.right + .5;
+          const noNeighborOverlap = !overlaps(b, l) && !overlaps(b, a);
+          const shortRelease = /^v\\d+\\.\\d+\\.\\d+$/.test(badge.textContent);
+          const complete = !shortRelease || (badge.scrollWidth <= badge.clientWidth + 1 && text.every(rect => rect.left >= b.left - .5 && rect.right <= b.right + .5));
+          const sameLineRects = text.length > 0 && text.every(rect => Math.abs(rect.top - text[0].top) <= 1 && Math.abs(rect.bottom - text[0].bottom) <= 1);
+          const singleLine = sameLineRects && (!shortRelease || text.length === 1);
+          return { ok: visible && bounded && noNeighborOverlap && complete && singleLine, mode: "desktop-foot", badge:b, row:r, link:l, actions:a, text, bounded, noNeighborOverlap, complete, singleLine, value:badge.textContent };
+        }
         const brand = document.querySelector(".drawer-head .brand");
         const badge = brand.querySelector(".ver");
         const close = document.querySelector(".drawer-close");
@@ -101,7 +119,7 @@ try {
         const visible = b.width > 0 && b.height > 0 && text.length > 0;
         const bounded = b.left >= h.left - .5 && b.right <= h.right + .5;
         const complete = badge.scrollWidth <= badge.clientWidth + 1 && text.every(r => r.left >= b.left - .5 && r.right <= b.right + .5 && r.top >= b.top - .5 && r.bottom <= b.bottom + .5);
-        const overlapsClose = c.width > 0 && b.left < c.right && b.right > c.left && b.top < c.bottom && b.bottom > c.top;
+        const overlapsClose = overlaps(b, c);
         const style = getComputedStyle(badge);
         const shortRelease = /^v\\d+\\.\\d+\\.\\d+$/.test(badge.textContent);
         const headerStyle = getComputedStyle(brand);
@@ -114,7 +132,7 @@ try {
         const singleLine = !shortRelease || text.length === 1;
         const rowFits = requiredWidth <= contentWidth + .5;
         const sameRowWhenPossible = !shortRelease || !rowFits || (b.top < n.bottom && b.bottom > n.top);
-        return { ok: visible && bounded && complete && !overlapsClose && singleLine && sameRowWhenPossible, badge:b, brand:h, name:n, close:c, text, overlapsClose, bounded, complete, singleLine, sameRowWhenPossible, rowFits, requiredWidth, contentWidth, font:headerStyle.fontFamily, overflow:style.textOverflow, value:badge.textContent };
+        return { ok: visible && bounded && complete && !overlapsClose && singleLine && sameRowWhenPossible, mode: "mobile-drawer", badge:b, brand:h, name:n, close:c, text, overlapsClose, bounded, complete, singleLine, sameRowWhenPossible, rowFits, requiredWidth, contentWidth, font:headerStyle.fontFamily, overflow:style.textOverflow, value:badge.textContent };
       })()`);
       const row = { theme, width, version, wideFont, ...geometry };
       cases.push(row);
