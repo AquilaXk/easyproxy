@@ -58,7 +58,7 @@ const LABELS: Record<Locale, Record<LogGuardOperationLabelKey, string>> = {
     "error.unsupported_schema": "이 Codex 로그 스키마는 이 작업을 지원하지 않습니다.",
     "error.unsafe_path": "Codex 로그 데이터베이스 경로가 안전성 검사를 통과하지 못했습니다.",
     "error.database_error": "Codex 로그 데이터베이스를 업데이트하지 못했습니다.",
-    "error.auto_vacuum_not_incremental": "이 Codex 로그 데이터베이스는 증분 정리로 구성되어 있지 않아, 전체 재구축 없이는 공간을 회수할 수 없습니다.",
+    "error.auto_vacuum_not_incremental": "이 Codex 로그 데이터베이스는 증분 정리로 구성되어 있지 않아 전체 재구축 없이는 공간을 회수할 수 없습니다.",
     "error.integrity_check_failed": "Codex 로그 데이터베이스 무결성 검사에 실패했습니다. 공간이 회수되지 않았습니다.",
   },
   zh: {

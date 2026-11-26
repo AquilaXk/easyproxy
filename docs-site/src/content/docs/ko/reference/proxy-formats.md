@@ -4,7 +4,7 @@ description: Responses, Chat Completions, Anthropic Messages, 모델 카탈로�
 ---
 
 easyproxy는 하나의 로컬 프록시를 여러 클라이언트 방언으로 제공합니다. Codex 클라이언트는
-Responses API를 말할 수 있고, OpenAI 호환 앱은 Chat Completions를 말할 수 있으며, Claude Code는
+Responses API를 말할 수 있고 OpenAI 호환 앱은 Chat Completions를 말할 수 있으며 Claude Code는
 각 업스트림 공급자가 모든 형식을 구현하지 않아도 Anthropic Messages를 말할 수 있습니다.
 
 일반적인 변환 경로는 다음과 같습니다.
@@ -15,13 +15,13 @@ provider events → internal adapter events → client dialect
 ```
 
 Responses 표현이 이 연결의 중심입니다. 네이티브 호환 경로는 변환의 일부를 건너뛰고 요청을 그대로
-전달할 수 있지만, 인증, 라우팅, 허용 제어, 응답 안전성은 여전히 프록시 경계에서 처리됩니다.
-[Configuration](/reference/configuration/)에서 리스너와 admission 키를 설정하십시오. 하나의 공개 모델 id가
-여러 대상 중 하나를 골라야 할 때는 [Combos](/guides/combos/)를 사용하십시오.
+전달할 수 있지만 인증, 라우팅, 허용 제어, 응답 안전성은 여전히 프록시 경계에서 처리됩니다.
+[Configuration](/reference/configuration/)에서 리스너와 admission 키를 설정하세요. 하나의 공개 모델 id가
+여러 대상 중 하나를 골라야 할 때는 [Combos](/guides/combos/)를 사용하세요.
 
 ## 업스트림 리다이렉트
 
-자격 증명을 포함하는 모델·이미지·동영상·검색 요청은 동일 출처를 포함한 HTTP 리다이렉트를 자동으로 따라가지 않습니다. 리다이렉트하는 별칭 대신 최종 업스트림 API URL을 설정하세요. 서버는 리다이렉트 대상으로 자격 증명이나 요청 본문을 다시 보내지 않습니다. 각 응답 처리 경로의 기존 오류·전달 동작은 유지되며, native Responses와 compact 경로는 원래 3xx와 `Location`을 클라이언트에 반환할 수 있습니다. 클라이언트의 리다이렉트 동작은 이 서버 전송 정책과 별개입니다.
+자격 증명을 포함하는 모델·이미지·동영상·검색 요청은 동일 출처를 포함한 HTTP 리다이렉트를 자동으로 따라가지 않습니다. 리다이렉트하는 별칭 대신 최종 업스트림 API URL을 설정하세요. 서버는 리다이렉트 대상으로 자격 증명이나 요청 본문을 다시 보내지 않습니다. 각 응답 처리 경로의 기존 오류·전달 동작은 유지되며 native Responses와 compact 경로는 원래 3xx와 `Location`을 클라이언트에 반환할 수 있습니다. 클라이언트의 리다이렉트 동작은 이 서버 전송 정책과 별개입니다.
 
 ## xAI policy refusals
 
@@ -31,16 +31,16 @@ Responses 표현이 이 연결의 중심입니다. 네이티브 호환 경로는
 
 ## 선언되지 않은 도구 호출
 
-Responses 엔드포인트에서 요청이 도구 카탈로그를 선언한 경우, 네이티브 패스스루 응답이 그 카탈로그에 없는 클라이언트 실행 도구를 호출하면 호출을 전달하는 대신 턴을 실패 처리합니다: 오류 코드 `undeclared_tool_call`이 포함된 `response.failed` 이벤트와 `data: [DONE]`을 보내고, 버퍼링된 JSON은 같은 코드와 함께 HTTP 502를 반환합니다. 이 거부는 응답이 후속 처리 상태에 들어가기 전에 실행되며, `authMode: "forward"` 공급자이거나 요청에 선언된 카탈로그가 없는 경우에만 적용되지 않습니다.
+Responses 엔드포인트에서 요청이 도구 카탈로그를 선언한 경우, 네이티브 패스스루 응답이 그 카탈로그에 없는 클라이언트 실행 도구를 호출하면 호출을 전달하는 대신 턴을 실패 처리합니다: 오류 코드 `undeclared_tool_call`이 포함된 `response.failed` 이벤트와 `data: [DONE]`을 보내고 버퍼링된 JSON은 같은 코드와 함께 HTTP 502를 반환합니다. 이 거부는 응답이 후속 처리 상태에 들어가기 전에 실행되며 `authMode: "forward"` 공급자이거나 요청에 선언된 카탈로그가 없는 경우에만 적용되지 않습니다.
 
-Chat Completions와 Messages 엔드포인트는 지연된 도구 카탈로그를 지원합니다: 이러한 클라이언트는 카탈로그의 일부만 선언하고 나머지를 자체 도구 레지스트리를 통해 런타임에 발견할 수 있으며, 전체 선언 경계는 번역된 카탈로그 스냅숏이 아니라 그 레지스트리가 소유합니다. 선언된 목록에 없는 호출은 클라이언트가 검증하도록 전달되고, 명시적으로 빈 `tools: []`에 대한 호출은 여전히 거부됩니다 — 빈 선언 아래에는 지연 레지스트리가 존재하지 않기 때문입니다. 이러한 거부도 모든 와이어에서 `undeclared_tool_call` 코드를 유지합니다:
+Chat Completions와 Messages 엔드포인트는 지연된 도구 카탈로그를 지원합니다: 이러한 클라이언트는 카탈로그의 일부만 선언하고 나머지를 자체 도구 레지스트리를 통해 런타임에 발견할 수 있으며 전체 선언 경계는 번역된 카탈로그 스냅숏이 아니라 그 레지스트리가 소유합니다. 선언된 목록에 없는 호출은 클라이언트가 검증하도록 전달되고 명시적으로 빈 `tools: []`에 대한 호출은 여전히 거부됩니다 — 빈 선언 아래에는 지연 레지스트리가 존재하지 않기 때문입니다. 이러한 거부도 모든 와이어에서 `undeclared_tool_call` 코드를 유지합니다:
 
 - **Chat Completions:** 코드를 포함하는 OpenAI 형식 `error` 객체가 담긴 `data:` 프레임을 보낸 뒤, 성공 완료나 `[DONE]` 없이 스트림을 닫습니다. 버퍼링된 JSON은 코드와 함께 HTTP 502를 반환합니다.
-- **Messages:** 본문이 `{ "type": "error", "error": { "type": "api_error", "code": "undeclared_tool_call", ... } }`인 Anthropic `event: error` 프레임을 보내며, 성공적인 `message_stop`이나 `[DONE]`은 보내지 않습니다. 버퍼링된 JSON은 코드가 포함된 HTTP 502 `api_error`를 반환합니다. 확정적인 카탈로그 위반은 재시도 가능한 `overloaded_error`(HTTP 529)로 보고되지 않습니다.
+- **Messages:** 본문이 `{ "type": "error", "error": { "type": "api_error", "code": "undeclared_tool_call", ... } }`인 Anthropic `event: error` 프레임을 보내며 성공적인 `message_stop`이나 `[DONE]`은 보내지 않습니다. 버퍼링된 JSON은 코드가 포함된 HTTP 502 `api_error`를 반환합니다. 확정적인 카탈로그 위반은 재시도 가능한 `overloaded_error`(HTTP 529)로 보고되지 않습니다.
 
 별도로, 모든 인바운드 와이어에서 공급자의 `default.` 네임스페이스 호출은 요청이 선언한 원래 도구 이름으로 정규화됩니다(`default.Read` → `Read`).
 
-네이티브 Messages는 `tools: []`와 함께 제공된 시스템 메시지의 인라인 도구 정의도 인식합니다. 해당 이름은 영구적으로 제거될 때까지 호출할 수 있으며, 다른 클라이언트 도구를 허용하지는 않습니다. 호스팅된 MCP 호출과 서버 도구의 인수 스트림은 네이티브 형식을 유지합니다.
+네이티브 Messages는 `tools: []`와 함께 제공된 시스템 메시지의 인라인 도구 정의도 인식합니다. 해당 이름은 영구적으로 제거될 때까지 호출할 수 있으며 다른 클라이언트 도구를 허용하지는 않습니다. 호스팅된 MCP 호출과 서버 도구의 인수 스트림은 네이티브 형식을 유지합니다.
 
 ## 엔드포인트 개요
 
@@ -75,7 +75,7 @@ Chat Completions와 Messages 엔드포인트는 지연된 도구 카탈로그를
 | 확장된 Responses 필드 | 호환 경로에서는 `background`, `include`, `prompt`, `text`, `truncation`도 허용됩니다 |
 
 알 수 없는 항목 유형은 앞으로의 호환성을 위해 느슨한 형식의 typed item으로 허용됩니다. 변환된 어댑터는
-자신이 인식하는 항목 유형만 처리하며, 제공자가 표현할 수 없는 기능은 거부할 수 있습니다.
+자신이 인식하는 항목 유형만 처리하며 제공자가 표현할 수 없는 기능은 거부할 수 있습니다.
 
 ### JSON과 SSE 출력
 
@@ -88,21 +88,21 @@ deltas, 그리고 정확히 하나의 종료 `response.completed`, `response.fai
 
 canonical ChatGPT Codex 경로는 upstream이 SSE만 받으므로 upstream 요청에만 `stream: true`를 사용합니다.
 EasyProxy는 종료 스트림을 제한된 크기 안에서 검증한 뒤 클라이언트가 요청한 JSON 형태로 접습니다.
-명시적인 `store` 값은 바꾸지 않으며, 검증에 실패하면 일부 JSON을 HTTP 200으로 반환하지 않고 오류로
+명시적인 `store` 값은 바꾸지 않으며 검증에 실패하면 일부 JSON을 HTTP 200으로 반환하지 않고 오류로
 끝냅니다. 한도는 프레임당 4 MiB, transcript와 재구성 입력 각각 32 MiB, 100,000 SSE 프레임, 재구성
 output item 10,000개입니다. `stallTimeoutSec`는 첫 body byte와 이후 무응답 간격에 모두 적용됩니다.
-값이 `0`이거나 로컬 upstream 기본값으로 비활성화된 경우 즉시 만료하지 않고, 독립된 15분 전체 상한만
+값이 `0`이거나 로컬 upstream 기본값으로 비활성화된 경우 즉시 만료하지 않고 독립된 15분 전체 상한만
 적용합니다. 스트리밍 클라이언트의 동작은 바뀌지 않습니다.
 
-클라이언트로 전달되는 Responses SSE 프레임은 SSE 블록 구분자 앞의 원시 바이트 기준으로 프레임당 4 MiB로 제한됩니다. HTTP에서는 구분자 없이 이 한도를 초과한 업스트림 프레임을 합성 `response.failed` 이벤트와 이어지는 `data: [DONE]`으로 fail closed 처리합니다. Responses WebSocket 브리지에서는 같은 조건에서 502 `websocket_protocol_error`를 보내고 업스트림 reader를 취소합니다. 완전한 Responses 종료 프레임이 이미 수신된 경우에는 그 종료가 우선하며, 이후의 과도한 크기 또는 잘못된 바이트는 완료된 턴을 전송 오류로 바꾸지 않고 버립니다.
+클라이언트로 전달되는 Responses SSE 프레임은 SSE 블록 구분자 앞의 원시 바이트 기준으로 프레임당 4 MiB로 제한됩니다. HTTP에서는 구분자 없이 이 한도를 초과한 업스트림 프레임을 합성 `response.failed` 이벤트와 이어지는 `data: [DONE]`으로 fail closed 처리합니다. Responses WebSocket 브리지에서는 같은 조건에서 502 `websocket_protocol_error`를 보내고 업스트림 reader를 취소합니다. 완전한 Responses 종료 프레임이 이미 수신된 경우에는 그 종료가 우선하며 이후의 과도한 크기 또는 잘못된 바이트는 완료된 턴을 전송 오류로 바꾸지 않고 버립니다.
 
 :::note
-네이티브 passthrough에서는 Responses 종료 이벤트가 우선합니다. 너무 이른 `data: [DONE]`은 해당 이벤트가 도착할 때까지 보류됩니다. 일반 네이티브 경로가 파싱된 종료 이벤트 없이 정상 HTTP 200 EOF에 도달하면, 프록시는 `incomplete_details.reason: "adapter_eof"`가 있는 `response.incomplete` 하나와 `data: [DONE]` 하나를 보냅니다. 구분자 없는 종료 JSON이 문법적으로 유효하면 정확히 한 번 받아들이고, 잘못되었거나 잘린 JSON은 incomplete로 남습니다. 모델별 종료 복구를 사용하도록 설정된 공급자에서는 프레임이 없는 종료 유사 suffix와 EOF의 너무 이른 `data: [DONE]`을, 승격할 수 있는 완전한 lifecycle 후보가 없을 때 `missing_terminal_event`로 fail closed 처리하며, 완전한 후보가 있으면 `response.completed`로 승격합니다. 신뢰도가 높은 `cyber_policy` 종료 형식은 의미론적 로깅 및 집계에서 `error.code: "cyber_policy"`가 있는 `response.failed`(status 400)로 정규화되지만, 이미 시작된 스트리밍 HTTP 응답은 200을 유지합니다. 이 커밋된 요청 경계에서는 재시도하거나 재전송하지 않습니다.
+네이티브 passthrough에서는 Responses 종료 이벤트가 우선합니다. 너무 이른 `data: [DONE]`은 해당 이벤트가 도착할 때까지 보류됩니다. 일반 네이티브 경로가 파싱된 종료 이벤트 없이 정상 HTTP 200 EOF에 도달하면, 프록시는 `incomplete_details.reason: "adapter_eof"`가 있는 `response.incomplete` 하나와 `data: [DONE]` 하나를 보냅니다. 구분자 없는 종료 JSON이 문법적으로 유효하면 정확히 한 번 받아들이고 잘못되었거나 잘린 JSON은 incomplete로 남습니다. 모델별 종료 복구를 사용하도록 설정된 공급자에서는 프레임이 없는 종료 유사 suffix와 EOF의 너무 이른 `data: [DONE]`을, 승격할 수 있는 완전한 lifecycle 후보가 없을 때 `missing_terminal_event`로 fail closed 처리하며 완전한 후보가 있으면 `response.completed`로 승격합니다. 신뢰도가 높은 `cyber_policy` 종료 형식은 의미론적 로깅 및 집계에서 `error.code: "cyber_policy"`가 있는 `response.failed`(status 400)로 정규화되지만 이미 시작된 스트리밍 HTTP 응답은 200을 유지합니다. 이 커밋된 요청 경계에서는 재시도하거나 재전송하지 않습니다.
 :::
 
 canonical ChatGPT forward streaming은 stable Bun 1.4.0 이상에서 Codex 업스트림 WebSocket을
 투명하게 사용할 수 있습니다. 번들 Bun 1.3.14, prerelease, 또는 검증 불가능한 런타임 identity는
-HTTP/SSE를 사용합니다. 업스트림 WS adapter는 같은 downstream SSE 계약을 유지하며, 원시 JSON
+HTTP/SSE를 사용합니다. 업스트림 WS adapter는 같은 downstream SSE 계약을 유지하며 원시 JSON
 프레임과 SSE envelope를 각각 4 MiB로 제한하고 8 MiB byte queue가 넘치기 전에 업스트림을 닫습니다.
 queue overflow 시 downstream에는 terminal `response.failed` 이벤트와 `[DONE]`을 내보냅니다.
 
@@ -120,7 +120,7 @@ queue overflow 시 downstream에는 terminal `response.failed` 이벤트와 `[DO
 ```
 
 사용 가능한 경우 `input_tokens_details`에는 `cache_write_tokens`도 포함될 수 있습니다. 항상 존재하는 상세 객체는
-엄격한 Responses 클라이언트를 위한 호환성 보장입니다. 0은 "보고되지 않음"을 뜻할 수 있으며, 반드시
+엄격한 Responses 클라이언트를 위한 호환성 보장입니다. 0은 "보고되지 않음"을 뜻할 수 있으며 반드시
 "제공자가 그런 작업을 하지 않았다"는 의미는 아닙니다.
 
 ### 응답과 요청 로그 연결
@@ -142,7 +142,7 @@ JavaScript가 교차 출처에서도 읽을 수 있습니다. 사용자 지정 `
 있습니다. 인증과 origin admission은 WebSocket 핸드셰이크 동안 처리됩니다. 각 프레임 안에서 다시 반복되지는
 않습니다.
 
-이 클라이언트 업그레이드는 위의 투명한 업스트림 ChatGPT WebSocket 선택과 별개이며,
+이 클라이언트 업그레이드는 위의 투명한 업스트림 ChatGPT WebSocket 선택과 별개이며
 `websockets` 설정은 클라이언트 엔드포인트만 제어합니다.
 
 클라이언트는 JSON 텍스트 프레임을 보냅니다.
@@ -157,12 +157,12 @@ JavaScript가 교차 출처에서도 읽을 수 있습니다. 사용자 지정 `
 }
 ```
 
-`type`을 제외한 모든 것은 Responses 요청 본문이 되며, 프록시는 해당 턴을 강제로 스트리밍으로 처리합니다.
+`type`을 제외한 모든 것은 Responses 요청 본문이 되며 프록시는 해당 턴을 강제로 스트리밍으로 처리합니다.
 새 `response.create`는 같은 소켓에서 이전 턴을 대체하고 취소합니다. `response.processed`는 no-op 확인으로
 받아들입니다. 파싱할 수 없거나 관련 없는 프레임 유형은 무시됩니다.
 
 서버 프레임은 JSON 텍스트 프레임입니다. 성공한 스트리밍 출력은 SSE `data:` 줄에 나타날 JSON payload와 같은
-내용이지만, SSE envelope나 `[DONE]`은 없습니다. 비스트리밍 내부 결과는 `response.created`, 이어서 0개 이상의
+내용이지만 SSE envelope나 `[DONE]`은 없습니다. 비스트리밍 내부 결과는 `response.created`, 이어서 0개 이상의
 `response.output_item.done` 프레임, 마지막으로 종료 프레임으로 재프레임됩니다. 오류는 다음 envelope를
 사용합니다.
 
@@ -189,9 +189,9 @@ Codex는 그 핸드셰이크 결과를 해당 세션에서 HTTP로 되돌아가�
 ## `POST /v1/chat/completions`
 
 이 엔드포인트는 필수 `model`과 비어 있지 않은 `messages` 배열을 가진 OpenAI 호환 Chat Completions 요청을
-받습니다. system, user, assistant, tool 메시지를 내부 Responses 항목으로 변환하고, function tools, tool
+받습니다. system, user, assistant, tool 메시지를 내부 Responses 항목으로 변환하고 function tools, tool
 choice, 이미지, reasoning effort, 지원되는 response format을 변환한 뒤, 일반 Responses 라우팅 파이프라인을
-실행하고, 결과를 다시 변환합니다.
+실행하고 결과를 다시 변환합니다.
 
 비스트리밍 출력의 `object`는 `"chat.completion"`입니다. 스트리밍 출력은 `object: "chat.completion.chunk"`인
 SSE 객체, choice delta, `finish_reason`이 있는 종료 choice, `data: [DONE]`을 사용합니다. tool-call과 usage
@@ -214,7 +214,7 @@ Responses로 변환되어 일반적으로 라우팅된 뒤, Anthropic JSON 또�
 
 변환되는 Messages 요청의 reasoning 재전송은 요청 전체의 번역 예산을 공유합니다. 이 예산에는
 인코딩·디코딩 과정에서 생기는 복사본도 포함됩니다. 한도를 초과하면 `translation_buffer_limit`과
-HTTP 413을 반환하며, 한도에 맞추려고 서명이나 불투명 reasoning 데이터를 자르지 않습니다.
+HTTP 413을 반환하며 한도에 맞추려고 서명이나 불투명 reasoning 데이터를 자르지 않습니다.
 네이티브 Anthropic passthrough에는 별도의 본문 크기 제한이 적용됩니다.
 
 네이티브 Anthropic passthrough는 다음이 모두 참일 때만 적용됩니다.
@@ -229,7 +229,7 @@ HTTP 413을 반환하며, 한도에 맞추려고 서명이나 불투명 reasonin
 유지됩니다. 그렇지 않으면 Responses 왕복을 탑니다.
 
 전용 admission 헤더는 upstream으로 전달되지 않습니다. `Authorization` 또는 `x-api-key`에서
-프록시 admission secret이 발견되어도 제거하며, 별도의 실제 Anthropic 자격 증명은 유지합니다.
+프록시 admission secret이 발견되어도 제거하며 별도의 실제 Anthropic 자격 증명은 유지합니다.
 쉼표로 결합된 모호한 자격 증명 헤더는 전달하지 않고 fail closed합니다.
 
 `POST /v1/messages/count_tokens`도 같은 model resolution과 passthrough 판단을 따릅니다. 네이티브로 적합한
@@ -254,9 +254,9 @@ HTTP 400을 반환합니다. 두 경우 모두 날짜 제거나 다른 경로로
 
 | 계약 | 트리거 | 최상위 형식 | 모델 id 동작 |
 | --- | --- | --- | --- |
-| Anthropic model list | `anthropic-version` 헤더 또는 `client_version`이 없는 `?flavor=anthropic` | Anthropic model-info 항목이 들어 있는 `{ "data": [...] }` | Claude Code는 읽기 쉬운 id를 받고, Desktop은 프로필별 alias 패밀리를 받을 수 있음 |
+| Anthropic model list | `anthropic-version` 헤더 또는 `client_version`이 없는 `?flavor=anthropic` | Anthropic model-info 항목이 들어 있는 `{ "data": [...] }` | Claude Code는 읽기 쉬운 id를 받고 Desktop은 프로필별 alias 패밀리를 받을 수 있음 |
 | Codex 카탈로그 | `client_version` 쿼리 파라미터 | `{ "models": [...] }` | 네이티브 및 라우팅 항목은 더 풍부한 Codex 카탈로그 필드, 표시 여부, effort, WebSocket, 다중 에이전트 메타데이터를 담음 |
-| 일반 OpenAI list | 어느 트리거도 아님 | `{ "object": "list", "data": [...] }` | 보이는 네이티브 id는 그대로이며, 라우팅 id는 alias 또는 `provider/model` |
+| 일반 OpenAI list | 어느 트리거도 아님 | `{ "object": "list", "data": [...] }` | 보이는 네이티브 id는 그대로이며 라우팅 id는 alias 또는 `provider/model` |
 
 ### Desktop 설정 스냅샷
 
@@ -268,16 +268,16 @@ HTTP 400을 반환합니다. 두 경우 모두 날짜 제거나 다른 경로로
 
 이 형식에 `ids=cli` 또는 `client_version`을 함께 보내면 HTTP 400을 반환합니다. 형식 선택자가
 없으면 위의 기본 응답 계약을 유지합니다. Claude가 꺼져 있으면
-`{ "version": 1, "models": [] }`를 반환하며, 연결된 Desktop apply는 사용 불가로 처리하고
-대체 프로필을 쓰지 않습니다. 버전 1 대신 일반 카탈로그를 반환하는 구형 허브는 지원하지 않으며,
+`{ "version": 1, "models": [] }`를 반환하며 연결된 Desktop apply는 사용 불가로 처리하고
+대체 프로필을 쓰지 않습니다. 버전 1 대신 일반 카탈로그를 반환하는 구형 허브는 지원하지 않으며
 클라이언트가 로컬에서 만든 ID로 대신 적용하지 않습니다.
 
 스냅샷은 읽기 전용 모델 목록이며 키 회전이나 프로필 업로드 API가 아닙니다. 연결된 Desktop의
 키 이전·복구·연결 해제는 기존 클라이언트 수명주기에서 처리합니다. 회전은 모델 항목과 선택을
 유지하며 CLI의 `rotation`은 `committed`와 `rolled_back`을 구분합니다. 연결 해제는 관리 설정을
-복원하거나 확인된 구형 프로필을 표준 모드로 전환하고, 사용자 필드와 이후의 유효한 선택을
+복원하거나 확인된 구형 프로필을 표준 모드로 전환하고 사용자 필드와 이후의 유효한 선택을
 보존합니다. 충돌이나 미완료 복구를 완료로 표시하지 않습니다. 디스크 변경을 읽으려면 Desktop을
-재시작해야 하며, 연결 해제는 허브 키를 자동 폐기하지 않습니다.
+재시작해야 하며 연결 해제는 허브 키를 자동 폐기하지 않습니다.
 [Claude Desktop 안내](/ko/guides/claude-code/)를 참고하세요. thinking 재전송과 프롬프트 캐시는
 별도 [#3719](https://github.com/AquilaXk/easyproxy/issues/3719)에서 다룹니다.
 
@@ -285,11 +285,11 @@ HTTP 400을 반환합니다. 두 경우 모두 날짜 제거나 다른 경로로
 
 아래 계정 연결 설명은 기존 Codex 클라이언트 기준입니다. 외부 API 키로 쓰는 받아쓰기와 GPT-Live는 [영문 음성 API 명세](/reference/proxy-formats/#streaming-dictation)를 따릅니다.
 
-Connections > API keys에는 받아쓰기와 실시간 음성 블록이 있습니다. 데이터 키는 입력란에만 잠시 유지됩니다. 받아쓰기는 선택한 파일을 전송하고, 음성 연결 확인은 마이크 없이 세션 응답을 기다립니다. 설정 표시는 실제 연결 성공을 뜻하지 않습니다.
+Connections > API keys에는 받아쓰기와 실시간 음성 블록이 있습니다. 데이터 키는 입력란에만 잠시 유지됩니다. 받아쓰기는 선택한 파일을 전송하고 음성 연결 확인은 마이크 없이 세션 응답을 기다립니다. 설정 표시는 실제 연결 성공을 뜻하지 않습니다.
 
 `POST /v1/live`는 ChatGPT/Codex App Frameless call-creation 표면을 받습니다.
 `POST /v1/realtime/calls`는 OpenAI Realtime call-creation 표면을 받습니다. easyproxy는 적절한 OpenAI 계열
-경로를 선택하고, 업스트림 인증 모드에 맞게 call-creation 요청을 정규화한 뒤, 제한된 응답을 릴레이합니다.
+경로를 선택하고 업스트림 인증 모드에 맞게 call-creation 요청을 정규화한 뒤, 제한된 응답을 릴레이합니다.
 
 call creation 이후 클라이언트는 다음의 지원되는 모든 inbound 형식 중 하나로 sideband WebSocket에 참여할 수
 있습니다.
@@ -299,23 +299,23 @@ call creation 이후 클라이언트는 다음의 지원되는 모든 inbound �
 - `/v1/realtime?call_id={callId}`
 
 프록시는 업스트림 join URL을 정규화한 뒤, 양방향 텍스트 및 바이너리 프레임을 투명하게 릴레이합니다. 업스트림
-인증은 프록시가 소유한 상태로 유지되며, 클라이언트 프로토콜 헤더는 보존됩니다.
+인증은 프록시가 소유한 상태로 유지되며 클라이언트 프로토콜 헤더는 보존됩니다.
 
 sideband 연결을 종료할 때 프록시는 업스트림의 정상 종료를 1초 동안 기다린 뒤, 응답하지 않는
 전송 연결을 강제로 닫습니다. 클라이언트 업그레이드가 실패한 경우에도 실제 업스트림 연결이
 닫힌 것을 확인한 후에만 해당 계정의 활성 통화 용량을 반환합니다.
 
-call creation과 sideband join은 같은 OpenAI 계정으로 이루어져야 하며, 그렇지 않으면 업스트림이 join을
+call creation과 sideband join은 같은 OpenAI 계정으로 이루어져야 하며 그렇지 않으면 업스트림이 join을
 거부합니다(`404`). 두 요청 모두 Codex의 `session-id`와 `thread-id` 헤더를 실어 보냅니다. Pool 모드는
-계정 선택을 그 쌍에 묶어 두므로(프로세스 로컬) 프록시에 도착한 join은 통화를 만든 계정을 그대로 쓰고,
+계정 선택을 그 쌍에 묶어 두므로(프로세스 로컬) 프록시에 도착한 join은 통화를 만든 계정을 그대로 쓰고
 Direct 모드는 두 요청 모두 호출자의 현재 bearer를 전달합니다. 릴레이되는 클라이언트 헤더는 정확히
 `openai-alpha`, `x-session-id`, `session-id`, `thread-id`, `originator`, `x-oai-attestation`,
 `x-codex-turn-metadata`, `voice-session-id`(실시간 `x-session-id`와 별개인 클라이언트 음성 세션 id)
-(`src/server/live.ts`의 `LIVE_CLIENT_PROTOCOL_HEADERS`)이며, 각 헤더는
+(`src/server/live.ts`의 `LIVE_CLIENT_PROTOCOL_HEADERS`)이며 각 헤더는
 호출자가 보낸 경우에만 전달되고 프록시가 만들어 내지 않습니다. `Authorization`과 ChatGPT 계정 id는
 ChatGPT 경로에서 프록시가 소유합니다(Pool은 저장된 계정으로 교체, Direct는 검증된 호출자 bearer를 전달).
 API 키 프로바이더는 자체 bearer를 씁니다. Codex가 join을 프록시로 보내는 것은
-`experimental_realtime_ws_base_url`이 프록시를 가리킬 때뿐이며, `epx start`가 이 키를
+`experimental_realtime_ws_base_url`이 프록시를 가리킬 때뿐이며 `epx start`가 이 키를
 `openai_base_url` 옆에 주입합니다([Codex 연동](/ko/guides/codex-integration/) 참고).
 
 ## `POST /v1/responses/compact`
@@ -327,7 +327,7 @@ Compaction은 긴 Responses 대화를 줄여야 하는 클라이언트를 위해
 | 경로 유형 | 동작 |
 | --- | --- |
 | 정식 ChatGPT 또는 공식 OpenAI 경로 | 확인된 계정과 모델 인증을 사용해 요청을 네이티브 `/responses/compact` endpoint로 전달합니다 |
-| 다른 라우팅된 모델 | `compaction_trigger`가 있는 내부 비스트리밍 no-tools compaction 턴을 실행합니다. `encrypted_content`가 `epx1:` envelope인 synthetic `compaction` 항목이 정확히 하나 있어야 하며, 그 요약을 v1 replacement history로 디코딩합니다 |
+| 다른 라우팅된 모델 | `compaction_trigger`가 있는 내부 비스트리밍 no-tools compaction 턴을 실행합니다. `encrypted_content`가 `epx1:` envelope인 synthetic `compaction` 항목이 정확히 하나 있어야 하며 그 요약을 v1 replacement history로 디코딩합니다 |
 
 네이티브 compact 응답은 선언된 `Content-Length`가 이미 한도를 넘는 응답을 포함해 최대 32 MiB로 버퍼링됩니다.
 compact 전용 실패는 다음과 같습니다.
@@ -344,7 +344,7 @@ compact 전용 실패는 다음과 같습니다.
 ## 인증 매트릭스
 
 loopback 전용 bind에서는 data-plane admission에 설정된 key가 필요하지 않습니다. remote bind에서는 아래
-매트릭스를 사용하십시오. “Dedicated”는 `X-EasyProxy-API-Key`를 뜻하고, 다른 열은 `Authorization: Bearer ...`
+매트릭스를 사용하세요. “Dedicated”는 `X-EasyProxy-API-Key`를 뜻하고 다른 열은 `Authorization: Bearer ...`
 와 `x-api-key`를 뜻합니다.
 
 | 표면 | Dedicated | Bearer | `x-api-key` |
@@ -356,30 +356,30 @@ loopback 전용 bind에서는 data-plane admission에 설정된 key가 필요하
 | `/v1/models` | 허용됨 | 허용됨 | 허용됨 |
 | `/v1/live`, `/v1/realtime/calls`, 및 sideband joins | 허용됨 | 허용됨 | 허용됨 |
 
-Responses 계열과 Chat 요청은 전용 헤더 또는 Bearer 필드의 프록시 키를 허용합니다. 네이티브 경로에서는 선택한 저장 Codex 자격 증명이 admission bearer를 대체하고, 다른 경로에서는 해당 bearer를 제거합니다. 프록시 키를 upstream 자격 증명으로 사용하지 않습니다. 별도의 provider bearer도 전달하려면 프록시 키는 전용 헤더에 넣으십시오.
+Responses 계열과 Chat 요청은 전용 헤더 또는 Bearer 필드의 프록시 키를 허용합니다. 네이티브 경로에서는 선택한 저장 Codex 자격 증명이 admission bearer를 대체하고 다른 경로에서는 해당 bearer를 제거합니다. 프록시 키를 upstream 자격 증명으로 사용하지 않습니다. 별도의 provider bearer도 전달하려면 프록시 키는 전용 헤더에 넣으세요.
 
-키가 없고 OAuth를 쓰지 않는 Cursor 경로는 별도의 호출자 bearer를 사용할 수 있지만, 프록시 secret이나 자동으로 보충한 ChatGPT main 인증은 사용할 수 없습니다. Combo/policy 선택과 실제 shadow/thread-spawn 경로 변경은 호출자의 원본 자격 증명을 새 대상으로 넘기지 않습니다. 정규 OpenAI 라우팅은 JWT에 ChatGPT 계정 claim이 포함되어 있고 명시적 계정 헤더가 있으면 그 claim과 일치하는 경우에만, 내부 경로 변경 후 프록시 키가 아닌 호출자의 단일 bearer를 복원할 수 있습니다. 선택적 OpenAI sidecar에 호출자 인증을 전달하려면 단일 JWT와 이에 일치하는 명시적 `chatgpt-account-id`가 필요합니다. Opaque bearer는 명시적 계정 헤더가 있어도 경로 변경을 거쳐 복원되지 않습니다. 그 외의 최종 대상에는 자체 설정·OAuth·저장 자격 증명이 필요하며, 없으면 로컬에서 실패합니다. thread-spawn 표지만 있고 경로가 바뀌지 않으면 자격 증명을 제거하지 않습니다.
+키가 없고 OAuth를 쓰지 않는 Cursor 경로는 별도의 호출자 bearer를 사용할 수 있지만 프록시 secret이나 자동으로 보충한 ChatGPT main 인증은 사용할 수 없습니다. Combo/policy 선택과 실제 shadow/thread-spawn 경로 변경은 호출자의 원본 자격 증명을 새 대상으로 넘기지 않습니다. 정규 OpenAI 라우팅은 JWT에 ChatGPT 계정 claim이 포함되어 있고 명시적 계정 헤더가 있으면 그 claim과 일치하는 경우에만, 내부 경로 변경 후 프록시 키가 아닌 호출자의 단일 bearer를 복원할 수 있습니다. 선택적 OpenAI sidecar에 호출자 인증을 전달하려면 단일 JWT와 이에 일치하는 명시적 `chatgpt-account-id`가 필요합니다. Opaque bearer는 명시적 계정 헤더가 있어도 경로 변경을 거쳐 복원되지 않습니다. 그 외의 최종 대상에는 자체 설정·OAuth·저장 자격 증명이 필요하며 없으면 로컬에서 실패합니다. thread-spawn 표지만 있고 경로가 바뀌지 않으면 자격 증명을 제거하지 않습니다.
 
 설정된 키가 없고 OAuth를 쓰지 않는 Cursor Chat 요청의 선택적 저장 main 인증 보강은 실제 OpenAI 보조 호출이 계획되고 canonical Direct 대상이 있을 때까지 미룹니다. 무관한 Cursor 요청은 이 과정에서 native main을 점유하지 않아 프로필 전환을 지연시키지 않습니다. 보조 호출 인증은 시작·전환 소유권 차단을 따르며 Cursor bearer와 분리됩니다. Pool 및 계정을 지정한 보조 호출은 기존 계정 선택을 유지합니다.
 
-Claude replay는 해당 turn이 소유권을 확보한 main 인증만 메모리 snapshot으로 유지하며, 최종 대상이 정규 ChatGPT 경로일 때만 복원합니다.
+Claude replay는 해당 turn이 소유권을 확보한 main 인증만 메모리 snapshot으로 유지하며 최종 대상이 정규 ChatGPT 경로일 때만 복원합니다.
 
 :::caution
 data-plane key는 management credential이 아닙니다. management API는 별도의 admin secret을 사용합니다.
-[Management API](/reference/management-api/)를 보십시오. 하나의 secret을 두 평면에 함께 재사용하지 마십시오.
+[Management API](/reference/management-api/)를 참고하세요. 하나의 secret을 두 평면에 함께 재사용하지 마세요.
 :::
 
 ## 공통 오류 어휘
 
-필요할 때는 클라이언트 방언의 envelope를 사용하지만, 다음 status/code 의미는 변하지 않습니다.
+필요할 때는 클라이언트 방언의 envelope를 사용하지만 다음 status/code 의미는 변하지 않습니다.
 
 | 상태 | 유형 또는 코드 | 의미 |
 | --- | --- | --- |
 | 401 | `authentication_error` | 필요한 프록시 admission credential이 없거나 유효하지 않습니다 |
 | 403 | `origin_rejected` | Responses/OpenAI data-plane 요청 또는 WebSocket 업그레이드가 허용되지 않은 origin에서 들어왔습니다 |
-| 503 | `combo_unavailable` | 선택한 combo의 모든 대상이 사용할 수 없거나, cooldown 중이거나, 비활성화되어 있거나, 다른 이유로 부적합합니다 |
+| 503 | `combo_unavailable` | 선택한 combo의 모든 대상이 사용할 수 없거나 cooldown 중이거나 비활성화되어 있거나 다른 이유로 부적합합니다 |
 | 400 | `unreadable_encrypted_agent_task` | 암호화된 v2 worker task를 처리할 수 있는 정규 ChatGPT 대상이나 명시적으로 신뢰한 Responses 대상이 없습니다 |
-| 426 | `upgrade_required` | Responses WebSocket transport가 비활성화되어 있거나 업그레이드에 실패했습니다. HTTP를 사용하십시오 |
+| 426 | `upgrade_required` | Responses WebSocket transport가 비활성화되어 있거나 업그레이드에 실패했습니다. HTTP를 사용하세요 |
 
 Anthropic-origin 실패는 Anthropic의 error envelope로 렌더링됩니다. 따라서 해당 방언에서 origin 거부는
 OpenAI 스타일 `origin_rejected` body가 아니라 403 `permission_error`입니다.
@@ -387,7 +387,7 @@ OpenAI 스타일 `origin_rejected` body가 아니라 403 `permission_error`입�
 ## 암호화된 콘텐츠 위생
 
 프록시는 실제 백엔드 암호문을 불투명한 데이터로 취급합니다. 구조적으로 유효한 암호문은 바이트 단위로
-그대로 보존됩니다. easyproxy는 이를 복호화하거나, 내용을 번역하거나, 다른 프로바이더용으로 다시
+그대로 보존됩니다. easyproxy는 이를 복호화하거나 내용을 번역하거나 다른 프로바이더용으로 다시
 암호화하지 않습니다.
 
 일부 에이전트 hook은 과거에 평문 제어 텍스트를 `encrypted_content` 슬롯에 넣었습니다. 호환성을 위해

@@ -20,7 +20,7 @@ Anthropic OAuth 요청에서 `claude_code_version_too_old`가 반환되면 사�
 Codex에서 `anthropic` 어댑터로 연결할 때는 EasyProxy 자체의 Claude Code 호환 프로필을 사용합니다.
 별도로 설치한 `claude` 실행 파일을 업데이트해도 이 프로필은 바뀌지 않습니다. EasyProxy를 업데이트하고
 프록시를 재시작하세요. `claude-cli` 프로바이더나 Claude Code를 직접 사용한다면 해당 CLI를 업데이트하세요.
-실제 Claude 클라이언트의 식별 정보를 전달받은 Anthropic 네이티브 Messages 요청은 그 클라이언트의 버전을 유지하며,
+실제 Claude 클라이언트의 식별 정보를 전달받은 Anthropic 네이티브 Messages 요청은 그 클라이언트의 버전을 유지하며
 설정한 헤더가 있으면 그 값이 우선합니다.
 
 예를 들어 `claude-fable-5-2`에서 보고된 오류는 Claude Code 2.1.290 이상을 요구했습니다.
@@ -212,7 +212,7 @@ EasyProxy 소유의 선택된 게이트웨이 항목, 저장된 게이트웨이 
 
 ### Claude Code CLI 1P
 
-연결 → Claude에서 CLI 1P를 켜거나 `epx claude config set --first-party on`을 실행하세요. 끌 때는 `off`를 사용합니다. 프록시가 꺼져 있거나 실행 중이지 않거나, CA·설정 파일을 준비할 수 없거나, 다른 프로그램이 프록시 설정을 소유하면 켜기 요청은 거절됩니다. 끄기는 프록시 상태와 관계없이 저장됩니다. Desktop 1P만 켜진 상태에서 터미널을 완전히 직접 연결하려면 셸에 `NO_PROXY='*'`를 설정하세요. 위의 계정 위험은 CLI 1P에도 적용됩니다. 1P가 켜져 있는 동안 EasyProxy는 `~/.claude/settings.json`의 `NO_PROXY`에 `127.0.0.1`, `localhost`, `::1`, `0.0.0.0`도 추가해서 로컬 MCP 서버(`*.localhost` 이름 포함)가 프록시를 거치지 않게 합니다. 그 밖의 `127.x` 주소는 직접 추가하세요. 기존 `NO_PROXY` 값에는 빠진 항목만 덧붙이고 끄면 EasyProxy가 원래 값을 기록할 수 있었고 그 뒤로 값을 바꾸지 않았을 때 원래 값으로 되돌립니다. 그렇지 않으면 추가된 항목을 포함한 현재 값을 그대로 둡니다.
+연결 → Claude에서 CLI 1P를 켜거나 `epx claude config set --first-party on`을 실행하세요. 끌 때는 `off`를 사용합니다. 프록시가 꺼져 있거나 실행 중이지 않거나 CA·설정 파일을 준비할 수 없거나 다른 프로그램이 프록시 설정을 소유하면 켜기 요청은 거절됩니다. 끄기는 프록시 상태와 관계없이 저장됩니다. Desktop 1P만 켜진 상태에서 터미널을 완전히 직접 연결하려면 셸에 `NO_PROXY='*'`를 설정하세요. 위의 계정 위험은 CLI 1P에도 적용됩니다. 1P가 켜져 있는 동안 EasyProxy는 `~/.claude/settings.json`의 `NO_PROXY`에 `127.0.0.1`, `localhost`, `::1`, `0.0.0.0`도 추가해서 로컬 MCP 서버(`*.localhost` 이름 포함)가 프록시를 거치지 않게 합니다. 그 밖의 `127.x` 주소는 직접 추가하세요. 기존 `NO_PROXY` 값에는 빠진 항목만 덧붙이고 끄면 EasyProxy가 원래 값을 기록할 수 있었고 그 뒤로 값을 바꾸지 않았을 때 원래 값으로 되돌립니다. 그렇지 않으면 추가된 항목을 포함한 현재 값을 그대로 둡니다.
 Claude 라우팅을 꺼도 소유한 설정 환경 변수는 남습니다. 리스너가 실행 중이면 모든 Messages 요청을 그대로 전달하지만 프록시가 멈추면 EasyProxy를 실행하거나 Desktop/CLI 1P를 끄기 전까지 일반 `claude`는 연결할 수 없습니다. `epx claude`는 소유한 설정 환경 변수가 있고 상속된 외부 HTTPS 프록시가 없을 때만 `NO_PROXY=*`를 설정합니다. 외부 프록시가 있으면 보존하고 설정의 인터셉트가 계속 적용되므로 1P를 끄거나 설정을 해제하라는 경고를 표시합니다.
 화면은 설정을 읽지 못한 상태(unknown), easyproxy 토큰이 있는 프록시에 관리 대상이 아닌 CA가 붙은 상태(foreign), Claude 라우팅이 꺼졌지만 리스너는 살아 있어 요청을 그대로 전달하는 상태(disabled)를 구분합니다. foreign이면 HTTPS_PROXY / NODE_EXTRA_CA_CERTS를 직접 고치고 disabled이면 재시작 전에 1P를 꺼서 설정을 지우세요. 리스너가 없으면 stopped, 관리 대상 CA를 쓰지만 포트·토큰이 다르면 broken입니다. 1P가 켜진 상태에서 인터셉트를 제공할 수 없으면 stopped와 broken 모두 routingOff 경고를 보여 줍니다. Claude 라우팅이나 인터셉트가 꺼졌거나 이 기기가 다른 easyproxy 허브의 클라이언트일 수 있으므로 이 기기에서 다시 켜거나 1P를 꺼서 설정을 지우라고 안내합니다. 인터셉트가 가능한 설정일 때만 stopped는 easyproxy 실행, broken은 `epx ensure` 또는 재시작을 안내합니다. CLI 1P만 켰는데 프록시 설정이 없으면 미적용, 한쪽만 켜고 프록시가 정상이면 공유 전달, 둘 다 껐는데 설정이 남으면 잔여 설정으로 표시합니다.
 unknown은 설정이 아직 easyproxy 프록시를 가리키는지 판단할 수 없다는 뜻입니다. 외부 CA와 토큰 없는 127.0.0.1 프록시가 함께 있으면 local로 표시합니다. easyproxy 소유인지 확인할 수 없으므로 사용하지 않는다면 ~/.claude/settings.json에서 HTTPS_PROXY를 지우세요. disabled는 현재 리스너와 설정이 정확히 맞을 때만 나타나고 포트나 토큰이 어긋나면 라우팅이 꺼져 있어도 broken입니다.
@@ -338,7 +338,7 @@ import/export는 로컬 설정만 다룹니다. 허브 프로필을 바꾸지 �
 해시 별칭과 `claude-epx-<provider>--<model>`, `claude-epx2-<provider>--<model>` 별칭도 계속 해석됩니다. 저장된 `claude-epx-`는 `epx-claude-`로, 이스케이프된 `claude-epx2-`는 `epx-claude2-`로 한 번 다시 고르면 카탈로그의 유효 컨텍스트 창과 compact가 함께 적용됩니다. 컨텍스트가 1M이거나 기본 압축 임곗값(829,800) 이상인 모델에는
 `…[1m]` 행이 하나 더 생깁니다 — 이걸 고르면 Claude Code가 그 모델의 컨텍스트를 1M로 계산합니다
 (자동 요약 유지, 프록시가 표식을 떼고 라우팅). 선택하면 Claude Code의
-`settings.json` `model` 필드에 저장되고, 인바운드 요청에서
+`settings.json` `model` 필드에 저장되고 인바운드 요청에서
 별칭이 라우팅 모델로 되돌려집니다. 구버전 Claude Code에서는 `ANTHROPIC_MODEL`로 슬롯을
 지정하거나 `/model`에 라우팅 id를 직접 입력하세요 (Claude Code는 문자열을 그대로 통과시킵니다).
 
@@ -542,7 +542,7 @@ Anthropic 패스스루는 그대로 유지합니다.
 | 백엔드 | 실행 방식 | 필요한 조건 |
 | --- | --- | --- |
 | `openai` | ChatGPT `forward` 프로바이더를 통해 작은 GPT 모델을 호출 | ChatGPT 로그인과 활성화된 `authMode: "forward"` 프로바이더 |
-| `anthropic` | 저장된 Anthropic OAuth로 Claude를 호출. 웹 검색은 `web_search_20250305`를 쓰고, 비전은 Claude가 이미지를 설명 | 활성 계정이 `needsReauth` 상태가 아닌 `adapter: "anthropic"`, `authMode: "oauth"` 프로바이더 |
+| `anthropic` | 저장된 Anthropic OAuth로 Claude를 호출. 웹 검색은 `web_search_20250305`를 쓰고 비전은 Claude가 이미지를 설명 | 활성 계정이 `needsReauth` 상태가 아닌 `adapter: "anthropic"`, `authMode: "oauth"` 프로바이더 |
 
 `backend`를 직접 지정하면 그 값이 항상 우선합니다. 생략하면 쓸 수 있는 Anthropic OAuth 계정이
 있을 때 `anthropic`, 없을 때 `openai`를 선택합니다. 사용할 수 있는 자격 증명 없이
@@ -609,7 +609,7 @@ Messages → Responses로 변환되는 요청에서는 Claude Code의 `/effort` 
 | 사용자 `tool_result` | `function_call_output`(`is_error` → `[tool error]` 접두사) |
 | 도구 결과의 `tool_reference` | 기본적으로 짝지어진 결과에 `Tool loaded: <tool_name>` 텍스트를 보존합니다. [append-only 옵션](/guides/claude-code/#preserve-cache-prefixes-when-client-tools-load)을 켠 적격 최종 Responses 경로에서는 성공한 클라이언트 검색 결과 위치에 현재 선언된 지연 함수의 정의를 배치할 수 있습니다. 참조만으로 도구 권한이나 서버 측 검색 기능을 추가하지는 않습니다. |
 | `thinking` / `redacted_thinking` 재생 | 서명과 비공개 페이로드를 제한된 `epxr1` 봉투에 담은 `reasoning` 항목 |
-| Function 도구 | `{type: "function"}`(`web_search*` → `{type: "web_search"}`). `api.anthropic.com`으로 번역하여 보내는 경로에서는 타입이 지정된 `web_search_*`와 `web_fetch_*` 선언도 Anthropic에 전달되어 서버에서 실행됩니다. 웹 검색 사이드카가 `web_search`를 제공하면 사이드카가 우선합니다. 검색과 가져오기 결과는 `server_tool_use` 및 대응하는 `web_search_tool_result` / `web_fetch_tool_result` 블록으로 클라이언트에 반환됩니다 `allowed_domains`, `blocked_domains`, `user_location`이 있으면 번역된 Responses/Chat 경로에서 호스팅 검색을 제외하며, 제외된 검색을 강제하면 400을 반환합니다. 유효한 `defer_loading` 함수 정의는 일반 함수로 호출할 수 있습니다. [번역 제한](/guides/claude-code/#search-restrictions-and-deferred-tools-on-translated-routes)을 참고하세요. |
+| Function 도구 | `{type: "function"}`(`web_search*` → `{type: "web_search"}`). `api.anthropic.com`으로 번역하여 보내는 경로에서는 타입이 지정된 `web_search_*`와 `web_fetch_*` 선언도 Anthropic에 전달되어 서버에서 실행됩니다. 웹 검색 사이드카가 `web_search`를 제공하면 사이드카가 우선합니다. 검색과 가져오기 결과는 `server_tool_use` 및 대응하는 `web_search_tool_result` / `web_fetch_tool_result` 블록으로 클라이언트에 반환됩니다 `allowed_domains`, `blocked_domains`, `user_location`이 있으면 번역된 Responses/Chat 경로에서 호스팅 검색을 제외하며 제외된 검색을 강제하면 400을 반환합니다. 유효한 `defer_loading` 함수 정의는 일반 함수로 호출할 수 있습니다. [번역 제한](/guides/claude-code/#search-restrictions-and-deferred-tools-on-translated-routes)을 참고하세요. |
 | `tool_choice` | `auto`→`auto`, `none`→`none`, `any`→`required`, 이름 지정 함수→`{type:"function",name}`, 호스팅 WebSearch/web_search→`{type:"web_search"}` |
 | `max_tokens` | `max_output_tokens` |
 | `stop_sequences` | `stop` |
@@ -753,15 +753,15 @@ Anthropic 백엔드를 명시하면 의도적으로 실패 후 중단합니다.
 언급하면 자동으로 불러옵니다. 네이티브 패스스루에서는 정상이며 라우팅 모델에서는 easyproxy가
 기본적으로 스텁으로 바꿉니다(`blockedSkills: ["claude-api"]`).
 
-**첫 턴부터 MCP 도구 스키마가 컨텍스트를 채움** — 게이트웨이 뒤에서 Claude Code가 MCP 도구를 지연 로드하는지는 버전에 따라 다릅니다. v2.1.304부터는 `ANTHROPIC_BASE_URL`이 게이트웨이를 가리켜도(모든 `epx claude` 세션 포함) 도구 검색이 기본으로 켜집니다. 그 이전 버전은 게이트웨이 뒤에서 지연 로드를 끄고 첫 턴에 모든 도구 스키마를 넣으므로 `claudeCode.toolSearch: true`로 다시 켤 수 있습니다. `epx claude`는 이 설정이 켜는 값일 때만 `ENABLE_TOOL_SEARCH`를 주입하고, 설정이 없으면 클라이언트 자체 기본값을 따릅니다. `toolSearch: false`는 아무것도 주입하지 않으므로 도구 검색을 끄지 않습니다. 번역 Chat 경로(DeepSeek, GLM 등)에서는 `ToolSearch`로 도구를 불러올 때마다 도구 목록과 시스템 메시지가 바뀌어 다음 요청이 프롬프트 캐시를 대부분 놓칩니다([#7963](https://github.com/AquilaXk/easyproxy/issues/7963)). 캐시를 우선하려면 `epx claude` 실행 전에 `ENABLE_TOOL_SEARCH=false`를 export하세요. 직접 export한 값이 항상 우선합니다. 도구 검색을 켠 채로 prefix를 유지하려면 검증한 직접 Chat 경로를 `claudeCode.chatToolDispatchModels`로 선택하세요(아래 Chat 경로 설명 참고). 네이티브 Anthropic 경로는 서버 측 검색과 지연 도구 참조를 그대로 전달합니다. 기본 번역 경로는 같은 서버 기능을 제공하지 않으므로 모든 타사 경로에서 켜도 된다는 뜻은 아닙니다.
+**첫 턴부터 MCP 도구 스키마가 컨텍스트를 채움** — 게이트웨이 뒤에서 Claude Code가 MCP 도구를 지연 로드하는지는 버전에 따라 다릅니다. v2.1.304부터는 `ANTHROPIC_BASE_URL`이 게이트웨이를 가리켜도(모든 `epx claude` 세션 포함) 도구 검색이 기본으로 켜집니다. 그 이전 버전은 게이트웨이 뒤에서 지연 로드를 끄고 첫 턴에 모든 도구 스키마를 넣으므로 `claudeCode.toolSearch: true`로 다시 켤 수 있습니다. `epx claude`는 이 설정이 켜는 값일 때만 `ENABLE_TOOL_SEARCH`를 주입하고 설정이 없으면 클라이언트 자체 기본값을 따릅니다. `toolSearch: false`는 아무것도 주입하지 않으므로 도구 검색을 끄지 않습니다. 번역 Chat 경로(DeepSeek, GLM 등)에서는 `ToolSearch`로 도구를 불러올 때마다 도구 목록과 시스템 메시지가 바뀌어 다음 요청이 프롬프트 캐시를 대부분 놓칩니다([#7963](https://github.com/AquilaXk/easyproxy/issues/7963)). 캐시를 우선하려면 `epx claude` 실행 전에 `ENABLE_TOOL_SEARCH=false`를 export하세요. 직접 export한 값이 항상 우선합니다. 도구 검색을 켠 채로 prefix를 유지하려면 검증한 직접 Chat 경로를 `claudeCode.chatToolDispatchModels`로 선택하세요(아래 Chat 경로 설명 참고). 네이티브 Anthropic 경로는 서버 측 검색과 지연 도구 참조를 그대로 전달합니다. 기본 번역 경로는 같은 서버 기능을 제공하지 않으므로 모든 타사 경로에서 켜도 된다는 뜻은 아닙니다.
 
-예외적으로, 클라이언트가 직접 실행하는 eager `ToolSearch` 함수와 구조화된 검색 결과를 제공하고 최종 Responses 목적지가 `additional_tools`를 지원한다면 `claudeCode.appendOnlyToolLoadingModels`로 그 목적지를 명시하여 사용할 수 있습니다. 이 옵션은 사용하지 않은 지연 정의를 초기 카탈로그에서 제외하고 성공한 검색 위치에 현재 정의를 배치합니다. 런처의 `toolSearch` 설정만으로 이 동작이나 서버 측 검색이 활성화되지는 않습니다. 지원되는 클라이언트와 게이트웨이 조합에서만 켜고, 그 밖의 타사 경로에서는 꺼 두세요. 기존 compatibility-enforcement 검사는 그대로 적용되므로 지원하지 않는 요청을 거절할 수 있습니다. 캐시 적중이나 네이티브 검색과의 완전한 동등성은 보장하지 않습니다. [영문 설정 안내](/guides/claude-code/#preserve-cache-prefixes-when-client-tools-load)를 참고하세요.
+예외적으로, 클라이언트가 직접 실행하는 eager `ToolSearch` 함수와 구조화된 검색 결과를 제공하고 최종 Responses 목적지가 `additional_tools`를 지원한다면 `claudeCode.appendOnlyToolLoadingModels`로 그 목적지를 명시하여 사용할 수 있습니다. 이 옵션은 사용하지 않은 지연 정의를 초기 카탈로그에서 제외하고 성공한 검색 위치에 현재 정의를 배치합니다. 런처의 `toolSearch` 설정만으로 이 동작이나 서버 측 검색이 활성화되지는 않습니다. 지원되는 클라이언트와 게이트웨이 조합에서만 켜고 그 밖의 타사 경로에서는 꺼 두세요. 기존 compatibility-enforcement 검사는 그대로 적용되므로 지원하지 않는 요청을 거절할 수 있습니다. 캐시 적중이나 네이티브 검색과의 완전한 동등성은 보장하지 않습니다. [영문 설정 안내](/guides/claude-code/#preserve-cache-prefixes-when-client-tools-load)를 참고하세요.
 
 OpenCode Go의 Responses 엔드포인트와 공식 xAI Responses 호스트는 선택 목록에 있어도 원래 전체 도구 카탈로그를 유지합니다. 이 목적지들은 `additional_tools`를 초기 `tools`로 승격하거나 거절하므로 시간순 로딩 prefix를 보존할 수 없습니다. 검색 결과의 정의를 초기 `tools`로 승격하는 다른 게이트웨이에서도 이 옵션을 꺼 두세요.
 
 `additional_tools`를 받아들이지만 오류 없이 버리는 Responses 공급자도 이 옵션의 대상이 아닙니다. 불러온 정의가 모델에게 전달되지 않기 때문입니다. 2026-10-31 측정에서 DeepSeek 공식 Responses API가 이렇게 동작했습니다. DeepSeek에는 아래 Chat 경로 옵션을 사용하세요.
 
-Chat Completions 경로에는 `additional_tools`에 해당하는 수단이 없습니다. 변환된 Chat 경로에서는 ToolSearch로 도구를 불러올 때마다 도구 카탈로그와 시스템 메시지의 도구 이름 목록이 바뀌어, 다음 요청이 대화 전체에서 공급자 프롬프트 캐시를 놓칩니다. `ENABLE_TOOL_SEARCH=false`로 도구 검색을 끌 수도 있고, 도구 검색을 켠 채로 사용하는 모델로 검증한 직접 Chat 경로라면 `claudeCode.chatToolDispatchModels`(예: `["deepseek/deepseek-flash"]`)로 둘을 고정할 수 있습니다. 선택자 문법, 제한, 메타데이터와 eager `ToolSearch` 전제, combo·policy·늦은 대체 경로 규칙은 `appendOnlyToolLoadingModels`와 같고, 최종 물리 경로가 직접 `openai-chat` 공급자일 때만 적용됩니다. 선택된 경로에서는 첫 요청부터 카탈로그에 `use_loaded_tool` 함수 하나를 더하고 사용하지 않은 지연 도구는 뺍니다. 검색으로 찾은 도구의 이름, 설명, 매개변수 스키마는 그 도구를 불러온 ToolSearch 결과 뒤에 텍스트로 붙습니다. 모델은 `use_loaded_tool`로 그 도구를 호출하고, easyproxy는 형식이 올바른 `use_loaded_tool` 호출을 모두 이름이 가리키는 도구 호출로 바꿔 Claude Code에 전달하므로 Claude Code는 항상 실제 도구 이름을 받습니다. 선언된 도구는 직접 호출한 것과 똑같이 실행되고, Claude Code가 모르는 이름은 그 이름 그대로 알 수 없는 도구로 보고됩니다. 형식이 맞지 않거나 다른 키가 섞인 호출은 그대로 전달되어 알 수 없는 도구로 실패합니다. 모델이 ToolSearch로 불러오지 않은 지연 도구를 직접 또는 `use_loaded_tool`로 호출하면 그 도구가 카탈로그로 돌아와 캐시 prefix를 한 번 잃습니다. 정의가 텍스트로 전달되므로 공급자 측 strict 스키마 검사는 적용되지 않습니다. 안내가 도구 결과 안에 있어 따르지 않는 모델이 있을 수 있으니 모델마다 검증한 뒤 켜세요. 옵션이 없거나 비어 있거나 목록에 없는 경로는 이전과 같은 요청 바이트를 보냅니다. 캐시 적중을 보장하지는 않습니다. Claude Code는 래퍼 호출의 인자를 호출이 끝난 뒤에 받는데, 변환된 Chat 경로의 모든 도구 호출이 이렇게 전달되므로 이 옵션으로 달라지는 점은 아닙니다. [영문 설정 안내](/guides/claude-code/#chat-routes)를 참고하세요.
+Chat Completions 경로에는 `additional_tools`에 해당하는 수단이 없습니다. 변환된 Chat 경로에서는 ToolSearch로 도구를 불러올 때마다 도구 카탈로그와 시스템 메시지의 도구 이름 목록이 바뀌어, 다음 요청이 대화 전체에서 공급자 프롬프트 캐시를 놓칩니다. `ENABLE_TOOL_SEARCH=false`로 도구 검색을 끌 수도 있고 도구 검색을 켠 채로 사용하는 모델로 검증한 직접 Chat 경로라면 `claudeCode.chatToolDispatchModels`(예: `["deepseek/deepseek-flash"]`)로 둘을 고정할 수 있습니다. 선택자 문법, 제한, 메타데이터와 eager `ToolSearch` 전제, combo·policy·늦은 대체 경로 규칙은 `appendOnlyToolLoadingModels`와 같고 최종 물리 경로가 직접 `openai-chat` 공급자일 때만 적용됩니다. 선택된 경로에서는 첫 요청부터 카탈로그에 `use_loaded_tool` 함수 하나를 더하고 사용하지 않은 지연 도구는 뺍니다. 검색으로 찾은 도구의 이름, 설명, 매개변수 스키마는 그 도구를 불러온 ToolSearch 결과 뒤에 텍스트로 붙습니다. 모델은 `use_loaded_tool`로 그 도구를 호출하고 easyproxy는 형식이 올바른 `use_loaded_tool` 호출을 모두 이름이 가리키는 도구 호출로 바꿔 Claude Code에 전달하므로 Claude Code는 항상 실제 도구 이름을 받습니다. 선언된 도구는 직접 호출한 것과 똑같이 실행되고 Claude Code가 모르는 이름은 그 이름 그대로 알 수 없는 도구로 보고됩니다. 형식이 맞지 않거나 다른 키가 섞인 호출은 그대로 전달되어 알 수 없는 도구로 실패합니다. 모델이 ToolSearch로 불러오지 않은 지연 도구를 직접 또는 `use_loaded_tool`로 호출하면 그 도구가 카탈로그로 돌아와 캐시 prefix를 한 번 잃습니다. 정의가 텍스트로 전달되므로 공급자 측 strict 스키마 검사는 적용되지 않습니다. 안내가 도구 결과 안에 있어 따르지 않는 모델이 있을 수 있으니 모델마다 검증한 뒤 켜세요. 옵션이 없거나 비어 있거나 목록에 없는 경로는 이전과 같은 요청 바이트를 보냅니다. 캐시 적중을 보장하지는 않습니다. Claude Code는 래퍼 호출의 인자를 호출이 끝난 뒤에 받는데, 변환된 Chat 경로의 모든 도구 호출이 이렇게 전달되므로 이 옵션으로 달라지는 점은 아닙니다. [영문 설정 안내](/guides/claude-code/#chat-routes)를 참고하세요.
 
 어떤 도구든 `allowed_callers` 목록을 지정했는데 그 값이 정확히 `["direct"]`가 아니라면 원래 카탈로그를 유지합니다.
 Chat 경로는 이 제한을 표현할 수 없어 공급자에게 보내기 전에 요청을 거절합니다.
@@ -771,9 +771,9 @@ Chat 경로는 이 제한을 표현할 수 없어 공급자에게 보내기 전�
 인자가 아니라 `<!-- epx-route: ... -->` 지시문을 사용합니다. 지시문이 원하는 라우트와 일치하는지
 확인하고 모델 자리 표시자로 `"haiku"`를 전달하세요.
 
-`config.json`에서 `claudeCode.stabilizePromptCache`를 `true`로 설정하면 변환 경로의 시스템 지시 끝에 붙은 지원 대상 Claude 알림을 떼어냅니다. 인식된 `<total_tokens>N tokens left</total_tokens>` 토큰 푸터는 반복된 경우에도 모두 제거합니다. TaskCreate 알림은 기존처럼 마지막 사용자 메시지로 옮기며, 토큰 푸터만 떼어낸 경우에는 입력 메시지를 추가하지 않습니다. 기본값은 `false`입니다. 사용하는 클라이언트에서 이 역할 변경을 허용할 때만 켜세요. 코드 펜스 안의 예제와 일치하지 않는 원문은 보존하며, Anthropic 원본 전달 경로는 바꾸지 않습니다. 메타데이터가 없는 요청의 캐시 키는 정리된 지시문을 기준으로 계산합니다. 대화 식별자를 만들거나 상위 서비스의 캐시 적중을 보장하는 기능은 아닙니다.
+`config.json`에서 `claudeCode.stabilizePromptCache`를 `true`로 설정하면 변환 경로의 시스템 지시 끝에 붙은 지원 대상 Claude 알림을 떼어냅니다. 인식된 `<total_tokens>N tokens left</total_tokens>` 토큰 푸터는 반복된 경우에도 모두 제거합니다. TaskCreate 알림은 기존처럼 마지막 사용자 메시지로 옮기며 토큰 푸터만 떼어낸 경우에는 입력 메시지를 추가하지 않습니다. 기본값은 `false`입니다. 사용하는 클라이언트에서 이 역할 변경을 허용할 때만 켜세요. 코드 펜스 안의 예제와 일치하지 않는 원문은 보존하며 Anthropic 원본 전달 경로는 바꾸지 않습니다. 메타데이터가 없는 요청의 캐시 키는 정리된 지시문을 기준으로 계산합니다. 대화 식별자를 만들거나 상위 서비스의 캐시 적중을 보장하는 기능은 아닙니다.
 
-변환된 모든 Chat 경로에서 타임라인 알림은 대기 중인 도구 결과 뒤, 대화 안의 원래 위치를 그대로 유지합니다. 덕분에 새 알림을 추가해도 맨 앞의 시스템 프롬프트를 다시 쓰지 않고, 대화 중간의 지시가 그 지시보다 앞선 턴으로 끌려가지도 않습니다. 그 자리가 어떤 역할을 싣는지는 따로 정합니다. 공급자가 `foldDeveloperRoleToSystem: false`를 기록하지 않는 한 알림은 `system`으로 보내며, 이 기록은 상위 서비스가 `developer` 역할을 받아들인다는 뜻이라 같은 위치에서 그대로 전달합니다. 받아들이지 않는 상위 서비스는 `400 role 'developer' is not allowed`로 응답해 턴이 시작조차 못 하므로, 기록이 없는 목적지는 접는 쪽을 씁니다. `stabilizePromptCache` 설정과 관계없이 적용되며 Anthropic 네이티브 전달은 기존 동작을 유지합니다. 캐시 재사용에는 안정적인 세션 식별자와 사용 가능한 상위 서비스 캐시가 여전히 필요합니다. 이전 지시나 도구의 변경, 대화 압축도 캐시 적중에 영향을 줄 수 있으며, 알림 순서를 유지하는 것만으로 재사용을 보장하지는 않습니다.
+변환된 모든 Chat 경로에서 타임라인 알림은 대기 중인 도구 결과 뒤, 대화 안의 원래 위치를 그대로 유지합니다. 덕분에 새 알림을 추가해도 맨 앞의 시스템 프롬프트를 다시 쓰지 않고 대화 중간의 지시가 그 지시보다 앞선 턴으로 끌려가지도 않습니다. 그 자리가 어떤 역할을 싣는지는 따로 정합니다. 공급자가 `foldDeveloperRoleToSystem: false`를 기록하지 않는 한 알림은 `system`으로 보내며 이 기록은 상위 서비스가 `developer` 역할을 받아들인다는 뜻이라 같은 위치에서 그대로 전달합니다. 받아들이지 않는 상위 서비스는 `400 role 'developer' is not allowed`로 응답해 턴이 시작조차 못 하므로, 기록이 없는 목적지는 접는 쪽을 씁니다. `stabilizePromptCache` 설정과 관계없이 적용되며 Anthropic 네이티브 전달은 기존 동작을 유지합니다. 캐시 재사용에는 안정적인 세션 식별자와 사용 가능한 상위 서비스 캐시가 여전히 필요합니다. 이전 지시나 도구의 변경, 대화 압축도 캐시 적중에 영향을 줄 수 있으며 알림 순서를 유지하는 것만으로 재사용을 보장하지는 않습니다.
 
 ### Forced Claude Code subagent model
 
@@ -789,4 +789,4 @@ The dashboard warns about old or unknown CLI versions, unavailable targets, and 
 
 Explicit gateway selectors on a generated agent request take precedence over its legacy `epx-route` fallback, even if the saved force setting changes after launch. For shell or settings overrides of generated roster agents, use an explicit gateway alias; bare Claude ids retain the older-client fallback behavior. Native aliases restore their bare model before the existing credential and model-map checks. Connected launches validate force targets against a fresh authenticated gateway catalog; failed discovery skips automatic force injection, and cached context windows alone never prove availability.
 
-출력 전의 응답에서만 정확한 HTTP 401 authentication_error (error.code 없음) 메시지가 “OAuth access token has been revoked.”이면 요청을 보낸 OAuth 계정에 재로그인이 필요하다고 표시하고 세션 연결을 해제합니다. 출력 전에는 기존 전송 제한 안에서 같은 풀의 사용 가능한 계정으로 전환할 수 있습니다. 대체 계정이 없으면 원래 401을 반환하며, 해당 계정은 재로그인할 때까지 선택에서 제외됩니다. 다른 401의 처리는 바뀌지 않습니다.
+출력 전의 응답에서만 정확한 HTTP 401 authentication_error (error.code 없음) 메시지가 “OAuth access token has been revoked.”이면 요청을 보낸 OAuth 계정에 재로그인이 필요하다고 표시하고 세션 연결을 해제합니다. 출력 전에는 기존 전송 제한 안에서 같은 풀의 사용 가능한 계정으로 전환할 수 있습니다. 대체 계정이 없으면 원래 401을 반환하며 해당 계정은 재로그인할 때까지 선택에서 제외됩니다. 다른 401의 처리는 바뀌지 않습니다.

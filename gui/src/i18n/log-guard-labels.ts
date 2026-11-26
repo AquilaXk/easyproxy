@@ -134,7 +134,7 @@ const LABELS: Record<Locale, Record<LogGuardLabelKey, string>> = {
     "error.trigger_collision": "예약된 Log Guard 트리거 이름이 이미 사용 중입니다. 보호를 변경하지 않았습니다.",
     "error.unsafe_path": "Codex 로그 데이터베이스 경로가 안전성 검사를 통과하지 못했습니다.",
     "error.database_error": "Codex 로그 데이터베이스를 업데이트하지 못했습니다.",
-    "error.config_write_failed": "데이터베이스는 변경되었지만 EasyProxy가 보호 설정을 저장하지 못했습니다. 구성 저장소를 수정한 뒤 복구를 실행하세요.",
+    "error.config_write_failed": "데이터베이스는 바뀌었지만 EasyProxy가 보호 설정을 저장하지 못했습니다. 구성 저장소를 고친 뒤 복구를 실행하세요.",
   },
   zh: {
     compact: '压缩',

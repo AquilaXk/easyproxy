@@ -3,9 +3,9 @@ title: 관리 API
 description: easyproxy 제어 평면의 인증, 오류, 엔드포인트 참고 문서입니다.
 ---
 
-Management API는 easyproxy의 제어 평면입니다. `http://localhost:10100`의 대시보드는 이 API의 한 클라이언트이며, 헤드리스 `epx` provider, model, combo, account, settings, diagnostics, lifecycle 명령도 모두 클라이언트입니다. 이 API는 프록시가 실행 중일 때만 사용할 수 있습니다.
+Management API는 easyproxy의 제어 평면입니다. `http://localhost:10100`의 대시보드는 이 API의 한 클라이언트이며 헤드리스 `epx` provider, model, combo, account, settings, diagnostics, lifecycle 명령도 모두 클라이언트입니다. 이 API는 프록시가 실행 중일 때만 사용할 수 있습니다.
 
-대화형 클라이언트가 필요하면 [Web Dashboard](/guides/web-dashboard/)를 사용하고, 자동화를 만들 때는 이 참고 문서를 사용하십시오. 영속 값은 결국 [Configuration](/reference/configuration/)을 따릅니다.
+대화형 클라이언트가 필요하면 [Web Dashboard](/guides/web-dashboard/)를 사용하고 자동화를 만들 때는 이 참고 문서를 사용하세요. 영속 값은 결국 [Configuration](/reference/configuration/)을 따릅니다.
 
 <a id="authentication-model"></a>
 
@@ -16,7 +16,7 @@ Management API에는 데이터 평면 API 키와는 독립된 자체 관리자 �
 1. 설정되어 있으면 `EASYPROXY_ADMIN_AUTH_TOKEN`
 2. 강화된 비밀 파일에 저장된 생성된 `epx_admin_*` 토큰
 
-파일 기반 토큰은 해당 디렉터리와 파일 권한 또는 ACL이 강화된 뒤에만 허용됩니다. 이를 보장할 수 없으면 관리 인증은 실패를 닫는 방식으로 처리되며, 환경 토큰이 제공되거나 파일 상태가 복구될 때까지 API는 503을 반환합니다.
+파일 기반 토큰은 해당 디렉터리와 파일 권한 또는 ACL이 강화된 뒤에만 허용됩니다. 이를 보장할 수 없으면 관리 인증은 실패를 닫는 방식으로 처리되며 환경 토큰이 제공되거나 파일 상태가 복구될 때까지 API는 503을 반환합니다.
 
 관리자 토큰은 다음 두 형식 중 하나로 보내면 됩니다.
 
@@ -29,14 +29,14 @@ Authorization: Bearer <admin-token>
 ```
 
 :::caution
-관리자 토큰은 모든 데이터 평면 자격 증명과 달라야 합니다. 시작 시 프록시 admission key와 충돌하는 관리 자격 증명은 거부됩니다. 관리자 토큰을 Codex, Claude Code, 또는 다른 모델 클라이언트에 넣지 마십시오. 이 토큰은 제어 평면 변경 권한을 부여합니다.
+관리자 토큰은 모든 데이터 평면 자격 증명과 달라야 합니다. 시작 시 프록시 admission key와 충돌하는 관리 자격 증명은 거부됩니다. 관리자 토큰을 Codex, Claude Code, 또는 다른 모델 클라이언트에 넣지 마세요. 이 토큰은 제어 평면 변경 권한을 부여합니다.
 :::
 
 ### 루프백 대시보드 세션
 
 루프백 바인드에서는 대시보드 초기화가 수명이 짧은 `epx_session_*` 자격 증명을 받을 수 있습니다. 각 세션은 5분 동안 유지되며 정확한 대시보드 origin에 묶입니다. 안전한 요청은 그 origin과 일치해야 합니다. 안전하지 않은 메서드에는 브라우저 `Origin`과 세션의 CSRF 토큰도 필요합니다.
 
-세션 발급은 원격 바인드와 같이 데이터 평면 인증이 필요한 경우에는 항상 비활성화됩니다. 원격 운영자는 원시 관리자 토큰으로 인증해야 하며, 루프백 방식의 GUI 세션은 발급되지 않습니다.
+세션 발급은 원격 바인드와 같이 데이터 평면 인증이 필요한 경우에는 항상 비활성화됩니다. 원격 운영자는 원시 관리자 토큰으로 인증해야 하며 루프백 방식의 GUI 세션은 발급되지 않습니다.
 
 ## 공통 오류
 
@@ -44,7 +44,7 @@ Authorization: Bearer <admin-token>
 
 | 상태 | 유형 또는 코드 | 의미 |
 | --- | --- | --- |
-| 401 | `easyproxy admin token required` | 관리자 토큰 또는 GUI 세션이 없거나, 잘못되었거나, 만료되었거나, origin이 일치하지 않거나, CSRF 증거가 없습니다 |
+| 401 | `easyproxy admin token required` | 관리자 토큰 또는 GUI 세션이 없거나 잘못되었거나 만료되었거나 origin이 일치하지 않거나 CSRF 증거가 없습니다 |
 | 403 | `cross-origin request blocked` | 요청 origin이 management allowlist 밖에 있습니다 |
 | 404 | `not_found` | method와 path에 맞는 management route가 없습니다 |
 | 413 | `request body too large` | POST, PUT, PATCH 본문이 management 2 MiB 제한을 초과했습니다 |
@@ -69,7 +69,7 @@ Authorization: Bearer <admin-token>
 | `GET /api/grok/reset-coupons?accountId=...` | 활성 또는 지정된 xAI 계정의 남은 Grok billing reset 토큰과 유효 기간을 읽습니다 | 400 누락된 account; 401 인증되지 않음; 502 upstream gRPC-Web 오류 |
 | `POST /api/grok/reset-coupons/consume` | 사용할 수 있는 reset coupon을 교환합니다. 본문은 `{ accountId?, tokenId?, operationId? }`. 선택적 `operationId`(UUIDv4)는 교환을 멱등하게 만듭니다 — 같은 id를 반복하면 이중 교환 없이 저장된 결과를 재생합니다. | 400 잘못된 JSON/UUID; 401 인증되지 않음; 409 `operation_id_owned_by_another_account` / `coupon_unavailable` / `operation_token_mismatch` / `operation_state_changed` / `attempt_in_progress` / `attempt_unresolved`; 502 upstream 오류; 503 ledger 용량 / `ledger_unavailable`; 500 `attempt_mark_failed` |
 | `GET /api/anthropic/reset-grants?accountId=...` | Anthropic OAuth 계정 하나의 Claude 사용량 리셋 grant를 읽습니다. 사용 가능 여부, grant별 남은 리셋 수와 유효 기간, 초기화하는 한도, 아직 다시 보낼 수 있는 미확인 시도를 함께 돌려줍니다 | 400 일치하는 계정 없음; 401 재로그인 필요; 502 upstream 응답 없음 |
-| `POST /api/anthropic/reset-grants/consume` | 리셋 grant 하나를 사용합니다. 본문은 `{ accountId, grantId, operationId }`이고, `operationId`(UUIDv4)는 upstream 요청 ID로 그대로 전송되므로 같은 값을 다시 보내면 같은 요청을 재시도합니다. 대시보드 세션이 필요합니다. | 400 잘못된 본문; 401 재로그인 필요; 403 `session_required`; 409 `grant_not_usable`, `in_flight`, `unresolved_prior_operation`, `unknown_outcome_expired`, `operation_identity_mismatch`; 500 `journal_write_failed`; 502 `unknown_outcome`; 503 저널 사용 중, 열 수 없음, 또는 가득 참 |
+| `POST /api/anthropic/reset-grants/consume` | 리셋 grant 하나를 사용합니다. 본문은 `{ accountId, grantId, operationId }`이고 `operationId`(UUIDv4)는 upstream 요청 ID로 그대로 전송되므로 같은 값을 다시 보내면 같은 요청을 재시도합니다. 대시보드 세션이 필요합니다. | 400 잘못된 본문; 401 재로그인 필요; 403 `session_required`; 409 `grant_not_usable`, `in_flight`, `unresolved_prior_operation`, `unknown_outcome_expired`, `operation_identity_mismatch`; 500 `journal_write_failed`; 502 `unknown_outcome`; 503 저널 사용 중, 열 수 없음, 또는 가득 참 |
 | `GET, PUT /api/claude-desktop` | Claude Desktop 라우팅/네이티브 프로필을 읽거나 저장합니다 | 400 잘못되었거나 사용할 수 없는 할당 |
 | `POST /api/claude-desktop/apply` | 저장된 프로필을 Claude Desktop의 관리형 구성에 기록합니다 | 400/500 기록 실패 |
 | `GET /api/claude-desktop/status` | 저장된 프로필과 적용된 프로필, Desktop 상태를 확인합니다 | 400 상태 읽기 실패 |
@@ -77,21 +77,21 @@ Authorization: Bearer <admin-token>
 
 `tokenId`를 보내면 비어 있지 않은 문자열이어야 합니다. 잘못된 값은 자격 증명을 읽거나 원장을 열기 전에 `400 invalid_token_id`로 거절됩니다. 30일 보존 기간 안에서 같은 `operationId` 재시도가 `accountId`를 생략하면 활성 계정이 바뀌어도 기록된 계정을 사용합니다. 실행 가능한 `open` 재시도가 `tokenId`를 생략하면 기록된 토큰을 사용합니다. 다른 계정이나 토큰을 명시하면 계속 거절됩니다. 대시보드는 확정 실패 뒤 해당 대기 요청에서 생긴 추측성 보류를 해제하여 새 작업을 명시적으로 확인할 수 있게 합니다. 실제 불확정 결과는 계속 보류합니다.
 
-교환 전에 ledger에 시도를 기록해 한 요청만 교환을 진행합니다. upstream의 교환 성공 응답이 확인된 경우에만 `redeemed`를 기록하며, 목록에서 쿠폰이 사라졌다는 사실만으로 이 operation의 성공을 판단하지 않습니다. 타임아웃이나 결과 저장 실패 후 재시도는 다시 교환하지 않고 가용성만 조회한 뒤 `attempt_unresolved`를 반환하며, 최근 시도는 `attempt_in_progress`를 반환합니다. 늦게 끝난 검사로 인한 거절은 아직 `open`인 operation에만 기록합니다. 같은 트랜잭션 안에서 계정과 토큰이 일치하는 확정된 최종 결과는 원래 코드와 HTTP 200으로 재생합니다. 결과가 미확정이거나 계정·토큰이 일치하지 않으면 `operation_state_changed`를 반환하며 같은 operation ID를 보존해 복구해야 합니다. ledger를 읽거나 잠글 수 없으면 교환 없이 `ledger_unavailable`을 반환합니다.
+교환 전에 ledger에 시도를 기록해 한 요청만 교환을 진행합니다. upstream의 교환 성공 응답이 확인된 경우에만 `redeemed`를 기록하며 목록에서 쿠폰이 사라졌다는 사실만으로 이 operation의 성공을 판단하지 않습니다. 타임아웃이나 결과 저장 실패 후 재시도는 다시 교환하지 않고 가용성만 조회한 뒤 `attempt_unresolved`를 반환하며 최근 시도는 `attempt_in_progress`를 반환합니다. 늦게 끝난 검사로 인한 거절은 아직 `open`인 operation에만 기록합니다. 같은 트랜잭션 안에서 계정과 토큰이 일치하는 확정된 최종 결과는 원래 코드와 HTTP 200으로 재생합니다. 결과가 미확정이거나 계정·토큰이 일치하지 않으면 `operation_state_changed`를 반환하며 같은 operation ID를 보존해 복구해야 합니다. ledger를 읽거나 잠글 수 없으면 교환 없이 `ledger_unavailable`을 반환합니다.
 
-결과를 확인하지 못한 사용 요청은 HTTP 502와 `error.code: "attempt_unresolved"`, 실제 `operationId`를 반환합니다. 이 ID를 보존하세요. 새 ID는 다른 작업을 시작합니다. CLI는 전송 전에 ID를 생성하고, 전송이나 응답이 불확실하면 같은 `--operation-id`를 보존하라는 안내를 출력합니다. 구버전 원장의 `open` 기록과 결과가 확인되지 않은 `redeem_failed` 기록은 불확정 상태로 격리되어 재사용 요청을 허용하지 않습니다.
+결과를 확인하지 못한 사용 요청은 HTTP 502와 `error.code: "attempt_unresolved"`, 실제 `operationId`를 반환합니다. 이 ID를 보존하세요. 새 ID는 다른 작업을 시작합니다. CLI는 전송 전에 ID를 생성하고 전송이나 응답이 불확실하면 같은 `--operation-id`를 보존하라는 안내를 출력합니다. 구버전 원장의 `open` 기록과 결과가 확인되지 않은 `redeem_failed` 기록은 불확정 상태로 격리되어 재사용 요청을 허용하지 않습니다.
 
-**Providers > xAI Grok > Accounts**의 계정별 티켓 배지에서 남은 쿠폰과 유효 기간을 확인합니다. 대화상자는 클라이언트가 생성한 `operationId`를 전송합니다. 전송이나 결과가 불확정이면 대시보드가 브라우저 탭 세션 동안 같은 시도를 보존하며, 대화상자를 닫았다 다시 열거나 페이지를 이동하거나 새로고침해도 유지합니다. 보존 기록은 요청을 보내기 전에 저장되고, 같은 `operationId`에 대한 확정 응답이 올 때만 해제됩니다. 새로고침은 GET만 보내고 추가 사용 POST를 허용하지 않습니다. `epx account grok-reset-coupons`는 대응하는 터미널 명령입니다.
+**Providers > xAI Grok > Accounts**의 계정별 티켓 배지에서 남은 쿠폰과 유효 기간을 확인합니다. 대화상자는 클라이언트가 생성한 `operationId`를 전송합니다. 전송이나 결과가 불확정이면 대시보드가 브라우저 탭 세션 동안 같은 시도를 보존하며 대화상자를 닫았다 다시 열거나 페이지를 이동하거나 새로고침해도 유지합니다. 보존 기록은 요청을 보내기 전에 저장되고 같은 `operationId`에 대한 확정 응답이 올 때만 해제됩니다. 새로고침은 GET만 보내고 추가 사용 POST를 허용하지 않습니다. `epx account grok-reset-coupons`는 대응하는 터미널 명령입니다.
 
 Claude 사용량 리셋도 **Providers > Anthropic > Accounts**에서 같은 방식으로 씁니다. 로그인한
-계정 행마다 남은 리셋 수를 보여 주는 티켓 배지가 붙고, 대화상자에서 한 번 더 확인하면 리셋
-하나를 사용합니다. grant마다 만료일과 초기화하는 한도가 달라서 대화상자는 쓸 grant를 고를 수 있게 보여 줍니다. 지금 쓸 수 있는 grant 중 만료가 가장 가까운 것이 먼저 선택되고, 지금 쓸 수 없는 grant는 이유와 함께 비활성으로 표시되며, 확인 단계에서 고른 grant의 이름, 만료일, 초기화하는 한도를 보여 준 뒤 그 `grantId`를 보냅니다. 서버는 고른 grant를 다시 확인하고 쓸 수 없으면 `409 grant_not_usable`로 거부합니다. 리셋은 그 grant가 초기화하는 한도(보통 5시간 한도와 주간 한도)를 다시 채우며 주간 리셋 요일은 바꾸지
+계정 행마다 남은 리셋 수를 보여 주는 티켓 배지가 붙고 대화상자에서 한 번 더 확인하면 리셋
+하나를 사용합니다. grant마다 만료일과 초기화하는 한도가 달라서 대화상자는 쓸 grant를 고를 수 있게 보여 줍니다. 지금 쓸 수 있는 grant 중 만료가 가장 가까운 것이 먼저 선택되고 지금 쓸 수 없는 grant는 이유와 함께 비활성으로 표시되며 확인 단계에서 고른 grant의 이름, 만료일, 초기화하는 한도를 보여 준 뒤 그 `grantId`를 보냅니다. 서버는 고른 grant를 다시 확인하고 쓸 수 없으면 `409 grant_not_usable`로 거부합니다. 리셋은 그 grant가 초기화하는 한도(보통 5시간 한도와 주간 한도)를 다시 채우며 주간 리셋 요일은 바꾸지
 않습니다. 요청이 응답하지 않으면 대화상자는 `operationId`를 그대로 들고 있다가 10분 동안 같은
-ID로 다시 보내기를 제안합니다. Claude Code 클라이언트도 이렇게 복구하며, 그동안 그 계정의 새 작업은
+ID로 다시 보내기를 제안합니다. Claude Code 클라이언트도 이렇게 복구하며 그동안 그 계정의 새 작업은
 어느 grant든 거부됩니다. 사용은 대시보드에서만 가능하며 관리자 토큰만으로는
 `403 session_required`가 돌아옵니다.
 
-모델 목록과 암호화된 worker-task 동작의 개념은 [Sub-agent Surface](/guides/sub-agent-surface/)를 참고하십시오.
+모델 목록과 암호화된 worker-task 동작의 개념은 [Sub-agent Surface](/guides/sub-agent-surface/)를 참고하세요.
 
 ### 클라이언트 연동 롤백 저널
 
@@ -114,7 +114,7 @@ ID로 다시 보내기를 제안합니다. Claude Code 클라이언트도 이렇
 계획에는 `version`, `clientId`, `operation`, `state`, `foreignEdit`, `kind`와 `path` 쌍으로 이루어진
 `changes`, 불투명한 `fingerprint`, `canApply`, `willChange`가 담기고 `refusalReason`과
 `profileId`는 선택 항목입니다. 경로는 관리 대상 스키마 경로이거나 `$snapshot`, `$ownership`,
-`$journal` 표식이며, 실행 중에 정해지는 자리는 `*`로 적습니다. 설정 값이나 파일 위치, 선택된
+`$journal` 표식이며 실행 중에 정해지는 자리는 `*`로 적습니다. 설정 값이나 파일 위치, 선택된
 항목의 이름은 돌려주지 않습니다.
 
 `canApply`가 참인데 `willChange`가 거짓이면 작업은 성공하지만 관리 대상 클라이언트 문서에서는
@@ -125,17 +125,17 @@ Aside 프로필 변경은 이때도 한 가지를 저장합니다. 확인을 보
 문서와 기록은 그대로 남습니다.
 
 `integration_preview_unavailable`은 지금 쓸 수 있는 모델 목록이 없다는 뜻입니다. 프록시를 막
-시작했을 때도 그렇고, 설정이나 공급자 캐시가 바뀌어 기존 목록을 버린 경우에도 그렇습니다.
+시작했을 때도 그렇고 설정이나 공급자 캐시가 바뀌어 기존 목록을 버린 경우에도 그렇습니다.
 `GET /api/client-integrations`를 읽으면 조회가 성공하고 설정을 확인할 수 있을 때 목록이
 준비되므로, 보통은 이렇게 해결되지만 항상 보장되지는 않습니다.
 
 ## 미리 본 변경 확정하기
 
 변경 요청 본문에 `operation`과 `planFingerprint`를 함께 보냅니다. 둘 다 보내거나 둘 다
-생략해야 하며, 하나만 보내거나 요청과 다른 작업을 적으면 거부합니다. Aside는 프로필 하나에만
+생략해야 하며 하나만 보내거나 요청과 다른 작업을 적으면 거부합니다. Aside는 프로필 하나에만
 묶을 수 있습니다. 지문 하나로 여러 파일의 변경을 설명할 수는 없기 때문입니다.
 
-서버는 쓰기 전에 다시 계획해 보고, 확인한 내용이 더 이상 맞지 않으면 새 계획을 담아
+서버는 쓰기 전에 다시 계획해 보고 확인한 내용이 현재 상태와 맞지 않으면 새 계획을 담아
 `409 integration_preview_stale`을 돌려줍니다. 자동으로 다시 시도하지 않으니 새 계획을 보고
 다시 결정하면 됩니다.
 
@@ -153,7 +153,7 @@ Aside 프로필 변경은 이때도 한 가지를 저장합니다. 확인을 보
 | `PUT /api/combos` | 하나의 combo를 생성, 대체, 또는 이름 변경합니다 | 400 잘못된 id, target, config, rename, 또는 일반 충돌; 409 Codex-account namespace 충돌 |
 | `DELETE /api/combos?id=...` | 하나의 combo를 삭제하고 선택/cooldown 상태를 지웁니다 | 400 id 누락; 404 알 수 없는 combo |
 
-대상 전략, cooldown, alias, 라우팅 실패는 [Combos](/guides/combos/)를 참고하십시오.
+대상 전략, cooldown, alias, 라우팅 실패는 [Combos](/guides/combos/)를 참고하세요.
 
 ### Codex 프롬프트 레이어
 
@@ -168,14 +168,14 @@ Aside 프로필 변경은 이때도 한 가지를 저장합니다. 확인을 보
 | `POST /api/codex-prompt/adopt` | `config.toml`의 `developer_instructions`를 사용자 지정 레이어로 가져옵니다 | 400 잘못된 본문, `invalid_characters`, `body_too_large`, `composed_too_large`; 409 `config_unreadable`, `nothing_to_adopt`, `adopt_unsupported_form`, `stale_revision` |
 | `POST /api/codex-prompt/repair` | `config.toml`과 소유 projection 사이의 drift를 복구합니다 | 400 잘못된 본문; 409 `config_unreadable`, `nothing_to_repair`, `repair_unsupported`, `stale_revision` |
 
-레이어 모델과 각 레이어가 쓰는 키는 [Codex 프롬프트 레이어](/ko/guides/codex-prompt/)를 참고하십시오.
+레이어 모델과 각 레이어가 쓰는 키는 [Codex 프롬프트 레이어](/ko/guides/codex-prompt/)를 참고하세요.
 
 ### 구성, 시작, 동기화, 업데이트
 
 | HTTP 메서드와 경로 | 목적 | 주요 오류 |
 | --- | --- | --- |
 | `GET /api/config` | redacted된 management-safe configuration DTO를 반환합니다 | — |
-| `PUT /api/config` | 전체 구성 교체 방지 기능이 비활성화되어 있습니다 | 405; 대신 집중된 엔드포인트를 사용하십시오 |
+| `PUT /api/config` | 전체 구성 교체 방지 기능이 비활성화되어 있습니다 | 405; 대신 집중된 엔드포인트를 사용하세요 |
 | `GET, PUT /api/settings` | 런타임/시작 설정을 읽거나 auto-start, stream mode, 앱 소유 memory budget, `codexAccountPickerEnabled`를 업데이트합니다 | 400 잘못됨, object 아님, 또는 비어 있는 업데이트 |
 | `GET /api/startup-health` | 캐시된 서비스/shim 시작 상태를 읽습니다 | — |
 | `POST /api/startup-action` | 서비스 또는 Codex shim을 설치하거나 복구합니다 | 400 잘못된 작업; 500 작업 실패 |
@@ -190,7 +190,7 @@ Aside 프로필 변경은 이때도 한 가지를 저장합니다. 확인을 보
 
 ### 로그, 사용량, 저장소
 
-요청 로그는 상위 서비스가 실제로 응답한 모델을 알려주면 `servedModel`을 기록하고, 상위 서비스로 보낸 모델이
+요청 로그는 상위 서비스가 실제로 응답한 모델을 알려주면 `servedModel`을 기록하고 상위 서비스로 보낸 모델이
 클라이언트에 표시된 모델과 다르면 `wireModel`을 기록합니다. 두 모델이 다를 때 대시보드는 `wire → served`로
 표시하고 툴팁에는 두 값을 모두 남깁니다. 상위 서비스가 응답 모델을 알려주지 않았다면 요청한 모델에서
 추정하지 않고 해당 정보를 비워 둡니다.
@@ -198,7 +198,7 @@ Aside 프로필 변경은 이때도 한 가지를 저장합니다. 확인을 보
 | HTTP 메서드와 경로 | 목적 | 주요 오류 |
 | --- | --- | --- |
 | `GET /api/logs` | 필터링된 인메모리 요청 로그를 조회합니다 | — |
-| `GET, PUT /api/debug` | debug 플래그를 읽거나, capture 범주를 설정, 해제, 초기화합니다 | 400 잘못되었거나 비어 있는 업데이트 |
+| `GET, PUT /api/debug` | debug 플래그를 읽거나 capture 범주를 설정, 해제, 초기화합니다 | 400 잘못되었거나 비어 있는 업데이트 |
 | `GET /api/debug/logs` | 제한된 provider/debug 로그 항목을 읽습니다 | — |
 | `GET /api/debug/usage-logs` | 제한된 usage-debug 항목을 읽습니다 | — |
 | `GET /api/debug/injection-logs` | 제한된 guidance-injection debug 항목을 읽습니다 | — |
@@ -215,15 +215,15 @@ Aside 프로필 변경은 이때도 한 가지를 저장합니다. 확인을 보
 | `POST /api/storage/cleanup-policy/run` | 수동 cleanup-policy 실행을 시작합니다 | 409 `already_running`; 500 `cleanup_failed` |
 | `GET /api/storage/cleanup-policy/test-stream` | 테스트 전용 policy stream 훅입니다 | 사용할 수 없으면 404 `not_found` |
 
-행이 기존 파서의 크기 제한을 넘으면 `GET /api/usage`와 `GET /api/keys`는 읽을 수 있는 행의 집계를 유지하고 응답 전체에 `usageIncomplete: true`, `usageIncompleteReason: "oversized_rows"`를 추가합니다. 이 진단은 캐시와 증분 추가에서도 유지되며, 빈 결과나 필터 일치 결과가 없는 경우에도 반환됩니다. 재구축 시에는 다시 계산합니다. 행을 맞추기 위해 공급자·모델·API 키 식별자를 줄이지 않습니다. 플래그가 없다고 모든 기록이 유효했다는 뜻은 아닙니다. `historyTruncated`, `entriesTruncated`, 토큰 측정 커버리지와는 별개입니다.
+행이 기존 파서의 크기 제한을 넘으면 `GET /api/usage`와 `GET /api/keys`는 읽을 수 있는 행의 집계를 유지하고 응답 전체에 `usageIncomplete: true`, `usageIncompleteReason: "oversized_rows"`를 추가합니다. 이 진단은 캐시와 증분 추가에서도 유지되며 빈 결과나 필터 일치 결과가 없는 경우에도 반환됩니다. 재구축 시에는 다시 계산합니다. 행을 맞추기 위해 공급자·모델·API 키 식별자를 줄이지 않습니다. 플래그가 없다고 모든 기록이 유효했다는 뜻은 아닙니다. `historyTruncated`, `entriesTruncated`, 토큰 측정 커버리지와는 별개입니다.
 
 `models`, `providers`, `days[].models`의 행에도 `cacheHitRate`가 포함됩니다. 이 값은 공급자의 프롬프트 캐시에서
 제공된 입력 토큰의 비율이며 `[0, 1]` 범위로 제한됩니다. 공급자가 캐시 텔레메트리를 보고하지 않았거나 행에 입력
-토큰이 없으면 `0`이 아니라 항상 `null`입니다. "캐시 데이터 없음"과 "실제 적중률 0%"는 서로 다른 사실이며,
+토큰이 없으면 `0`이 아니라 항상 `null`입니다. "캐시 데이터 없음"과 "실제 적중률 0%"는 서로 다른 사실이며
 이를 똑같이 표시하는 차트는 오해를 부르기 때문입니다.
 
 :::caution
-저장소 cleanup 엔드포인트는 archived session 데이터를 이동하거나 영구적으로 제거할 수 있습니다. 항상 먼저 미리 보고, 반환된 digest를 제출하십시오. 복구가 필요할 수 있으면 quarantine를 우선하십시오.
+저장소 cleanup 엔드포인트는 archived session 데이터를 이동하거나 영구적으로 제거할 수 있습니다. 항상 먼저 미리 보고 반환된 digest를 제출하세요. 복구가 필요할 수 있으면 quarantine를 우선하세요.
 :::
 
 ### 모델 및 catalog
@@ -258,7 +258,7 @@ Aside 프로필 변경은 이때도 한 가지를 저장합니다. 확인을 보
 | `POST /api/oauth/logout` | 선택된 provider 자격 증명을 제거합니다 | 400 알 수 없는 provider; `oauth_mutation_busy` |
 | `GET, DELETE /api/oauth/accounts` | 마스킹된 계정을 나열하거나 계정 하나를 제거합니다 Kiro 행에는 자동 선택 가능 여부인 `autoSelectable`과 제외 시 닫힌 집합의 `skipReason`이 포함됩니다. 활성 단일 계정은 여전히 요청을 보낼 수 있고 quota 조회는 선택 사항입니다. | 400 잘못된 provider/id; 404 계정 없음; `oauth_mutation_busy` |
 | `PUT /api/oauth/accounts/active` | 활성 OAuth 계정을 선택합니다 | 400 잘못된 provider/account; `oauth_mutation_busy`; 503 `affinity_reset_not_persisted` (Anthropic: `selectionCommitted: true`, `retryable: true`; 계정 선택은 저장됨; 이미 활성 상태여도 동일 요청을 재전송) |
-| `GET, PUT, PATCH /api/pool/settings` | 모든 pool 종류(codex, anthropic, generic)의 policy를 읽거나 업데이트합니다. 세 종류 모두 같은 키로 응답하고, 해당 종류가 실제로 적용하는 필드는 `supported`에 나옵니다. `inert`는 generic pool에서 `pool.kernel`이 꺼져 있어 저장된 `strategy`, `stickyLimit`, `autoSwitchThreshold`가 적용되지 않을 때 true입니다. codex와 anthropic에서는 항상 false이며 `enabled`를 뜻하지 않습니다 | 400 알 수 없는 provider, 해당 종류가 지원하지 않는 필드, 잘못된 값 |
+| `GET, PUT, PATCH /api/pool/settings` | 모든 pool 종류(codex, anthropic, generic)의 policy를 읽거나 업데이트합니다. 세 종류 모두 같은 키로 응답하고 해당 종류가 실제로 적용하는 필드는 `supported`에 나옵니다. `inert`는 generic pool에서 `pool.kernel`이 꺼져 있어 저장된 `strategy`, `stickyLimit`, `autoSwitchThreshold`가 적용되지 않을 때 true입니다. codex와 anthropic에서는 항상 false이며 `enabled`를 뜻하지 않습니다 | 400 알 수 없는 provider, 해당 종류가 지원하지 않는 필드, 잘못된 값 |
 | `GET, PUT, PATCH /api/oauth/accounts/pool` | Anthropic과 일반 OAuth provider의 기존 pool policy입니다. `/api/pool/settings`로 대체되었고 기존 클라이언트를 위해 유지합니다 | 400 codex 또는 API 키 provider, 잘못된 policy |
 | `POST /api/oauth/accounts/clear-cooldown` | OAuth 계정 하나의 런타임 cooldown을 지웁니다 | 400 잘못된 provider/account |
 | `PUT /api/oauth/accounts/alias` | OAuth 계정 alias를 설정하거나 지웁니다 | 400 잘못된 provider/account/alias |
@@ -270,37 +270,37 @@ Aside 프로필 변경은 이때도 한 가지를 저장합니다. 확인을 보
 | `GET, POST, PATCH, DELETE /api/keys` | 데이터 평면 admission key를 나열, 생성, 수정, 또는 삭제합니다 | 400 잘못된 본문/id; 404 key 없음 |
 | `PUT /api/oauth/accounts/affinity-reset` | 계정 없이 provider 전체의 대화 연결 초기화 저장을 확인합니다. Body `{ provider }`; 성공 시 `affinityResetConfirmed: true`. CLI: `epx account reset-affinity anthropic --json` (`anthropic2` supported). | 400 invalid body/provider; 503 `affinity_reset_not_persisted`, `retryable: true` |
 
-대시보드는 저장된 계정이 사라져도 초기화 저장이 확인되기 전에는 경고를 보존합니다. 목록 로드 실패나 활성 계정의 일시정지·재인증 상태에서도 안내와 재시도를 유지합니다. 로드된 목록에서 계정 부재가 확인되면 재시도는 `{ provider }`로 `PUT /api/oauth/accounts/affinity-reset`을 호출하고, `affinityResetConfirmed: true`를 받아야 경고를 지웁니다. 이 작업은 최초 실패 이후 생성된 연결까지 모두 지우지만 계정을 선택·재개하지 않으며 빈 목록에서도 가능합니다. 초기화가 남은 상태의 계정 삭제는 `retryAffinityReset=true`를 보내고, 게시 실패 시 503 `affinity_reset_not_persisted`, `deletionCommitted: true`, `retryable: true`를 반환합니다. 계정은 이미 삭제됐으므로 삭제 대신 초기화 전용 API를 재시도하세요. 일반 삭제는 남은 계정의 연결을 보존합니다. 초기화 전용 정리는 등록된 Anthropic OAuth 인스턴스만 지원하며 기존 관리 인증·출처 검사를 유지합니다.
+대시보드는 저장된 계정이 사라져도 초기화 저장이 확인되기 전에는 경고를 보존합니다. 목록 로드 실패나 활성 계정의 일시정지·재인증 상태에서도 안내와 재시도를 유지합니다. 로드된 목록에서 계정 부재가 확인되면 재시도는 `{ provider }`로 `PUT /api/oauth/accounts/affinity-reset`을 호출하고 `affinityResetConfirmed: true`를 받아야 경고를 지웁니다. 이 작업은 최초 실패 이후 생성된 연결까지 모두 지우지만 계정을 선택·재개하지 않으며 빈 목록에서도 가능합니다. 초기화가 남은 상태의 계정 삭제는 `retryAffinityReset=true`를 보내고 게시 실패 시 503 `affinity_reset_not_persisted`, `deletionCommitted: true`, `retryable: true`를 반환합니다. 계정은 이미 삭제됐으므로 삭제 대신 초기화 전용 API를 재시도하세요. 일반 삭제는 남은 계정의 연결을 보존합니다. 초기화 전용 정리는 등록된 Anthropic OAuth 인스턴스만 지원하며 기존 관리 인증·출처 검사를 유지합니다.
 
 자격 증명 목록 응답은 의도적으로 마스킹됩니다. OAuth access token과 완전한 provider API key는 대시보드 클라이언트에 반환되지 않습니다.
 
 #### Anthropic OAuth: `pause` / `resume`
 
-CLI 명령은 Anthropic OAuth 계정을 id 또는 유일한 alias로 일시 정지하거나 재개합니다. alias는 정확히 일치하는 값을 먼저 찾고, 없으면 대소문자를 구분하지 않고 찾습니다. 대시보드와 같은 `PUT /api/oauth/accounts/pause`에 `{ provider: "anthropic", accountId, paused }`를 보냅니다. 계정에 저장되는 `paused` 상태는 `GET /api/oauth/accounts`에도 표시됩니다. 사전 계정 전환 풀이 꺼져 있어도 정지된 계정은 선택, 세션 바인딩, 429 대체 후보에서 제외됩니다. 모든 계정이 정지되면 하나를 재개할 때까지 요청은 403을 반환합니다. 이미 전송한 요청은 유지하며 자격 증명과 건강 상태를 지우지 않습니다. 재시작·재로그인 후에도 정지는 유지되고, 계정을 삭제하면 함께 제거됩니다. 계정별 전환 임계값은 이 기능에 포함되지 않습니다.
+CLI 명령은 Anthropic OAuth 계정을 id 또는 유일한 alias로 일시 정지하거나 재개합니다. alias는 정확히 일치하는 값을 먼저 찾고 없으면 대소문자를 구분하지 않고 찾습니다. 대시보드와 같은 `PUT /api/oauth/accounts/pause`에 `{ provider: "anthropic", accountId, paused }`를 보냅니다. 계정에 저장되는 `paused` 상태는 `GET /api/oauth/accounts`에도 표시됩니다. 사전 계정 전환 풀이 꺼져 있어도 정지된 계정은 선택, 세션 바인딩, 429 대체 후보에서 제외됩니다. 모든 계정이 정지되면 하나를 재개할 때까지 요청은 403을 반환합니다. 이미 전송한 요청은 유지하며 자격 증명과 건강 상태를 지우지 않습니다. 재시작·재로그인 후에도 정지는 유지되고 계정을 삭제하면 함께 제거됩니다. 계정별 전환 임계값은 이 기능에 포함되지 않습니다.
 
 ### 제공자
 
 | HTTP 메서드와 경로 | 목적 | 주요 오류 |
 | --- | --- | --- |
 | `GET /api/providers` | redacted된 provider 구성과 discovery 상태를 나열합니다 | — |
-| `POST /api/providers` | 검증된 provider 하나를 추가하거나 교체하고, 선택적으로 기본 provider로 설정합니다 | 400 잘못되었거나 위험한 대상 또는 구성; 409 namespace 충돌 |
+| `POST /api/providers` | 검증된 provider 하나를 추가하거나 교체하고 선택적으로 기본 provider로 설정합니다 | 400 잘못되었거나 위험한 대상 또는 구성; 409 namespace 충돌 |
 | `PATCH /api/providers?name=...` | 허용된 provider 필드(병합되는 `headers` 블록 포함), enabled/default 상태, 또는 OpenAI account mode를 업데이트합니다 | 400 잘못된 필드 또는 전환; 404 알 수 없는 provider |
-| `DELETE /api/providers?name=...` | provider를 삭제하고, 가능하면 기본 provider를 재지정합니다 | 404 알 수 없는 provider; 409 `last_provider`; 409 `provider_has_dependent_combos` |
+| `DELETE /api/providers?name=...` | provider를 삭제하고 가능하면 기본 provider를 재지정합니다 | 404 알 수 없는 provider; 409 `last_provider`; 409 `provider_has_dependent_combos` |
 | `POST /api/providers/test?name=...` | 제한된 live provider connectivity/model-discovery 탐색을 수행합니다 | 404 알 수 없는 provider; 실패는 보통 `ok: false` 증거로 반환됩니다 |
 | `GET /api/provider-quotas` | provider quota 보고서를 읽습니다. `refresh=1`은 새로 고침을 강제합니다 | — |
 | `GET, PUT /api/provider-context-caps` | 전역, 모든 provider, 또는 하나의 provider context cap을 읽거나 업데이트합니다 | 400 잘못된 요청; 404 알 수 없는 provider |
 | `GET /api/provider-presets` | 런타임 registry에서 파생된 GUI provider preset을 반환합니다 | — |
 
 컨텍스트 상한 응답에는 `caps`(활성 상한)와 `values`(꺼도 유지되는 마지막 선택값)가 포함됩니다.
-`value` 없이 공급자의 상한을 켜면 선택값을 복원하고, 처음 켤 때는 전역 `contextCapValue`를 씁니다.
-OpenAI도 같은 규칙을 따르며, 스위치를 켠다고 별도의 922k 모드가 선택되지는 않습니다.
+`value` 없이 공급자의 상한을 켜면 선택값을 복원하고 처음 켤 때는 전역 `contextCapValue`를 씁니다.
+OpenAI도 같은 규칙을 따르며 스위치를 켠다고 별도의 922k 모드가 선택되지는 않습니다.
 활성 상한은 모든 네이티브 윈도에 적용됩니다. 장문 컨텍스트를 지원하는 모델은 해당 모델의 지원 상한까지만
 확장할 수 있습니다. `{ "value": 600000, "setAll": true }`는 전역 값과 활성 상한만 갱신합니다.
-상한이 꺼진 공급자는 선택값을 유지하고, 나중에 켜면 그 값을 복원합니다.
-`value` 없이 `{ "setAll": true }`를 보내면 설정된 모든 공급자의 상한을 현재 전역 값으로 켜고,
+상한이 꺼진 공급자는 선택값을 유지하고 나중에 켜면 그 값을 복원합니다.
+`value` 없이 `{ "setAll": true }`를 보내면 설정된 모든 공급자의 상한을 현재 전역 값으로 켜고
 저장된 선택값도 바꿉니다. 상한을 꺼도 선택값은 다시 불러온 뒤까지 유지되지만 제한으로 적용되지는 않습니다.
 
-`provider_has_dependent_combos`는 안전 장치입니다. provider를 삭제하기 전에 종속된 combo를 제거하거나 수정하십시오.
+`provider_has_dependent_combos`는 안전 장치입니다. provider를 삭제하기 전에 종속된 combo를 제거하거나 수정하세요.
 
 ### 사이드바 및 동의가 필요한 작업
 
@@ -313,7 +313,7 @@ OpenAI도 같은 규칙을 따르며, 스위치를 켠다고 별도의 922k 모�
 
 데스크톱 snapshot은 임시 표시 상태이며 설치 요청이 아닙니다. 프록시는 메모리에 최대 32개 세션을 보관하고 마지막 heartbeat 후 180초가 지나면 만료시킵니다. surface=desktop이 없는 일반 브라우저는 계속 패키지 배지를 읽습니다.
 
-대상 패키지 설치에서는 시작 후 캐시가 없거나 20시간 이상 오래됐으면 확인하고, 이후 매시간 신선도를 검사합니다. `EPX_DISABLE_UPDATE_CHECK=1`은 자동 확인만 끕니다. 명시적인 확인 및 실행 요청은 계속 동작합니다.
+대상 패키지 설치에서는 시작 후 캐시가 없거나 20시간 이상 오래됐으면 확인하고 이후 매시간 신선도를 검사합니다. `EPX_DISABLE_UPDATE_CHECK=1`은 자동 확인만 끕니다. 명시적인 확인 및 실행 요청은 계속 동작합니다.
 
 :::caution
 관리자 인증은 프록시에 대한 접근만 증명할 뿐, 사용자의 신원을 써도 된다는 동의까지 증명하지는 않습니다. 에이전트는 `agent_consent_required`를 우회해서는 안 됩니다. 저장소를 star할지 여부는 사용자가 직접 선택해야 합니다.
@@ -321,13 +321,13 @@ OpenAI도 같은 규칙을 따르며, 스위치를 켠다고 별도의 922k 모�
 
 ### 시스템 수명 주기
 
-`POST /api/system/restart`는 본문이 없거나 `{}`이면 기본 60초 drain 유예 시간을 유지합니다. 관리 세션 또는 관리자 토큰을 사용하는 호출자는 `{"drainGraceMs":2000}`으로 짧은 유예 시간을 명시적으로 선택할 수 있습니다. 값은 1~60000밀리초의 정수여야 합니다. 잘못된 본문이나 값은 재시작을 시작하지 않고 400을 반환하며, 대상 프로세스에 한정된 로컬 재시작 capability는 이 옵션을 설정할 수 없습니다(403). 응답의 `drainTimeoutMs`는 처음 수락한 유예 시간을 나타내며 반복 호출은 기존 기한을 바꾸지 않습니다. 유예 시간에는 응답 전송 지연이 포함됩니다. 정리와 대체 프로세스 준비에는 각각 별도의 60초와 70초 예산이 유지됩니다. 중단된 요청이 이미 실행되었을 수 있으므로 재전송 전에 결과를 확인하세요. 자동 재전송은 추가되지 않습니다.
+`POST /api/system/restart`는 본문이 없거나 `{}`이면 기본 60초 drain 유예 시간을 유지합니다. 관리 세션 또는 관리자 토큰을 사용하는 호출자는 `{"drainGraceMs":2000}`으로 짧은 유예 시간을 명시적으로 선택할 수 있습니다. 값은 1~60000밀리초의 정수여야 합니다. 잘못된 본문이나 값은 재시작을 시작하지 않고 400을 반환하며 대상 프로세스에 한정된 로컬 재시작 capability는 이 옵션을 설정할 수 없습니다(403). 응답의 `drainTimeoutMs`는 처음 수락한 유예 시간을 나타내며 반복 호출은 기존 기한을 바꾸지 않습니다. 유예 시간에는 응답 전송 지연이 포함됩니다. 정리와 대체 프로세스 준비에는 각각 별도의 60초와 70초 예산이 유지됩니다. 중단된 요청이 이미 실행되었을 수 있으므로 재전송 전에 결과를 확인하세요. 자동 재전송은 추가되지 않습니다.
 
 | HTTP 메서드와 경로 | 목적 | 주요 오류 |
 | --- | --- | --- |
 | `GET /api/system/memory` | 프로세스, heap, stream, response-state, watchdog, active-turn의 스칼라 메트릭을 반환합니다 | — |
 | `POST /api/system/restart` | 클라이언트 injection을 제거하지 않고 drain-aware 프로세스 재시작을 시작합니다 | 202 반환; 반복 호출은 기존 drain을 보고합니다 |
-| `POST /api/stop` | 서비스를 중지하고, native Codex를 복원하며, 관리형 Grok injection을 제거하고, 프록시를 drain합니다 | 409 서비스 소유권 충돌; Windows 작업 스케줄러 래퍼가 프록시를 다시 띄울 수 있고 호출자가 `epx stop`이 아니면 409 `respawnable_service`(아무것도 바뀌지 않음); 설치된 관리자가 정지를 거부하면 409; 작업 스케줄러 상태를 읽을 수 없으면 409 `service_state_unknown`(아무것도 바뀌지 않음, 조회를 고친 뒤 재시도) |
+| `POST /api/stop` | 서비스를 중지하고 native Codex를 복원하며 관리형 Grok injection을 제거하고 프록시를 drain합니다 | 409 서비스 소유권 충돌; Windows 작업 스케줄러 래퍼가 프록시를 다시 띄울 수 있고 호출자가 `epx stop`이 아니면 409 `respawnable_service`(아무것도 바뀌지 않음); 설치된 관리자가 정지를 거부하면 409; 작업 스케줄러 상태를 읽을 수 없으면 409 `service_state_unknown`(아무것도 바뀌지 않음, 조회를 고친 뒤 재시도) |
 
 ### Codex 인증 위임
 
@@ -340,7 +340,7 @@ OpenAI도 같은 규칙을 따르며, 스위치를 켠다고 별도의 922k 모�
 
 | HTTP 메서드와 경로 | 목적 | 주요 오류 |
 | --- | --- | --- |
-| `GET, POST, DELETE /api/codex-auth/accounts` | Codex account를 나열/갱신하거나 삭제합니다. POST는 비활성화된 호환성 endpoint로만 유지되며, 성공한 DELETE는 `catalogRefreshPending`를 포함합니다. | POST는 항상 403 `manual_import_disabled`; DELETE 입력이 잘못되면 400 |
+| `GET, POST, DELETE /api/codex-auth/accounts` | Codex account를 나열/갱신하거나 삭제합니다. POST는 비활성화된 호환성 endpoint로만 유지되며 성공한 DELETE는 `catalogRefreshPending`를 포함합니다. | POST는 항상 403 `manual_import_disabled`; DELETE 입력이 잘못되면 400 |
 | `PUT /api/codex-auth/accounts/alias` | 계정 alias를 설정하거나 지웁니다 | 400 잘못된 account/alias |
 | `PUT /api/codex-auth/accounts/pause` | 계정과 동일한 로그인 정보를 가진 기존 메인/풀 항목을 수동으로 일시 중지하거나 재개합니다. `affectedAccountIds`를 반환합니다 | 400 잘못된 계정/상태; 404 계정 없음; 503 메인 계정의 로그인 정보가 사용 중이거나 읽을 수 없음 |
 | `PUT /api/codex-auth/accounts/pause-exhausted` | quota가 소진된 account를 일시 중지합니다 | mutation-lock 실패는 503이 됩니다 |
@@ -355,35 +355,35 @@ OpenAI도 같은 규칙을 따르며, 스위치를 켠다고 별도의 922k 모�
 | `POST /api/codex-auth/login` | Codex 로그인 또는 재인증을 시작합니다 | 400 잘못된 요청; 충돌/바쁨 로그인 상태 |
 | `POST /api/codex-auth/login/code` | Codex 로그인 흐름용 수동 코드를 제출합니다 | 400 잘못된 흐름/code |
 | `POST /api/codex-auth/login/cancel` | `{ "flowId": "..." }`로 지정한 대기 중인 Codex 로그인만 취소합니다 | 400 흐름 ID 누락, 알 수 없음 또는 대기 중이 아님 |
-| `GET /api/codex-auth/login-status` | 흐름 또는 account 로그인 상태를 조회합니다. 새 계정 완료 시 복구가 필요할 때만 `catalogRefreshPending: true`를 포함합니다. | 알 수 없는 흐름은 `expired`로 보고되며, 활성 흐름이 없으면 `idle`로 보고됩니다 |
+| `GET /api/codex-auth/login-status` | 흐름 또는 account 로그인 상태를 조회합니다. 새 계정 완료 시 복구가 필요할 때만 `catalogRefreshPending: true`를 포함합니다. | 알 수 없는 흐름은 `expired`로 보고되며 활성 흐름이 없으면 `idle`로 보고됩니다 |
 
 `PUT /api/codex-auth/active`에는 `{ "accountId": "<id>" }`가 필요합니다. 선택을 지우려면
 `{ "accountId": null }`을 명시적으로 지정해야 합니다. 다른 프로세스가 저장된 계정을 변경했더라도
 현재 계정을 다시 선택하는 것은 명시적인 선택으로 처리됩니다. 서버는 관련 없는 저장된 설정을
-보존하고, 대시보드를 불러온 뒤 삭제되거나 일시 중지된 계정의 선택을 거부합니다. 저장된 구성을
+보존하고 대시보드를 불러온 뒤 삭제되거나 일시 중지된 계정의 선택을 거부합니다. 저장된 구성을
 사용할 수 없거나 구성이 유효하지 않으면 기존 런타임 선택과 계정 어피니티는 변경되지 않습니다.
-설정을 다시 불러온 뒤 재시도하십시오. 성공 응답은 커밋된 선택을 나타냅니다. 기존 quota 및
-failover 규칙에 따라 고정이 해제될 수 있으며, `pinDrained`는 현재 알려진 고정 해제 사유를 나타냅니다.
+설정을 다시 불러온 뒤 다시 시도하세요. 성공 응답은 커밋된 선택을 나타냅니다. 기존 quota 및
+failover 규칙에 따라 고정이 해제될 수 있으며 `pinDrained`는 현재 알려진 고정 해제 사유를 나타냅니다.
 
 수동 소비가 `reset`으로 확인되면 같은 계정의 새 usage를 조회하여 기존 shared reset-derived
 쿨다운을 즉시 복구할 수 있습니다. 복구는 조건부입니다. 계정이 일시 정지되었거나 재인증이
 필요하거나 다른 진행 중인 probe가 쿨다운을 소유하면 쿨다운은 유지됩니다. reset 이전에 시작한
 조회, 불완전하거나 소진된 usage, 신원이 바뀐 계정, 더 최근의 quota 실패로는 복구하지 않습니다.
 오래된 main usage 응답은 더 최근에 반영한 관측을 덮어쓰지 않습니다. credential 갱신을 거쳤다면
-해당 인증에서 이어진 갱신인지 확인되어야 하며, 외부에서 교체된 credential은 같은 계정이어도
+해당 인증에서 이어진 갱신인지 확인되어야 하며 외부에서 교체된 credential은 같은 계정이어도
 복구 근거가 되지 않습니다. 명시적 `Retry-After`, Reserve 쿨다운, pause·pin·선택
 설정도 보존됩니다. `already_redeemed`와 저장된 결과 재생은 새 reset을 증명하지 않습니다.
 
 `reset` 또는 `already_redeemed`가 확인된 뒤 usage 조회가 실패하거나 바쁘더라도 소비 응답은
 HTTP 200과 원래 `code`를 유지합니다. 새 잔여 수를 얻지 못하면 `remaining`을 생략합니다.
-이는 소비 결과의 확인이며 라우팅 가능 상태를 보장하지 않습니다. usage를 다시 조회하십시오.
-usage 조회 실패를 재시도하기 위해 reset credit을 다시 소비하지 마십시오.
+이는 소비 결과의 확인이며 라우팅 가능 상태를 보장하지 않습니다. usage를 다시 조회하세요.
+usage 조회 실패를 재시도하기 위해 reset credit을 다시 소비하지 마세요.
 
 새 account의 config row는 저장되었지만 credential setup을 완료하지 못하면 OAuth `login-status`는
 `status: "error"`를 보고하며
 `code: "codex_credential_persistence_failed"`, `accountId`, `needsReauth: true`, 필요한 경우
 `catalogRefreshPending: true`를 포함하며 storage error 세부 정보는 노출하지 않습니다. account row는
-저장된 상태이므로 account 생성을 다시 시도하기 전에 재인증하거나 삭제하십시오.
+저장된 상태이므로 account 생성을 다시 시도하기 전에 재인증하거나 삭제하세요.
 
 이 위임된 계열에서 configuration-writer 또는 credential-refresh lock timeout이 발생하면 HTTP 503과 `CONFIG_MUTATION_LOCK_UNAVAILABLE` 코드가 반환됩니다. 클라이언트는 이를 영구적인 계정 실패로 보지 말고 곧바로 다시 시도해야 합니다.
 
@@ -393,11 +393,11 @@ account의 selector binding은 남아 있어 계정이 없을 때 exact route가
 
 ## 클라이언트 선택
 
-일반적인 관리 작업에는 [Web Dashboard](/guides/web-dashboard/)가 가장 안전한 안내형 워크플로를 제공합니다. 헤드리스 호스트와 자동화에는 대응하는 `epx` 명령을 사용하십시오. 이 명령들은 동일한 실시간 API를 호출하며, 프록시에 접근할 수 없거나 작업이 실패하면 0이 아닌 결과를 반환합니다. 직접 HTTP는 위의 정확한 엔드포인트 계약이 필요한 통합에 가장 유용합니다.
+일반적인 관리 작업에는 [Web Dashboard](/guides/web-dashboard/)가 가장 안전한 안내형 워크플로를 제공합니다. 헤드리스 호스트와 자동화에는 대응하는 `epx` 명령을 사용하세요. 이 명령들은 동일한 실시간 API를 호출하며 프록시에 접근할 수 없거나 작업이 실패하면 0이 아닌 결과를 반환합니다. 직접 HTTP는 위의 정확한 엔드포인트 계약이 필요한 통합에 가장 유용합니다.
 
 ## 원격 세션과 데이터 키 교체
 
-`POST /api/keys/rotate {id}`는 최대 10분의 전환을 시작하며 새 데이터 키를 한 번만 반환합니다. `POST /api/keys/rotate/commit {id,rotationId}`는 확정하고, `DELETE /api/keys/rotate {id,rotationId}`는 취소합니다. 모두 관리 인증이 필요하며 데이터 키로 호출할 수 없습니다. `POST /api/session/logout`은 현재 `gui-session`, 일치하는 Origin, CSRF가 필요합니다. 관리자 토큰은 403을 받고 동의 세션을 만들거나 교환할 수 없습니다.
+`POST /api/keys/rotate {id}`는 최대 10분의 전환을 시작하며 새 데이터 키를 한 번만 반환합니다. `POST /api/keys/rotate/commit {id,rotationId}`는 확정하고 `DELETE /api/keys/rotate {id,rotationId}`는 취소합니다. 모두 관리 인증이 필요하며 데이터 키로 호출할 수 없습니다. `POST /api/session/logout`은 현재 `gui-session`, 일치하는 Origin, CSRF가 필요합니다. 관리자 토큰은 403을 받고 동의 세션을 만들거나 교환할 수 없습니다.
 
 ## Anthropic 계정 사용량 임계값
 

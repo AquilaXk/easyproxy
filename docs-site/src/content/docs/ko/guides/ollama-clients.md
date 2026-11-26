@@ -18,7 +18,7 @@ curl "$OLLAMA_HOST/api/tags"
 
 프록시가 API 키를 요구하는 경우(예: `0.0.0.0` 바인드) `/v1/chat/completions`와 같은 방식으로 키를
 보냅니다. 예: `Authorization: Bearer <easyproxy key>`. 모델 범위가 지정된 키는 허용된 모델만 보고 사용할 수
-있습니다. 이 엔드포인트는 기본 리스너에서만 제공되며, 인증 없는 루프백 리스너, Remote Link, 허브 관리
+있습니다. 이 엔드포인트는 기본 리스너에서만 제공되며 인증 없는 루프백 리스너, Remote Link, 허브 관리
 인그레스에서는 노출되지 않습니다.
 
 ## 엔드포인트
@@ -57,12 +57,12 @@ curl "$OLLAMA_HOST/api/tags"
 ## 응답
 
 완료된 응답에는 `done: true`와 `stop`, `tool_calls`, `length` 중 하나인 `done_reason`이 있습니다.
-`prompt_eval_count`와 `eval_count`는 프로바이더가 사용량을 보고한 경우에만 나타나며, 소요 시간 필드는
+`prompt_eval_count`와 `eval_count`는 프로바이더가 사용량을 보고한 경우에만 나타나며 소요 시간 필드는
 보고되지 않습니다. 스트림은 업스트림 응답이 완전히 끝난 뒤 `done: true` 줄을 정확히 한 번 보냅니다.
 
 오류는 Ollama 형식 `{ "error": "message" }`을 사용하며 HTTP 상태를 유지합니다. 속도 제한과 혼잡 거부에는
 `Retry-After`도 포함됩니다. 콘텐츠 필터나 알 수 없는 이유로 중단된 응답은 일반적인 중지가 아니라 오류로
 반환됩니다. 스트림이 시작된 뒤 실패하면 마지막 줄은 `error` 객체이며 `done: true` 줄은 뒤따르지 않습니다.
 
-요청은 다른 트래픽과 마찬가지로 대시보드 요청 로그에 표시되며, 응답 헤더
+요청은 다른 트래픽과 마찬가지로 대시보드 요청 로그에 표시되며 응답 헤더
 `x-easyproxy-request-id`가 해당 행을 가리킵니다.

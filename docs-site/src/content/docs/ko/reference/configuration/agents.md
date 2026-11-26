@@ -3,15 +3,15 @@ title: 에이전트 설정
 description: 멀티 에이전트 표면, 위임 안내, 선호 모델, 대체 체인, 기본값 동기화, 추론 강도 상한을 다룹니다.
 ---
 
-`multiAgentMode: "v2-plaintext"`는 새 채팅에 V2를 선택하면서 전역 V2 강제를 끄고, 조건에 맞는 공식 ChatGPT Responses 경로에 실험적 평문 작업 전달을 적용하는 명시적 선택입니다. 대시보드 확인 또는 `epx v2 mode v2-plaintext --live --acknowledge-plaintext-agent-messages`로 진입합니다. 작업 텍스트는 이력·선택한 제공자의 요청·로컬 디버그 상태에 남을 수 있지만 HTTPS와 인증은 유지됩니다. 기존 암호문을 복호화하지 않으며 기존 채팅 기록도 변경하지 않습니다. 별도 `plaintextV2AgentMessages` 설정은 다른 모드로 돌아갈 때도 보존됩니다. 컴파일러는 현재 설정을 따르므로 기존 V2 세션의 후속 적격 요청도 적용 대상입니다. 비활성화해도 이력·제공자 요청·로컬 응답·디버그 상태에 이미 보존된 사본은 삭제되지 않습니다.
+`multiAgentMode: "v2-plaintext"`는 새 채팅에 V2를 선택하면서 전역 V2 강제를 끄고 조건에 맞는 공식 ChatGPT Responses 경로에 실험적 평문 작업 전달을 적용하는 명시적 선택입니다. 대시보드 확인 또는 `epx v2 mode v2-plaintext --live --acknowledge-plaintext-agent-messages`로 진입합니다. 작업 텍스트는 이력·선택한 제공자의 요청·로컬 디버그 상태에 남을 수 있지만 HTTPS와 인증은 유지됩니다. 기존 암호문을 복호화하지 않으며 기존 채팅 기록도 변경하지 않습니다. 별도 `plaintextV2AgentMessages` 설정은 다른 모드로 돌아갈 때도 보존됩니다. 컴파일러는 현재 설정을 따르므로 기존 V2 세션의 후속 적격 요청도 적용 대상입니다. 비활성화해도 이력·제공자 요청·로컬 응답·디버그 상태에 이미 보존된 사본은 삭제되지 않습니다.
 
-에이전트 설정은 어떤 Codex 협업 표면을 노출할지와, easyproxy가 위임 작업을 어떻게 안내하고, 라우팅하고, 제한할지를 제어합니다.
+에이전트 설정은 어떤 Codex 협업 표면을 노출할지와, easyproxy가 위임 작업을 어떻게 안내하고 라우팅하고 제한할지를 제어합니다.
 
 ## 에이전트 필드
 
 | 필드 | 형식 | 기본값 | 의미 |
 | --- | --- | --- | --- |
-| `multiAgentMode?` | `"v1" \| "default" \| "v2" \| "v2-plaintext"` | `"default"` | `v1`은 카탈로그의 모든 모델에 v1을 표시하고, `v2`는 모든 모델에 v2를 표시합니다. `default`는 상위 고정값(Sol/Terra는 v2, Luna는 v1)을 복원하고, 그 외에는 네이티브 `multi_agent_v2` 플래그를 따릅니다. `v2-plaintext`는 실험적 평문 작업 전달을 함께 켜고 전역 강제는 끕니다. 카탈로그 고정값은 새 세션에 적용되며, 활성화된 컴파일러는 기존 V2 세션의 후속 적격 요청에도 적용됩니다. |
+| `multiAgentMode?` | `"v1" \| "default" \| "v2" \| "v2-plaintext"` | `"default"` | `v1`은 카탈로그의 모든 모델에 v1을 표시하고 `v2`는 모든 모델에 v2를 표시합니다. `default`는 상위 고정값(Sol/Terra는 v2, Luna는 v1)을 복원하고 그 외에는 네이티브 `multi_agent_v2` 플래그를 따릅니다. `v2-plaintext`는 실험적 평문 작업 전달을 함께 켜고 전역 강제는 끕니다. 카탈로그 고정값은 새 세션에 적용되며 활성화된 컴파일러는 기존 V2 세션의 후속 적격 요청에도 적용됩니다. |
 | `subagentModels?` | `string[]` | `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-luna` | 최대 다섯 개의 bare native id, account-qualified `<selector>/<native-openai-model>` id 또는 routed `provider/model` id를 서브에이전트 선택기에 우선 표시합니다. 새 선택 항목으로는 bare native와 routed id를 제공합니다. 저장할 때는 현재 카탈로그에 없는 항목을 포함하여 이미 설정된 정확한 account-qualified id를 보존합니다. 새 정확한 account-qualified id를 추가하려면 `epx agent subagents set`을 사용하거나 설정을 편집하세요. [Astra 최초 업그레이드](/reference/configuration/agents/#astra-roster-upgrade) 이후에는 명시적으로 빈 목록도 보존됩니다. |
 | `injectionModel?` | `string` | — | 프록시가 작성한 v2 위임 안내에서 사용하는 선호 네이티브 또는 라우팅된 서브에이전트 모델입니다. |
 | `injectionEffort?` | `string` | — | 선호 추론 강도(`low`부터 `ultra`까지)입니다. `injectionModel`이 있을 때만 의미가 있습니다. |
@@ -31,7 +31,7 @@ description: 멀티 에이전트 표면, 위임 안내, 선호 모델, 대체 �
 
 `PUT /api/v2`로 `v2-plaintext`에 진입하려면 `plaintextAgentMessagesAcknowledged: true`가 필요합니다. 일반 `config set`과 `config import`는 이 모드로 새로 진입할 수 없습니다. 해당 모드가 포함된 내보내기를 복원하려면 먼저 확인을 거쳐 모드로 전환한 뒤 가져오세요.
 
-새 설정에서 `plaintextV2AgentMessages`는 설정되지 않으며, 명시적으로 `true`로 설정하는 방법과 `v2-plaintext` 모드 선택은 독립적인 활성화 방법입니다. 호출자는 Responses 프로토콜을 사용하고 최종 대상은 `adapter: "openai-responses"`, `authMode: "forward"`, 정확한 기본 URL `https://chatgpt.com/backend-api/codex`를 사용하는 공식 ChatGPT 전달 경로여야 합니다. OpenAI API 키 제공자, 사용자 지정 호환 게이트웨이, 다른 제공자 라우트 및 Responses가 아닌 호출자는 제외됩니다. 독립 필드는 `epx config set plaintextV2AgentMessages true`로 설정할 수 있으며 변경 후 프록시를 재시작하세요.
+새 설정에서 `plaintextV2AgentMessages`는 설정되지 않으며 명시적으로 `true`로 설정하는 방법과 `v2-plaintext` 모드 선택은 독립적인 활성화 방법입니다. 호출자는 Responses 프로토콜을 사용하고 최종 대상은 `adapter: "openai-responses"`, `authMode: "forward"`, 정확한 기본 URL `https://chatgpt.com/backend-api/codex`를 사용하는 공식 ChatGPT 전달 경로여야 합니다. OpenAI API 키 제공자, 사용자 지정 호환 게이트웨이, 다른 제공자 라우트 및 Responses가 아닌 호출자는 제외됩니다. 독립 필드는 `epx config set plaintextV2AgentMessages true`로 설정할 수 있으며 변경 후 프록시를 재시작하세요.
 
 ## 항상 능동 위임
 
@@ -39,25 +39,25 @@ description: 멀티 에이전트 표면, 위임 안내, 선호 모델, 대체 �
 
 대시보드 스위치를 켜려면 네이티브 기능이 활성화된 명시적 `multiAgentMode: "v2"` 또는 전역 강제를 끄고 카탈로그 pin을 사용하는 `multiAgentMode: "v2-plaintext"`가 필요합니다. `epx v2 on`만으로는 조건을 충족하지 않습니다.
 
-`GET`과 `PUT /api/v2`는 `multiAgentModeHintRecommendation: { text, revision }`도 반환합니다. 대시보드는 프리셋을 켜거나 복원할 때 서버가 제공한 텍스트를 사용하며, 고정된 대체 문구는 사용하지 않습니다. 이전 서버가 권장값을 제공하지 않거나 잘못된 형식으로 반환하면 프리셋 적용·복원은 사용할 수 없으며, 기존 사용자 지정 힌트의 편집·삭제는 계속 사용할 수 있습니다. **프리셋 복원**은 로컬 초안만 바꾸고, **저장**을 눌러야 저장됩니다.
+`GET`과 `PUT /api/v2`는 `multiAgentModeHintRecommendation: { text, revision }`도 반환합니다. 대시보드는 프리셋을 켜거나 복원할 때 서버가 제공한 텍스트를 사용하며 고정된 대체 문구는 사용하지 않습니다. 이전 서버가 권장값을 제공하지 않거나 잘못된 형식으로 반환하면 프리셋 적용·복원은 사용할 수 없으며 기존 사용자 지정 힌트의 편집·삭제는 계속 사용할 수 있습니다. **프리셋 복원**은 로컬 초안만 바꾸고 **저장**을 눌러야 저장됩니다.
 
-설정 조회, 관련 없는 업데이트, 업그레이드는 저장된 힌트를 자동 변경하지 않습니다. 힌트를 명시적으로 업데이트할 때 본문이 알려진 두 가지 이전 EasyProxy 프리셋 중 하나와 바이트 단위로 정확히 일치하는 경우에만 현재 권장 문구로 바뀝니다. 그 밖의 유효한 사용자 지정 텍스트는 공백 차이가 있는 변형까지 바이트 단위로 보존됩니다. 기존 v2 활성화·기능 지원 확인·힌트 해제 규칙은 그대로이며, 변경은 새 Codex 세션에 적용됩니다.
+설정 조회, 관련 없는 업데이트, 업그레이드는 저장된 힌트를 자동 변경하지 않습니다. 힌트를 명시적으로 업데이트할 때 본문이 알려진 두 가지 이전 EasyProxy 프리셋 중 하나와 바이트 단위로 정확히 일치하는 경우에만 현재 권장 문구로 바뀝니다. 그 밖의 유효한 사용자 지정 텍스트는 공백 차이가 있는 변형까지 바이트 단위로 보존됩니다. 기존 v2 활성화·기능 지원 확인·힌트 해제 규칙은 그대로이며 변경은 새 Codex 세션에 적용됩니다.
 
 ## 로스터와 안내
 
-실제 v2 로스터는 설정되어 있고, 선택기에 보이며, 우선순위로 정렬된 상위 다섯 모델 중 주입된 카탈로그에 존재하고 명시적으로 `"disabled"`로 표시되지 않은 모델입니다. 명시적인 `"v2"` 고정값은 재귀 작업자를 지원하며, `"v1"`, `null`, 생략된 고정값도 하위 작업을 다시 위임하지 않는 작업자로 참여할 수 있습니다. 제외된 항목은 나중에 적격이 될 수 있도록 설정에 그대로 남습니다.
+실제 v2 로스터는 설정되어 있고 선택기에 보이며 우선순위로 정렬된 상위 다섯 모델 중 주입된 카탈로그에 존재하고 명시적으로 `"disabled"`로 표시되지 않은 모델입니다. 명시적인 `"v2"` 고정값은 재귀 작업자를 지원하며 `"v1"`, `null`, 생략된 고정값도 하위 작업을 다시 위임하지 않는 작업자로 참여할 수 있습니다. 제외된 항목은 나중에 적격이 될 수 있도록 설정에 그대로 남습니다.
 
 표면 판별은 도구 형태를 기준으로 합니다. 네임스페이스가 붙은 `spawn_agent`에 `send_input`, `resume_agent`, `close_agent`가 있으면 v1입니다. 평평한 `spawn_agent`에 `send_message`, `followup_task`, `interrupt_agent`, `list_agents`가 있으면 v2입니다.
 
-V1 안내는 `max` 또는 `ultra`에서만 선제 텍스트로 제공됩니다. V2는 선호 모델, 적격 로스터, 대체 체인 중 하나가 있을 때만 프록시가 작성한 개발자 메시지를 받습니다. 내장 v2 안내에는 700자 예산이 있고, 필요하면 로스터를 먼저 줄입니다. 안내는 replay prefix 전반에서 중복 제거되며, 뒤에 오는 `compaction_trigger` 앞에 삽입됩니다.
+V1 안내는 `max` 또는 `ultra`에서만 선제 텍스트로 제공됩니다. V2는 선호 모델, 적격 로스터, 대체 체인 중 하나가 있을 때만 프록시가 작성한 개발자 메시지를 받습니다. 내장 v2 안내에는 700자 예산이 있고 필요하면 로스터를 먼저 줄입니다. 안내는 replay prefix 전반에서 중복 제거되며 뒤에 오는 `compaction_trigger` 앞에 삽입됩니다.
 
-내장 v2 서브에이전트 안내와 사용자 지정 `injectionPrompt` 본문은 모두 `<easyproxy_subagent_guidance>`를 사용하며, Codex 네이티브 `<multi_agent_mode>` 메시지와 구분됩니다. 내장 텍스트는 결정된 선호 모델, 모델 목록, 대체 체인을 알리지만 위임, 모델 오버라이드, `fork_turns`를 지시하지는 않습니다. 사용자 지정 본문의 자리표시자 치환과 내용은 유지됩니다. `injectionModel`과 `injectionEffort`는 네이티브 기본값 동기화가 활성화되지 않으면 계속 권고 수준이며, 사용자 지정 자리표시자의 누락된 값은 빈 문자열로 대체됩니다.
+내장 v2 서브에이전트 안내와 사용자 지정 `injectionPrompt` 본문은 모두 `<easyproxy_subagent_guidance>`를 사용하며 Codex 네이티브 `<multi_agent_mode>` 메시지와 구분됩니다. 내장 텍스트는 결정된 선호 모델, 모델 목록, 대체 체인을 알리지만 위임, 모델 오버라이드, `fork_turns`를 지시하지는 않습니다. 사용자 지정 본문의 자리표시자 치환과 내용은 유지됩니다. `injectionModel`과 `injectionEffort`는 네이티브 기본값 동기화가 활성화되지 않으면 계속 권고 수준이며 사용자 지정 자리표시자의 누락된 값은 빈 문자열로 대체됩니다.
 
-replay 중복 제거는 각 태그 계열의 가장 최근 텍스트와 정확히 일치하는지 비교합니다. 두 값 모두 새 프록시 태그 계열을 사용하는 경우, 사용자 지정 안내에서 내장 형식으로 돌아오면 현재 안내가 추가됩니다. 그 사이에 네이티브 모드가 바뀌어도 변경되지 않은 프록시 안내가 중복 추가되지는 않습니다. 기존 네이티브 메시지와 예전 태그가 붙은 이력은 보존됩니다. 래퍼 변경으로 과거 메시지의 작성자가 판별되거나 이전 지침이 철회되는 것은 아닙니다. 여러 버전이 섞인 이력은 예전 태그만으로 분류할 수 없으며, 이러한 이력에서 설정 전환이 감지된다고 보장하지 않습니다.
+replay 중복 제거는 각 태그 계열의 가장 최근 텍스트와 정확히 일치하는지 비교합니다. 두 값 모두 새 프록시 태그 계열을 사용하는 경우, 사용자 지정 안내에서 내장 형식으로 돌아오면 현재 안내가 추가됩니다. 그 사이에 네이티브 모드가 바뀌어도 변경되지 않은 프록시 안내가 중복 추가되지는 않습니다. 기존 네이티브 메시지와 예전 태그가 붙은 이력은 보존됩니다. 래퍼 변경으로 과거 메시지의 작성자가 판별되거나 이전 지침이 철회되는 것은 아닙니다. 여러 버전이 섞인 이력은 예전 태그만으로 분류할 수 없으며 이러한 이력에서 설정 전환이 감지된다고 보장하지 않습니다.
 
 ## Codex 기본값 동기화
 
-활성화되면 `syncCodexSubagentDefaults`는 마커가 소유한 `[agents] default_subagent_model` 및 `default_subagent_reasoning_effort` 필드를 기록합니다. 기존의 표시 없는 사용자 소유 대상 필드는 충돌로 간주하며 그대로 우선합니다. 일부만 지정됐거나 모호한 TOML 쓰기는 보수적으로 실패합니다. `injectionModel`을 지우면 이 옵트인도 함께 해제됩니다. 이 기본값은 새로 만들어지는 Codex 작업에만 영향을 주며, 그 자체로 위임을 일으키지는 않습니다.
+활성화되면 `syncCodexSubagentDefaults`는 마커가 소유한 `[agents] default_subagent_model` 및 `default_subagent_reasoning_effort` 필드를 기록합니다. 기존의 표시 없는 사용자 소유 대상 필드는 충돌로 간주하며 그대로 우선합니다. 일부만 지정됐거나 모호한 TOML 쓰기는 보수적으로 실패합니다. `injectionModel`을 지우면 이 옵트인도 함께 해제됩니다. 이 기본값은 새로 만들어지는 Codex 작업에만 영향을 주며 그 자체로 위임을 일으키지는 않습니다.
 
 ## 대체 체인
 
@@ -72,7 +72,7 @@ replay 중복 제거는 각 태그 계열의 가장 최근 텍스트와 정확�
 거부하고 역할을 건너뜁니다 (#1190). TOML의 기존 `model_fallback` 줄은 하위 호환성을 위해
 계속 읽히지만 `epx doctor`가 이를 표시합니다.
 
-easyproxy는 비활성, 라우팅 불가, 비정상, 쿨다운 중, 또는 할당량 임계값에 걸린 후보를 건너뜁니다. 사용 가능성 스냅샷은 `subagentModelFallbackPollMs` 동안 캐시됩니다. 암호화된 하위 작업은 정규 네이티브 ChatGPT 대상과 `allowEncryptedV2AgentTasks: true`로 명시적으로 신뢰한 직접 키 인증 Responses 라우트만 후보로 사용합니다. 암호화된 페이로드를 처리할 수 있는 대상이 없으면 읽을 수 없는 암호문을 다른 곳으로 보내지 않고 요청이 실패합니다. 콤보는 먼저 사용 가능한 정규 네이티브 대상을 시도하고, 선택 가능한 네이티브 대상이 없거나 네이티브 시도가 모두 소진되었고 `agentTaskRecovery`가 켜져 있으면 암호화된 `NEW_TASK`를 라우팅된 콤보 전송 전에 한 번 복구합니다. 콤보 복구는 spawn된 하위 턴에만 적용되고, 직접 라우팅 경로는 스레드 도중의 모델 전환도 복구합니다.
+easyproxy는 비활성, 라우팅 불가, 비정상, 쿨다운 중, 또는 할당량 임계값에 걸린 후보를 건너뜁니다. 사용 가능성 스냅샷은 `subagentModelFallbackPollMs` 동안 캐시됩니다. 암호화된 하위 작업은 정규 네이티브 ChatGPT 대상과 `allowEncryptedV2AgentTasks: true`로 명시적으로 신뢰한 직접 키 인증 Responses 라우트만 후보로 사용합니다. 암호화된 페이로드를 처리할 수 있는 대상이 없으면 읽을 수 없는 암호문을 다른 곳으로 보내지 않고 요청이 실패합니다. 콤보는 먼저 사용 가능한 정규 네이티브 대상을 시도하고 선택 가능한 네이티브 대상이 없거나 네이티브 시도가 모두 소진되었고 `agentTaskRecovery`가 켜져 있으면 암호화된 `NEW_TASK`를 라우팅된 콤보 전송 전에 한 번 복구합니다. 콤보 복구는 spawn된 하위 턴에만 적용되고 직접 라우팅 경로는 스레드 도중의 모델 전환도 복구합니다.
 
 ```json
 {
@@ -92,10 +92,10 @@ easyproxy는 비활성, 라우팅 불가, 비정상, 쿨다운 중, 또는 할�
 
 ## 추론 강도 상한
 
-상한은 v2 협업 기능에만 적용됩니다. 메인 턴은 도구가 v2를 노출할 때 적격이 되고, 하위 턴은 leaf 도구가 더 이상 협업을 노출하지 않더라도 `x-codex-turn-metadata` 안에 codex-rs의 정확한 `x-openai-subagent: collab_spawn` 또는 `"subagent_kind": "thread_spawn"` 표시가 있으면 적격이 됩니다. V1 메인 턴, `multiAgentMode: "v1"`, compaction, review, memory-consolidation 턴은 상한을 적용받지 않습니다.
+상한은 v2 협업 기능에만 적용됩니다. 메인 턴은 도구가 v2를 노출할 때 적격이 되고 하위 턴은 leaf 도구가 협업을 노출하지 않더라도 `x-codex-turn-metadata` 안에 codex-rs의 정확한 `x-openai-subagent: collab_spawn` 또는 `"subagent_kind": "thread_spawn"` 표시가 있으면 적격이 됩니다. V1 메인 턴, `multiAgentMode: "v1"`, compaction, review, memory-consolidation 턴은 상한을 적용받지 않습니다.
 
-상한은 추론 강도만 낮춥니다. 모델이 광고한 단계 중 상한 이하에서 가장 높은 단계로 맞춥니다. 모델에 추론 강도 제어가 없거나 맞는 지원 단계가 없으면, easyproxy는 추론 강도 지정을 제거하고 프로바이더 기본값을 적용합니다. `max`와 `ultra`는 허용되며, 대시보드는 `low`부터 `xhigh`까지 제공합니다.
+상한은 추론 강도만 낮춥니다. 모델이 광고한 단계 중 상한 이하에서 가장 높은 단계로 맞춥니다. 모델에 추론 강도 제어가 없거나 맞는 지원 단계가 없으면, easyproxy는 추론 강도 지정을 제거하고 프로바이더 기본값을 적용합니다. `max`와 `ultra`는 허용되며 대시보드는 `low`부터 `xhigh`까지 제공합니다.
 
-모델 effort pin이 없어도 적용 대상 native Chat Completions 요청에는 설정된 상한이 적용됩니다. pin을 적용하거나 상한이 값을 바꾼 경우에 제공자 전송 값으로 매핑하며, 둘 다 없으면 호출자 값은 원래 표기를 유지합니다.
+모델 effort pin이 없어도 적용 대상 native Chat Completions 요청에는 설정된 상한이 적용됩니다. pin을 적용하거나 상한이 값을 바꾼 경우에 제공자 전송 값으로 매핑하며 둘 다 없으면 호출자 값은 원래 표기를 유지합니다.
 
 v1, default, v2 동작에 대한 초보자용 설명은 [Sub-agent surfaces](/guides/sub-agent-surface/)를 참고하세요.

@@ -4,7 +4,7 @@ description: easyproxy가 주어진 모델 id를 어느 프로바이더가 처�
 ---
 
 Codex가 모델을 요청하면 `router.ts`가 이를 정확히 하나의 설정된 프로바이더로 해석합니다. 규칙은
-**순서대로** 검사되며, 첫 번째로 일치하는 것이 적용됩니다.
+**순서대로** 검사되며 첫 번째로 일치하는 것이 적용됩니다.
 
 OpenAI에서는 설정된 `<selector>/gpt-*` id가 combo 또는 provider 네임스페이스보다 먼저
 `codexAccountNamespaces`를 통해 정확히 하나의 저장된 Codex 계정에 매핑됩니다. bare `gpt-*` id는
@@ -27,7 +27,7 @@ fallback하지 않습니다.
 2. **Combo id 또는 alias** — combo가 하나 이상 설정되어 있는 동안에는 canonical `combo/<id>` 또는
    설정된 combo alias가 provider namespace보다 먼저 concrete target을 선택합니다. 설정된 combo가
    하나도 없으면 이름이 정확히 `combo`인 legacy physical provider는 일반 provider namespace로
-   유지됩니다. target selection과 failover 동작은 [Combos](/ko/guides/combos/)를 참고하십시오.
+   유지됩니다. target selection과 failover 동작은 [Combos](/ko/guides/combos/)를 참고하세요.
 
 3. **명시적 `provider/model`** — id에 `/`가 포함되어 있고 그 앞부분이 설정된 프로바이더의 이름이면,
    해당 프로바이더가 사용되며 id는 슬래시 뒷부분으로 잘립니다.
@@ -81,27 +81,27 @@ fallback하지 않습니다.
   이 설정만으로 해당 모델의 직접 요청을
   막지는 않습니다.
 - 프로바이더의 `selectedModels`가 비어 있지 않으면 카탈로그 허용 목록으로 동작합니다. 실시간 모델 탐색과
-  직접 라우팅은 그대로 두고, 카탈로그와 `/v1/models`에 내보낼 모델만 줄입니다.
-- `modelDiscovery.newModelPolicy`가 `"off"`이면 첫 실시간 탐색 성공 시 기준을 만들고,
+  직접 라우팅은 그대로 두고 카탈로그와 `/v1/models`에 내보낼 모델만 줄입니다.
+- `modelDiscovery.newModelPolicy`가 `"off"`이면 첫 실시간 탐색 성공 시 기준을 만들고
   이후 추가된 모델을 `disabledModels`에 넣습니다. 이 정책은 `/v1/models`, 대시보드,
   클라이언트 설정 내보내기, 서비스 시작을 포함한 Codex 카탈로그 동기화에서 새 모델을 공개하기
   전에 적용됩니다. 수동으로 활성화한 모델은 이후 새로고침과 내보내기에서도 활성 상태를 유지합니다.
-  새 설치의 기본값은 `"off"`이며, 기존 설치는 직접 바꾸기 전까지 `"on"`을 유지합니다.
-  `epx models new-policy off`로 전역 정책을 설정하고, `--provider <name>`으로 프로바이더별
+  새 설치의 기본값은 `"off"`이며 기존 설치는 직접 바꾸기 전까지 `"on"`을 유지합니다.
+  `epx models new-policy off`로 전역 정책을 설정하고 `--provider <name>`으로 프로바이더별
   정책을 지정합니다. `epx models new-arrivals [--json]`으로 새 모델을 확인할 수 있습니다.
   실패하거나 제한된 탐색은 기준을 바꾸지 않습니다. `selectedModels`가 비어 있지 않은
   프로바이더는 이미 선택 목록을 사용하므로 이 정책으로 모델을 자동 비활성화하지 않습니다.
 - `provider.disabled: true`인 프로바이더는 카탈로그 탐색에서 제외됩니다. 명시적 `provider/model` 요청은
-  실패하고, `defaultModel` / `models[]` 검사에서도 건너뜁니다.
+  실패하고 `defaultModel` / `models[]` 검사에서도 건너뜁니다.
 - `providerContextCaps`는 공급자별로 Codex에 표시할 컨텍스트 상한을 지정합니다.
-  `contextCapValue`는 대시보드의 기본값이며 기본 설정은 350,000입니다. 이 값만으로는 상한이 적용되지 않고,
+  `contextCapValue`는 대시보드의 기본값이며 기본 설정은 350,000입니다. 이 값만으로는 상한이 적용되지 않고
   `providerContextCaps`에 공급자가 있어야 적용됩니다. '모든 라우팅 대상 공급자에 적용' 토글을 켠 상태에서
   대시보드 값을 바꾸면 활성 상한만 갱신합니다. 토글이 꺼져 있으면 각 공급자의 상한을 유지합니다.
-  일반적인 기존 윈도는 줄일 수만 있지만, 장문 윈도를 지원하는 네이티브 모델은 해당 모델의 지원 상한까지
+  일반적인 기존 윈도는 줄일 수만 있지만 장문 윈도를 지원하는 네이티브 모델은 해당 모델의 지원 상한까지
   확장할 수 있습니다. 업스트림 모델의 실제 한도는 바뀌지 않습니다. 상한을 꺼도 선택값은
-  `providerContextCapValues`에 남고 다시 불러와도 유지됩니다. 다시 켜면 이 선택값을 복원하며,
+  `providerContextCapValues`에 남고 다시 불러와도 유지됩니다. 다시 켜면 이 선택값을 복원하며
   꺼져 있는 동안에는 저장된 값을 제한으로 적용하지 않습니다. `value` 없이 `{ "setAll": true }`를 보내면
-  설정된 모든 공급자의 상한을 현재 전역 값으로 켜고, 저장된 선택값도 이 값으로 바꿉니다.
+  설정된 모든 공급자의 상한을 현재 전역 값으로 켜고 저장된 선택값도 이 값으로 바꿉니다.
 
 ```json
 {
@@ -115,10 +115,10 @@ fallback하지 않습니다.
 
 ## 팁
 
-- **Codex account를 명시적으로 지정하려면** `<selector>/<native-openai-model>`(규칙 1)을 사용하십시오.
+- **Codex account를 명시적으로 지정하려면** `<selector>/<native-openai-model>`(규칙 1)을 사용하세요.
   이 route는 exact하고 fail closed하므로 다른 account로 조용히 전환하지 않습니다.
 - **라우팅된 모델에는 명시적으로 작성하세요.** exact public id가 combo alias가 아닐 때
-  `provider/model`(규칙 3)을 선호하십시오. provider를 직접 지정하며 catalog 동기화 후 Codex가
+  `provider/model`(규칙 3)을 우선하세요. provider를 직접 지정하며 catalog 동기화 후 Codex가
   picker에 표시하는 것과 일치합니다.
 - 프로바이더에 **`models[]` 또는 `defaultModel`을 미리 채워두면** 짧은 id(규칙 5/7)가 `provider/`
   프리픽스 없이 해석됩니다.

@@ -1,6 +1,6 @@
 ---
 title: 라우팅 프로필 편집기
-description: easyproxy 대시보드에서 라우팅 정책 프로필을 만들고, 편집하고, 검증하고, 시험 평가하고, 삭제합니다.
+description: easyproxy 대시보드에서 라우팅 정책 프로필을 만들고 편집하고 검증하고 시험 평가하고 삭제합니다.
 ---
 
 easyproxy 대시보드의 **Models → Routing** 탭에서 `config.json`을 직접 편집하지 않고 `config.routingProfiles`를 관리할 수 있습니다.
@@ -26,9 +26,9 @@ easyproxy 대시보드의 **Models → Routing** 탭에서 `config.json`을 직�
 - 숫자 한도와 요구 조건은 지원 범위 안에 있어야 합니다.
 - 최적화 가중치 중 하나 이상은 양수여야 합니다.
 
-저장에 성공하면 일반 설정 기록기로 프로필을 저장하고, 실시간 상태를 조정하고, 모델 카탈로그를 새로 고칩니다. 검증에 실패하면 이전 설정은 그대로 유지되고 오류가 편집기에 표시됩니다.
+저장에 성공하면 일반 설정 기록기로 프로필을 저장하고 실시간 상태를 조정하고 모델 카탈로그를 새로 고칩니다. 검증에 실패하면 이전 설정은 그대로 유지되고 오류가 편집기에 표시됩니다.
 
-`limits.maxEstimatedCostUsd`를 설정하면 `limits.onUnknownCost`의 기본값은 `"allow"`입니다. 비용 추정치를 알 수 없어도 한도 자체를 이유로 제외하지 않으며, 시험 평가와 실제 라우트 결정 기록에 `cost.capOutcome: "unknown-allowed"`를 남겨 한도가 입증되지 않았음을 알립니다. 상한을 엄격히 지켜야 한다면 `"exclude"`를 설정하세요(`cost-limit-unknown`, `cost.capOutcome: "unknown-excluded"`). `onUnknownCost`만 설정하면 효력이 없으며 한도 결과도 기록되지 않습니다. 이 설정은 `unknownEvidence.cost`와 별개입니다. 후자는 가격 정보가 없을 때 독립적으로 제외하거나 감점할 수 있습니다.
+`limits.maxEstimatedCostUsd`를 설정하면 `limits.onUnknownCost`의 기본값은 `"allow"`입니다. 비용 추정치를 알 수 없어도 한도 자체를 이유로 제외하지 않으며 시험 평가와 실제 라우트 결정 기록에 `cost.capOutcome: "unknown-allowed"`를 남겨 한도가 입증되지 않았음을 알립니다. 상한을 엄격히 지켜야 한다면 `"exclude"`를 설정하세요(`cost-limit-unknown`, `cost.capOutcome: "unknown-excluded"`). `onUnknownCost`만 설정하면 효력이 없으며 한도 결과도 기록되지 않습니다. 이 설정은 `unknownEvidence.cost`와 별개입니다. 후자는 가격 정보가 없을 때 독립적으로 제외하거나 감점할 수 있습니다.
 
 ## 저장된 프로필 시험 평가
 

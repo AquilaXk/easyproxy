@@ -6,7 +6,7 @@ description: 공유 Codex 카탈로그를 통해 easyproxy 모델이 Codex App, 
 기본값은 `false`입니다. `config.json`에 `"omitDisabledNativeModels": true`를 설정하고 `epx sync`를 실행하면 비활성화한 native 행을 catalog와 cache, Codex 형식의 HTTP 모델 목록에서 제외합니다. 제외 전 검증한 상속 템플릿을 보존하므로 routed 행의 메타데이터는 유지되며 직접 요청의 라우팅은 바뀌지 않습니다. 아래 hide 설명은 기본 설정에 해당합니다.
 
 easyproxy는 Codex App을 직접 고치지 않습니다. Codex CLI/TUI와 같은 Codex 설정과 모델 카탈로그를
-씁니다. app-server는 이 공유 상태를 읽지만, 일부 Codex Desktop 릴리스는 renderer에서 추가 remote
+씁니다. app-server는 이 공유 상태를 읽지만 일부 Codex Desktop 릴리스는 renderer에서 추가 remote
 allowlist를 적용해 routed row를 picker에서 제거할 수 있습니다. 명시적 `nativeAlias: true` combo가
 이 업스트림 버그를 위한 호환 모드입니다.
 
@@ -48,13 +48,13 @@ wire id는 계속 `gpt-daybreak-blue-latest`이고 Sol로 다시 쓰지 않으�
 qualified 행을 숨기고 선택기에 bare native 행을 복원합니다.
 
 API GPT-5.6과 Daybreak 항목은 context 922,000 / max input 922,000을
-쓰고, `*-pro` picker id는 로그, 사용량, picker 상태에는 가상 id를 유지한 채 wire에서는 base model과
+쓰고 `*-pro` picker id는 로그, 사용량, picker 상태에는 가상 id를 유지한 채 wire에서는 base model과
 `reasoning.mode: "pro"`로 풀립니다. API 카탈로그는 `gpt-5.5`, `gpt-5.6`, Sol/Terra/Luna, 세 개의
-Pro 가상 id, `daybreak-red-latest`, `daybreak-blue-latest`까지 정확히 열 개로 고정되어 있으며,
+Pro 가상 id, `daybreak-red-latest`, `daybreak-blue-latest`까지 정확히 열 개로 고정되어 있으며
 일반적인 `gpt-5.6-pro` 별칭은 없습니다. Compact 요청은
 선택한 tier를 유지하되 reasoning 객체 없이 base model만 보냅니다.
 
-선택기 id로 credential 경로를 명시적으로 선택하세요. Pool/Direct는 Providers 페이지에서 바꾸며,
+선택기 id로 credential 경로를 명시적으로 선택하세요. Pool/Direct는 Providers 페이지에서 바꾸며
 아래 `<selector>`는 `codexAccountNamespaces`로 매핑한 사용자 지정 공개 label입니다:
 
 ```text
@@ -66,7 +66,7 @@ openai/gpt-daybreak-blue-latest     # 명시적 Codex-forward custom 행 (922,00
 openai-apikey/daybreak-blue-latest  # 별도 API-key 경로 (1,050,000 / 922,000)
 ```
 
-새로 설치한 환경과 저장된 모드가 없는 설정은 Pool이 기본값입니다. 현재 설정은 마커 2를 사용하고,
+새로 설치한 환경과 저장된 모드가 없는 설정은 Pool이 기본값입니다. 현재 설정은 마커 2를 사용하고
 출하된 v1 소스를 `~/.easyproxy/config.json.pre-openai-tiers-v2.bak`에 보관합니다. 복원하려면 다음을
 실행합니다:
 
@@ -100,7 +100,7 @@ visibility = "list"
 ## 현재 안정 모델 범위
 
 네이티브 폴백 목록에는 `gpt-5.5`와 GPT-5.6 Sol/Terra/Luna가 들어 있습니다. GPT-5.5 계열은 설치된
-Codex 카탈로그의 더 풍부한 실시간 항목을 보존하고, 빠진 항목만 합성합니다. 번들 업스트림 스냅샷은
+Codex 카탈로그의 더 풍부한 실시간 항목을 보존하고 빠진 항목만 합성합니다. 번들 업스트림 스냅샷은
 GPT-5.6에만 사용합니다. 오래된 템플릿으로 근사하지 않고 모델별 실제 식별 정보와 메타데이터를
 제공하기 위해서입니다.
 
@@ -112,11 +112,11 @@ GPT-5.6에만 사용합니다. 오래된 템플릿으로 근사하지 않고 모
 | OpenAI(API key) | 네임스페이스 모델에는 `gpt-5.5`, `gpt-5.6`, Sol/Terra/Luna, `*-pro` 가상 id, Daybreak 별칭이 포함됩니다(컨텍스트 1,050,000; 최대 입력 922,000). `openai-apikey/gpt-6.1-terra`는 컨텍스트 1,050,000, 최대 출력 128,000입니다. |
 | OpenRouter | `openrouter/openai/gpt-5.6-sol`, `openrouter/openai/gpt-5.6-terra`, `openrouter/openai/gpt-5.6-luna` (922,000) |
 | OpenRouter | `openrouter/openai/gpt-6.1-terra` (1,050,000) |
-| Cursor | 정적 폴백에는 `cursor/gpt-5.6-sol`, `cursor/gpt-5.6-terra`, `cursor/gpt-5.6-luna` (1,000,000)와 Grok 4.5/4.6/4.7의 일반·Fast 항목(500,000)이 들어갑니다. 4.6과 4.7은 `xhigh`도 노출하며, 실시간 계정 탐색이 어떤 항목을 계속 보일지 정합니다. |
-| xAI | 실시간 탐색이 기준입니다. 폴백 카탈로그에는 `xai/grok-4.6`과 `xai/grok-4.7`이 포함되며 기본값은 `xai/grok-4.5`입니다. 세 모델 모두 컨텍스트 창은 500,000입니다. Grok 4.6과 4.7은 `low` / `medium` / `high` / `xhigh`(업스트림 기본값: `high`)를 제공하고, Grok 4.5는 `high`까지만 제공합니다. |
+| Cursor | 정적 폴백에는 `cursor/gpt-5.6-sol`, `cursor/gpt-5.6-terra`, `cursor/gpt-5.6-luna` (1,000,000)와 Grok 4.5/4.6/4.7의 일반·Fast 항목(500,000)이 들어갑니다. 4.6과 4.7은 `xhigh`도 노출하며 실시간 계정 탐색이 어떤 항목을 계속 보일지 정합니다. |
+| xAI | 실시간 탐색이 기준입니다. 폴백 카탈로그에는 `xai/grok-4.6`과 `xai/grok-4.7`이 포함되며 기본값은 `xai/grok-4.5`입니다. 세 모델 모두 컨텍스트 창은 500,000입니다. Grok 4.6과 4.7은 `low` / `medium` / `high` / `xhigh`(업스트림 기본값: `high`)를 제공하고 Grok 4.5는 `high`까지만 제공합니다. |
 
-고정된 GPT-5.6 항목은 업스트림 ladder를 그대로 보존합니다. Sol과 Terra는 `low`부터 `ultra`까지 노출하고,
-Luna는 `max`에서 멈춥니다. Sol의 기본값은 `low`이고, Terra와 Luna의 기본값은 `medium`입니다. 명시적
+고정된 GPT-5.6 항목은 업스트림 ladder를 그대로 보존합니다. Sol과 Terra는 `low`부터 `ultra`까지 노출하고
+Luna는 `max`에서 멈춥니다. Sol의 기본값은 `low`이고 Terra와 Luna의 기본값은 `medium`입니다. 명시적
 Codex-forward Daybreak Blue 행도 wire id를 바꾸지 않은 채 Sol의 ladder와 기본값을 상속합니다. `ultra`는
 최대 reasoning과 선제적 delegation을 묶은 클라이언트 선택지이며 백엔드에는 `max`로 전달됩니다. picker 항목이
 보인다는 것은 카탈로그가 준비됐다는 뜻일 뿐입니다. 연결된 계정이나 API key에 실제 사용 권한이 있어야
@@ -170,10 +170,10 @@ fast_mode = true
 ```
 
 하지만 모델 카탈로그와 런타임 요청 tier id는 `priority`를 씁니다. easyproxy는 이 분리를 그대로
-유지합니다. 네이티브 OpenAI passthrough 모델은 fast 지원을 유지하고, 라우팅된 프로바이더는
+유지합니다. 네이티브 OpenAI passthrough 모델은 fast 지원을 유지하고 라우팅된 프로바이더는
 케이퍼빌리티로 게이트되어 프로바이더가 `supportsServiceTier: false`를 선언한 경우에만
 `service_tier`가 제거됩니다(레지스트리가 정식 OpenAI를 `true`, DeepSeek과 Volcengine Ark를 `false`로 분류). 미분류 커스텀 게이트웨이는 호출자가 준 값을 그대로 보존하고 주입도 받지 않습니다. 따라서
-처리 불가능한 곳에 fast 옵션이 노출되지 않으며, 커스텀 게이트웨이는 `true`로 명시적으로 옵트인할 수 있습니다.
+처리 불가능한 곳에 fast 옵션이 노출되지 않으며 커스텀 게이트웨이는 `true`로 명시적으로 옵트인할 수 있습니다.
 
 ### Codex에서 Flex 선택
 
@@ -199,7 +199,7 @@ Fast, Flex가 나타납니다. `openai-chat` 라우트는 Chat Completions API�
 `providers.nanogpt` 항목에서 서비스 등급 사용이 이미 허용된 다른 모델에도
 Flex 선택지가 표시될 수 있습니다. `modelSupportsServiceTier`에 Luna만 적어도
 이미 적격인 다른 모델을 제외하는 허용 목록이 되는 것은 아닙니다. 다만 Flex 선택지는
-카탈로그에 게시되는 **일반 라우팅 모델 행**에만 표시되며, Combo 네임스페이스와
+카탈로그에 게시되는 **일반 라우팅 모델 행**에만 표시되며 Combo 네임스페이스와
 Native Alias 행에는 표시되지 않습니다. 따라서 해당 항목에서 서비스 등급 사용이
 허용된 **모든 일반 라우팅 모델**의 Flex 지원 여부를 확인하세요.
 Luna만 Flex를 지원한다면 Fast 지원 모델이 다른 모델과 섞이지 않도록
@@ -208,10 +208,10 @@ Luna만 Flex를 지원한다면 Fast 지원 모델이 다른 모델과 섞이지
 
 EasyProxy의 전역 Fast 설정은 **Auto**(`fastMode` 생략)로 유지하세요.
 Fast 또는 Default 강제 모드는 Flex 선택을 덮어씁니다. `epx sync` 후 Codex의
-모델 목록을 갱신하고 속도 선택기에서 **Flex**를 선택하거나, Codex CLI에서
+모델 목록을 갱신하고 속도 선택기에서 **Flex**를 선택하거나 Codex CLI에서
 `/model <routed-id> --speed=flex`를 사용하면 됩니다. 이는 **선택 가능한 등급**이지
 모델별 강제 기본값은 아닙니다. 다른 모델로 바꾸더라도 Flex 사용이 자동 강제되지는
-않습니다. 상위 API로 `service_tier: "flex"`를 전달하지만, 실제 처리 가능 여부,
+않습니다. 상위 API로 `service_tier: "flex"`를 전달하지만 실제 처리 가능 여부,
 요금과 지연 시간은 공급자에 따라 다릅니다. 메뉴나 요청 로그만으로 Flex 과금이
 확정되지는 않습니다.
 
@@ -237,7 +237,7 @@ easyproxy가 라우팅 모델의 Codex 기본 속도 메뉴에 **Ultra Fast**를
 이 매핑은 해당 프로바이더에서 Fast를 사용할 수 있는 모든 모델에 적용됩니다. 일부 모델만
 Ultra Fast를 지원한다면 별도 프로바이더 항목을 사용하세요. 앱에서 선택한 속도를 전달하려면
 easyproxy의 Fast 모드를 **Auto**로 유지하세요(`fastMode` 생략). Fast 강제 모드는 `priority`를
-전송하고, Default 강제 모드는 tier를 제거합니다. 모델 카탈로그를 새로고침하고, 앱에 이전
+전송하고 Default 강제 모드는 tier를 제거합니다. 모델 카탈로그를 새로고침하고 앱에 이전
 목록이 남아 있다면 Codex 데스크톱을 다시 시작한 뒤 라우팅 모델의 속도 메뉴에서 **Ultra Fast**를
 선택하세요. 기본 속도는 Standard로 유지됩니다.
 
@@ -252,7 +252,7 @@ Codex가 HTTP로 모델 목록을 불러올 때도 현재 적용 중인 설정�
 별도로 넣은 Ultra Fast tier를 보존합니다. 자동 생성된 라우팅 tier는 사용자 제공 tier로
 취급하지 않습니다. bare native `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.2-astra`, `gpt-6.2-sol` 항목과 신뢰된 계정별 복제
 항목에서는 `ultraFastTier`를 켜면 네이티브 기본 tier를 바꾸지 않고 누락된 Ultrafast 선택지도
-생성합니다. 끄면 자동 생성한 것으로 추적되는 네이티브 tier 메타데이터만 제거하며,
+생성합니다. 끄면 자동 생성한 것으로 추적되는 네이티브 tier 메타데이터만 제거하며
 사용자가 별도로 넣거나 수정한 네이티브 tier 항목은 보존합니다.
 
 [OpenAI 속도 안내](https://learn.chatgpt.com/docs/agent-configuration/speed#ultrafast-mode)는 GPT-6.2 Astra와 Sol,
@@ -277,7 +277,7 @@ override를 정할 뿐, 모델을 고르거나 delegation을 시작하지는 않
 
 Codex Desktop의 원격 서버 모드는 클라이언트 자체 `available_models` 허용 목록으로 picker를
 필터링합니다(원격 `use_hidden_models` 설정이 켜져 있을 때 적용). 라우팅된 카탈로그 항목은
-여전히 로드되고 제공됩니다. `model/list`가 항목을 반환하고 번들 CLI도 읽을 수 있지만, Desktop
+여전히 로드되고 제공됩니다. `model/list`가 항목을 반환하고 번들 CLI도 읽을 수 있지만 Desktop
 렌더러는 표시 전에 이 네이티브 전용 허용 목록에 없는 항목을 버립니다. easyproxy는 이 목록에
 개입할 수 없습니다. 업스트림 버그는
 [openai/codex#19694](https://github.com/openai/codex/issues/19694)에서 추적됩니다.
@@ -285,7 +285,7 @@ Codex Desktop의 원격 서버 모드는 클라이언트 자체 `available_model
 Desktop이 허용 목록을 제어할 수 있게 될 때까지:
 
 - 원격 머신의 `~/.codex/config.toml`에서 모델을 직접 설정하세요(예: `model = "input/grok-4.5"`).
-  picker에는 `Custom`으로 표시될 수 있지만, 요청은 설정된 라우팅 모델을 계속 사용합니다.
+  picker에는 `Custom`으로 표시될 수 있지만 요청은 설정된 라우팅 모델을 계속 사용합니다.
 - Desktop picker 대신 Codex CLI 또는 TUI를 사용하세요. 이들은 허용 목록을 적용하지 않으며
   라우팅 모델을 정상적으로 나열합니다.
 
@@ -294,7 +294,7 @@ Desktop이 허용 목록을 제어할 수 있게 될 때까지:
 
 Codex 앱이 네이티브 5시간 쿼터를 다 쓰면 리저브 폴백 모델로 넘어가면서 피커의 다른 줄을 회색으로 만들 수 있습니다. [#2813](https://github.com/AquilaXk/easyproxy/issues/2813)에 보고된 이 차단은 easyproxy가 넣은 라우팅 줄까지 가립니다. 그 줄들은 관계없는 프로바이더 자격 증명을 쓰고 ChatGPT 쿼터를 전혀 쓰지 않습니다.
 
-이 차단은 요청이 프록시에 닿기 전에 클라이언트가 적용하므로 easyproxy가 풀 수 없습니다. 라우팅 줄은 `visibility: "list"`로 기록되고, 카탈로그 필터링은 `disabledModels`와 프로바이더별 `selectedModels`만 봅니다. 쿼터 값은 라우팅 줄의 노출에 관여하지 않습니다.
+이 차단은 요청이 프록시에 닿기 전에 클라이언트가 적용하므로 easyproxy가 풀 수 없습니다. 라우팅 줄은 `visibility: "list"`로 기록되고 카탈로그 필터링은 `disabledModels`와 프로바이더별 `selectedModels`만 봅니다. 쿼터 값은 라우팅 줄의 노출에 관여하지 않습니다.
 
 라우팅 모델을 직접 지정하는 경로는 피커를 거치지 않습니다. `config.toml`에 모델을 적습니다.
 
@@ -308,7 +308,7 @@ model = "anthropic/claude-sonnet-5"
 epx access test anthropic/claude-sonnet-5 --protocol responses
 ```
 
-두 경로 모두 **요청이 프록시에 도달한 뒤에는** 정상 라우팅되고, 이건 테스트로 덮여 있습니다. 다만 Codex 데스크톱 앱은 리저브 모드에서 설정한 모델을 보내지 않습니다. 앱이 자체 `wham/usage` 폴링(`luna_reserve` 업셀과 허용 상태의 `gpt-reserve` 추가 한도)으로 리저브를 판정하고, 요청이 나가기 전에 모델 설정을 `gpt-reserve`로 강제하기 때문에 `config.toml` 경로는 앱 안에서 덮어써집니다. 윈도우가 리셋될 때까지는 `epx access test`, 프록시를 통한 Claude Code(`epx claude`), 직접 `/v1` 클라이언트를 쓰세요. [Codex 리저브 모드에서의 라우팅 모델](/guides/codex-integration/#routed-models-during-codex-reserve-mode)도 참고하세요.
+두 경로 모두 **요청이 프록시에 도달한 뒤에는** 정상 라우팅되고 이건 테스트로 덮여 있습니다. 다만 Codex 데스크톱 앱은 리저브 모드에서 설정한 모델을 보내지 않습니다. 앱이 자체 `wham/usage` 폴링(`luna_reserve` 업셀과 허용 상태의 `gpt-reserve` 추가 한도)으로 리저브를 판정하고 요청이 나가기 전에 모델 설정을 `gpt-reserve`로 강제하기 때문에 `config.toml` 경로는 앱 안에서 덮어써집니다. 윈도우가 리셋될 때까지는 `epx access test`, 프록시를 통한 Claude Code(`epx claude`), 직접 `/v1` 클라이언트를 쓰세요. [Codex 리저브 모드에서의 라우팅 모델](/guides/codex-integration/#routed-models-during-codex-reserve-mode)도 참고하세요.
 
 
 picker에 오래된 항목이 계속 보이면 카탈로그를 새로 쓰고 대상 Codex 서피스를 다시 시작합니다:

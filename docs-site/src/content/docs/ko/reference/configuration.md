@@ -4,7 +4,7 @@ description: easyproxy가 설정을 저장하는 위치, 편집 방식, 각 설�
 ---
 
 easyproxy는 지속 설정을 `$EASYPROXY_HOME/config.json`에 저장합니다. 보통은
-`~/.easyproxy/config.json`이며, Windows에서는 기본값이
+`~/.easyproxy/config.json`이며 Windows에서는 기본값이
 `%USERPROFILE%\.easyproxy\config.json`입니다.
 
 ## 설정을 편집하는 방법
@@ -12,19 +12,19 @@ easyproxy는 지속 설정을 `$EASYPROXY_HOME/config.json`에 저장합니다. 
 작업에 맞는 편집 경로를 선택하세요.
 
 - **대시보드:** 안내형 UI에서 프로바이더, 모델, 에이전트, 접근, 저장소 설정을 조정합니다.
-- **CLI:** `epx init`은 초기 파일을 만들고, `epx provider`, `epx models`, `epx combo`,
+- **CLI:** `epx init`은 초기 파일을 만들고 `epx provider`, `epx models`, `epx combo`,
   `epx agent`, `epx config` 같은 명령은 각 명령이 맡은 설정을 갱신하거나 조회합니다.
 - **파일:** 전용 UI나 CLI 명령이 없는 필드는 `config.json`을 직접 편집합니다. 파일은 유효한 JSON이어야
   합니다.
 
 대시보드, 관리 API, 그리고 설정을 바꾸는 CLI 명령은 모두 같은 파일에 저장합니다. 가능하면 그 경로를
-쓰고, 직접 손으로 고쳐야 한다면 프록시를 멈춘 뒤 하세요. 실행 중인 프로세스는 설정을 메모리에 유지하므로,
+쓰고 직접 손으로 고쳐야 한다면 프록시를 멈춘 뒤 하세요. 실행 중인 프로세스는 설정을 메모리에 유지하므로,
 나중에 라이브 저장이 스냅샷을 기준으로 손수 고친 내용을 다시 덮어쓸 수 있습니다. 라이브 저장은 충돌 보호
-경로가 명시된 `claudeCode`와 리스너 바인딩 필드의 외부 수정분을 병합하지만, 그 보호가 모든 하위 트리를
+경로가 명시된 `claudeCode`와 리스너 바인딩 필드의 외부 수정분을 병합하지만 그 보호가 모든 하위 트리를
 덮지는 않습니다.
 
-파일을 파싱할 수 없으면 easyproxy는 `config.json.invalid-<timestamp>`로 백업하고, 콘솔에 경고를
-남긴 뒤 기본값으로 시작합니다. 파일이 없어도 새로 설치한 경우의 기본값을 그대로 사용하며, 그것은 단일
+파일을 파싱할 수 없으면 easyproxy는 `config.json.invalid-<timestamp>`로 백업하고 콘솔에 경고를
+남긴 뒤 기본값으로 시작합니다. 파일이 없어도 새로 설치한 경우의 기본값을 그대로 사용하며 그것은 단일
 `openai` forward 프로바이더입니다.
 
 로컬 `epx config set`, `unset`, `import`, 오프라인 `epx effort`, 커스텀 모델 추가·삭제,

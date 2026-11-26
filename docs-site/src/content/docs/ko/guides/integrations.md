@@ -25,7 +25,7 @@ Windows에서 절대 경로가 필요한 오버라이드는 드라이브 문자(
 | omo | `~/.omo/agent/models.json` | JSON | 새 세션에서 | 루프백 자리표시자 |
 | Cline CLI | `~/.cline/data/settings/providers.json` 및 같은 위치의 `models.json` | JSON 파일 쌍 | Cline을 중지하고 다시 시작한 뒤 | 루프백 자리표시자 |
 | Kilo | `~/.config/kilo`에서 먼저 존재하는 `kilo.jsonc`, `kilo.json`, `opencode.jsonc`, `opencode.json`, `config.json` (`XDG_CONFIG_HOME`로 디렉터리 변경 가능, 모두 없으면 `kilo.jsonc` 생성) | JSONC | 새 세션에서 | `EASYPROXY_KILO_API_KEY` |
-| Command Code | `~/.commandcode/providers.json` (Windows 기본 홈 사용 시: `HOME ?? USERPROFILE` 값이 비어 있거나 공백만으로 구성되지 않은 Windows 절대 경로일 때만 사용하고, 그 외에는 `homedir()` 사용. 별도로 전달된 홈은 유지. 해당 홈 아래의 `.commandcode\providers.json`) | JSON | 다음 Command Code 실행 시 | 없음 — 키 없는 루프백 (`apiKey: false`). 데스크톱 앱은 자체 로그인이 필요하며 easyproxy는 `auth.json`을 기록하지 않습니다 |
+| Command Code | `~/.commandcode/providers.json` (Windows 기본 홈 사용 시: `HOME ?? USERPROFILE` 값이 비어 있거나 공백만으로 구성되지 않은 Windows 절대 경로일 때만 사용하고 그 외에는 `homedir()` 사용. 별도로 전달된 홈은 유지. 해당 홈 아래의 `.commandcode\providers.json`) | JSON | 다음 Command Code 실행 시 | 없음 — 키 없는 루프백 (`apiKey: false`). 데스크톱 앱은 자체 로그인이 필요하며 easyproxy는 `auth.json`을 기록하지 않습니다 |
 | Factory Droid | `~/.factory/settings.json` (`%USERPROFILE%\.factory\settings.json` Windows에서) | JSON | 파일 변경 시 즉시 | 키 없는 루프백 |
 
 생성된 카탈로그에는 각 프로바이더 선택에서 활성화된 모델만 들어갑니다. Pi와 Aside를 포함한 다운로드와 관리형 연동 모두에 적용됩니다. 관리 모델 목록에는 전체 모델이 계속 표시되어 추가 모델을 활성화할 수 있습니다.
@@ -42,15 +42,15 @@ modelProfile:
 
 지원되는 추론 강도 단계가 있는 GJC 모델은 `reasoning: true`, `thinking.levels`, `compat.supportsReasoningEffort`를 내보내 GJC에서 강도를 선택할 수 있게 합니다. 네이티브 Codex 모델은 카탈로그에 단계가 없어도 표준 단계를 내보냅니다. 알려진 단계가 없는 모델은 이 필드들을 생략합니다. `none`은 강도를 보내지 않고 `ultra`는 전송 시 `max`로 바뀌므로 선택지에서 제외합니다. 모델 옵션을 갱신하려면 연동을 새로 고치세요.
 
-관리형 OpenCode 연동은 `provider.easyproxy`(opencode V1)와 `providers.easyproxy`(opencode V2) 두 조각을 소유합니다. 두 블록 모두 선언된 모델별 추론 선택지와 기본값을 같은 내용으로 가집니다. 레거시 블록은 모델 options의 기본값과 변형 맵으로, V2 블록은 모델 settings와 네이티브 변형 배열로 표현하며 둘 다 기록하고 동기화합니다. 두 블록은 같은 프로바이더와 모델 ID를 가리키고 opencode V2는 이를 프로바이더 항목 하나로 병합합니다. Apply, Refresh, Disable, Restore는 두 조각 모두에 작용하며 다른 프로바이더, 에이전트, 단축키, MCP 항목은 유지됩니다. 이 모델 정의는 Kilo 내보내기와 `epx opencode` 런처와 같은 유효 정규 모델 메타데이터에서 만들어집니다. 명시적 사용자 지정 오버라이드는 항상 우선하고 비워 둔 단계는 그대로 유지되며, 단계나 기본값을 지어내지 않습니다. 신뢰할 수 있는 컨텍스트 한도는 출력 한도와 함께 전달됩니다. 출력은 알려진 값(명시적 또는 카탈로그 메타데이터)이 우선하고, 알려지지 않았으면 스키마 필수 32000 폴백(컨텍스트로 상한)이 사용되며, 신뢰할 수 있는 컨텍스트가 없으면 limit 블록 전체가 생략됩니다. 기능, 강도 단계, 기본값, 선택적 입력 한도는 알려진 경우에만 기록됩니다. V2 블록의 네이티브 capabilities 객체에는 알려진 tools 값이 필요해서 도구 지원 여부를 알 수 없으면 일부만 쓰지 않고 객체 전체를 생략하며, 레거시 쪽 모달리티 선언은 그대로 남습니다. 단계를 지어내는 대신 제어만 기록합니다. V2 블록은 항상 명시적인 변형 배열을 가지며 선언이 없으면 비어 있는데, 생략하면 OpenCode가 low/medium/high를 합성하기 때문입니다. 고정된 추론은 알려졌지만 조절 가능한 단계가 없는 모델에는 선택 가능한 강도 대신 비활성 전용 억제가 기록됩니다. 레거시 OpenCode 블록과 Kilo 모두 클라이언트가 그냥 생성했을 각 단계 ID를 전부 비활성화합니다. 어느 쪽도 선택 가능한 강도를 추가하지 않습니다. 선택 가능한 변형(모델 자신의 단계가 `none`을 선언한 경우의 `none` 포함)은 알려진 경우에 기록되는 기본 추론 강도를 덮어쓸 수 있습니다. 클라이언트가 무엇을 선택하든 프록시의 업스트림 고정 정책은 계속 실제 요청에 적용됩니다.
+관리형 OpenCode 연동은 `provider.easyproxy`(opencode V1)와 `providers.easyproxy`(opencode V2) 두 조각을 소유합니다. 두 블록 모두 선언된 모델별 추론 선택지와 기본값을 같은 내용으로 가집니다. 레거시 블록은 모델 options의 기본값과 변형 맵으로, V2 블록은 모델 settings와 네이티브 변형 배열로 표현하며 둘 다 기록하고 동기화합니다. 두 블록은 같은 프로바이더와 모델 ID를 가리키고 opencode V2는 이를 프로바이더 항목 하나로 병합합니다. Apply, Refresh, Disable, Restore는 두 조각 모두에 작용하며 다른 프로바이더, 에이전트, 단축키, MCP 항목은 유지됩니다. 이 모델 정의는 Kilo 내보내기와 `epx opencode` 런처와 같은 유효 정규 모델 메타데이터에서 만들어집니다. 명시적 사용자 지정 오버라이드는 항상 우선하고 비워 둔 단계는 그대로 유지되며 단계나 기본값을 지어내지 않습니다. 신뢰할 수 있는 컨텍스트 한도는 출력 한도와 함께 전달됩니다. 출력은 알려진 값(명시적 또는 카탈로그 메타데이터)이 우선하고 알려지지 않았으면 스키마 필수 32000 폴백(컨텍스트로 상한)이 사용되며 신뢰할 수 있는 컨텍스트가 없으면 limit 블록 전체가 생략됩니다. 기능, 강도 단계, 기본값, 선택적 입력 한도는 알려진 경우에만 기록됩니다. V2 블록의 네이티브 capabilities 객체에는 알려진 tools 값이 필요해서 도구 지원 여부를 알 수 없으면 일부만 쓰지 않고 객체 전체를 생략하며 레거시 쪽 모달리티 선언은 그대로 남습니다. 단계를 지어내는 대신 제어만 기록합니다. V2 블록은 항상 명시적인 변형 배열을 가지며 선언이 없으면 비어 있는데, 생략하면 OpenCode가 low/medium/high를 합성하기 때문입니다. 고정된 추론은 알려졌지만 조절 가능한 단계가 없는 모델에는 선택 가능한 강도 대신 비활성 전용 억제가 기록됩니다. 레거시 OpenCode 블록과 Kilo 모두 클라이언트가 그냥 생성했을 각 단계 ID를 전부 비활성화합니다. 어느 쪽도 선택 가능한 강도를 추가하지 않습니다. 선택 가능한 변형(모델 자신의 단계가 `none`을 선언한 경우의 `none` 포함)은 알려진 경우에 기록되는 기본 추론 강도를 덮어쓸 수 있습니다. 클라이언트가 무엇을 선택하든 프록시의 업스트림 고정 정책은 계속 실제 요청에 적용됩니다.
 
-관리형 DSH 지원의 최저 호환 버전은 **DSH 0.1.0-rc.6**입니다. **DSH 0.1.7 이상**은 Desktop 프로필 패치인 `$DSH_HOME/profiles/desktop/cordis.patch.yml`에서 라우트를 읽고 파일 변경을 즉시 반영합니다. Desktop 프로필과 패치가 있으면 EasyProxy는 `[id=llm-pi-ai].config.providers.easyproxy` 행만 기록합니다. `$DSH_HOME/profiles/desktop/package.json`은 있지만 `cordis.patch.yml`이 없으면 Apply를 거부합니다. `[]`(DSH가 새 프로필에 기록하는 빈 패치)가 들어 있는 `cordis.patch.yml`을 만든 뒤 연동을 다시 켜세요. Desktop 프로필이 없을 때만 `$DSH_HOME/settings.yaml`의 `llm-pi-ai.providers.easyproxy`를 대신 사용합니다. Apply와 Refresh는 해당 부분을 교체하고, Disable은 그 부분만 제거하며, Restore는 기록된 스냅샷을 되돌립니다. 이 작업은 사용자의 기본 모델이나 네이티브 `deepseek-official` 프로바이더를 바꾸지 않습니다. 관리형 DSH 연동은 현재 루프백 전용이며 실제 자격 증명을 기록하지 않습니다.
+관리형 DSH 지원의 최저 호환 버전은 **DSH 0.1.0-rc.6**입니다. **DSH 0.1.7 이상**은 Desktop 프로필 패치인 `$DSH_HOME/profiles/desktop/cordis.patch.yml`에서 라우트를 읽고 파일 변경을 즉시 반영합니다. Desktop 프로필과 패치가 있으면 EasyProxy는 `[id=llm-pi-ai].config.providers.easyproxy` 행만 기록합니다. `$DSH_HOME/profiles/desktop/package.json`은 있지만 `cordis.patch.yml`이 없으면 Apply를 거부합니다. `[]`(DSH가 새 프로필에 기록하는 빈 패치)가 들어 있는 `cordis.patch.yml`을 만든 뒤 연동을 다시 켜세요. Desktop 프로필이 없을 때만 `$DSH_HOME/settings.yaml`의 `llm-pi-ai.providers.easyproxy`를 대신 사용합니다. Apply와 Refresh는 해당 부분을 교체하고 Disable은 그 부분만 제거하며 Restore는 기록된 스냅샷을 되돌립니다. 이 작업은 사용자의 기본 모델이나 네이티브 `deepseek-official` 프로바이더를 바꾸지 않습니다. 관리형 DSH 연동은 현재 루프백 전용이며 실제 자격 증명을 기록하지 않습니다.
 
 MiniMax Code는 `MINIMAX_DATA_DIR`, 다음으로 `MAVIS_DATA_DIR`를 확인한 뒤 기본값 `~/.minimax`를 사용합니다. 관리형 블록은 `custom_provider.easyproxy`만 소유합니다. `defaultModel`, 선택된 MiniMax 자격 증명 출처, MiniMax 로그인은 바꾸지 않습니다. 연결 후 MCode에서 `custom_provider:easyproxy/<provider/model>` 항목을 선택하세요. 연동을 새로 고치면 모델별로 신뢰할 수 있는 컨텍스트 창과 추론 강도 선택지도 갱신합니다. 알 수 없는 기능은 생략하고 MCode 세션이 소유한 현재 강도는 유지합니다.
 
 Prime Agent는 `PRIME_AGENT_CODING_AGENT_DIR`를 먼저 확인하고 없으면 `~/.prime/agent`를 사용합니다. 프록시와 에이전트가 서로 다른 파일을 가리키지 않도록 상대 경로는 거부합니다. 관리형 블록은 `providers.easyproxy`만 소유하므로 다른 프로바이더와 사용자가 설정한 `modelOverrides`는 유지됩니다. Prime Agent는 세션 시작 시 `models.json`을 읽으므로 연결 후 새 세션을 시작하세요.
 
-Aside는 로컬 프로필을 포함해 등록된 프로필마다 별도 모델 카탈로그를 유지합니다. easyproxy는 로컬 프로필까지 모두 나열하고, 함께 동기화하거나 프로필별로 제어할 수 있습니다. 연동을 전환해도 Aside의 활성 계정은 바뀌지 않습니다. 이전에 Aside를 연결했다면 모든 프로필이 기본으로 활성화되며 개별 제외 설정은 이후 동기화에서도 유지됩니다.
+Aside는 로컬 프로필을 포함해 등록된 프로필마다 별도 모델 카탈로그를 유지합니다. easyproxy는 로컬 프로필까지 모두 나열하고 함께 동기화하거나 프로필별로 제어할 수 있습니다. 연동을 전환해도 Aside의 활성 계정은 바뀌지 않습니다. 이전에 Aside를 연결했다면 모든 프로필이 기본으로 활성화되며 개별 제외 설정은 이후 동기화에서도 유지됩니다.
 
 Aside만의 주의 사항이 있습니다. 실행 중인 앱이 `models.json`을 직접 다시 쓰므로 적용 후에는 Claude Desktop을 재시작할 때처럼 Aside를 완전히 종료하고 다시 여세요. Aside 블록은 루프백 전용이며 실제 자격 증명을 담지 않습니다.
 
@@ -58,9 +58,9 @@ Aside만의 주의 사항이 있습니다. 실행 중인 앱이 `models.json`을
 
 상태 필드 `aiDirPresent`는 Raycast 앱 설치 여부나 플랫폼 지원 여부와 관계없이 `~/.config/raycast/ai`의 존재만 알려줍니다. Raycast를 설치했거나 사용할 수 있다는 증거는 아닙니다. CLI는 `plan`을 별도 줄에 출력하고 `aiDirPresent`가 false이면 macOS/Windows 설정 안내를 추가합니다. `--json`은 중첩된 `raycast` 블록을 포함한 원시 상태를 유지합니다. Raycast는 macOS와 Windows 모두에서 `~/.config/raycast/ai/providers.yaml`을 읽고 `XDG_CONFIG_HOME`은 따르지 않으므로 이 경로를 옮길 수 없습니다.
 
-관리형 블록은 파일의 `providers` 배열에 있는 `id: easyproxy` 항목 하나입니다. `name: EasyProxy`, `base_url: http://<host>:<port>/v1`, 그리고 각각 `abilities`를 가진 모든 라우팅 모델을 포함합니다. 내보내기는 클라이언트 규약에 따라 `tools`와 `system_message`를 `true`로 설정합니다. `vision`은 카탈로그의 입력 모달리티를 따르고, 모델에 추론 강도 단계가 있으면 `reasoning_effort`를 설정하며, 추론 모델에서는 `temperature`를 끕니다. 다른 프로바이더는 유지되고 Disable은 easyproxy 항목만 제거합니다. 파일이 저장되면 Raycast가 즉시 변경을 읽어 재시작이 필요하지 않습니다. 모델은 Raycast의 모델 선택기에서 **EasyProxy** 그룹에 표시됩니다. Raycast는 선택적 `api_keys`를 지원하지만 easyproxy는 의도적으로 생략하고 루프백 밖이나 수용 인증이 필요한 목적지는 거부합니다. 이 연동은 easyproxy가 요구하는 수용 헤더를 제공할 수 없습니다.
+관리형 블록은 파일의 `providers` 배열에 있는 `id: easyproxy` 항목 하나입니다. `name: EasyProxy`, `base_url: http://<host>:<port>/v1`, 그리고 각각 `abilities`를 가진 모든 라우팅 모델을 포함합니다. 내보내기는 클라이언트 규약에 따라 `tools`와 `system_message`를 `true`로 설정합니다. `vision`은 카탈로그의 입력 모달리티를 따르고 모델에 추론 강도 단계가 있으면 `reasoning_effort`를 설정하며 추론 모델에서는 `temperature`를 끕니다. 다른 프로바이더는 유지되고 Disable은 easyproxy 항목만 제거합니다. 파일이 저장되면 Raycast가 즉시 변경을 읽어 재시작이 필요하지 않습니다. 모델은 Raycast의 모델 선택기에서 **EasyProxy** 그룹에 표시됩니다. Raycast는 선택적 `api_keys`를 지원하지만 easyproxy는 의도적으로 생략하고 루프백 밖이나 수용 인증이 필요한 목적지는 거부합니다. 이 연동은 easyproxy가 요구하는 수용 헤더를 제공할 수 없습니다.
 
-macOS 비공개 환경설정은 Pro 여부를 알려주는 참고 정보일 뿐입니다. Windows는 이를 읽지 않고 플랜을 알 수 없음으로 보고합니다. 플랜 감지 결과로 쓰기를 허용하거나 막지 않습니다. 내보내기 메타데이터에는 신뢰할 수 있는 도구 지원 플래그가 없으므로 `tools: true`가 모든 라우팅 모델의 도구 지원을 입증하지는 않습니다. 비전과 강도 플래그는 카탈로그 메타데이터를 따르고, 강도 단계가 있는 모델의 temperature를 끄는 것은 보수적인 내보내기 동작입니다. 프로바이더 값은 유지되지만 YAML 형식과 주석의 보존은 보장하지 않습니다. 형식은 [Raycast 사용자 설명서](https://manual.raycast.com/ai/custom-providers)에 문서화되어 있습니다.
+macOS 비공개 환경설정은 Pro 여부를 알려주는 참고 정보일 뿐입니다. Windows는 이를 읽지 않고 플랜을 알 수 없음으로 보고합니다. 플랜 감지 결과로 쓰기를 허용하거나 막지 않습니다. 내보내기 메타데이터에는 신뢰할 수 있는 도구 지원 플래그가 없으므로 `tools: true`가 모든 라우팅 모델의 도구 지원을 입증하지는 않습니다. 비전과 강도 플래그는 카탈로그 메타데이터를 따르고 강도 단계가 있는 모델의 temperature를 끄는 것은 보수적인 내보내기 동작입니다. 프로바이더 값은 유지되지만 YAML 형식과 주석의 보존은 보장하지 않습니다. 형식은 [Raycast 사용자 설명서](https://manual.raycast.com/ai/custom-providers)에 문서화되어 있습니다.
 
 Raycast CLI 내보내기와 대시보드 다운로드는 설정된 비인증 루프백 리스너를 포함해 실행 중인 서버의 목적지와 수용 정책을 사용합니다. `epx ensure`는 저장된 설정 스냅샷에서 Raycast를 새로 고치지 않습니다. 스냅샷은 실행 중인 서버와 다를 수 있기 때문입니다. 서버 시작과 명시적 동기화가 카탈로그 갱신 경로입니다.
 
@@ -70,17 +70,17 @@ Cursor에는 탭이 있지만 이 스위치들에는 속하지 않습니다. 일
 
 네이티브 OpenAI 모델에서 생성된 OMP 블록은 모델 수준 Responses API를 선택해 이미지 입력과 추론 강도 제어를 유지합니다. 라우팅 모델은 기존 어댑터와 호환되도록 프로바이더의 Chat Completions 방식을 유지합니다.
 
-OpenClaw에는 역할이 서로 다른 여러 설정이 있습니다. `OPENCLAW_CONFIG_PATH`는 파일을 선택합니다. `OPENCLAW_STATE_DIR`, `OPENCLAW_PROFILE`, `OPENCLAW_HOME`은 상태 디렉터리를 선택하며 탐지도 이 위치를 봅니다. 따라서 프로필이나 이동한 홈은 설치된 것으로 인식하고 설정 파일 경로 오버라이드는 파일만 옮깁니다. 이전 `.clawdbot` 구조도 찾습니다. 최신 디렉터리가 있으면 우선하고, 없을 때만 이전 디렉터리를 사용합니다.
+OpenClaw에는 역할이 서로 다른 여러 설정이 있습니다. `OPENCLAW_CONFIG_PATH`는 파일을 선택합니다. `OPENCLAW_STATE_DIR`, `OPENCLAW_PROFILE`, `OPENCLAW_HOME`은 상태 디렉터리를 선택하며 탐지도 이 위치를 봅니다. 따라서 프로필이나 이동한 홈은 설치된 것으로 인식하고 설정 파일 경로 오버라이드는 파일만 옮깁니다. 이전 `.clawdbot` 구조도 찾습니다. 최신 디렉터리가 있으면 우선하고 없을 때만 이전 디렉터리를 사용합니다.
 
 이 경로들은 **절대 경로**이거나 `~`로 시작해야 합니다. 상대 경로는 각 프로세스가 시작한 디렉터리에 따라 달라지므로 해석하지 않고 거부합니다. 백업에도 경로를 저장하므로 다음 날에도 같은 파일을 가리켜야 합니다.
 
 easyproxy는 자체 환경에서 이 값을 읽습니다. 게이트웨이가 프로필이나 옮겨진 홈에서 실행된다면 easyproxy도 같은 변수를 설정해 시작하세요. 그렇지 않으면 다른 설치를 올바르게 따라가게 됩니다.
 
-CLI의 `epx integration client enable|disable --client <id>`는 대시보드 토글처럼 이 컴퓨터만 바꿉니다. route 의도를 쓰는 Remote Link Home에서는 이 변경을 Home 자신의 결정으로 기록하므로 `epx sync`가 유지하고, 연결된 Child는 기본값을 그대로 따릅니다. Child가 상속하는 값을 바꾸려면 `epx route to <client> on|off`를 사용하세요. Remote Link Child에서는 일반 토글을 거부하고 그 기기용 Home 명령을 출력합니다. 해당 Child만 제외하려면 그곳에서 `epx route to <client> off --local`을 사용하세요. [Remote Link](/ko/guides/remote-link/)를 참고하세요.
+CLI의 `epx integration client enable|disable --client <id>`는 대시보드 토글처럼 이 컴퓨터만 바꿉니다. route 의도를 쓰는 Remote Link Home에서는 이 변경을 Home 자신의 결정으로 기록하므로 `epx sync`가 유지하고 연결된 Child는 기본값을 그대로 따릅니다. Child가 상속하는 값을 바꾸려면 `epx route to <client> on|off`를 사용하세요. Remote Link Child에서는 일반 토글을 거부하고 그 기기용 Home 명령을 출력합니다. 해당 Child만 제외하려면 그곳에서 `epx route to <client> off --local`을 사용하세요. [Remote Link](/ko/guides/remote-link/)를 참고하세요.
 
 ## 스위치가 아닌 다른 다섯 서피스
 
-**API Keys**는 클라이언트가 아니라 easyproxy 자체 자격 증명을 관리합니다. **Codex CLI**는 프록시 서비스가 직접 연결합니다. easyproxy를 시작하면 적용되고 멈추면 네이티브 라우팅이 복원되므로 파일별 스위치가 없습니다. **Claude**는 자체 활성화 플래그와 Desktop의 Save/Apply 흐름을 유지하고, **Grok Build**는 모델을 선택한 뒤 적용하는 경계를 유지합니다. 모두 이 기능보다 먼저 있던 동작이며 바뀌지 않았습니다. **Cursor**는 아무 파일도 쓰지 않습니다. 탭에서 탐지 결과, 게이트웨이 값, 마지막 요청을 보여주고 나머지는 Cursor Private Inference 안에서 처리합니다.
+**API Keys**는 클라이언트가 아니라 easyproxy 자체 자격 증명을 관리합니다. **Codex CLI**는 프록시 서비스가 직접 연결합니다. easyproxy를 시작하면 적용되고 멈추면 네이티브 라우팅이 복원되므로 파일별 스위치가 없습니다. **Claude**는 자체 활성화 플래그와 Desktop의 Save/Apply 흐름을 유지하고 **Grok Build**는 모델을 선택한 뒤 적용하는 경계를 유지합니다. 모두 이 기능보다 먼저 있던 동작이며 바뀌지 않았습니다. **Cursor**는 아무 파일도 쓰지 않습니다. 탭에서 탐지 결과, 게이트웨이 값, 마지막 요청을 보여주고 나머지는 Cursor Private Inference 안에서 처리합니다.
 
 ## 롤백
 
@@ -108,7 +108,7 @@ Apply, Replace, Disable, Restore는 미리 보기로 시작합니다. 대화 상
 
 계획에 변경이 없다면 관리 대상 클라이언트 문서가 이미 요청한 상태라는 뜻입니다. Aside 프로필을 선택했다면 관리 문서가 바뀌지 않아도 확인 시 그 프로필의 동기화 기본 설정을 저장할 수 있습니다.
 
-검토 후 파일이 바뀌면 오래된 계획으로 판단해 쓰기를 거부합니다. 대화 상자가 갱신된 계획을 보여주고 다시 확인을 요청하며, 자동으로 쓰기를 재시도하지 않습니다. 미리 보기가 모델 카탈로그가 아직 로드되지 않았다고 알리면 대화 상자는 열린 채로 **카탈로그 로드 후 다시 시도**를 제공합니다. 통합 목록을 다시 읽은 뒤 계획을 다시 요청합니다.
+검토 후 파일이 바뀌면 오래된 계획으로 판단해 쓰기를 거부합니다. 대화 상자가 갱신된 계획을 보여주고 다시 확인을 요청하며 자동으로 쓰기를 재시도하지 않습니다. 미리 보기가 모델 카탈로그가 아직 로드되지 않았다고 알리면 대화 상자는 열린 채로 **카탈로그 로드 후 다시 시도**를 제공합니다. 통합 목록을 다시 읽은 뒤 계획을 다시 요청합니다.
 
 Aside는 선택한 프로필 하나에 같은 미리 보기와 확인 흐름을 사용합니다. **Sync all profiles**는 별도 일괄 작업이며 하나의 통합 미리 보기에 묶이지 않습니다. 하나의 계획은 한 프로필의 파일만 설명하므로, 충돌 상태인 Aside 개요 카드는 **프로필 선택**을 제공하고 블록 교체는 해당 프로필 페이지에서 합니다.
 
@@ -141,7 +141,7 @@ epx integration client restore --op <opId> [--confirm-drift]
 ```
 
 `epx commandcode restore --op <opId>`는 Command Code 작업만 복원합니다.
-`--preview`와 `--plan-fingerprint`에도 같은 조건이 적용되며, 클라이언트나
+`--preview`와 `--plan-fingerprint`에도 같은 조건이 적용되며 클라이언트나
 프로필을 바꾸는 옵션은 받지 않습니다. 실행 중인 프록시가 이 전용 복원 경로를
 지원하지 않으면 일반 복원으로 재시도하지 않고 오류를 반환합니다. 일반 작업 기록은 위의
 `epx integration client restore`를, Aside 작업은 아래의 프로필 전용 명령을 사용하세요.
@@ -182,7 +182,7 @@ epx mmx text repl --model openai/gpt-5.6-sol
 
 Aside 프로필 제어와 `epx sync`의 Aside 갱신에는 Aside 프로필 API를 지원하는 실행 중 epx 프록시가 필요합니다. CLI만 업데이트해도 이미 실행 중인 프록시가 업데이트되지는 않습니다. 프록시가 없거나 너무 오래된 경우 Aside 작업을 완료할 수 없으며 CLI가 로컬 Aside 프로필 파일을 대신 기록하지 않습니다.
 
-프록시에서 사용하는 epx 설치를 업그레이드한 뒤 프록시를 다시 시작하거나, 멈춰 있다면 시작하세요. `epx sync` 또는 프로필 명령을 다시 실행합니다. 프로필 파일이 성공적으로 갱신된 뒤에는 Aside를 완전히 종료하고 다시 열어 새 카탈로그를 불러오세요.
+프록시에서 사용하는 epx 설치를 업그레이드한 뒤 프록시를 다시 시작하거나 멈춰 있다면 시작하세요. `epx sync` 또는 프로필 명령을 다시 실행합니다. 프로필 파일이 성공적으로 갱신된 뒤에는 Aside를 완전히 종료하고 다시 열어 새 카탈로그를 불러오세요.
 
 ```bash
 epx integration client status --client aside --json
@@ -200,11 +200,11 @@ epx integration client restore --client aside --profile 1 --op <opId>
 
 ## ZCode 3.14 이상
 
-위 경로는 기본값입니다. 기본 홈의 `~/.zcode/v2/setting.json`에 절대 경로 `dataBaseDir`를 지정하면 저장소는 `<dataBaseDir>/.zcode/v2/provider_config.json`으로 이동합니다. `ZCODE_DATA_DIR`는 `.zcode` 루트 자체를 지정하며 설정값보다 우선하고, `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE`는 제공자 파일 경로에 우선합니다. 잘못되거나 읽을 수 없는 설정, 상대 경로는 새 적용과 갱신을 거부합니다. 기존 소유권과 복구 기록은 보존됩니다. [경로와 복구 규칙의 원문](https://easyproxy.me/guides/integrations/#zcode-314-and-later)을 참고하세요.
+위 경로는 기본값입니다. 기본 홈의 `~/.zcode/v2/setting.json`에 절대 경로 `dataBaseDir`를 지정하면 저장소는 `<dataBaseDir>/.zcode/v2/provider_config.json`으로 이동합니다. `ZCODE_DATA_DIR`는 `.zcode` 루트 자체를 지정하며 설정값보다 우선하고 `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE`는 제공자 파일 경로에 우선합니다. 잘못되거나 읽을 수 없는 설정, 상대 경로는 새 적용과 갱신을 거부합니다. 기존 소유권과 복구 기록은 보존됩니다. [경로와 복구 규칙의 원문](https://easyproxy.me/guides/integrations/#zcode-314-and-later)을 참고하세요.
 
 ZCode 3.14는 사용자 정의 프로바이더를 `~/.zcode/v2/provider_config.json`으로 옮겼습니다. `~/.zcode/v2/config.json`은 새 파일이 없을 때 한 번 실행되는 가져오기 경로로만 남았습니다. ZCode를 처음 실행하면 새 파일을 만들므로 한 번이라도 실행한 설치에서는 가져오기 기회가 이미 지나갔고 `config.json`에 써도 반영되지 않습니다.
 
-easyproxy는 가능할 때 `provider_config.json`에 직접 기록합니다. 연동을 활성화하면 그 파일에 `easyproxy` 프로바이더 규칙을 추가하고, 카탈로그 갱신 시 이를 갱신하며, 비활성화하면 easyproxy가 넣은 내용만 제거합니다. easyproxy 아래에도 있는 모델 ID를 다른 프로바이더가 규칙으로 사용하더라도 파일의 다른 모든 규칙은 유지됩니다. easyproxy가 기록하지 않은 `easyproxy` ID 규칙은 가져오지 않고 충돌로 처리합니다. ZCode에서 해결하거나 명시적 덮어쓰기를 사용하세요.
+easyproxy는 가능할 때 `provider_config.json`에 직접 기록합니다. 연동을 활성화하면 그 파일에 `easyproxy` 프로바이더 규칙을 추가하고 카탈로그 갱신 시 이를 갱신하며 비활성화하면 easyproxy가 넣은 내용만 제거합니다. easyproxy 아래에도 있는 모델 ID를 다른 프로바이더가 규칙으로 사용하더라도 파일의 다른 모든 규칙은 유지됩니다. easyproxy가 기록하지 않은 `easyproxy` ID 규칙은 가져오지 않고 충돌로 처리합니다. ZCode에서 해결하거나 명시적 덮어쓰기를 사용하세요.
 
 읽을 수 없거나 파일이 아닌 프로바이더 저장소도 쓰기를 거부합니다. 이전 형식 가져오기를 허용하는 빈 저장소로 취급하지 않습니다.
 
@@ -227,9 +227,9 @@ epx integration client restore --op <operation-id>
 
 활성화 후 Cline을 다시 시작하고 EasyProxy를 선택하거나 `cline --provider easyproxy --model <provider/model>`로 실행하세요. 외부 카탈로그 변경은 Cline 재시작 시 읽습니다. Cline은 자동 카탈로그 갱신 대상에서 제외됩니다. 라우팅 모델 선택을 바꾼 뒤에는 Cline을 중지하고 `epx sync`를 실행하거나 연동을 다시 활성화해 갱신하세요. 선택된 모델이 계속 라우팅되면 유지하고 내보낸 카탈로그에서 사라지면 선택을 해제합니다.
 
-`CLINE_PROVIDER_SETTINGS_PATH`는 기본 파일 경로를 덮어씁니다. 그렇지 않으면 `CLINE_DATA_DIR`이 데이터 디렉터리를, 다음으로 `CLINE_DIR`이 루트를 선택하며, 마지막 기본값은 `~/.cline`입니다. 모델 파일은 언제나 선택된 프로바이더 파일 옆의 `models.json`입니다. 오버라이드는 절대 경로이거나 `~`로 시작해야 합니다. Cline 명령의 `--config` 경로를 사용할 때는 easyproxy 시작 시 `CLINE_PROVIDER_SETTINGS_PATH`로 같은 경로를 지정하세요. 파일 두 개가 달라야 하므로 기본 파일 이름이 `models.json`이면 거부합니다.
+`CLINE_PROVIDER_SETTINGS_PATH`는 기본 파일 경로를 덮어씁니다. 그렇지 않으면 `CLINE_DATA_DIR`이 데이터 디렉터리를, 다음으로 `CLINE_DIR`이 루트를 선택하며 마지막 기본값은 `~/.cline`입니다. 모델 파일은 언제나 선택된 프로바이더 파일 옆의 `models.json`입니다. 오버라이드는 절대 경로이거나 `~`로 시작해야 합니다. Cline 명령의 `--config` 경로를 사용할 때는 easyproxy 시작 시 `CLINE_PROVIDER_SETTINGS_PATH`로 같은 경로를 지정하세요. 파일 두 개가 달라야 하므로 기본 파일 이름이 `models.json`이면 거부합니다.
 
-각 파일은 원자적으로 교체하지만 두 파일을 동시에 교체하는 파일 시스템 작업은 없습니다. 저널 작업 하나가 원본 파일 둘을 스냅샷으로 남기며 쓰기나 장부 기록이 실패하면 둘 다 보정합니다. 중단된 작업은 비공개 복구 기록을 남깁니다. 상태는 완료되지 않은 복구를 안전하지 않다고 보고하고, 다음 명시적 변경 시 두 파일과 소유권 모두에 관련 없는 편집이 없을 때만 복구합니다. 복구가 거부되면 파일과 작업에서 알려준 복구 경로를 보존하고 충돌을 해결한 뒤 재시도하세요.
+각 파일은 원자적으로 교체하지만 두 파일을 동시에 교체하는 파일 시스템 작업은 없습니다. 저널 작업 하나가 원본 파일 둘을 스냅샷으로 남기며 쓰기나 장부 기록이 실패하면 둘 다 보정합니다. 중단된 작업은 비공개 복구 기록을 남깁니다. 상태는 완료되지 않은 복구를 안전하지 않다고 보고하고 다음 명시적 변경 시 두 파일과 소유권 모두에 관련 없는 편집이 없을 때만 복구합니다. 복구가 거부되면 파일과 작업에서 알려준 복구 경로를 보존하고 충돌을 해결한 뒤 재시도하세요.
 
 Undo는 원래 없던 파일까지 포함해 **두 원본 바이트 문자열 모두** 복원합니다. 작업 후 편집된 내용이 있으면 기존의 명시적 `--confirm-drift`가 필요하며 편집된 파일 쌍도 먼저 백업합니다. 이미 차지된 EasyProxy 항목에는 기존 `--overwrite-conflict` 동의가 필요합니다. Disable은 관리형 항목 두 개를 제거하며 이전 외부 항목을 복원하지는 않습니다. 그럴 때는 Undo를 사용하세요. 스냅샷 보관과 만료에는 다른 연동과 같은 규칙이 적용됩니다.
 
@@ -247,15 +247,15 @@ Undo는 원래 없던 파일까지 포함해 **두 원본 바이트 문자열 �
 
 ## omo (Codex / LazyCodex) 역할별 추론 강도
 
-LazyCodex가 감지되면 omo 탭의 **omo (Codex / LazyCodex)** 섹션에서 `$CODEX_HOME/agents/*.toml`에 있는 역할마다 모델과 추론 강도를 고른 뒤 **저장**을 누를 수 있습니다. 모델 고정이 없는 역할의 행은 강도만 저장할 수 있고, 그 역할은 계속 모델을 상속합니다. easyproxy는 그 역할 파일의 루트 `model`과 `model_reasoning_effort` 키만 고치고, 없는 고정값은 파일 위쪽에 추가합니다. 역할의 지침, 다른 주석과 다른 키는 그대로 둡니다. 모델만 바꿔 저장하면 `effort`를 보내지 않으므로 두 파일의 추론 강도가 그대로 유지됩니다. 단계를 고르면 역할 파일의 `model_reasoning_effort`를 추가하거나 바꾸고, LazyCodex가 그 단계를 지원하면 `~/.omo/omo.jsonc`의 `[codex].agents.<role>.reasoning`에도 씁니다(`ultra`는 역할 파일에만 남고, 이전 `reasoning`은 제거합니다). 명령줄에서는 `epx agent roles set <role> <model> --effort <level>`로 같은 작업을 합니다.
+LazyCodex가 감지되면 omo 탭의 **omo (Codex / LazyCodex)** 섹션에서 `$CODEX_HOME/agents/*.toml`에 있는 역할마다 모델과 추론 강도를 고른 뒤 **저장**을 누를 수 있습니다. 모델 고정이 없는 역할의 행은 강도만 저장할 수 있고 그 역할은 계속 모델을 상속합니다. easyproxy는 그 역할 파일의 루트 `model`과 `model_reasoning_effort` 키만 고치고 없는 고정값은 파일 위쪽에 추가합니다. 역할의 지침, 다른 주석과 다른 키는 그대로 둡니다. 모델만 바꿔 저장하면 `effort`를 보내지 않으므로 두 파일의 추론 강도가 그대로 유지됩니다. 단계를 고르면 역할 파일의 `model_reasoning_effort`를 추가하거나 바꾸고 LazyCodex가 그 단계를 지원하면 `~/.omo/omo.jsonc`의 `[codex].agents.<role>.reasoning`에도 씁니다(`ultra`는 역할 파일에만 남고 이전 `reasoning`은 제거합니다). 명령줄에서는 `epx agent roles set <role> <model> --effort <level>`로 같은 작업을 합니다.
 
-이미 강도가 고정된 역할을 포함해 모든 행에 **추론 강도 상속** 항목이 있습니다. 고정된 강도를 이 항목으로 바꾸고 저장하면 `"effort": null`을 보내, 역할 파일의 루트 `model_reasoning_effort` 줄과 그 줄 끝의 주석, omo.jsonc의 `[codex].agents.<role>.reasoning`을 제거합니다. 모델 고정은 그대로 남습니다. 이후 Codex는 자체 값이 없는 다른 역할과 같은 방식으로 추론 강도를 정합니다(명시적인 spawn 값, `[agents]` 기본값 또는 상위 세션). 모델의 고정 기본값을 쓰는 것이 아닙니다. 제거할 수 있는 값은 기존의 한 줄짜리 문자열뿐이며, 여러 줄이거나 문자열이 아닌 값은 409 `unsupported_model_value`로 거부되고 두 파일 모두 바뀌지 않습니다.
+이미 강도가 고정된 역할을 포함해 모든 행에 **추론 강도 상속** 항목이 있습니다. 고정된 강도를 이 항목으로 바꾸고 저장하면 `"effort": null`을 보내, 역할 파일의 루트 `model_reasoning_effort` 줄과 그 줄 끝의 주석, omo.jsonc의 `[codex].agents.<role>.reasoning`을 제거합니다. 모델 고정은 그대로 남습니다. 이후 Codex는 자체 값이 없는 다른 역할과 같은 방식으로 추론 강도를 정합니다(명시적인 spawn 값, `[agents]` 기본값 또는 상위 세션). 모델의 고정 기본값을 쓰는 것이 아닙니다. 제거할 수 있는 값은 기존의 한 줄짜리 문자열뿐이며 여러 줄이거나 문자열이 아닌 값은 409 `unsupported_model_value`로 거부되고 두 파일 모두 바뀌지 않습니다.
 
-`PUT /api/codex-agent-roles/{role}`에서 `model`을 생략하면 역할 파일의 `model` 고정과 omo.jsonc의 `model`을 그대로 둡니다. 따라서 고정이 없는 역할은 모델을 계속 상속하면서 강도만 바뀌거나 지워집니다. 대시보드는 이런 행에 강도만 담은 요청을 보내며, omo.jsonc에 그 역할의 항목이 없으면 LazyCodex가 지원하는 강도를 저장할 때에 한해 `reasoning`만 담은 항목을 만듭니다. 저장은 모델 고정을 지우지 않으므로 `null` 모델은 400 `invalid_model`로 거부됩니다. `model`과 `effort`가 모두 없는 요청은 역할 파일이나 omo.jsonc를 읽기 전에 400 `empty_update`로 거부됩니다. `epx agent roles set`은 항상 모델을 받습니다.
+`PUT /api/codex-agent-roles/{role}`에서 `model`을 생략하면 역할 파일의 `model` 고정과 omo.jsonc의 `model`을 그대로 둡니다. 따라서 고정이 없는 역할은 모델을 계속 상속하면서 강도만 바뀌거나 지워집니다. 대시보드는 이런 행에 강도만 담은 요청을 보내며 omo.jsonc에 그 역할의 항목이 없으면 LazyCodex가 지원하는 강도를 저장할 때에 한해 `reasoning`만 담은 항목을 만듭니다. 저장은 모델 고정을 지우지 않으므로 `null` 모델은 400 `invalid_model`로 거부됩니다. `model`과 `effort`가 모두 없는 요청은 역할 파일이나 omo.jsonc를 읽기 전에 400 `empty_update`로 거부됩니다. `epx agent roles set`은 항상 모델을 받습니다.
 
-`~/.omo/omo.jsonc`가 없으면 새로 만들지 않습니다. 주석이 있으면 저장할 때 주석이 사라지므로 파일을 건드리지 않습니다. 이때는 값을 직접 설정하세요. 미러를 건너뛰어도 역할 파일 저장은 취소되지 않습니다. 역할 파일은 저장됐지만 omo.jsonc 쓰기에 실패하면 그 행의 버튼이 **omo.jsonc 다시 시도**로 바뀌고, **추론 강도 상속**으로 해제한 경우(`null`)를 포함해 같은 강도 선택을 다시 보냅니다. 재시도가 성공하기 전까지는 그 역할에서 강도를 바꾸지 않는 다음 **저장**이나 **자동 배정**의 **적용**도 대기 중인 선택을 함께 보냅니다. 강도를 직접 고르면 그 값이 우선합니다.
+`~/.omo/omo.jsonc`가 없으면 새로 만들지 않습니다. 주석이 있으면 저장할 때 주석이 사라지므로 파일을 건드리지 않습니다. 이때는 값을 직접 설정하세요. 미러를 건너뛰어도 역할 파일 저장은 취소되지 않습니다. 역할 파일은 저장됐지만 omo.jsonc 쓰기에 실패하면 그 행의 버튼이 **omo.jsonc 다시 시도**로 바뀌고 **추론 강도 상속**으로 해제한 경우(`null`)를 포함해 같은 강도 선택을 다시 보냅니다. 재시도가 성공하기 전까지는 그 역할에서 강도를 바꾸지 않는 다음 **저장**이나 **자동 배정**의 **적용**도 대기 중인 선택을 함께 보냅니다. 강도를 직접 고르면 그 값이 우선합니다.
 
-**자동 배정**은 필요한 능력과 추론 강도를 판정한 역할 가운데 선택된 모델의 강도 단계 목록이 비어 있지 않은 모든 역할에 추론 강도를 제안하며, **적용**, **모두 적용** 또는 `epx agent roles suggest --apply`는 그 역할의 `model_reasoning_effort` 값을 추가하거나 바꿉니다. 강도는 선택된 모델 자체의 단계에서 정하며, 가장 낮은 단계, 기본 단계, 기본보다 한 단계 높은 단계, 가장 높은 단계 중 하나입니다. 단계 목록이 비어 있으면 강도를 제안하지 않고(`proposedEffort: null`), 적용할 때 `effort`를 보내지 않아 기존 강도 고정을 그대로 둡니다. `null` 제안은 고정값을 지우지 않습니다.
+**자동 배정**은 필요한 능력과 추론 강도를 판정한 역할 가운데 선택된 모델의 강도 단계 목록이 비어 있지 않은 모든 역할에 추론 강도를 제안하며 **적용**, **모두 적용** 또는 `epx agent roles suggest --apply`는 그 역할의 `model_reasoning_effort` 값을 추가하거나 바꿉니다. 강도는 선택된 모델 자체의 단계에서 정하며 가장 낮은 단계, 기본 단계, 기본보다 한 단계 높은 단계, 가장 높은 단계 중 하나입니다. 단계 목록이 비어 있으면 강도를 제안하지 않고(`proposedEffort: null`), 적용할 때 `effort`를 보내지 않아 기존 강도 고정을 그대로 둡니다. `null` 제안은 고정값을 지우지 않습니다.
 
 CLI의 `epx agent roles suggest --apply`는 한 이력 묶음에 **변경할 역할을 최대 50개** 적용합니다. 이미 같은 값으로 설정됐거나 평가·배정되지 않은 역할은 세지 않습니다. 50개를 넘으면 역할 업데이트를 하나도 보내지 않고 종료 코드 5로 거부합니다. `--apply` 없이 미리 확인한 뒤, 개별 변경에는 `epx agent roles set <role> <model> [--effort <level>]`을 사용하세요. 도중에 실패했을 때 확인된 쓰기와 미확인 요청을 구분하고 재시도하는 방법은 [CLI 적용·복구 규칙](/reference/cli/agents/)을 참고하세요.
 
@@ -269,7 +269,7 @@ EasyProxy는 이 후보 파일을 JSONC로 읽습니다. `//` 한 줄 주석은 
 
 관리하는 부분은 OpenCode V1 형식의 `provider.easyproxy`(`npm`, `options`, `models`)뿐입니다. OpenCode V2의 `providers` 키는 내보내지 않습니다. 대신 모델별 추론 선택지는 프로바이더 블록 안의 변형 맵으로, OpenCode 내보내기와 같은 유효 정규 메타데이터에서 기록됩니다. `$schema`, `model`, `enabled_providers`, MCP 등의 키는 사용자가 관리합니다. 적용한 뒤 Kilo에서 `easyproxy/<provider/model>`을 선택하세요.
 
-루프백에서는 `options.apiKey`로 `{env:EASYPROXY_KILO_API_KEY}`를 사용합니다. 루프백이 아닌 바인드에서는 인증을 `options.headers["x-easyproxy-api-key"]`로 옮기며 실제 키를 저장하지 않습니다. 적용 시 전역 파일 전체를 보기 좋은 JSON으로 다시 쓰므로 다른 키의 주석과 후행 쉼표는 보존되지 않습니다. Kilo는 자동 카탈로그 갱신 대상입니다. `epx sync`, `POST /api/sync`, 표시 여부·프로바이더·프리셋 변경은 다른 클라이언트와 같은 소유 블록만 갱신하는 안전한 규칙으로 소유한 Kilo 블록을 갱신하며, 새 Kilo 세션이 갱신된 파일을 읽습니다.
+루프백에서는 `options.apiKey`로 `{env:EASYPROXY_KILO_API_KEY}`를 사용합니다. 루프백이 아닌 바인드에서는 인증을 `options.headers["x-easyproxy-api-key"]`로 옮기며 실제 키를 저장하지 않습니다. 적용 시 전역 파일 전체를 보기 좋은 JSON으로 다시 쓰므로 다른 키의 주석과 후행 쉼표는 보존되지 않습니다. Kilo는 자동 카탈로그 갱신 대상입니다. `epx sync`, `POST /api/sync`, 표시 여부·프로바이더·프리셋 변경은 다른 클라이언트와 같은 소유 블록만 갱신하는 안전한 규칙으로 소유한 Kilo 블록을 갱신하며 새 Kilo 세션이 갱신된 파일을 읽습니다.
 
 후보 파일을 읽을 때 배열 요소나 객체 속성 뒤의 후행 쉼표는 허용합니다. 빈 배열과 객체는 `[]`, `{}`로 작성하세요. `[,]`, `{,}`는 잘못된 형식으로 거부합니다.
 
@@ -280,7 +280,7 @@ epx export --client kilo --out ./kilo.jsonc
 
 ## GitHub Copilot 앱
 
-GitHub Copilot 데스크톱 앱에서 easyproxy를 OpenAI 호환 모델 프로바이더로 사용할 수 있습니다. **연결** 페이지에 스위치가 없는 수동 클라이언트 설정이며, easyproxy의 백엔드로 Copilot 구독을 사용하는 upstream `github-copilot` 프로바이더와는 별개입니다.
+GitHub Copilot 데스크톱 앱에서 easyproxy를 OpenAI 호환 모델 프로바이더로 사용할 수 있습니다. **연결** 페이지에 스위치가 없는 수동 클라이언트 설정이며 easyproxy의 백엔드로 Copilot 구독을 사용하는 upstream `github-copilot` 프로바이더와는 별개입니다.
 
 1. easyproxy를 시작하고 응답하는지 확인하세요.
 
@@ -301,7 +301,7 @@ GitHub Copilot 데스크톱 앱에서 easyproxy를 OpenAI 호환 모델 프로�
 
 앱은 모델 검색에 `GET /v1/models`, 요청 처리에 `POST /v1/chat/completions`를 사용합니다. 요청은 easyproxy의 일반 모델 라우팅을 거치므로 다른 클라이언트와 마찬가지로 프로바이더 자격 증명, OAuth 계정, 콤보가 적용됩니다. 허용되는 요청 필드는 [프록시 형식 레퍼런스](/reference/proxy-formats/)를 확인하세요.
 
-모델이 없다고 표시되면 Base URL이 `/v1/chat/completions`가 아니라 `/v1`로 끝나는지, `/v1/models`가 비어 있지 않은 `data` 배열을 반환하는지 확인하세요. easyproxy가 루프백이 아닌 주소에서 수신 대기한다면 앱의 API key 입력란에 데이터 수용 키([원격 액세스](/reference/configuration/server/#remote-access)에 설명된 토큰 또는 대시보드에서 생성한 `epx_…` 키)를 입력하세요. 앱은 이를 `Authorization: Bearer`로 전송하며, `/v1/chat/completions`는 프록시 수용 인증에만 사용하고 upstream으로 전달하지 않습니다. 자세한 내용은 [인증 매트릭스](/reference/proxy-formats/#authentication-matrix)를 확인하세요.
+모델이 없다고 표시되면 Base URL이 `/v1/chat/completions`가 아니라 `/v1`로 끝나는지, `/v1/models`가 비어 있지 않은 `data` 배열을 반환하는지 확인하세요. easyproxy가 루프백이 아닌 주소에서 수신 대기한다면 앱의 API key 입력란에 데이터 수용 키([원격 액세스](/reference/configuration/server/#remote-access)에 설명된 토큰 또는 대시보드에서 생성한 `epx_…` 키)를 입력하세요. 앱은 이를 `Authorization: Bearer`로 전송하며 `/v1/chat/completions`는 프록시 수용 인증에만 사용하고 upstream으로 전달하지 않습니다. 자세한 내용은 [인증 매트릭스](/reference/proxy-formats/#authentication-matrix)를 확인하세요.
 
 ## Factory Droid
 
@@ -312,24 +312,24 @@ GitHub Copilot 데스크톱 앱에서 easyproxy를 OpenAI 호환 모델 프로�
 목록이 없는 모델에는 사용 가능한 기본값이 없다고 표시됩니다.
 
 이 값은 Droid 요청에 effort가 없을 때만 적용됩니다. 요청이 effort를 명시하면
-그 값을 사용하며, 기존 EasyProxy pin과 cap 정책은 계속 적용됩니다. EasyProxy가
+그 값을 사용하며 기존 EasyProxy pin과 cap 정책은 계속 적용됩니다. EasyProxy가
 기본값을 적용하더라도 Droid에는 **Dynamic**으로 표시될 수 있습니다. Droid 기본값
-헤더가 없는 요청에는 영향을 주지 않습니다. 이 헤더는 요청의 선호 값이며,
+헤더가 없는 요청에는 영향을 주지 않습니다. 이 헤더는 요청의 선호 값이며
 클라이언트 신원을 증명하지 않습니다.
 콤보와 라우팅 정책에서는 각 실제 대상이 자체 effort 목록으로 이 선호 값을
 확인하므로, 첫 대상이 지원하지 않아도 지원하는 다음 대상으로 전달됩니다.
 
-저장된 기본값을 라우팅된 모델이 더 이상 지원하지 않으면 요청에는 적용하지
-않습니다. 현재 모델의 effort 목록에서 빠진 값은 패널의 기본값에서도 제외되며,
+저장된 기본값을 라우팅된 모델이 지원하지 않게 되면 요청에는 적용하지
+않습니다. 현재 모델의 effort 목록에서 빠진 값은 패널의 기본값에서도 제외되며
 새로고침할 때 관리 행에서 제거됩니다. 편집 없이 변경 내용을 검토하면 여전히
 지원되는 기본값은 유지됩니다.
 
 새로고침은 정확히 같은 `provider/model` 선택자가 계속 연결되고 저장된 effort를 지원하는 동안 기본값을
 유지합니다. 프로바이더, 모델, 콤보 별칭의 이름을 바꾸면 관리 행이 교체되고
 기본값이 지워지므로 새 행에서 다시 선택하세요. 연동을 해제하면 관리되는 모델
-행과 기본값이 함께 제거되며, 되돌리기는 저장된 행과 기본값을 함께 복원합니다.
+행과 기본값이 함께 제거되며 되돌리기는 저장된 행과 기본값을 함께 복원합니다.
 
-Factory Droid는 `~/.factory/settings.json`(Windows에서는 `%USERPROFILE%\.factory\settings.json`)을 사용합니다. `epx integration client enable --client droid`로 명시적으로 활성화한 다음 `/model`에서 사용자 지정 모델을 선택하세요. 관리되는 항목에는 키가 없으며 루프백에서만 동작합니다. 비활성화하면 관리되는 항목이 제거되고, Undo는 저장된 원본 바이트를 복원합니다. 기존 `config.json`에 EasyProxy 항목이 있거나 `settings.local.json`이 `customModels`를 덮어쓰면 활성화 전에 충돌을 해결하세요. [Factory BYOK 문서](https://docs.factory.ai/model-independence/byok)를 참고하세요.
+Factory Droid는 `~/.factory/settings.json`(Windows에서는 `%USERPROFILE%\.factory\settings.json`)을 사용합니다. `epx integration client enable --client droid`로 명시적으로 활성화한 다음 `/model`에서 사용자 지정 모델을 선택하세요. 관리되는 항목에는 키가 없으며 루프백에서만 동작합니다. 비활성화하면 관리되는 항목이 제거되고 Undo는 저장된 원본 바이트를 복원합니다. 기존 `config.json`에 EasyProxy 항목이 있거나 `settings.local.json`이 `customModels`를 덮어쓰면 활성화 전에 충돌을 해결하세요. [Factory BYOK 문서](https://docs.factory.ai/model-independence/byok)를 참고하세요.
 
 ## Hermes / Command Code: model names
 

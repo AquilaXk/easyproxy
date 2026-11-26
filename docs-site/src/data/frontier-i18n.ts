@@ -343,7 +343,7 @@ export const FRONTIER_STRINGS = {
   "frontier.chartHint.costStack": "Intelligence Index 작업당 비용을 Answer·Reasoning·Cache write·Cache hit·Input으로 쌓아 표시합니다.",
   "frontier.chartHint.score": "벤치마크 점수 기준 가로 순위.",
   "frontier.chartHint.efficiency": "점수 / $ 기준 가로 순위(높을수록 가성비 좋음).",
-  "frontier.chartHint.reasoning": "점수 vs 롤아웃 비용 — 모델마다 추론 수준을 잇는 선입니다. 포인트에 올리면 수준이 보이고, 이름은 최고 점수 점에 붙습니다.",
+  "frontier.chartHint.reasoning": "점수 vs 롤아웃 비용 — 모델마다 추론 수준을 잇는 선입니다. 포인트에 올리면 수준이 보이고 이름은 최고 점수 위치에 붙습니다.",
   "frontier.effortViewAria": "추론 수준 보기",
   "frontier.effortView.best": "최고 추론 모드",
   "frontier.effortView.all": "모든 추론 수준",

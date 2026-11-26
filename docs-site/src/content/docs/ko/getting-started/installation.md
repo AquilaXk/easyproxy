@@ -1,17 +1,17 @@
 ---
 title: 설치
-description: easyproxy(epx) 프록시와 사전 요구 사항을 설치하고, 정상 실행되는지 확인합니다.
+description: easyproxy(epx) 프록시와 사전 요구 사항을 설치하고 정상 실행되는지 확인합니다.
 ---
 
 easyproxy를 설치하면 같은 실행 파일을 가리키는 `epx`와 `easyproxy` 명령이 함께 제공됩니다.
 둘 다 Bun 기반의 작은 로컬 HTTP 서버를 실행합니다. 모델 요청은 라우팅으로 선택된 프로바이더에
-전달되며, 필요할 때 vision 및 웹 검색 sidecar가 ChatGPT 로그인을 사용할 수도 있습니다.
+전달되며 필요할 때 vision 및 웹 검색 sidecar가 ChatGPT 로그인을 사용할 수도 있습니다.
 
 ## 사전 요구 사항
 
 | 요구 사항 | 이유 |
 | --- | --- |
-| **[Node](https://nodejs.org) ≥ 18** | `epx`는 Bun 런타임에서 실행되지만, 런타임이 `npm install` 시 자동으로 번들되므로 Bun을 직접 설치할 필요가 **없습니다**. |
+| **[Node](https://nodejs.org) ≥ 18** | `epx`는 Bun 런타임에서 실행되지만 런타임이 `npm install` 시 자동으로 번들되므로 Bun을 직접 설치할 필요가 **없습니다**. |
 | **[OpenAI Codex](https://openai.com/codex)**(CLI, App, 또는 SDK) | easyproxy가 앞단에 위치하는 클라이언트입니다. easyproxy는 `$CODEX_HOME/config.toml`(기본값 `~/.codex/config.toml`)에 기록합니다. |
 | 프로바이더 계정 또는 API 키 | Anthropic, xAI, Kimi, Ollama Cloud, OpenRouter, OpenAI API 키, OpenAI 호환 엔드포인트, 또는 ChatGPT 로그인. |
 
@@ -27,11 +27,11 @@ install-scripts ... blocked because they are not covered by allowScripts`).
 이 경우 번들 Bun 런타임이 준비되지 않을 수 있습니다. 런처는 허용된 번들 복구를
 시도한 다음, 절대 경로 PATH 디렉터리의 실행 가능한 Bun을 검증합니다. 정식 버전의
 major가 패키지 pin과 같고 버전이 pin 이상이면 사용할 수 있습니다. 현재 의존성
-1.4.4에서는 1.4.4 이상, 2.0.0 미만입니다. 제한 시간 안에 버전 정책과 identity를 확인하며,
+1.4.4에서는 1.4.4 이상, 2.0.0 미만입니다. 제한 시간 안에 버전 정책과 identity를 확인하며
 `bun --version` 출력이 `bun -e`로 확인한 `Bun.version`과 같아야 합니다. POSIX에서는 런처가
 상위 디렉터리와 심볼릭 링크를 따라 도달하는 구성 요소를 포함한 후보 경로 전체를 검사합니다.
 검사하는 각 디렉터리와 심볼릭 링크, 최종 실행 파일은 root 또는 런처의 유효 사용자 소유여야 합니다.
-디렉터리와 최종 실행 파일에 그룹 또는 다른 사용자의 쓰기 권한이 있으면 거부하며, 심볼릭 링크의
+디렉터리와 최종 실행 파일에 그룹 또는 다른 사용자의 쓰기 권한이 있으면 거부하며 심볼릭 링크의
 권한 비트는 사용하지 않습니다. `/tmp` 같은 공유 쓰기 가능 상위 디렉터리는 sticky bit가 있어도
 거부하므로 실행 파일과 바로 위 부모 디렉터리만 보호하는 것으로는 충분하지 않습니다.
 선택한 Bun 버전을 stderr 한 줄로 알립니다. Bun은 계속 패키지에 포함되므로 별도 설치는 선택 사항입니다.
@@ -103,7 +103,7 @@ bun run dev:gui     # 대시보드 dev 서버 시작 (다른 터미널)
 ```
 
 `bun run dev`는 `bun run dev:proxy`의 별칭으로 남아 있습니다. 프록시 API는 `/healthz`,
-`/v1/responses`, `/api/*`를 노출하며, `GET /`는 `bun run build:gui`가 `gui/dist`를 생성한
+`/v1/responses`, `/api/*`를 노출하며 `GET /`는 `bun run build:gui`가 `gui/dist`를 생성한
 뒤에만 패키징된 대시보드를 서빙합니다. 대시보드를 수정할 때는 `bun run dev:gui`로 프론트엔드를
 별도로 실행하세요.
 
@@ -130,5 +130,5 @@ easyproxy는 절대 Codex 설정을 삭제하지 않습니다. 모든 주입은 
 
 ## 다음
 
-[Quickstart](/ko/getting-started/quickstart/)로 이동해 첫 프로바이더를 설정하거나,
+[Quickstart](/ko/getting-started/quickstart/)로 이동해 첫 프로바이더를 설정하거나
 아키텍처를 알아보려면 [작동 방식](/ko/getting-started/how-it-works/)을 읽어 보세요.

@@ -13,12 +13,12 @@ description: easyproxy가 LLM 프로바이더를 인증하고 통신하는 모�
 | `openai` | Codex 로그인 | Pool(기본)은 메인+추가 계정을 선택하고 Direct는 현재 caller/메인 로그인만 사용합니다. |
 | `openai-apikey` | OpenAI API | 설정된 API key/key pool만 사용하며 Codex 계정을 읽지 않습니다. |
 
-bare `gpt-5.6-sol`은 Providers 페이지의 Pool/Direct 옵션을 따르고,
+bare `gpt-5.6-sol`은 Providers 페이지의 Pool/Direct 옵션을 따르고
 `openai-apikey/gpt-5.6-sol`은 API를 선택합니다. 자격증명 경로 간 fallback은 없습니다. API는 context 922,000 /
 max input 922,000이며 `*-pro` virtual id는 공개 상태에 유지되고 wire에서 base 모델과
 `reasoning.mode: "pro"`로 바뀝니다.
 
-내장 `openai` 제공자가 없거나 비활성화된 경우 대시보드 Accounts 선택기와 Codex Auth 페이지에서 복구할 수 있습니다. 없는 항목은 정규 프리셋으로 만들고, 비활성화된 정규 항목은 저장된 모드/모델 설정을 바꾸지 않고 다시 켜며, 비정규 `openai` 항목에는 그 복구 경로를 제공하지 않습니다.
+내장 `openai` 제공자가 없거나 비활성화된 경우 대시보드 Accounts 선택기와 Codex Auth 페이지에서 복구할 수 있습니다. 없는 항목은 정규 프리셋으로 만들고 비활성화된 정규 항목은 저장된 모드/모델 설정을 바꾸지 않고 다시 켜며 비정규 `openai` 항목에는 그 복구 경로를 제공하지 않습니다.
 
 ### 프로바이더 개요의 풀 용량
 
@@ -27,12 +27,12 @@ Codex 로그인을 Pool 모드로 사용하면 Providers 개요에는 임의의 
 풀 추정치와 다음 요청에서 사용할 계정의 상태를 구분할 수 있습니다.
 
 리셋 정보가 있으면 다음 리셋 시각과 그때 회복되는 풀 용량을 표시합니다. **불완전한 범위**는
-요금제나 quota를 알 수 없거나, 측정값이 오래되었거나, 계정이 일시 중지되었거나 재인증이 필요한
+요금제나 quota를 알 수 없거나 측정값이 오래되었거나 계정이 일시 중지되었거나 재인증이 필요한
 등의 이유로 일부 계정을 안전하게 추정치에 포함하지 못했음을 뜻합니다.
 
 **일부 기간의 범위가 불완전함**은 포함된 계정 중 일부가 표시된 quota 기간을 모두 보고하지
 않았음을 뜻합니다. 개요는 각 기간을 서로 분리한 채 영향을 받은 기간을 개별적으로 불완전하다고
-표시하며, 누락된 값을 해당 기간의 사용량으로 간주하지 않습니다.
+표시하며 누락된 값을 해당 기간의 사용량으로 간주하지 않습니다.
 
 이 추정치는 표시 전용입니다. 계정 선택, 세션 affinity, 자동 전환, cooldown 또는 다른 라우팅
 판단을 변경하지 않습니다. 개별 계정 상태와 라우팅 제어는
@@ -46,20 +46,20 @@ shipped v1 config는 marker 2의 단일 옵션 행으로 자동 이관됩니다.
 
 ## 인증 모드
 
-프로바이더 설정에서 쓸 수 있는 `authMode`는 세 가지이며, 기본값은 `key`입니다. 빌트인 레지스트리는
+프로바이더 설정에서 쓸 수 있는 `authMode`는 세 가지이며 기본값은 `key`입니다. 빌트인 레지스트리는
 로컬 프리셋을 별도로 분류합니다. 로컬 프리셋에는 보통 `authMode`와 `apiKey`를 모두 쓰지 않습니다.
 
 | `authMode` | 인증 방식 | 사용처 |
 | --- | --- | --- |
 | `key` | API 키를 전송합니다(`Authorization: Bearer …`, 또는 어댑터에 따라 `x-api-key` / `api-key`). 키는 리터럴이거나 `${ENV_VAR}` 참조일 수 있습니다. | 대부분의 프로바이더. |
 | `forward` | **수신된 Codex 인증 헤더를** 프로바이더에 그대로 중계합니다 — 키를 저장하지 않습니다. ChatGPT 로그인 패스스루입니다. | OpenAI (`openai-responses` 어댑터). |
-| `oauth` | 저장된 OAuth 액세스 토큰을 불러와 bearer 키로 사용하며, 만료 전에 자동 갱신합니다. | xAI, Anthropic, Kimi, Kiro, Google Antigravity, Cursor, Command Code, GitHub Copilot, Nous Portal. |
+| `oauth` | 저장된 OAuth 액세스 토큰을 불러와 bearer 키로 사용하며 만료 전에 자동 갱신합니다. | xAI, Anthropic, Kimi, Kiro, Google Antigravity, Cursor, Command Code, GitHub Copilot, Nous Portal. |
 
 [`retryOn429`](/ko/reference/configuration/)（동일 키 429 재시도）는 API 키 프로바이더
 （`authMode: "key"`）에만 적용됩니다. OAuth·forward·로컬 프리셋은 제외됩니다 — 같은 토큰을
-재전송해서는 안 되며, 로컬 런타임에는 보존할 원격 키가 없습니다. 문서화된 대상별 기본값을 제외하면 옵트인입니다. 정식 Mistral Chat은 기존 요청 단위 전송 한도 안에서 끈질긴 재시도 정책(재전송 6회, 대체 간격 10초)을 사용합니다. `enabled: false`를 포함한 명시적인 `retryOn429` 설정이 우선합니다. Mistral 프리셋은 전달받은 프롬프트 캐시 키도 기본으로 전달하며, `promptCacheKey: false`로 전달을 끌 수 있습니다. 캐시 친화성은 재사용 가능성을 높이지만 캐시 적중을 보장하거나 토큰 처리량 제한을 없애지는 않습니다.
+재전송해서는 안 되며 로컬 런타임에는 보존할 원격 키가 없습니다. 문서화된 대상별 기본값을 제외하면 옵트인입니다. 정식 Mistral Chat은 기존 요청 단위 전송 한도 안에서 끈질긴 재시도 정책(재전송 6회, 대체 간격 10초)을 사용합니다. `enabled: false`를 포함한 명시적인 `retryOn429` 설정이 우선합니다. Mistral 프리셋은 전달받은 프롬프트 캐시 키도 기본으로 전달하며 `promptCacheKey: false`로 전달을 끌 수 있습니다. 캐시 친화성은 재사용 가능성을 높이지만 캐시 적중을 보장하거나 토큰 처리량 제한을 없애지는 않습니다.
 
-Mistral은 Studio 키와 Vibe 키 모두에 하나의 API 키 프로바이더를 사용합니다. 키 종류와 요금제 허용량은 [Mistral API 키 문서](https://docs.mistral.ai/admin/identity-access/api-keys)에 설명되어 있으며, 프록시는 키에서 구독 등급을 추론하지 않습니다. 모든 모델에서 업스트림이 명시한 `Retry-After` 기한은 같은 자격 증명과 모델의 호출 사이에서 공유됩니다. 재시도 시각이 없는 429는 유효한 분 단위 카운터가 용량 소진을 보여 주거나, 거절된 쿼리의 측정 비용이 남은 토큰을 넘지만 공시된 전체 허용량 안에 들어올 때 보수적인 60초 복구 대기를 시작할 수 있습니다. 이는 로컬 복구 정책이며 서버 재설정 시각을 정확히 예측하는 것이 아닙니다. 정상 트래픽에서는 다음 쿼리의 캐시나 비용을 예측하지 않습니다. 대기 후 복구 프로브를 한 번 보내고, 성공하면 일반 트래픽으로 돌아갑니다. 근거가 없거나, 형식이 잘못됐거나, 이용 권한이 0이거나, 월간 한도가 소진됐거나, 전체 허용량을 넘는 경우에는 재설정을 지어내거나 기록을 압축하지 않습니다. `requestPacing: { "enabled": false }` 또는 `retryOn429: { "respectRetryAfter": false }`로 공유 페이싱을 끕니다. 같은 키로 재전송할 때 Mistral의 재시도 시각이 `retryOn429.maxIntervalMs`를 넘으면 프록시는 일찍 재전송하지 않고 429와 재시도 힌트를 반환합니다. 라운드 로빈 키 선택이 켜져 있으면 대기 중인 요청은 키 쿨다운을 다시 확인하고 대체 키의 페이싱 용량을 확보하며, 출력 전의 키 거절은 요청의 기존 전송 한도 안에서 정상 키로 복구될 수 있습니다. 컨텍스트 창과 모델별 압축 설정은 서로 독립적으로 유지됩니다.
+Mistral은 Studio 키와 Vibe 키 모두에 하나의 API 키 프로바이더를 사용합니다. 키 종류와 요금제 허용량은 [Mistral API 키 문서](https://docs.mistral.ai/admin/identity-access/api-keys)에 설명되어 있으며 프록시는 키에서 구독 등급을 추론하지 않습니다. 모든 모델에서 업스트림이 명시한 `Retry-After` 기한은 같은 자격 증명과 모델의 호출 사이에서 공유됩니다. 재시도 시각이 없는 429는 유효한 분 단위 카운터가 용량 소진을 보여 주거나 거절된 쿼리의 측정 비용이 남은 토큰을 넘지만 공시된 전체 허용량 안에 들어올 때 보수적인 60초 복구 대기를 시작할 수 있습니다. 이는 로컬 복구 정책이며 서버 재설정 시각을 정확히 예측하는 것이 아닙니다. 정상 트래픽에서는 다음 쿼리의 캐시나 비용을 예측하지 않습니다. 대기 후 복구 프로브를 한 번 보내고 성공하면 일반 트래픽으로 돌아갑니다. 근거가 없거나 형식이 잘못됐거나 이용 권한이 0이거나 월간 한도가 소진됐거나 전체 허용량을 넘는 경우에는 재설정을 지어내거나 기록을 압축하지 않습니다. `requestPacing: { "enabled": false }` 또는 `retryOn429: { "respectRetryAfter": false }`로 공유 페이싱을 끕니다. 같은 키로 재전송할 때 Mistral의 재시도 시각이 `retryOn429.maxIntervalMs`를 넘으면 프록시는 일찍 재전송하지 않고 429와 재시도 힌트를 반환합니다. 라운드 로빈 키 선택이 켜져 있으면 대기 중인 요청은 키 쿨다운을 다시 확인하고 대체 키의 페이싱 용량을 확보하며 출력 전의 키 거절은 요청의 기존 전송 한도 안에서 정상 키로 복구될 수 있습니다. 컨텍스트 창과 모델별 압축 설정은 서로 독립적으로 유지됩니다.
 
 ## 1. ChatGPT 로그인 (forward / 패스스루)
 
@@ -86,10 +86,10 @@ ChatGPT 패스스루 카탈로그에는 GPT-5.6 Sol/Terra/Luna의 네임스페�
 
 ## 2. 계정 로그인 (OAuth)
 
-프로바이더 프리셋은 계정 로그인을 쓸 수 있으며, 실험적 비공식 디바이스 플로우
+프로바이더 프리셋은 계정 로그인을 쓸 수 있으며 실험적 비공식 디바이스 플로우
 브리지를 쓰는 GitHub Copilot도 여기에 들어갑니다. 자격 증명은 `~/.easyproxy/auth.json`에 저장되고
 자동으로 갱신됩니다. `epx login codex`도 받지만 이건 위 프로바이더가 아닙니다. Codex 계정 풀
-로그인(`epx account login codex`와 같은 흐름)으로 연결되고, 이 풀은 자체 계정 원장을 쓰기 때문에
+로그인(`epx account login codex`와 같은 흐름)으로 연결되고 이 풀은 자체 계정 원장을 쓰기 때문에
 프록시가 실행 중이어야 합니다. `chatgpt`와 `openai`는 같은 경로의 별칭입니다.
 
 ```bash
@@ -110,15 +110,15 @@ epx logout <provider>
 
 | 프로바이더 | 어댑터 | 베이스 URL | 비고 |
 | --- | --- | --- | --- |
-| `xai` | `openai-chat` | `https://cli-chat-proxy.grok.com/v1` | OAuth는 별도의 Grok CLI 구독 게이트웨이를 사용합니다. API 키 오버라이드는 `https://api.x.ai/v1`을 사용하며 Priority Processing을 주입할 수 있습니다. 실시간 목록을 우선 사용하며, 폴백 기본 모델은 `grok-4.5`입니다. |
+| `xai` | `openai-chat` | `https://cli-chat-proxy.grok.com/v1` | OAuth는 별도의 Grok CLI 구독 게이트웨이를 사용합니다. API 키 오버라이드는 `https://api.x.ai/v1`을 사용하며 Priority Processing을 주입할 수 있습니다. 실시간 목록을 우선 사용하며 폴백 기본 모델은 `grok-4.5`입니다. |
 | `anthropic` | `anthropic` | `https://api.anthropic.com` | Claude 모델; 실시간 모델 목록은 `/v1/models`에서 가져옵니다. |
 | `kimi` | `openai-chat` | `https://api.kimi.com/coding/v1` | Kimi Code 모델입니다. `kimi-for-coding`은 현재 K2.8 Preview를 가리키며 100만 토큰 문맥, `low`/`high`/`max` 추론, 텍스트·이미지 입력을 지원합니다. `k3-256k`의 문맥 한도는 256K로 고정됩니다. |
-| `kimi-responses` | `openai-responses` | `https://api.kimi.com/coding/v1` | `kimi`와 동일한 OAuth 로그인과 모델 목록을 Responses 방식으로 사용합니다. 추론 내용은 서버 측에서 암호화된 상태로 유지되고 도구 호출과 결과는 볼 수 있습니다. 대시보드 **Add provider** 선택기(**Kimi (Responses)**)나 `epx provider add kimi-responses --live`로 추가합니다. 자체 로그인이 없으므로 Kimi에 이미 로그인되어 있으면 추가할 때 다시 로그인하지 않으며, 선택기의 이 항목에서 로그인해도 이 행만 만들어지고 `kimi` 행은 그대로 둡니다. 어느 행에서 로그아웃하든(`epx logout kimi` 또는 `epx logout kimi-responses`, 로컬이든 `--live`든, 대시보드 어느 행의 **Logout**이든) 두 행 모두에서 현재 Kimi 계정이 제거되고 그 사실이 안내되며, 저장된 다른 Kimi 계정이 있으면 두 행 모두 그 계정이 활성화되며, 일시 중지된 동안에는 두 행 모두 그 계정을 쓰지 않고, 다시 로그인해야 하면 그 계정으로 다시 로그인하세요. 대시보드(또는 `--live`)에서 한 행을 삭제해도 다른 행이 쓰는 동안 로그인은 유지되고, 마지막 행을 삭제하면 로그인도 삭제됩니다. 로컬 `epx provider remove`는 다른 공급자와 마찬가지로 저장된 로그인을 그대로 둡니다. |
-| `nous` | `openai-chat` | `https://inference-api.nousresearch.com/v1` | Nous Research 구독 게이트웨이(Hermes Agent와 동일한 백엔드). `portal.nousresearch.com`에 대한 디바이스 그랜트 로그인; access 토큰은 요청별 inference JWT. 유료 + `:free` 모델 혼합 카탈로그(`tencent/hy3:free`, `stepfun/step-3.7-flash:free` 등)는 로그인한 계정에서 실시간으로 발견됩니다. Refresh 토큰은 단회 사용이며, 갱신할 때마다 회전됩니다. |
-| `kiro` | `kiro` | `https://runtime.us-east-1.kiro.dev` | 최초 로그인은 설치하고 로그인한 `kiro-cli` 세션을 가져옵니다(Unix에서는 `curl -fsSL https://cli.kiro.dev/install` &#124; `bash`, Windows PowerShell에서는 `irm 'https://cli.kiro.dev/install.ps1'` &#124; `iex`로 설치한 뒤 `kiro-cli login` 실행). **계정 추가**는 `kiro-cli`에서 로그아웃한 뒤 새 브라우저 로그인을 시작하여 `kiro-cli` 자체의 계정을 전환하고, 계정별 프로필 메타데이터를 저장합니다. 기존 EasyProxy 계정은 유지되며, 취소되거나 실패하면 이전 `kiro-cli` 세션을 복원합니다. |
+| `kimi-responses` | `openai-responses` | `https://api.kimi.com/coding/v1` | `kimi`와 동일한 OAuth 로그인과 모델 목록을 Responses 방식으로 사용합니다. 추론 내용은 서버 측에서 암호화된 상태로 유지되고 도구 호출과 결과는 볼 수 있습니다. 대시보드 **Add provider** 선택기(**Kimi (Responses)**)나 `epx provider add kimi-responses --live`로 추가합니다. 자체 로그인이 없으므로 Kimi에 이미 로그인되어 있으면 추가할 때 다시 로그인하지 않으며 선택기의 이 항목에서 로그인해도 이 행만 만들어지고 `kimi` 행은 그대로 둡니다. 어느 행에서 로그아웃하든(`epx logout kimi` 또는 `epx logout kimi-responses`, 로컬이든 `--live`든, 대시보드 어느 행의 **Logout**이든) 두 행 모두에서 현재 Kimi 계정이 제거되고 그 사실이 안내되며 저장된 다른 Kimi 계정이 있으면 두 행 모두 그 계정이 활성화되며 일시 중지된 동안에는 두 행 모두 그 계정을 쓰지 않고 다시 로그인해야 하면 그 계정으로 다시 로그인하세요. 대시보드(또는 `--live`)에서 한 행을 삭제해도 다른 행이 쓰는 동안 로그인은 유지되고 마지막 행을 삭제하면 로그인도 삭제됩니다. 로컬 `epx provider remove`는 다른 공급자와 마찬가지로 저장된 로그인을 그대로 둡니다. |
+| `nous` | `openai-chat` | `https://inference-api.nousresearch.com/v1` | Nous Research 구독 게이트웨이(Hermes Agent와 동일한 백엔드). `portal.nousresearch.com`에 대한 디바이스 그랜트 로그인; access 토큰은 요청별 inference JWT. 유료 + `:free` 모델 혼합 카탈로그(`tencent/hy3:free`, `stepfun/step-3.7-flash:free` 등)는 로그인한 계정에서 실시간으로 발견됩니다. Refresh 토큰은 단회 사용이며 갱신할 때마다 회전됩니다. |
+| `kiro` | `kiro` | `https://runtime.us-east-1.kiro.dev` | 최초 로그인은 설치하고 로그인한 `kiro-cli` 세션을 가져옵니다(Unix에서는 `curl -fsSL https://cli.kiro.dev/install` &#124; `bash`, Windows PowerShell에서는 `irm 'https://cli.kiro.dev/install.ps1'` &#124; `iex`로 설치한 뒤 `kiro-cli login` 실행). **계정 추가**는 `kiro-cli`에서 로그아웃한 뒤 새 브라우저 로그인을 시작하여 `kiro-cli` 자체의 계정을 전환하고 계정별 프로필 메타데이터를 저장합니다. 기존 EasyProxy 계정은 유지되며 취소되거나 실패하면 이전 `kiro-cli` 세션을 복원합니다. |
 | `google-antigravity` | `google` | `https://daily-cloudcode-pa.googleapis.com` | Google OAuth를 Cloud Code Assist wire로 사용합니다. 실시간 탐색은 인증된 CCA `v1internal:fetchAvailableModels` 엔드포인트를 사용하며 로그인한 계정에서 사용할 수 있는 agent 모델만 게시합니다. 유지 관리되는 카탈로그는 폴백으로 남습니다. |
 | `cursor` | `cursor` | `https://api2.cursor.sh` | 실험적 PKCE 로그인, HTTP/2 전송, 계정별 모델 탐색을 지원합니다. |
-| `devin` | `devin` | `https://server.codeium.com` | 실험적인 비공식 Cognition/Devin 브리지. 로그인은 먼저 설치된 Devin CLI가 이미 보유한 자격을 가져옵니다(`devin auth login`이 `devin-session-token`을 자기 `credentials.toml`에 씁니다). 없으면 Auth0 브라우저 사인인을 열어 붙여넣은 토큰을 `RegisterUser`로 장기 API 키에 교환합니다. `epx login devin-cli`는 deprecated alias로 계속 동작합니다. 모델 목록은 `GetCascadeModelConfigs`로 계정마다 조회하며, 스트리밍은 Connect-RPC 위에서 `runTurn` 경로만 씁니다. 대시보드 프리셋에는 기본으로 없으니 직접 추가하세요. |
+| `devin` | `devin` | `https://server.codeium.com` | 실험적인 비공식 Cognition/Devin 브리지. 로그인은 먼저 설치된 Devin CLI가 이미 보유한 자격을 가져옵니다(`devin auth login`이 `devin-session-token`을 자기 `credentials.toml`에 씁니다). 없으면 Auth0 브라우저 사인인을 열어 붙여넣은 토큰을 `RegisterUser`로 장기 API 키에 교환합니다. `epx login devin-cli`는 deprecated alias로 계속 동작합니다. 모델 목록은 `GetCascadeModelConfigs`로 계정마다 조회하며 스트리밍은 Connect-RPC 위에서 `runTurn` 경로만 씁니다. 대시보드 프리셋에는 기본으로 없으니 직접 추가하세요. |
 | `dsh-account` | `dsh-account` | `https://api.deepseek.com/anthropic` | 설치 및 로그인된 DeepSeek Harness (DSH) Desktop 계정을 재사용하는 실험적 자격 임포트 우선 계정 프로바이더입니다. 명시적 임포트 시 `~/.dsh/.credentials.yaml`에서 엄격히 읽기 전용으로 자격을 읽습니다. DeepSeek API 키 요금 청구와 완전히 독립적입니다. |
 | `github-copilot` | `openai-chat` | `https://api.githubcopilot.com` | 실험적. GitHub 디바이스 플로우 + `copilot_internal` 교환(VS Code OAuth 클라이언트). 활성 Copilot 구독 필요; 공식 서드파티 API가 아닙니다. |
 
@@ -158,7 +158,7 @@ deny-by-default 상태로 유지됩니다.
 요금을 적용한 [API 가격](https://platform.kimi.ai/docs/pricing/chat) 기준 추정치입니다. Code Plan의
 실제 청구액이나 할당량은 아닙니다. K3의 1M 버전은 `k3-256k`보다 할당량을 약 두 배 소비합니다.
 `kimi-for-coding`은 K2.8 Preview로 전환되었으므로 이전 K2.7 가격을 적용하지 않습니다. 사용자가
-`modelCosts`를 지정하지 않으면 비용을 알 수 없으며, 미확인 비용을 제외하도록 설정한 라우팅 정책에서는
+`modelCosts`를 지정하지 않으면 비용을 알 수 없으며 미확인 비용을 제외하도록 설정한 라우팅 정책에서는
 이 별칭이 후보에서 빠질 수 있습니다.
 
 [웹 대시보드](/ko/guides/web-dashboard/)에서도 OAuth를 시작할 수 있습니다.
@@ -166,9 +166,9 @@ deny-by-default 상태로 유지됩니다.
 ### 여러 OAuth 계정
 
 자격 증명에 고정된 계정 id나 이메일이 있는 OAuth 프로바이더는 로그인을 여러 개 보관할 수 있습니다.
-Providers 페이지에서 계정을 추가하고, 다른 계정을 로그아웃하지 않은 채 활성 계정만 바꿀 수 있습니다.
-계정 식별 정보가 없는 Kimi 자격 증명은 일반 로그인에서는 활성 슬롯을 교체하지만, 명시적인 **계정 추가**에서는 기존 슬롯을 보존하고 별도의 새 슬롯을 활성화합니다. Kiro 계정은 프로필 ARN과 로그인한 사용자의 이메일(제공되는 경우)을 함께 사용해 구분합니다. 같은 조직 프로필을 공유하는 사용자도 각자의 자격 증명을 별도로 유지할 수 있습니다.
-`chatgpt`는 Codex 계정 풀에 별도 저장소가 있어 항상 단일 슬롯만 씁니다. 토큰은 `~/.easyproxy/auth.json`에 저장되고,
+Providers 페이지에서 계정을 추가하고 다른 계정을 로그아웃하지 않은 채 활성 계정만 바꿀 수 있습니다.
+계정 식별 정보가 없는 Kimi 자격 증명은 일반 로그인에서는 활성 슬롯을 교체하지만 명시적인 **계정 추가**에서는 기존 슬롯을 보존하고 별도의 새 슬롯을 활성화합니다. Kiro 계정은 프로필 ARN과 로그인한 사용자의 이메일(제공되는 경우)을 함께 사용해 구분합니다. 같은 조직 프로필을 공유하는 사용자도 각자의 자격 증명을 별도로 유지할 수 있습니다.
+`chatgpt`는 Codex 계정 풀에 별도 저장소가 있어 항상 단일 슬롯만 씁니다. 토큰은 `~/.easyproxy/auth.json`에 저장되고
 `/api/oauth/accounts`는 마스킹된 메타데이터만 반환합니다.
 
 ### Cockpit Tools Antigravity 가져오기
@@ -192,38 +192,38 @@ Kiro 로그인에는 Kiro CLI가 필요합니다. Unix에서는 `curl -fsSL http
 
 일반 `epx login kiro` 가져오기는 CLI SQLite 데이터베이스를 읽기 전용으로 열며 데이터베이스, WAL, SHM을 수정하지 않습니다.
 
-- `KIROCLI_DB_PATH`는 비표준 Kiro CLI SQLite 데이터베이스를 선택하며, 지정한 데이터베이스는 이미 존재해야 합니다.
+- `KIROCLI_DB_PATH`는 비표준 Kiro CLI SQLite 데이터베이스를 선택하며 지정한 데이터베이스는 이미 존재해야 합니다.
 - `KIROCLI_TOKEN_KEY`는 모호한 토큰 행이 여러 개일 때 가져올 정확한 `auth_kv` 행의 키를 선택합니다. 선택값이 없으면 추측하지 않고 로그인이 실패합니다.
 
 가져온 자격 증명은 `~/.easyproxy/auth.json`에 저장됩니다. **계정 추가** 롤백은 별도 절차로, 이전 스냅샷을 복원할 때 데이터베이스를 교체하고 현재 WAL, SHM, journal 사이드카를 제거합니다.
 
-롤백은 스냅샷이 있을 때만 가능하므로, 세션 저장소가 존재하지만 캡처할 수 없는 경우(파일을 읽을 수 없음, 스키마 불일치, 토큰 선택 모호), `KIROCLI_DB_PATH` / `KIRO_CLI_DB_FILE`이 실제 CLI 저장소와 다른 가져오기 경로를 가리키는 경우, 또는 기본 CLI 데이터베이스에 인식 가능한 토큰 행이 없는 경우 **계정 추가**는 `kiro-cli` 로그아웃을 거부합니다. 일반 `kiro-cli` 데이터 경로의 손상된 데이터베이스를 수리하거나 제거하고, 가져오기 전용 선택자가 설정돼 있으면 해제한 뒤 다시 시도하세요. 기존 `kiro-cli` 세션이 아예 없는 환경에서는 영향이 없습니다.
+롤백은 스냅샷이 있을 때만 가능하므로, 세션 저장소가 존재하지만 캡처할 수 없는 경우(파일을 읽을 수 없음, 스키마 불일치, 토큰 선택 모호), `KIROCLI_DB_PATH` / `KIRO_CLI_DB_FILE`이 실제 CLI 저장소와 다른 가져오기 경로를 가리키는 경우, 또는 기본 CLI 데이터베이스에 인식 가능한 토큰 행이 없는 경우 **계정 추가**는 `kiro-cli` 로그아웃을 거부합니다. 일반 `kiro-cli` 데이터 경로의 손상된 데이터베이스를 수리하거나 제거하고 가져오기 전용 선택자가 설정돼 있으면 해제한 뒤 다시 시도하세요. 기존 `kiro-cli` 세션이 아예 없는 환경에서는 영향이 없습니다.
 
 ### DeepSeek Account (DSH)
 
 `dsh-account`는 설치 및 로그인된 DeepSeek Harness (DSH) Desktop 애플리케이션의 인증된 계정 자격 증명을 재사용하는 실험적 자격 임포트 우선 계정 프로바이더입니다.
 
-- **DeepSeek API 키와 독립:** `dsh-account`는 사용자의 인증된 DeepSeek 세션 할당량(일반/보너스 지갑 잔액 및 총 지출)을 사용하며, `deepseek` 프로바이더는 플랫폼 API 키 잔액에서 청구됩니다. 두 자격 증명 도메인 및 라우팅은 엄격히 분리되어 상호 폴백되지 않습니다.
-- **명시적 가져오기 전용:** easyproxy는 DeepSeek Harness의 설치 및 로그인 여부(`~/.dsh/.credentials.yaml`)를 감지하지만, 사용자의 명시적 명령(`epx login dsh-account` 또는 웹 대시보드에서 가져오기 클릭) 없이 토큰을 자동 복사, 가져오기 또는 사용하지 않습니다.
+- **DeepSeek API 키와 독립:** `dsh-account`는 사용자의 인증된 DeepSeek 세션 할당량(일반/보너스 지갑 잔액 및 총 지출)을 사용하며 `deepseek` 프로바이더는 플랫폼 API 키 잔액에서 청구됩니다. 두 자격 증명 도메인 및 라우팅은 엄격히 분리되어 상호 폴백되지 않습니다.
+- **명시적 가져오기 전용:** easyproxy는 DeepSeek Harness의 설치 및 로그인 여부(`~/.dsh/.credentials.yaml`)를 감지하지만 사용자의 명시적 명령(`epx login dsh-account` 또는 웹 대시보드에서 가져오기 클릭) 없이 토큰을 자동 복사, 가져오기 또는 사용하지 않습니다.
 - **DSH 자격 증명 저장소 읽기 전용:** easyproxy는 `~/.dsh/.credentials.yaml`을 엄격히 읽기 전용으로 취급합니다. easyproxy는 DeepSeek Harness에 속한 어떠한 파일도 쓰기, 수정, 삭제하거나 권한을 변경하지 않습니다.
-- **격리된 자격 증명 복사본 및 로그아웃:** 가져오기 시 easyproxy는 DeepSeek의 신뢰할 수 있는 ID 엔드포인트(`/auth-api/v0/users/current`)에서 토큰을 검증하고 자체 복사본을 easyproxy 인증 저장소에 저장합니다. easyproxy에서 로그아웃하거나 계정을 삭제해도 easyproxy 로컬 복사본만 삭제되며, 업스트림 원격 세션 로그아웃을 트리거하거나 DeepSeek Harness Desktop에서 로그아웃되지 않습니다.
+- **격리된 자격 증명 복사본 및 로그아웃:** 가져오기 시 easyproxy는 DeepSeek의 신뢰할 수 있는 ID 엔드포인트(`/auth-api/v0/users/current`)에서 토큰을 검증하고 자체 복사본을 easyproxy 인증 저장소에 저장합니다. easyproxy에서 로그아웃하거나 계정을 삭제해도 easyproxy 로컬 복사본만 삭제되며 업스트림 원격 세션 로그아웃을 트리거하거나 DeepSeek Harness Desktop에서 로그아웃되지 않습니다.
 - **백그라운드 토큰 자동 갱신 없음 및 401 재가져오기:** DSH 세션 부여에는 자동 백그라운드 갱신 엔드포인트가 없습니다. 업스트림에서 HTTP 401(`ACCOUNT_TOKEN_INVALID`)을 반환하면 easyproxy는 계정을 `needsReauth`로 표시하고 라우팅을 중단합니다. 액세스를 복원하려면 사용자가 `epx login dsh-account`로 명시적 재가져오기를 수행해야 합니다.
 - **서드파티 면책 조항:** easyproxy는 서드파티 클라이언트의 세션 부여 재사용에 대한 DeepSeek의 공식 보증이나 승인을 주장하지 않습니다.
 
 ## 3. API 키 카탈로그
 
 easyproxy에는 빌트인 프리셋이 112개 들어 있습니다. 키 방식 90개, OAuth 18개, 로컬 3개,
-기본 ChatGPT 포워드 프리셋 1개입니다. 대시보드의 **Add provider** 선택기는 키 발급 페이지를 열고,
+기본 ChatGPT 포워드 프리셋 1개입니다. 대시보드의 **Add provider** 선택기는 키 발급 페이지를 열고
 입력한 키를 검증한 뒤 저장합니다(검증은 프로바이더별로 다릅니다). 주요 항목은 다음과 같습니다:
 
 **ClinePass**는 Cline API 키로 [공식 구독 카탈로그](https://docs.cline.bot/getting-started/clinepass)와
 [Chat Completions 엔드포인트](https://docs.cline.bot/api/chat-completions)에 연결합니다. 운영 주체는
 [Cline 약관](https://cline.bot/tos)에 명시된 Cline Bot Inc.입니다. `cline-pass/cline-pass/kimi-k3`
 같은 라우팅 ID는 정상입니다.
-앞의 `cline-pass`는 easyproxy 프로바이더이고, 뒤의 `cline-pass/kimi-k3`는 upstream에 보내는
+앞의 `cline-pass`는 easyproxy 프로바이더이고 뒤의 `cline-pass/kimi-k3`는 upstream에 보내는
 전체 모델 slug입니다. ClinePass 사용량은 계정의 5시간 롤링·주간·월간 한도를 함께 사용합니다.
 2026-08-13 실측에서 모든 정적 ClinePass 모델이 게이트웨이 입력에서 `low`, `medium`, `high`, `xhigh`, `max`를 수락하는 것을 확인했습니다.
-easyproxy는 요청한 단계를 그대로 보존하며, 백엔드별 정규화는 ClinePass가 담당합니다.
+easyproxy는 요청한 단계를 그대로 보존하며 백엔드별 정규화는 ClinePass가 담당합니다.
 
 **Cline**은 동일한 API 키·엔드포인트를 종량제로 사용하며 100개 이상의 모델에 접근합니다
 (OpenRouter 형식 ID, 예: `anthropic/claude-sonnet-4-6`). Cline의 프로모션 무료 모델은
@@ -299,17 +299,17 @@ Responses 도구 결과 배열은 텍스트로 변환하고 이미지는 짝이 
 재전송은 명시적인 `store: false`, 완전한 입력, 클라이언트 실행 도구만 있는 요청에 한정합니다.
 `web_search` 같은 서버 실행 도구가 선언돼 있으면 도구 이벤트가 없어도 자동 재전송하지 않습니다.
 
-**OpenCode Zen**(`opencode-zen`)은 [opencode.ai/auth](https://opencode.ai/auth)에서 발급한 API 키로 `https://opencode.ai/zen/v1`을 사용합니다. 무료 모델은 분당 약 15–20회 요청의 짧은 창 속도 제한에 걸릴 수 있습니다(커뮤니티 측정; OpenCode는 RPM을 공개하지 않음). 속도 제한 429에 `Retry-After`가 없으면 easyproxy가 안내와 합성 `Retry-After`를 추가하며, 유효한 업스트림 헤더가 우선합니다. 동일 키 재시도는 [`retryOn429`](/ko/reference/configuration/)로 선택합니다.
+**OpenCode Zen**(`opencode-zen`)은 [opencode.ai/auth](https://opencode.ai/auth)에서 발급한 API 키로 `https://opencode.ai/zen/v1`을 사용합니다. 무료 모델은 분당 약 15–20회 요청의 짧은 창 속도 제한에 걸릴 수 있습니다(커뮤니티 측정; OpenCode는 RPM을 공개하지 않음). 속도 제한 429에 `Retry-After`가 없으면 easyproxy가 안내와 합성 `Retry-After`를 추가하며 유효한 업스트림 헤더가 우선합니다. 동일 키 재시도는 [`retryOn429`](/ko/reference/configuration/)로 선택합니다.
 
 정식 `opencode-zen` 제공자에서 API 키 인증과 공식 경로 `https://opencode.ai/zen/v1` 또는 `https://opencode.ai/inference/v1`을 사용하면 Gemini는 기본 `googleMode: ai-studio`에서 Google 네이티브 API를 자동으로 사용합니다. Zen 모델 ID는 `-tiered` 접미사가 없는 Flash ID도 그대로 유지합니다. Claude는 `googleMode`와 관계없이 Anthropic Messages를 사용합니다. 저장된 설정을 읽을 때 이 네이티브 모델의 조건에 맞는 기존 Chat/Responses 재정의와 조건에 맞는 Responses 전용 `image_generation` 호스팅 도구 선호 설정만 무시합니다. 사용자 지정 제공자, 키 인증이 아닌 경로, 그 밖의 선호 설정은 그대로 유지합니다.
 
-**`opencode-free` 지원이 제거되었습니다.** OpenCode의 업스트림 무료 등급 제한으로 모든 모델이 `403 permission_denied`를 반환하기 때문입니다([#7255](https://github.com/AquilaXk/easyproxy/issues/7255)). 기존 설정을 불러오면 해당 항목과 종속 모델 참조를 메모리에서 비활성화하고 프로세스당 한 번 경고하며 불러올 때 파일은 변경하지 않습니다. 다음 설정 저장 시 해당 항목과 참조가 config.json에서 제거됩니다. 저장 전에 원본 파일을 같은 폴더의 `config.json.pre-opencode-free-removal.bak`에 자동 보관합니다. 해당 이름이 이미 사용 중이면 고유한 이름의 사본을 만듭니다. 바이트가 동일한 독립 사본은 소유자만 접근할 수 있음을 검증한 경우에만 재사용하고, 그렇지 않으면 그 옆에 보호된 새 사본을 만듭니다. 기존 파일은 덮어쓰지 않습니다. 첫 로드가 겹치면 동일하게 보호된 사본이 여러 개 남을 수 있습니다. 경고에 복구 사본 경로가 표시됩니다. 다운그레이드 후 복원하려면 이 사본을 config.json 위에 복사하세요. 자동 복사에 실패하면 config.json을 즉시 복사하라는 경고가 표시됩니다. 기본 공급자였다면 표준 OpenAI OAuth 경로가 기본값이 됩니다. `opencode-go`, API 키를 사용하는 `opencode-zen` 또는 다른 공급자를 사용하세요. [OpenCode Zen 약관](https://opencode.ai/docs/zen/). 수동적 읽기(passive read)에서는 메모리 내 비활성화만 적용하고 사본이나 경고를 만들지 않습니다.
+**`opencode-free` 지원이 제거되었습니다.** OpenCode의 업스트림 무료 등급 제한으로 모든 모델이 `403 permission_denied`를 반환하기 때문입니다([#7255](https://github.com/AquilaXk/easyproxy/issues/7255)). 기존 설정을 불러오면 해당 항목과 종속 모델 참조를 메모리에서 비활성화하고 프로세스당 한 번 경고하며 불러올 때 파일은 변경하지 않습니다. 다음 설정 저장 시 해당 항목과 참조가 config.json에서 제거됩니다. 저장 전에 원본 파일을 같은 폴더의 `config.json.pre-opencode-free-removal.bak`에 자동 보관합니다. 해당 이름이 이미 사용 중이면 고유한 이름의 사본을 만듭니다. 바이트가 동일한 독립 사본은 소유자만 접근할 수 있음을 검증한 경우에만 재사용하고 그렇지 않으면 그 옆에 보호된 새 사본을 만듭니다. 기존 파일은 덮어쓰지 않습니다. 첫 로드가 겹치면 동일하게 보호된 사본이 여러 개 남을 수 있습니다. 경고에 복구 사본 경로가 표시됩니다. 다운그레이드 후 복원하려면 이 사본을 config.json 위에 복사하세요. 자동 복사에 실패하면 config.json을 즉시 복사하라는 경고가 표시됩니다. 기본 공급자였다면 표준 OpenAI OAuth 경로가 기본값이 됩니다. `opencode-go`, API 키를 사용하는 `opencode-zen` 또는 다른 공급자를 사용하세요. [OpenCode Zen 약관](https://opencode.ai/docs/zen/). 수동적 읽기(passive read)에서는 메모리 내 비활성화만 적용하고 사본이나 경고를 만들지 않습니다.
 
-정상 Claude Desktop 할당과 기본값은 유지됩니다. 소스 모델 허용 목록이 비게 되는 규칙은 비활성화되며, 주입 모델이 제거되면 네이티브 하위 에이전트 동기화도 비활성화됩니다. 이후 설정을 저장하면 제거된 참조는 다시 기록되지 않고 정상적인 동시 편집은 유지됩니다.
+정상 Claude Desktop 할당과 기본값은 유지됩니다. 소스 모델 허용 목록이 비게 되는 규칙은 비활성화되며 주입 모델이 제거되면 네이티브 하위 에이전트 동기화도 비활성화됩니다. 이후 설정을 저장하면 제거된 참조는 다시 기록되지 않고 정상적인 동시 편집은 유지됩니다.
 
-대부분은 bearer 키와 함께 `openai-chat` 어댑터를 사용하며, **Xiaomi MiMo**(`xiaomi`) 같은
+대부분은 bearer 키와 함께 `openai-chat` 어댑터를 사용하며 **Xiaomi MiMo**(`xiaomi`) 같은
 Anthropic 호환 프리셋은 `anthropic` 어댑터(`x-api-key`)를 사용합니다. Xiaomi에는 OpenAI Chat
-프리셋 `xiaomi-mimo`와 토큰 플랜 프리셋 `mimo`도 있습니다. 세 프리셋 모두 기본 모델은 MiMo V2.6이며,
+프리셋 `xiaomi-mimo`와 토큰 플랜 프리셋 `mimo`도 있습니다. 세 프리셋 모두 기본 모델은 MiMo V2.6이며
 `xiaomi-mimo`에서는 `mimo-v2.6-flash`, 나머지에서는 `mimo-v2.6-pro`를 사용합니다. Xiaomi는
 2026-10-21에 `mimo-v2.5`와 `mimo-v2.5-pro`를 리디렉션 없이 종료하므로, 저장된 V2.5 기본 모델을
 그전에 바꾸세요. easyproxy가 자동으로 변경하지는 않습니다.
@@ -317,7 +317,7 @@ Volcengine Coding Plan과 Agent Plan은 `openai-responses` 어댑터로 네이�
 
 > **Volcengine의 세 가지 과금 경로:** `volcengine`은 종량제 Ark API,
 > `volcengine-coding-plan`은 Coding Plan 할당량, `volcengine-agent-plan`은 Agent Plan
-> 할당량을 사용합니다. 같은 상품에서 발급된 키와 엔드포인트를 함께 사용해야 하며, Plan 구독이
+> 할당량을 사용합니다. 같은 상품에서 발급된 키와 엔드포인트를 함께 사용해야 하며 Plan 구독이
 > 있어도 일반 `/api/v3` 엔드포인트 호출에는 종량제 요금이 발생할 수 있습니다.
 > 세 preset은 선별된 정적 모델 카탈로그를 사용합니다. Ark의 `/models`는 텍스트와 함께
 > Embedding, 이미지, 비디오, 3D 리소스도 반환하고 Coding 게이트웨이도 같은 광범위한 카탈로그를
@@ -326,55 +326,55 @@ Volcengine Coding Plan과 Agent Plan은 `openai-responses` 어댑터로 네이�
 > 포함됩니다. Coding Plan의 기본값은 `ark-code-latest`, Agent Plan은 `deepseek-v4-flash`입니다.
 
 **Chutes 검색:** `chutes` 프리셋은 Chutes의 고정된 공유 OpenAI 호환 LLM gateway를 사용합니다.
-공개 `/v1/models` catalog에서 `supported_features`가 `tools`를 명시한 행만 유지하고, 슬래시가 포함된
+공개 `/v1/models` catalog에서 `supported_features`가 `tools`를 명시한 행만 유지하고 슬래시가 포함된
 model id와 안전한 live metadata를 보존합니다. 검색은 256 KiB와 raw 128행으로 제한됩니다. 이 catalog는
-공개되어 있어 입력한 키의 유효성을 증명할 수 없지만, chat request는 설정된 Bearer 키로 인증됩니다.
+공개되어 있어 입력한 키의 유효성을 증명할 수 없지만 chat request는 설정된 Bearer 키로 인증됩니다.
 사용자가 배포한 custom Chute host와 LLM 이외의 API는 custom provider로 설정해야 합니다. 키는
 [Chutes dashboard](https://chutes.ai/auth/start)에서 생성합니다.
 
 **DeepInfra 검색:** 키 기반 OpenAI Chat Completions 제공자인 `deepinfra`는 `openai-chat` 어댑터와
 Bearer API 키를 사용합니다. registry가 소유하는 DeepInfra 모델 목록 URL에서 `chat` 태그가 있는 행만
-유지하고, 슬래시가 포함된 네이티브 모델 ID를 보존합니다. live discovery는 512 KiB 및 raw 512행으로
+유지하고 슬래시가 포함된 네이티브 모델 ID를 보존합니다. live discovery는 512 KiB 및 raw 512행으로
 제한합니다. 키는 [DeepInfra dashboard](https://deepinfra.com/dash/api_keys)에서 생성합니다.
 
-**Hyperbolic 검색:** 프리셋은 설정된 bearer 키로 `/v1/models`를 읽고, 슬래시가 포함된 네이티브 모델 ID를
+**Hyperbolic 검색:** 프리셋은 설정된 bearer 키로 `/v1/models`를 읽고 슬래시가 포함된 네이티브 모델 ID를
 보존하며 live discovery를 256 KiB와 raw 행 256개로 제한합니다. serverless text 및 vision-language chat만
 대상으로 하며 별도 image, audio, GPU 엔드포인트는 범위에서 제외합니다. 키는
 [Hyperbolic](https://app.hyperbolic.ai)에서 생성합니다.
 
-**Nscale 및 Vultr 검색:** 두 프리셋 모두 인증된 `/v1/models` 카탈로그를 읽고 네이티브 ID를 보존하며,
+**Nscale 및 Vultr 검색:** 두 프리셋 모두 인증된 `/v1/models` 카탈로그를 읽고 네이티브 ID를 보존하며
 검색을 256 KiB와 원시 행 256개로 제한합니다. Nscale 카탈로그는 modality 필드 없이 chat, image,
 embedding 모델을 함께 반환하므로 공식 도구 호출 API 예제에 사용된
 `meta-llama/Llama-3.1-8B-Instruct`만 허용합니다. Vultr는 현재 `kimi-k2-instruct`에만 도구 호출을
 문서화하므로 해당 모델만 노출합니다. 다른 행은 동등한 agent-tool 근거가 공개될 때까지 숨깁니다.
-Nscale service token은 [Nscale Console](https://console.nscale.com)에서 만들고, Vultr inference key는
+Nscale service token은 [Nscale Console](https://console.nscale.com)에서 만들고 Vultr inference key는
 [Vultr Console](https://my.vultr.com)의 구독 overview에서 복사합니다.
 
 **Command Code 검색.** 프리셋은 고정된 Provider API 호스트에서 Command Code의
-`/provider/v1/models` 목록을 읽고, 프로바이더의 원래 ID를 보존하며 검색을 256 KiB와 원본 행
+`/provider/v1/models` 목록을 읽고 프로바이더의 원래 ID를 보존하며 검색을 256 KiB와 원본 행
 256개로 제한합니다. `epx login command-code`는 브라우저 로그인을 통한 OAuth를 지원합니다.
 기존 Command Code CLI 사용자는 `~/.commandcode/auth.json`에서 로컬 CLI 자격 증명을 가져올 수도
 있습니다. 모델 카탈로그는 계정별로 제공되며 로그인 후 인증된 검색 엔드포인트에서 가져옵니다.
 Provider API 프리셋(`commandcode`)은 현재 설정된 활성 키를 전송합니다. 대부분의 모델 ID에는
-Bearer 헤더를 사용하는 Chat Completions를 쓰지만, `claude-*` ID에는 `x-api-key`를 사용하는
+Bearer 헤더를 사용하는 Chat Completions를 쓰지만 `claude-*` ID에는 `x-api-key`를 사용하는
 Anthropic Messages를 씁니다. Command Code가 해당 모델을 `/provider/v1/messages`에서만 제공하기
 때문입니다. 다른 엔드포인트에 `commandcode`라는 이름을 재사용한 프로바이더는 자체 통신 방식을
-유지합니다. OAuth 프리셋(`command-code`)은 저장된 계정 bearer로 인증된 모델 검색을 수행하고,
+유지합니다. OAuth 프리셋(`command-code`)은 저장된 계정 bearer로 인증된 모델 검색을 수행하고
 `/alpha/generate`에서 생성 결과를 NDJSON으로 스트리밍합니다. 게이트웨이가 실제 도구 호출과 중복된
 MiMo 도구 호출 마크업을 텍스트로 되돌리면 해당 마크업을 제거합니다. MiMo 모델에서 선언된 도구 호출이
 완전하지만 대응하는 네이티브 호출이 없다면, 정상 종료된 뒤에만 이를 복원합니다. 중단되거나 필터링된
 턴에서는 마크업을 텍스트로 남깁니다. Provider API 키는
 [Command Code Studio](https://commandcode.ai/studio/)에서 생성하세요.
 
-**Command Code 할당량:** 대시보드와 `epx account refresh`는 정규 호스트 `https://api.commandcode.ai`에서 `/alpha/billing/credits` 창(5시간 및 주간)을 조회합니다. OAuth 프리셋(`command-code`)은 저장된 계정 bearer를 사용하고, Provider-API 키 프리셋(`commandcode`)은 현재 설정된 활성 키를 사용합니다. 사용자가 바꾼 유사 base URL은 조회하지 않습니다. Command Code가 기간 사용량을 함께 반환하면 남은 monthly / purchased / free credits가 USD 창으로 표시됩니다.
+**Command Code 할당량:** 대시보드와 `epx account refresh`는 정규 호스트 `https://api.commandcode.ai`에서 `/alpha/billing/credits` 창(5시간 및 주간)을 조회합니다. OAuth 프리셋(`command-code`)은 저장된 계정 bearer를 사용하고 Provider-API 키 프리셋(`commandcode`)은 현재 설정된 활성 키를 사용합니다. 사용자가 바꾼 유사 base URL은 조회하지 않습니다. Command Code가 기간 사용량을 함께 반환하면 남은 monthly / purchased / free credits가 USD 창으로 표시됩니다.
 
 OrcaRouter 브라우저 로그인(`epx login orcarouter-oauth`)의 키 교환 성공 응답 본문은 64 KiB 이하의
 유효한 UTF-8 JSON이어야 합니다. 해당 키 교환 요청의 기존 30초 제한은 응답 헤더와 전체 본문 수신을
-포함하며, 크기를 초과하거나 형식이 잘못된 본문은 키를 저장하기 전에 거부합니다. 이 제한은 로그인
+포함하며 크기를 초과하거나 형식이 잘못된 본문은 키를 저장하기 전에 거부합니다. 이 제한은 로그인
 키 교환에만 적용되며 추론 요청 본문의 제한이 아닙니다. `scope` 검사는 그대로 유지되어 생략은
 허용하고 명시적으로 잘못된 값은 거부합니다.
 
-**SambaNova Cloud 검색:** 프리셋은 고정 API 호스트의 SambaNova Cloud 공개 `/v1/models` 목록을 읽고, 프로바이더
+**SambaNova Cloud 검색:** 프리셋은 고정 API 호스트의 SambaNova Cloud 공개 `/v1/models` 목록을 읽고 프로바이더
 네이티브 ID를 보존하며 discovery를 128 KiB와 raw 행 128개로 제한합니다. 카탈로그에는 인증이 필요하지 않으므로
 CLI 로그인 흐름은 공개 응답을 키 유효성의 증거로 사용하지 않고 키를 검증할 수 없는 것으로 보고합니다. chat 요청은
 계속 설정된 Bearer 키를 사용하고 SambaNova가 아직 지원하지 않는 병렬 function call은 비활성화합니다. 비공개
@@ -398,9 +398,9 @@ project와 model 단위로 적용되며(초과 시 429, 공유 deployment 확장
 크레딧이 제공됩니다. 키는 [Crusoe Cloud console](https://console.crusoecloud.com)의
 Intelligence Foundry > Inference에서 생성합니다.
 
-**DigitalOcean 검색:** 프리셋은 model access key를 고정된 공유 Serverless Inference 호스트에 사용하고,
+**DigitalOcean 검색:** 프리셋은 model access key를 고정된 공유 Serverless Inference 호스트에 사용하고
 인증된 `/v1/models` 응답과 DigitalOcean 공식 문서로 확인한 Chat Completions allowlist의 교집합만
-노출합니다. 알 수 없는 ID, Responses 전용, embedding 및 media-generation ID는 fail closed로 제외하며,
+노출합니다. 알 수 없는 ID, Responses 전용, embedding 및 media-generation ID는 fail closed로 제외하며
 discovery를 256 KiB와 raw 행 256개로 제한합니다. agent 전용 및 dedicated 호스트는 범위에서 제외합니다.
 키는 [DigitalOcean Control Panel](https://cloud.digitalocean.com/model-studio/manage-keys)에서 생성합니다.
 
@@ -410,13 +410,13 @@ discovery를 256 KiB와 raw 행 256개로 제한합니다. agent 전용 및 dedi
 Project ID가 포함된 URL과 dedicated deployment는 custom provider로 설정하세요. API 키는
 [Scaleway console](https://console.scaleway.com/generative-api)에서 생성합니다.
 
-**Featherless 검색:** 이 프리셋은 고정된 OpenAI 호환 host에 인증하고, 상위에서 chat과 현재 plan으로
+**Featherless 검색:** 이 프리셋은 고정된 OpenAI 호환 host에 인증하고 상위에서 chat과 현재 plan으로
 필터링된 인기 모델 100개만 요청합니다. 이후 registry 규칙은 각 행이 plan 사용 가능 여부, Hugging Face
-gate 없음, `features.tool_use: true`를 스스로 보고하지 않으면 fail closed로 제외하고, discovery를
+gate 없음, `features.tool_use: true`를 스스로 보고하지 않으면 fail closed로 제외하고 discovery를
 128 KiB와 raw 행 100개로 제한합니다. 덕분에 수만 개 규모의 catalog를 통째로 내려받거나 캐시하지
 않습니다. `/v1/models`는 인증 없이도 호출할 수 있다고 문서화되어 있어 전달한 키가 유효한지 증명하지
 못합니다. chat 요청에는 설정된 Bearer key를 그대로 사용합니다. Featherless 약관은 개인 plan을 대화형
-및 프로토타이핑 용도로 제한하며, 임의의 애플리케이션에는 Scale plan이 필요합니다. 키는
+및 프로토타이핑 용도로 제한하며 임의의 애플리케이션에는 Scale plan이 필요합니다. 키는
 [Featherless dashboard](https://featherless.ai/account/api-keys)에서 생성합니다.
 
 **Novita 검색:** 키 기반 프리셋은 `openai-chat` adapter를 사용하며 Bearer key를 Novita의 고정
@@ -437,22 +437,22 @@ provider 전체 parallel tool call이나 OpenAI `reasoning_effort`를 광고하�
 `openai-chat`, `authMode: "key"`, 공식 `https://api.a6api.com` 또는
 `https://api.a6api.com/v1` 주소를 사용하는 사용자 지정 프로바이더는 대시보드와
 `epx account refresh <provider>`에서 A6API 크레딧 사용량을 표시합니다. 프로바이더 이름은 자유롭게 정할 수
-있습니다. 계정의 hard credit limit을 기준으로 토큰 단위를 USD로 환산해 사용률과 남은 크레딧을 표시하며, 토큰 만료는 충전을 뜻하지 않으므로 쿼터
-리셋으로 표시하지 않습니다. 활성 키만 공식 호스트로 전송하고 리디렉션을 거부하며, 음수이거나 서로 일치하지
+있습니다. 계정의 hard credit limit을 기준으로 토큰 단위를 USD로 환산해 사용률과 남은 크레딧을 표시하며 토큰 만료는 충전을 뜻하지 않으므로 쿼터
+리셋으로 표시하지 않습니다. 활성 키만 공식 호스트로 전송하고 리디렉션을 거부하며 음수이거나 서로 일치하지
 않는 결제 합계에는 보고서를 만들지 않습니다.
 
 > **Tencent Cloud Coding Plan 사용 제한:** Tencent는 이 구독을 대화형 코딩 도구 전용으로
 > 안내합니다. 일반 API 자동화, 사용자 애플리케이션 백엔드 및 비대화형 일괄 호출은 금지되며
 > 플랜 키가 정지될 수 있습니다.
 
-> **GLM 과금 경로:** `zai`는 Z.AI 국제 코딩 플랜 구독이고, `zhipu-bigmodel`은
-> Zhipu의 중국 내수 BigModel 종량제 엔드포인트입니다. 호스트도 키도 과금도 다르며, 한쪽에서
+> **GLM 과금 경로:** `zai`는 Z.AI 국제 코딩 플랜 구독이고 `zhipu-bigmodel`은
+> Zhipu의 중국 내수 BigModel 종량제 엔드포인트입니다. 호스트도 키도 과금도 다르며 한쪽에서
 > 발급한 키는 다른 쪽에서 인증되지 않습니다.
 
 ### 여러 API 키
 
 키 기반 프로바이더도 여러 키를 보관할 수 있습니다. Providers 페이지에서 키를 추가하면
-`provider.apiKeyPool`에 저장하고 이를 활성화하며, 라우팅과 어댑터가 이전처럼 같은 필드를 읽도록
+`provider.apiKeyPool`에 저장하고 이를 활성화하며 라우팅과 어댑터가 이전처럼 같은 필드를 읽도록
 `provider.apiKey`에도 반영합니다. 같은 드롭다운에서 키를 전환하거나 제거할 수 있습니다. 관리 API는
 `/api/providers/keys`이며 마스킹된 키만 반환합니다.
 
@@ -479,7 +479,7 @@ Sol/Terra/Luna를 폴백 목록에 넣어 둡니다.
 
 네이티브 GPT-5.6 항목은 고정된 업스트림 reasoning 단계를 그대로 따릅니다. 예를 들어 Luna에는
 `max`는 있지만 `ultra`는 없습니다. 라우팅 모델은 각 프로바이더의 메타데이터와 reasoning 매핑을
-사용합니다. 네 경로 모두 실제 사용 권한은 업스트림 계정이 결정하며, Cursor는 실시간 탐색 결과를
+사용합니다. 네 경로 모두 실제 사용 권한은 업스트림 계정이 결정하며 Cursor는 실시간 탐색 결과를
 기준으로 현재 계정에서 쓸 수 있는 모델만 남깁니다.
 
 :::note[게이트웨이 및 구독 프록시]
@@ -490,24 +490,24 @@ Amazon Bedrock 네이티브 API처럼 이 구현 중 어느 것과도 맞지 않
 **GitHub Copilot**과 **GitLab Duo**는 자신의 범용 OpenAI 호환 엔드포인트에 매핑된 멀티 모델
 게이트웨이입니다. Copilot은 `epx login github-copilot`으로 GitHub 디바이스 플로우 OAuth 로그인을
 지원합니다(비공식 브리지 — VS Code 공개 클라이언트 id로 로그인 후 단기 Copilot API 토큰으로
-교환하며, 활성 Copilot 구독이 필요하고 GitHub 정책 변경으로 막힐 수 있음). GitLab Duo는 Bearer
+교환하며 활성 Copilot 구독이 필요하고 GitHub 정책 변경으로 막힐 수 있음). GitLab Duo는 Bearer
 **구독 토큰**(일반 API 키가 아님)으로 인증합니다. **Cloudflare AI
 Gateway**는 URL에 계정 + 게이트웨이 id를 채워야 합니다.
 
 Copilot은 혼합 wire 카탈로그를 제공합니다. 모델(`gpt-5.3-codex`, `gpt-5.4`,
 `gpt-5.4-mini`, `gpt-5.5`, `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`, `grok-4.5`, `grok-4.6`, `mai-code-1.1-flash`, `mai-code-1-flash-picker`)은 에이전트
 트래픽에 대해 `/chat/completions`를 거부하므로 easyproxy는 이 모델들을 내장 기본값으로
-Responses API를 통해 라우팅하고, 다른 Copilot 모델은 모두 chat completions를 유지합니다. `gpt-6-sol`, `gpt-6-luna`, `gpt-6.2-sol`, `gpt-6.2-astra`도 선제적 내장 기본값으로 Responses를 사용합니다. 이 모델들에서 거부가 관측된 적은 없으며, Copilot의 GPT-6.2 모델 제공 여부는 확인되지 않았습니다.
+Responses API를 통해 라우팅하고 다른 Copilot 모델은 모두 chat completions를 유지합니다. `gpt-6-sol`, `gpt-6-luna`, `gpt-6.2-sol`, `gpt-6.2-astra`도 선제적 내장 기본값으로 Responses를 사용합니다. 이 모델들에서 거부가 관측된 적은 없으며 Copilot의 GPT-6.2 모델 제공 여부는 확인되지 않았습니다.
 우선순위는 하드 wire 핀 → 명시적 [`modelAdapters`](/ko/reference/configuration/providers/)
 항목 → 레지스트리 기본값 → 프로바이더 전체 adapter 순입니다. 내장 기본값이 없는 모델(예:
 `gpt-5.4-nano`)을 Responses로 전환하려면 `"modelAdapters": { "gpt-5.4-nano": "openai-responses" }`를
 설정하세요.
 
 Cursor는 별도의 실험적 어댑터로 추적합니다. `adapter: "cursor"`는 `epx init`과 dashboard Add
-Provider picker에 실험적 local config 항목으로 표시되며, Cursor의 static fallback model catalog
+Provider picker에 실험적 local config 항목으로 표시되며 Cursor의 static fallback model catalog
 metadata를 저장합니다. Cursor access token이 설정되면 easyproxy는 Cursor live HTTP/2 transport를
 사용합니다. 번들 폴백 목록에는 1M 컨텍스트의 `gpt-5.6-sol` / `terra` / `luna`, 500K 컨텍스트의
-Grok 4.5/4.6/4.7의 일반·Fast 항목, 262K 컨텍스트의 `kimi-k3`가 들어 있으며, 실시간 탐색 결과에 따라
+Grok 4.5/4.6/4.7의 일반·Fast 항목, 262K 컨텍스트의 `kimi-k3`가 들어 있으며 실시간 탐색 결과에 따라
 현재 계정에 표시할 모델을 결정합니다. Grok 4.6과 4.7은 두 형식 모두 `low` / `medium` / `high` / `xhigh`를
 노출하고 4.5는 `high`까지만 노출합니다. Grok 4.5와 4.6의 Fast 요청은 해당 기본 모델과 별도의
 `effort`, `fast=true` `requested_model` 파라미터를 전송합니다. 이 두 버전의 평탄화된
@@ -520,9 +520,9 @@ effort 접미사가 붙은 wire id로만
 `~/.easyproxy/config.json`의 `providers.cursor`에 `unsafeAllowNativeLocalExec: true`를 설정하세요.
 대시보드에서는 **Providers → Cursor → Edit JSON**에서 설정할 수 있습니다. 전체 예시는
 [설정 레퍼런스](/ko/reference/configuration/providers/#cursor-공급자-adapter-cursor)를 참고하세요.
-MCP, 화면 녹화, computer-use는 executor hook으로 열려 있으며, 로컬
+MCP, 화면 녹화, computer-use는 executor hook으로 열려 있으며 로컬
 executor가 없으면 정책 차단이 아니라 typed no-executor 결과를 반환합니다. Cursor OAuth와 live
-model discovery는 이 실험적 어댑터에서 활성화되어 있으며, Cursor는 여전히 key-login 목록에는
+model discovery는 이 실험적 어댑터에서 활성화되어 있으며 Cursor는 여전히 key-login 목록에는
 표시되지 않습니다.
 :::
 
@@ -530,11 +530,11 @@ model discovery는 이 실험적 어댑터에서 활성화되어 있으며, Curs
 
 Ollama Cloud는 호스팅형(로컬이 아님) Ollama입니다. `https://ollama.com/v1`으로 설정하고 키는
 [ollama.com/settings/keys](https://ollama.com/settings/keys)에서 발급받습니다. easyproxy는 OpenAI 호환
-표면이 아니라 Ollama 자체 REST API(`POST /api/chat`)로 연결하며, 모델 목록을 공급자에서 직접
+표면이 아니라 Ollama 자체 REST API(`POST /api/chat`)로 연결하며 모델 목록을 공급자에서 직접
 발견하므로 새 Ollama Cloud 모델이 설정 변경 없이 나타납니다. easyproxy는 클라우드
 라인업을 비전 기능에 따라 분류하여 [비전 사이드카](/ko/guides/sidecars/)가 텍스트 전용 모델에만
 작동하도록 합니다. 텍스트 전용 모델(예: `glm-5.2`, `deepseek-v4-flash`, `gpt-oss`, `qwen3-coder`,
-`minimax-m2.x`, `nemotron-3-*`)은 `noVisionModels`에 나열되며, 비전 네이티브 모델(예:
+`minimax-m2.x`, `nemotron-3-*`)은 `noVisionModels`에 나열되며 비전 네이티브 모델(예:
 `kimi-k2.6`, `minimax-m3`, `gemma4`, `qwen3.5`, `gemini-3-flash-preview`)은 포함되지 않습니다. 매칭은
 Ollama의 `:size` 태그에 관대하므로 `gpt-oss`는 `gpt-oss:120b`와 `gpt-oss:20b`를 모두 포괄합니다.
 
@@ -564,6 +564,6 @@ easyproxy를 로컬 OpenAI 호환 서버로 향하게 하세요 — 보통은 �
 
 ### Antigravity 쿼터 조회 실패 확인
 
-계정 쿼터 화면과 `epx account list google-antigravity --quota --refresh`는 접근 거부, 요청 한도, 목적지·리디렉션 차단, DNS·연결·시간 초과, 읽을 수 없는 응답을 구분합니다. 조회가 실패해도 마지막 관측 막대와 시각은 유지합니다. 재로그인하면 이전 자격 증명의 진단을 버리고, 조회에 성공하면 오류 표시를 지웁니다.
+계정 쿼터 화면과 `epx account list google-antigravity --quota --refresh`는 접근 거부, 요청 한도, 목적지·리디렉션 차단, DNS·연결·시간 초과, 읽을 수 없는 응답을 구분합니다. 조회가 실패해도 마지막 관측 막대와 시각은 유지합니다. 재로그인하면 이전 자격 증명의 진단을 버리고 조회에 성공하면 오류 표시를 지웁니다.
 
 접근 거부만으로 로그인 만료나 플랜 사용 불가를 단정하지 않습니다. 목적지 차단도 Fake-IP 결함의 증거는 아닙니다. Google의 고정 쿼터 주소에는 TLS 인증서 확인과 리디렉션·사설 주소 제한이 유지됩니다. 인증된 TUN 환경의 동작은 해당 환경에서 별도로 확인해야 합니다.

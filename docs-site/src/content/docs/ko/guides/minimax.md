@@ -46,7 +46,7 @@ custom_provider:
 
 생성되는 모델 목록, 컨텍스트 창, 추론 강도 단계는 실행 중인 easyproxy 카탈로그에서 가져옵니다. 컨텍스트 창에는 [사용자 지정 공급자의 추정값](/ko/reference/configuration/providers/#사용자-지정-공급자의-컨텍스트)이 포함될 수 있습니다. 카탈로그에 창이나 강도 단계가 없으면 해당 필드를 생략합니다. MCode는 현재 선택한 강도를 세션에 유지하므로 easyproxy는 선택을 덮어쓰지 않고 `effortOptions`를 내보냅니다. 이 블록은 실제 키를 기록하거나 `defaultModel`을 교체하거나 MiniMax 로그인을 바꾸지 않습니다. MCode에서는 `custom_provider:easyproxy/...` 아래의 모델을 고르세요.
 
-`epx mcode`는 클라이언트를 실행하기 전에 이 프로바이더가 현재 실행 중인 프록시를 가리키는지 확인합니다. 한 번 활성화한 뒤에는 포트나 카탈로그 기능이 달라질 때 `epx sync`로 소유 블록을 갱신합니다. 자동 동기화는 소유하지 않은 블록을 만들거나, 삭제한 블록을 다시 만들거나, easyproxy가 기록한 뒤 변경된 파일을 덮어쓰지 않습니다. 의도적으로 재연결하려면 활성화 명령을 사용하세요. 같은 감사 대상 연동 시스템에서 비활성화하거나 복원할 수 있습니다.
+`epx mcode`는 클라이언트를 실행하기 전에 이 프로바이더가 현재 실행 중인 프록시를 가리키는지 확인합니다. 한 번 활성화한 뒤에는 포트나 카탈로그 기능이 달라질 때 `epx sync`로 소유 블록을 갱신합니다. 자동 동기화는 소유하지 않은 블록을 만들거나 삭제한 블록을 다시 만들거나 easyproxy가 기록한 뒤 변경된 파일을 덮어쓰지 않습니다. 의도적으로 재연결하려면 활성화 명령을 사용하세요. 같은 감사 대상 연동 시스템에서 비활성화하거나 복원할 수 있습니다.
 
 ```bash
 epx integration client disable --client mcode
@@ -77,7 +77,7 @@ epx mmx --output json text chat \
   --message "Return a JSON summary"
 ```
 
-MMX는 API 기본 URL 아래의 `/anthropic/v1/messages`를 고정해 사용합니다. 래퍼는 자식 프로세스가 실행되는 동안 임시 루프백 브리지를 시작합니다. 이 브리지는 해당 Messages 경로와 `/anthropic/v1/messages/count_tokens`에 대한 POST 요청만 받고, 요청 본문과 쿼리 데이터를 유지하면서 easyproxy의 기존 `/v1/messages` 및 `/v1/messages/count_tokens` 데이터 경로로 매핑합니다. easyproxy의 정식 요청 변환, 사용량 계산, 설정된 다운스트림 프로바이더 인증은 그대로 적용됩니다. 설정에 따라 프로바이더에는 `x-api-key` 또는 bearer 전송 방식이 사용됩니다. 스트리밍은 Anthropic 메시지와 콘텐츠 이벤트를 유지합니다. 전달 전 브리지는 인바운드 수용 자격 증명 헤더를 제거하고 공개 `easyproxy-loopback` 자리표시자를 고정합니다. 임의의 Anthropic 리소스를 프록시하지 않으며 브리지는 루프백 밖으로 노출되지 않습니다.
+MMX는 API 기본 URL 아래의 `/anthropic/v1/messages`를 고정해 사용합니다. 래퍼는 자식 프로세스가 실행되는 동안 임시 루프백 브리지를 시작합니다. 이 브리지는 해당 Messages 경로와 `/anthropic/v1/messages/count_tokens`에 대한 POST 요청만 받고 요청 본문과 쿼리 데이터를 유지하면서 easyproxy의 기존 `/v1/messages` 및 `/v1/messages/count_tokens` 데이터 경로로 매핑합니다. easyproxy의 정식 요청 변환, 사용량 계산, 설정된 다운스트림 프로바이더 인증은 그대로 적용됩니다. 설정에 따라 프로바이더에는 `x-api-key` 또는 bearer 전송 방식이 사용됩니다. 스트리밍은 Anthropic 메시지와 콘텐츠 이벤트를 유지합니다. 전달 전 브리지는 인바운드 수용 자격 증명 헤더를 제거하고 공개 `easyproxy-loopback` 자리표시자를 고정합니다. 임의의 Anthropic 리소스를 프록시하지 않으며 브리지는 루프백 밖으로 노출되지 않습니다.
 
 래퍼는 자리표시자만 들어 있는 임시 `MMX_CONFIG_DIR`도 만들고 `mmx` 종료 후 삭제합니다. 사용자의 `~/.mmx/config.json`, OAuth 토큰, MiniMax API 키는 불러오거나 복사하지 않습니다.
 

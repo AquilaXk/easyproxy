@@ -3,7 +3,7 @@ title: Factory Droid 브리지
 description: 로컬 Responses 호환 브리지를 통해 Factory Droid 모델을 easyproxy에 연결합니다.
 ---
 
-Factory Droid는 에이전트 런타임이며, 문서화된 OpenAI 호환 추론 엔드포인트가 아닙니다. 내부
+Factory Droid는 에이전트 런타임이며 문서화된 OpenAI 호환 추론 엔드포인트가 아닙니다. 내부
 Factory LLM URL을 사용자 지정 프로바이더로 등록했을 때 `403 Forbidden`이 발생한다면,
 easyproxy 어댑터나 프로바이더 헤더만 바꿔도 그 비공개 경로가 지원되는 공개 API로 바뀌지는
 않습니다.
@@ -32,7 +32,7 @@ easyproxy 어댑터나 프로바이더 헤더만 바꿔도 그 비공개 경로�
 | `${DROID_BRIDGE_TOKEN}`을 찾지 못함 | easyproxy 서비스 환경에 변수가 없음 | 대화형 셸이 아니라 서비스 프로세스에 변수 주입 |
 | `OutputTextDelta without active item` | 출력 item과 content part를 열기 전에 text delta를 보냄 | Responses SSE 수명주기 전체를 순서대로 전송 |
 
-따라서 같은 Factory 자격 증명으로 `droid exec`는 성공하지만, 문서화되지 않은 LLM URL 직접
+따라서 같은 Factory 자격 증명으로 `droid exec`는 성공하지만 문서화되지 않은 LLM URL 직접
 요청은 `403`을 반환할 수 있습니다. 두 결과는 서로 다른 제품 표면을 시험한 것이므로 모순이
 아닙니다.
 
@@ -52,23 +52,23 @@ easyproxy 어댑터나 프로바이더 헤더만 바꿔도 그 비공개 경로�
    - `GET /v1/models`
    - `POST /v1/responses`
 
-Factory는 `droid exec`를 비대화형 자동화 표면으로 문서화하며, 스크립트에서는 JSON 출력을
+Factory는 `droid exec`를 비대화형 자동화 표면으로 문서화하며 스크립트에서는 JSON 출력을
 권장합니다. 장시간 유지되는 통합에는 stream JSON-RPC와 공식 TypeScript/Python SDK도 사용할 수
 있습니다. 자세한 내용은 [Droid Exec 가이드](https://docs.factory.ai/droid-exec/overview)를
 참고하세요.
 
 ## 브리지 계약
 
-브리지는 `127.0.0.1`에만 바인딩하고, 무작위 bearer 토큰을 요구하며, 요청 크기와 모델 ID를
+브리지는 `127.0.0.1`에만 바인딩하고 무작위 bearer 토큰을 요구하며 요청 크기와 모델 ID를
 제한해야 합니다. 최소 브리지는 다음 Responses `input` 형태만 허용합니다.
 
 - 비어 있지 않은 문자열
 - `message` item만 들어 있는 배열. 각 메시지의 role은 `user`, `developer`, `system`,
-  `assistant` 중 하나여야 하며, content는 문자열이거나 텍스트 전용 content part여야 합니다.
+  `assistant` 중 하나여야 하며 content는 문자열이거나 텍스트 전용 content part여야 합니다.
   입력 role에는 `input_text`, assistant 이력에는 `output_text`만 허용합니다.
 
-Droid를 실행하기 전에 요청 전체를 검증해야 합니다. input part에 이미지나 파일이 있거나,
-`tools`에 도구 정의가 하나라도 있거나, `input`에 도구 호출 또는 결과(`function_call`,
+Droid를 실행하기 전에 요청 전체를 검증해야 합니다. input part에 이미지나 파일이 있거나
+`tools`에 도구 정의가 하나라도 있거나 `input`에 도구 호출 또는 결과(`function_call`,
 `function_call_output`, `custom_tool_call`, `custom_tool_call_output`)가 있으면 Responses 형식의
 `invalid_request_error`와 함께 HTTP `400`을 반환합니다. `unsupported_bridge_input`처럼 안정적인
 브리지 전용 code를 사용하고 message에서 거부한 필드를 명시하세요. `stream: true`여도 SSE를
@@ -107,7 +107,7 @@ response.output_item.done
 response.completed
 ```
 
-브리지를 `0.0.0.0`에 노출하지 말고, Factory 자격 증명을 브리지 bearer 토큰으로 재사용하지
+브리지를 `0.0.0.0`에 노출하지 말고 Factory 자격 증명을 브리지 bearer 토큰으로 재사용하지
 마세요.
 
 ## EasyProxy 프로바이더 설정
@@ -171,7 +171,7 @@ epx access test droid/glm-5.2 --protocol responses
 ## 현재 한계
 
 위 최소 브리지는 텍스트와 Responses SSE 수명주기만 변환합니다. Codex App과 `codex exec`는
-프롬프트에서 도구를 호출하지 말라고 해도 일반적으로 도구 정의를 보내며, 현재 Codex CLI에는 그
+프롬프트에서 도구를 호출하지 말라고 해도 일반적으로 도구 정의를 보내며 현재 Codex CLI에는 그
 정의를 모두 제거하는 범용 플래그가 없습니다. 최소 브리지는 위 계약에 따라 해당 요청을 `400`으로
 거부해야 합니다. 도구 정의, 도구 호출과 결과, 권한, 취소, 풍부한 Droid 이벤트를 처리하려면
 Factory stream JSON-RPC 모드 또는 공식 Droid SDK를 사용하는 상태 유지 브리지가 필요합니다.

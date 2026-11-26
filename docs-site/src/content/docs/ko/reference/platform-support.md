@@ -3,7 +3,7 @@ title: 플랫폼 지원
 description: macOS, Windows, Linux에서 easyproxy가 지원하는 기능과 일부 기능이 플랫폼별로 다른 이유를 설명합니다.
 ---
 
-easyproxy는 macOS, Windows, Linux에서 실행됩니다. 대부분의 기능은 세 플랫폼에서 똑같이 동작합니다. 일부는 운영체제가 제공하는 기능에 의존하며, 이 문서에서 지원 범위와 이유를 설명합니다.
+easyproxy는 macOS, Windows, Linux에서 실행됩니다. 대부분의 기능은 세 플랫폼에서 똑같이 동작합니다. 일부는 운영체제가 제공하는 기능에 의존하며 이 문서에서 지원 범위와 이유를 설명합니다.
 
 ## 모든 플랫폼
 

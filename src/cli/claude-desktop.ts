@@ -795,7 +795,7 @@ export async function handleClaudeDesktopCommand(argv: string[], deps: ApplyProf
       }
       if (target.kind === "first-party") {
         console.log(`Claude Desktop first-party 설정을 적용했습니다: ${result.path}`);
-        console.log("Desktop 앱 설정은 그대로이며, Code 탭의 Claude Code만 로컬 프록시를 거칩니다.");
+        console.log("Desktop 앱 설정은 그대로이며 Code 탭의 Claude Code만 로컬 프록시를 거칩니다.");
         console.warn(`⚠️  ${FIRST_PARTY_ACCOUNT_RISK.message}`);
         printPickerStatus(result.picker, false);
       } else {

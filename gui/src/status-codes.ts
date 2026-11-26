@@ -33,7 +33,7 @@ const STATUS_CODES: Record<number, LocalizedInfo> = {
   402: {
     en: { label: "Payment required", description: "The upstream provider rejected the request because billing, credits, or plan access is not available. Add credits, update billing, or switch provider." },
     fr: { label: "Paiement requis", description: "Le fournisseur en amont a rejeté la requête, car la facturation, les crédits ou l’accès à l’offre ne sont pas disponibles. Ajoutez des crédits, mettez à jour la facturation ou changez de fournisseur." },
-    ko: { label: "결제 필요", description: "청구, 크레딧 또는 플랜 접근 권한 문제로 업스트림 프로바이더가 요청을 거부했습니다. 크레딧을 충전하거나 결제 정보를 갱신하고, 필요하면 다른 프로바이더로 전환하세요." },
+    ko: { label: "결제 필요", description: "청구, 크레딧 또는 플랜 접근 권한 문제로 업스트림 프로바이더가 요청을 거부했습니다. 크레딧을 충전하거나 결제 정보를 갱신하고 필요하면 다른 프로바이더로 전환하세요." },
     zh: { label: "需要付款", description: "上游提供商因账单、额度或套餐权限不可用而拒绝了请求。请充值、更新账单信息或切换提供商。" },
     "zh-TW": { label: "需要付款", description: "上游供應商因帳單、額度或方案許可權不可用而拒絕了請求。請儲值、更新帳單資訊或切換供應商。" },
     de: { label: "Zahlung erforderlich", description: "Der Upstream-Anbieter hat die Anfrage abgelehnt, weil Abrechnung, Guthaben oder Planzugriff nicht verfügbar ist. Guthaben aufladen, Abrechnung aktualisieren oder Anbieter wechseln." },

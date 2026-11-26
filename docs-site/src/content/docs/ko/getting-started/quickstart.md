@@ -49,8 +49,8 @@ epx start --port 8080
 
 시작하면 easyproxy는:
 
-- PID를 `~/.easyproxy/epx.pid`에 기록하고 중복 시작을 거부하며,
-- 프로바이더가 지원하는 경우 실시간 모델을 찾아 네이티브와 라우팅 항목을 **Codex 모델 카탈로그에 동기화**하고,
+- PID를 `~/.easyproxy/epx.pid`에 기록하고 중복 시작을 거부하며
+- 프로바이더가 지원하는 경우 실시간 모델을 찾아 네이티브와 라우팅 항목을 **Codex 모델 카탈로그에 동기화**하고
 - `http://localhost:<port>/v1`에서 수신 대기합니다.
 
 동일한 `EASYPROXY_HOME`을 사용하는 easyproxy가 실행 중이면 빈 포트라도 두 번째로 시작할 수 없습니다. 먼저 해당 인스턴스를 `epx stop`으로 중지하거나 다른 `EASYPROXY_HOME`을 선택하세요. 형제 인스턴스는 자신의 포트에서 직접 요청을 처리하지만 Codex, Grok, Claude의 공유 라우팅은 변경하지 않습니다. 무관한 프로세스가 포트를 사용하면 `epx start`가 알립니다. `epx start --port <port>`로 빈 포트를 지정하세요. 포트는 자동으로 바뀌지 않습니다.
@@ -97,7 +97,7 @@ epx claude
 epx claude desktop
 ```
 
-새로 설치할 때는 앱 전체에 게이트웨이 프로필을 설정합니다. 이미 first-party 모드를 사용하는 설치는 해당 모드를 유지하며, `epx claude desktop apply --gateway`를 실행해 명시적으로 전환할 수 있습니다. Desktop은 claude.ai를 유지하고 Code 탭만 라우팅하는 first-party 모드는 [Claude Code](/ko/guides/claude-code/)의 Claude Desktop 모드 항목을 참조하세요.
+새로 설치할 때는 앱 전체에 게이트웨이 프로필을 설정합니다. 이미 first-party 모드를 사용하는 설치는 해당 모드를 유지하며 `epx claude desktop apply --gateway`를 실행해 명시적으로 전환할 수 있습니다. Desktop은 claude.ai를 유지하고 Code 탭만 라우팅하는 first-party 모드는 [Claude Code](/ko/guides/claude-code/)의 Claude Desktop 모드 항목을 참조하세요.
 
 모드를 전환한 뒤에는 Claude Desktop을 완전히 종료했다가 다시 여세요.
 
@@ -119,7 +119,7 @@ epx integration client enable --client <id>
 
 ## Sub-agent 모델 선택(선택 사항)
 
-새 구성에는 Codex의 sub-agent 선택기에 네이티브 모델 다섯 개인 `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-6-astra`가 표시됩니다. `epx gui`를 열어 네이티브 또는 라우팅 모델을 최대 다섯 개까지 바꾸거나 순서를 다시 정할 수 있습니다. 대시보드에서는 선호하는 sub-agent 모델과 추론 강도도 설정할 수 있습니다. [Sub-agent Surface](/guides/sub-agent-surface/)에서 v1/base/v2를 고르고, guidance, 네이티브 기본값, fallback이 언제 적용되는지 확인합니다.
+새 구성에는 Codex의 sub-agent 선택기에 네이티브 모델 다섯 개인 `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-6-astra`가 표시됩니다. `epx gui`를 열어 네이티브 또는 라우팅 모델을 최대 다섯 개까지 바꾸거나 순서를 다시 정할 수 있습니다. 대시보드에서는 선호하는 sub-agent 모델과 추론 강도도 설정할 수 있습니다. [Sub-agent Surface](/guides/sub-agent-surface/)에서 v1/base/v2를 고르고 guidance, 네이티브 기본값, fallback이 언제 적용되는지 확인합니다.
 
 ## 키를 붙여넣는 대신 로그인하기
 

@@ -5,9 +5,9 @@ description: 비OpenAI 모델을 통해 Grok Imagine Video로 영상을 생성�
 
 ## 개요
 
-Video Bridge는 easyproxy가 라우팅한 OpenAI가 아닌 모델로 xAI의 Grok Imagine Video 생성을 사용할 수 있게 합니다. 활성화하면 대화에 합성 `video_gen` 도구가 주입됩니다. 모델은 이를 일반 함수 도구처럼 호출하고, easyproxy는 이 호출을 가로채 xAI에 영상 생성 작업을 제출한 뒤 완료될 때까지 폴링하고 결과를 내려받습니다.
+Video Bridge는 easyproxy가 라우팅한 OpenAI가 아닌 모델로 xAI의 Grok Imagine Video 생성을 사용할 수 있게 합니다. 활성화하면 대화에 합성 `video_gen` 도구가 주입됩니다. 모델은 이를 일반 함수 도구처럼 호출하고 easyproxy는 이 호출을 가로채 xAI에 영상 생성 작업을 제출한 뒤 완료될 때까지 폴링하고 결과를 내려받습니다.
 
-기본적으로 작업은 xAI로 전송되며, `images.videoProvider`로 호환되는 다른 백엔드를 지정할 수 있습니다.
+기본적으로 작업은 xAI로 전송되며 `images.videoProvider`로 호환되는 다른 백엔드를 지정할 수 있습니다.
 
 ## 사전 조건
 
@@ -18,7 +18,7 @@ Video Bridge는 easyproxy가 라우팅한 OpenAI가 아닌 모델로 xAI의 Grok
 - 비OpenAI provider를 거치도록 easyproxy 설정
 
 > **⚠ Provider key required:** 비디오 브리지는 `xai` provider가
-> API key auth를 사용할 때만 활성화됩니다. 설정에 다음을 추가하십시오:
+> API key auth를 사용할 때만 활성화됩니다. 설정에 다음을 추가하세요:
 >
 > ```json
 > {
@@ -32,7 +32,7 @@ Video Bridge는 easyproxy가 라우팅한 OpenAI가 아닌 모델로 xAI의 Grok
 
 ## 구성
 
-`images` 설정에 `videoBridgeEnabled: true`를 추가하십시오:
+`images` 설정에 `videoBridgeEnabled: true`를 추가하세요:
 
 ```json
 {
@@ -80,8 +80,8 @@ Video Bridge는 easyproxy가 라우팅한 OpenAI가 아닌 모델로 xAI의 Grok
 - 지정한 제공자의 `baseUrl`과 API 키만 목적지와 자격 증명으로 사용합니다. 어댑터 종류는 상관없지만 API 키 인증이어야 합니다.
 - `"videoProvider": "xai"`는 `xai` 항목의 `baseUrl`과 관계없이 고정된 `https://api.x.ai/v1`을 사용합니다. 다른 내장 제공자 ID는 거부되므로 사용자 지정 제공자를 지정하세요.
 - 루프백 또는 사설망 `baseUrl`은 다른 제공자 트래픽과 마찬가지로 해당 제공자에 `allowPrivateNetwork: true`가 필요합니다.
-- EasyProxy가 xAI 키로 식별할 수 있는 키(`xai-` 형식 키, `xai` 항목이 가진 키, xAI나 Grok 이름의 환경 변수 참조)는 `https://api.x.ai` 또는 `https://cli-chat-proxy.grok.com`으로만 전송되며 다른 출처는 거부됩니다. 이런 표시가 없는 키는 식별할 수 없으므로 xAI 키를 다른 제공자 항목에 붙여 넣지 마세요. 다른 제공자의 비밀을 가리키는 키체인 참조는 항상 거부되고, 일시 중지된 활성 키도 거부되며, `baseUrl`에는 자격 증명, 쿼리, 프래그먼트를 넣을 수 없습니다.
-- 제공자가 없거나, 비활성화되었거나, 일시 중지되었거나, 키가 없거나, 거부되면 모든 `video_gen` 호출이 그 오류를 모델에 반환합니다. 아무것도 전송하지 않으며 xAI로 대체하지 않습니다.
+- EasyProxy가 xAI 키로 식별할 수 있는 키(`xai-` 형식 키, `xai` 항목이 가진 키, xAI나 Grok 이름의 환경 변수 참조)는 `https://api.x.ai` 또는 `https://cli-chat-proxy.grok.com`으로만 전송되며 다른 출처는 거부됩니다. 이런 표시가 없는 키는 식별할 수 없으므로 xAI 키를 다른 제공자 항목에 붙여 넣지 마세요. 다른 제공자의 비밀을 가리키는 키체인 참조는 항상 거부되고 일시 중지된 활성 키도 거부되며 `baseUrl`에는 자격 증명, 쿼리, 프래그먼트를 넣을 수 없습니다.
+- 제공자가 없거나 비활성화되었거나 일시 중지되었거나 키가 없거나 거부되면 모든 `video_gen` 호출이 그 오류를 모델에 반환합니다. 아무것도 전송하지 않으며 xAI로 대체하지 않습니다.
 - 완성된 영상은 여전히 base64 `data:` URL이나 공개 `https:` URL에서만 내려받으므로, 로컬 브리지는 `video.url`로 둘 중 하나를 반환해야 합니다.
 
 ## 동작 방식
@@ -89,7 +89,7 @@ Video Bridge는 easyproxy가 라우팅한 OpenAI가 아닌 모델로 xAI의 Grok
 1. easyproxy는 `videoBridgeEnabled: true`가 켜진 비OpenAI 라우팅 모델을 감지합니다.
 2. 합성 `video_gen` 함수 도구가 대화에 주입됩니다.
 3. 모델이 `video_gen`을 호출하면, easyproxy는 xAI의 `/videos/generations`로 작업을 제출합니다 (`images.videoProvider`를 설정한 경우 그 제공자).
-4. 브리지는 5-15초마다 작업 상태를 폴링하고, 스트림을 살리기 위해 heartbeat 메시지를 보냅니다.
+4. 브리지는 5-15초마다 작업 상태를 폴링하고 스트림을 살리기 위해 heartbeat 메시지를 보냅니다.
 5. 비디오가 준비되면 artifacts 디렉터리로 내려받습니다.
 6. 로컬 파일 경로가 도구 결과로 모델에 반환됩니다.
 

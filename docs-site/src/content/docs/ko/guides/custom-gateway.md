@@ -10,7 +10,7 @@ description: 모델 목록 조회부터 제한된 응답 생성까지 사용자 
 추론 성공이 증명되지는 않습니다.
 
 [Remote Link](/ko/guides/remote-link/) Child에서는 provider를 Home에서 가져옵니다. Child 대시보드는 provider 변경을
-거부하고, 요청은 Home의 provider가 처리합니다. 게이트웨이 등록과 검증은 Home에서 하세요.
+거부하고 요청은 Home의 provider가 처리합니다. 게이트웨이 등록과 검증은 Home에서 하세요.
 
 각 단계를 따로 확인하세요. 기본 포트가 아니면 설정한 로컬 포트를 사용합니다.
 
@@ -32,10 +32,10 @@ provider test는 추론이 아닌 모델 목록 조회를 검사합니다. 정�
 예시 ID는 제공받은 정확한 값으로 바꿉니다. [정적 모델 설정](/ko/reference/configuration/providers/)을 참고하세요.
 
 `config.json`을 직접 수정하기 전에 작업을 저장하고 진행 중인 요청이 끝날 때까지 기다리세요. 프록시를 중지하면
-진행 중인 요청이 중단될 수 있습니다. 관리 주체에 따라 Desktop 트레이에서 EasyProxy를 종료하거나, 서비스 설치는
+진행 중인 요청이 중단될 수 있습니다. 관리 주체에 따라 Desktop 트레이에서 EasyProxy를 종료하거나 서비스 설치는
 `epx service stop`, 감독되지 않는 프록시는 `epx stop`으로 중지하세요. 중지된 것을 확인한 뒤 다른 설정 쓰기 작업을
-실행하지 않는 상태에서 파일을 수정하고 저장합니다. 같은 관리 주체로 다시 시작하세요: Desktop을 다시 열거나,
-`epx service start`를 실행하거나, 기존 `epx start` 명령과 실행 옵션을 사용합니다. 직접 지정한 `--port`도
+실행하지 않는 상태에서 파일을 수정하고 저장합니다. 같은 관리 주체로 다시 시작하세요: Desktop을 다시 열거나
+`epx service start`를 실행하거나 기존 `epx start` 명령과 실행 옵션을 사용합니다. 직접 지정한 `--port`도
 포함합니다. 포그라운드 시작 명령은 해당 터미널에서 계속 실행하고 다른 터미널에서 `epx sync`와 나머지 검사를
 실행하세요. 그다음 live 카탈로그를 다시 확인합니다. 또는 아래 비용 확인을 거치는 응답 생성 명령에
 제공받은 원본 ID를 직접 사용할 수 있습니다. 이 테스트에는 카탈로그 행이 필요하지 않습니다.
@@ -43,7 +43,7 @@ provider test는 추론이 아닌 모델 목록 조회를 검사합니다. 정�
 live 카탈로그에서 실제 `id`, `namespaced`, `disabled`, `initialSelectionPending`을 확인하세요.
 초기 선택에 따라 모델이 꺼져 있거나 대기 상태일 수 있습니다. [초기 모델 선택](/ko/reference/configuration/providers/)을
 참고하세요. 행을 켜기 전에 초기 선택의 대기 상태를 해소합니다. 표시 관리 명령의 선택자는 프로바이더 이름과 행의
-**원본 `id`**를 조합하며, ID 내부의 슬래시를 그대로 유지합니다.
+**원본 `id`**를 조합하며 ID 내부의 슬래시를 그대로 유지합니다.
 
 ```sh
 epx models enable 'my-gateway/<원본-업스트림-ID>'
