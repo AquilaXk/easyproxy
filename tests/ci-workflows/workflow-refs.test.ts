@@ -11,6 +11,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -349,5 +350,68 @@ describe("GitHub workflow and action reference integrity", () => {
       encoding: "utf8",
     });
     expect(res.status, res.stderr).toBe(0);
+  });
+
+  test.skipIf(process.platform === "win32")("appimage-patchelf preserves prepared native-bin helpers and fails closed on symlinks", () => {
+    const work = mkdtempSync(join(tmpdir(), "epx-patchelf-native-"));
+    tempDirs.push(work);
+    const fakeRepo = join(work, "repo");
+    const scriptDst = join(fakeRepo, "desktop", "scripts", "appimage-patchelf.py");
+    const preparedDir = join(fakeRepo, "desktop", "src-tauri", "resources", "native-bin", "linux-x64");
+    const preparedChild = join(preparedDir, "epx-child");
+    const cargoTargetDir = join(work, "appimage-target");
+    const appDirNative = join(
+      cargoTargetDir,
+      "x86_64-unknown-linux-gnu",
+      "release",
+      "bundle",
+      "appimage",
+      "EasyProxy.AppDir",
+      "usr",
+      "lib",
+      "EasyProxy",
+      "native-bin",
+      "linux-x64",
+    );
+    const appDirChild = join(appDirNative, "epx-child");
+
+    mkdirSync(join(fakeRepo, "desktop", "scripts"), { recursive: true });
+    mkdirSync(preparedDir, { recursive: true });
+    mkdirSync(appDirNative, { recursive: true });
+    copyFileSync(repoPath("desktop", "scripts", "appimage-patchelf.py"), scriptDst);
+    chmodSync(scriptDst, 0o755);
+
+    const payload = Buffer.from("\x7fELF-fake-rust-epx-child-binary");
+    const expectedHash = createHash("sha256").update(payload).digest("hex");
+    writeFileSync(preparedChild, payload);
+    writeFileSync(appDirChild, payload);
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      const res = spawnSync(
+        scriptDst,
+        ["--set-rpath", "$ORIGIN", appDirChild],
+        {
+          env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
+          encoding: "utf8",
+        },
+      );
+      expect(res.status, res.stderr).toBe(0);
+      expect(res.stderr).toContain("Preserving prepared native helper epx-child bytes");
+      expect(readFileSync(appDirChild)).toEqual(payload);
+      expect(createHash("sha256").update(readFileSync(appDirChild)).digest("hex")).toBe(expectedHash);
+    }
+
+    rmSync(appDirChild);
+    symlinkSync(preparedChild, appDirChild);
+    const symlinkRes = spawnSync(
+      scriptDst,
+      ["--set-rpath", "$ORIGIN", appDirChild],
+      {
+        env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
+        encoding: "utf8",
+      },
+    );
+    expect(symlinkRes.status).not.toBe(0);
+    expect(symlinkRes.stderr).toContain("AppImage native helper differs from the prepared binary");
   });
 });
