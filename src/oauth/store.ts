@@ -450,6 +450,10 @@ const peekAuthStoreCache = new StatFileCache<AuthStore>(bytes => {
   return snapshot.kind === "ready" ? snapshot.store : {};
 });
 
+export function invalidateAuthStoreCache(path = getAuthStorePath()): void {
+  peekAuthStoreCache.invalidate(path);
+}
+
 /**
  * Observe-only auth store read for diagnostics (`epx doctor` / status).
  * Does not chmod paths or backup invalid JSON — corrupt files are treated as empty.

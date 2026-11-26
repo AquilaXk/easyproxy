@@ -12,7 +12,7 @@ import { GATEWAY_NOTE_TEXT, gatewayNote, type GatewayClientConnector, type Gatew
 
 type Json = Record<string, unknown>;
 interface Prior { present: boolean; value?: unknown }
-interface Written { written: { gateway: unknown; defaultModelId: string | null }; writtenSha256: string }
+interface Written { written: { gateway: unknown; defaultModelId: string | null; defaultModelCleared?: true }; writtenSha256: string }
 /**
  * `written`/`writtenSha256` is the last state known to be on disk; `pending` is a write that may or may not
  * have landed, journaled before it starts so an interrupted or failed write still leaves both recognisable.
@@ -168,13 +168,21 @@ function connect(ctx: GatewayClientContext, target: GatewayTarget): GatewayClien
       gateway: pending && same(doc.gateway, pending.gateway) ? pending.gateway : base.written.gateway,
       defaultModelId: pending && models?.defaultModelId === pending.defaultModelId
         ? pending.defaultModelId : base.written.defaultModelId,
+      ...(pending && pending.defaultModelCleared && models?.defaultModelId === undefined
+        ? { defaultModelCleared: true as const }
+        : base.written.defaultModelCleared ? { defaultModelCleared: true as const } : {}),
     };
     stash = { ...stash!, resolvedPath, written, writtenSha256: base.writtenSha256, ...(stash!.pathWiseOnly || !onDisk ? { pathWiseOnly: true as const } : {}) };
     delete stash.pending;
   }
   const gateway = { enabled: true, url: target.url, apiKey: target.apiKey, wireProtocol: "openai" };
   doc.gateway = gateway;
-  if (target.defaultModel || models?.list !== undefined) {
+  if (target.clearDefaultModel && models) {
+    delete models.defaultModelId;
+    delete models.list;
+    if (Object.keys(models).length === 0) delete doc.models;
+    else doc.models = models;
+  } else if (target.defaultModel || models?.list !== undefined) {
     const m: Json = models ?? {};
     if (target.defaultModel) m.defaultModelId = target.defaultModel;
     delete m.list;
@@ -184,7 +192,16 @@ function connect(ctx: GatewayClientContext, target: GatewayTarget): GatewayClien
   const outSha = sha256(out);
   const next: Stash = { ...(stash as Stash), ...(target.issuedKeyId ? { issuedKeyId: target.issuedKeyId } : {}) };
   if (!target.issuedKeyId) delete next.issuedKeyId;
-  const applied: Written = { written: { gateway, defaultModelId: target.defaultModel ?? (keep ? next.written.defaultModelId : null) }, writtenSha256: outSha };
+  const applied: Written = {
+    written: {
+      gateway,
+      defaultModelId: target.clearDefaultModel ? null : (target.defaultModel ?? (keep ? next.written.defaultModelId : null)),
+      ...(target.clearDefaultModel
+        ? { defaultModelCleared: true as const }
+        : (!target.defaultModel && keep && next.written.defaultModelCleared ? { defaultModelCleared: true as const } : {})),
+    },
+    writtenSha256: outSha,
+  };
   assertClientSize(out);
   writeStash(ctx, ID, { ...next, pending: applied });
   writeClientFile(ctx, path, file, out);
@@ -218,6 +235,7 @@ function disconnect(ctx: GatewayClientContext): GatewayClientResult {
   const models = isObj(doc.models) ? doc.models : undefined;
   const saved = stash.prior;
   const writtenModels = states.map(st => st.written.defaultModelId).filter((id): id is string => id !== null);
+  const defaultWasCleared = states.some(st => st.written.defaultModelCleared === true) && models?.defaultModelId === undefined;
   const gatewayMatches = states.some(st => st.written.gateway !== null && same(doc.gateway, st.written.gateway));
   const defaultMatches = writtenModels.some(id => models?.defaultModelId === id);
   const listWasRemoved = saved.list.present && (models !== undefined || doc.models === undefined) && models?.list === undefined;
@@ -225,7 +243,8 @@ function disconnect(ctx: GatewayClientContext): GatewayClientResult {
   // A prior value may already be in place if a previous restore could not remove the record.
   const conflicts: string[] = [];
   if (!gatewayMatches && !same(doc.gateway, saved.gateway.value)) conflicts.push("gateway");
-  if (writtenModels.length > 0 && !defaultMatches && !same(models?.defaultModelId, saved.defaultModelId.value)) {
+  if ((writtenModels.length > 0 || states.some(st => st.written.defaultModelCleared === true))
+    && !defaultMatches && !defaultWasCleared && !same(models?.defaultModelId, saved.defaultModelId.value)) {
     conflicts.push("models.defaultModelId");
   }
   if (saved.list.present && !listWasRemoved && !same(models?.list, saved.list.value)) conflicts.push("models.list");
@@ -236,11 +255,17 @@ function disconnect(ctx: GatewayClientContext): GatewayClientResult {
   if (gatewayMatches) {
     if (saved.gateway.present) doc.gateway = saved.gateway.value; else delete doc.gateway;
   }
-  if (models && defaultMatches) {
-    if (saved.defaultModelId.present) models.defaultModelId = saved.defaultModelId.value; else delete models.defaultModelId;
+  if (defaultMatches || defaultWasCleared) {
+    if (saved.defaultModelId.present) {
+      const m: Json = models ?? {};
+      m.defaultModelId = saved.defaultModelId.value;
+      doc.models = m;
+    } else if (models) {
+      delete models.defaultModelId;
+    }
   }
   if (listWasRemoved) {
-    const m: Json = models ?? {};
+    const m: Json = isObj(doc.models) ? doc.models : {};
     m.list = saved.list.value;
     doc.models = m;
   }

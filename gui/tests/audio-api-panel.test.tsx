@@ -227,3 +227,45 @@ test("old server and malformed cache audio never invent configured support", asy
   expect(container.querySelector(`${LIVE} input`)).toBeNull();
   expect(sent).toHaveLength(0);
 });
+
+test("standalone browser localhost aligns 127.0.0.1 audio upload & live WS endpoints with window.location.origin for CSP self", async () => {
+  const seenUrls: string[] = [];
+  win.location.href = "http://localhost:10100/";
+  const loopback127Audio = {
+    transcriptionEndpoint: "http://127.0.0.1:10100/v1/audio/transcriptions",
+    dictationStreamEndpoint: "ws://127.0.0.1:10100/v1/audio/transcriptions/stream",
+    liveEndpoint: "ws://127.0.0.1:10100/v1/live",
+    realtimeCallsEndpoint: "http://127.0.0.1:10100/v1/realtime/calls",
+    transcriptionModel: "gpt-4o-transcribe",
+    liveModel: "gpt-live-1-codex",
+    transcriptionConfigured: true,
+    dictationConfigured: true,
+    liveConfigured: true,
+  };
+  audio = loopback127Audio;
+  Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true, value: async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/keys")) {
+      return Response.json({
+        keys: [],
+        baseUrl: "http://127.0.0.1:10100/v1",
+        endpoint: "http://127.0.0.1:10100/v1/responses",
+        authMatrix: [{ endpoint: "/v1/models", bearer: "accepted", dedicated: "accepted", xApiKey: "accepted" }],
+        audio: loopback127Audio,
+      });
+    }
+    if (url.endsWith("/v1/models")) return Response.json({ data: [] });
+    if (url.endsWith("/v1/audio/transcriptions")) { seenUrls.push(url); sent.push(init!); return responder(init!); }
+    return new Response(null, { status: 404 });
+  } });
+
+  await render(true, "http://localhost:10100");
+  await typeKey(DICTATION);
+  await selectFile();
+  await submit(DICTATION);
+  expect(seenUrls).toEqual(["http://localhost:10100/v1/audio/transcriptions"]);
+
+  await typeKey(LIVE);
+  await submit(LIVE);
+  expect(Socket.latest?.url).toBe("ws://localhost:10100/v1/live?model=gpt-live-1-codex");
+});

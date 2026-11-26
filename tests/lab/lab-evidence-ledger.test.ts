@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as nodeFs from "node:fs";
-import { chmodSync, existsSync, mkdirSync, writeFileSync, symlinkSync, linkSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync, symlinkSync, linkSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -1218,6 +1218,8 @@ describe("CL-02 phase-2 review regressions", () => {
       expect(event.eventKind).toBe("observation");
       const dir = openTrustedArtifactDir(join(home, "lab", "artifacts"));
       closeTrustedArtifactDir(dir);
+      const leftover = readdirSync(join(home, "lab", "artifacts")).filter(name => name.startsWith(".dirfd-probe-"));
+      expect(leftover).toEqual([]);
     });
   });
 });

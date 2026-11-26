@@ -10,6 +10,7 @@ import { getProviderRegistryEntry } from "../providers/registry";
 import { sendTrackingRequestSlot, waitForProviderRequestSlot, RequestPacingQueueOverloadError, RequestPacingProviderRemovedError } from "../providers/request-pacing";
 import { usageFromGemini } from "../adapters/google-usage";
 import { antigravityUserAgentForWireModel } from "../adapters/google-antigravity-wire";
+import { bindOAuthSnapshotToProvider } from "../lib/provider-egress";
 import { providerEgressFetch } from "../lib/provider-tls-profile";
 import { fetchWithAttemptDeadline, releaseResponseBodyBestEffort } from "../lib/upstream-retry";
 import { reserveWorkflowSend } from "../lib/workflow-budget";
@@ -233,7 +234,7 @@ export async function handleGeminiNative(
           dispatched = true;
           const accountProxy = access.proxy ?? account.proxy;
           const hostPlatform = access.hostPlatform ?? account.hostPlatform;
-          const effectiveProvider = accountProxy ? { ...provider, proxy: accountProxy } : provider;
+          const effectiveProvider = bindOAuthSnapshotToProvider(provider, { proxy: accountProxy, hostPlatform });
           const outboundFetch = providerEgressFetch(
             GEMINI_NATIVE_PROVIDER,
             effectiveProvider,
@@ -306,7 +307,7 @@ export async function handleGeminiNative(
     if (req.signal.aborted) return geminiNativeError(499, "Request cancelled");
     if (error instanceof NativeRequestBodyTimeout) return geminiNativeError(408, "Gemini request body upload stalled; send a complete JSON body and retry");
     if (error instanceof OAuthLoginRequiredError) return geminiNativeError(503, "Antigravity sign-in required; run epx login google-antigravity");
-    if (error instanceof OAuthAccountPausedError) return geminiNativeError(503, "Antigravity account is paused; resume it in OC account settings and retry");
+    if (error instanceof OAuthAccountPausedError) return geminiNativeError(503, "Antigravity account is paused; resume it in EasyProxy account settings and retry");
     if (error instanceof OAuthTokenRefreshBusyError || error instanceof OAuthTokenRefreshStaleError) {
       const response = geminiNativeError(503, "Antigravity credential refresh is temporarily busy; retry shortly");
       response.headers.set("Retry-After", "1"); return response;
@@ -317,7 +318,7 @@ export async function handleGeminiNative(
       response.headers.set("Retry-After", String(seconds)); return response;
     }
     if (error instanceof RequestPacingProviderRemovedError || error instanceof NativeConfigurationInvalid) {
-      return geminiNativeError(503, "Antigravity provider configuration is unavailable or invalid; check its baseUrl and destination policy in OC settings");
+      return geminiNativeError(503, "Antigravity provider configuration is unavailable or invalid; check its baseUrl and destination policy in EasyProxy settings");
     }
     if (error instanceof NativeModelUnavailable) {
       if (logCtx) {

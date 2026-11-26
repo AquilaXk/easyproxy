@@ -9,7 +9,7 @@
 import { ADVISOR_INTERNAL_CAPABILITY_HEADER } from "../../lib/local-internal-call-capability";
 import { clientFacingModelLabel, clientFacingModelText } from "../../lib/error-destination";
 import { classifyUsageClient } from "../../usage/client";
-import { admissionFields, isAllowedRequestOrigin, resolveApiAuth, resolveResponsesApiAuth, withCors } from "../auth-cors";
+import { admissionFields, isAllowedRequestOrigin, resolveApiAuth, resolveResponsesApiAuth, shouldPromoteGeminiCredential, withCors, type RequestPolicyView } from "../auth-cors";
 import { AdmissionModelDeniedError, projectAdmissionModelDeniedLog, routeAllowedByScope } from "../admission-model-scope";
 import { SIDECAR_INTERNAL_CAPABILITY_HEADER } from "../advisor-admission-scope";
 import { withCallerSessionIdentity } from "../caller-session-identity";
@@ -31,12 +31,14 @@ import type { OllamaRouteDeps } from "./ollama-routes";
 
 export type GeminiRouteDeps = OllamaRouteDeps;
 
-/** Move the Gemini credential onto the proxy's dedicated header and drop it from the URL. */
-function withProxyCredential(req: Request, url: URL): Request {
+/** Move a recognized proxy credential from Gemini headers/query onto the dedicated header and strip vendor auth. */
+function withProxyCredential(req: Request, url: URL, policy: RequestPolicyView): Request {
   const headers = new Headers(req.headers);
   const key = headers.get("x-goog-api-key")?.trim() || url.searchParams.get("key")?.trim();
   headers.delete("x-goog-api-key");
-  if (key && !headers.get("x-easyproxy-api-key")?.trim()) headers.set("x-easyproxy-api-key", key);
+  if (key && !headers.get("x-easyproxy-api-key")?.trim() && shouldPromoteGeminiCredential(key, policy)) {
+    headers.set("x-easyproxy-api-key", key);
+  }
   const clean = new URL(url);
   clean.searchParams.delete("key");
   const init: RequestInit & { duplex?: "half" } = { method: req.method, headers, signal: req.signal };
@@ -69,7 +71,7 @@ async function handleGeminiRoute(route: GeminiNativeRoute, original: Request, ur
   const generation = route.kind === "interactions"
     || (route.kind === "method" && (route.method === "generateContent" || route.method === "streamGenerateContent"));
   if (generation) disableResponsesRequestTimeout(original, deps.requestServer);
-  const req = withProxyCredential(original, url);
+  const req = withProxyCredential(original, url, policy);
   if (route.kind === "interaction" || route.kind === "interaction-cancel") {
     // Stored interactions take the same admission as creating them, so the keys that can read or
     // delete one are exactly the keys that can create one.

@@ -250,4 +250,32 @@ describe("target resolution and actions", () => {
     expect(gatewayClientsStatus(ctx).map(s => s.id)).toEqual(["antigravity", "agy"]);
     expect(disconnectGatewayClient("antigravity", ctx)).toMatchObject({ ok: true, restore: "exact" });
   });
+
+  test("empty model string explicitly clears defaultModelId while undefined keeps it and whitespace-only refuses", () => {
+    mkdirSync(join(ctx.home, ".antigravity"));
+    writeFileSync(settings(), USER_SETTINGS);
+    const cfg = {} as Parameters<typeof resolveGatewayTarget>[0];
+    expect(resolveGatewayTarget(cfg, 10100, "")).toEqual({
+      ok: true,
+      target: { url: "http://127.0.0.1:10100", apiKey: "easyproxy-local", clearDefaultModel: true },
+    });
+    expect(resolveGatewayTarget(cfg, 10100, "   ")).toMatchObject({ ok: false, code: "invalid-model" });
+
+    // model === undefined leaves defaultModelId untouched.
+    expect(connectGatewayClient("antigravity", ctx, cfg, 10100).ok).toBe(true);
+    expect(JSON.parse(read(settings())).models).toEqual({ defaultModelId: "mine" });
+
+    // model === "" explicitly clears defaultModelId.
+    expect(connectGatewayClient("antigravity", ctx, cfg, 10100, "").ok).toBe(true);
+    expect(JSON.parse(read(settings())).models).toBeUndefined();
+
+    // User edit triggers path-wise disconnect which restores prior defaultModelId and list cleanly.
+    const edited = JSON.parse(read(settings()));
+    edited.theme = "light";
+    writeFileSync(settings(), JSON.stringify(edited, null, 4));
+    expect(disconnectGatewayClient("antigravity", ctx).restore).toBe("path-wise");
+    const restoredDoc = JSON.parse(read(settings()));
+    expect(restoredDoc.theme).toBe("light");
+    expect(restoredDoc.models).toEqual({ defaultModelId: "mine", list: [{ modelId: "mine" }] });
+  });
 });

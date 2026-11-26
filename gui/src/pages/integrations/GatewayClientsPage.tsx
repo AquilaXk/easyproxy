@@ -141,7 +141,9 @@ function GatewayClientCard({
   const run = async (action: GatewayClientAction) => {
     setPending(action);
     setResult(null);
-    const model = action === "connect" && modelDraft !== null ? modelDraft.trim() || undefined : undefined;
+    const model = action === "connect" && modelDraft !== null
+      ? (client.id === "antigravity" ? modelDraft.trim() : modelDraft.trim() || undefined)
+      : undefined;
     const outcome = await runGatewayClientAction(apiBase, client.id, action, model);
     setResult(describeOutcome(client.id, action, outcome));
     if (outcome.ok) setModelDraft(null);

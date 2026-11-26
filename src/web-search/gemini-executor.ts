@@ -16,6 +16,7 @@ import { readBoundedResponseBytes } from "../lib/bounded-body";
 import { sidecarEnter } from "../lib/sidecar-tracker";
 import { redactSecretString } from "../lib/redact";
 import { antigravityUserAgentForWireModel } from "../adapters/google-antigravity-wire";
+import { bindOAuthSnapshotToProvider } from "../lib/provider-egress";
 import { providerEgressFetch } from "../lib/provider-tls-profile";
 import { resolveAntigravityEffortWireModel } from "../providers/antigravity-models";
 import { getProviderRegistryEntry } from "../providers/registry";
@@ -72,14 +73,19 @@ export async function runGeminiWebSearch(
   const linkedSignal = signalWithTimeout(settings.timeoutMs, abortSignal);
   const sidecarExit = sidecarEnter("web-search");
   const t0 = Date.now();
-  const egressFetch = providerEgressFetch(providerName, {
-    ...provider,
-    adapter: "google",
-    authMode: "oauth",
-    googleMode: "cloud-code-assist",
-    baseUrl: base,
-    ...(accountProxy ? { proxy: accountProxy } : {}),
-  });
+  const egressFetch = providerEgressFetch(
+    providerName,
+    bindOAuthSnapshotToProvider(
+      {
+        ...provider,
+        adapter: "google",
+        authMode: "oauth",
+        googleMode: "cloud-code-assist",
+        baseUrl: base,
+      },
+      { proxy: accountProxy, hostPlatform },
+    ),
+  );
   try {
     const res = await fetchWithResetRetry(
       recovery => egressFetch(`${base}/v1internal:generateContent`, applyUpstreamRecoveryInit({

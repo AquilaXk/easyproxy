@@ -1,7 +1,7 @@
 import type { EpxProviderConfig } from "../types";
 import { redactSecretString } from "./redact";
 import { runtimeProviderFetch } from "./provider-runtime-fetch";
-import { markEgressTransparentExecutor, providerEgressSendInit } from "./provider-egress";
+import { getProviderHostPlatform, markEgressTransparentExecutor, providerEgressSendInit } from "./provider-egress";
 import {
   configuredOutboundFetch,
   outboundProxyConfigured,
@@ -125,6 +125,16 @@ function requireDirect(env: ProxyEnvMap): Record<string, never> {
   return {};
 }
 
+function tlsEmulatedOsForHostPlatform(hostPlatform?: string): "macos" | "windows" | "linux" {
+  const normalized = (hostPlatform ?? "").trim().toLowerCase();
+  if (normalized.startsWith("darwin")) return "macos";
+  if (normalized.startsWith("windows")) return "windows";
+  if (normalized.startsWith("linux")) return "linux";
+  if (process.platform === "darwin") return "macos";
+  if (process.platform === "win32") return "windows";
+  return "linux";
+}
+
 /**
  * The proxy option expressing this send's route on the native transport, or a refusal.
  *
@@ -206,7 +216,7 @@ export function providerTlsFetch(
         ...rest,
         redirect: "manual",
         browser: "chrome_142",
-        os: "windows",
+        os: tlsEmulatedOsForHostPlatform(getProviderHostPlatform(provider as EpxProviderConfig)),
         ...proxyOption,
       } as RequestInit & { browser: string; os: string });
       status.set(name, "active");

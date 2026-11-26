@@ -737,7 +737,7 @@ describe("Antigravity v9 UX polish, session recovery, tray & gateway features", 
       }
     }
 
-    expect(uxOverhaulCopyKo["ux.playground.subtitle"]).toMatch(/요\.$/);
-    expect(uxOverhaulCopyKo["ux.auth.sessionRequiredBanner"]).toMatch(/요\.$/);
+    expect(uxOverhaulCopyKo["ux.playground.subtitle"]).toMatch(/다\.$/);
+    expect(uxOverhaulCopyKo["ux.auth.sessionRequiredBanner"]).toMatch(/다\.$/);
   });
 });

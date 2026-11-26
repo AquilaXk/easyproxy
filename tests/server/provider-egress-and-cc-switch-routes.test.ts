@@ -686,4 +686,62 @@ describe("Stage 3B provider egress, upstreamHistorySlim, and cc-switch managemen
       expect(cfg.providers[name]?.authMode).toBeUndefined();
     }
   });
+
+  test("CC-Switch rollback restores pre-existing OS keychain secret instead of deleting it and emits management CORS headers", async () => {
+    const cfg: EpxConfig = {
+      port: 10100,
+      hostname: "127.0.0.1",
+      defaultProvider: "alpha",
+      providers: { alpha: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1", authMode: "key", apiKey: "k", models: ["gpt-5"] } },
+    };
+    saveConfig(cfg);
+
+    const keychainMap = new Map<string, string>([
+      ["ccswitch-ccs-existing", "prior-super-secret"],
+    ]);
+    setProviderKeychainEntryFactoryForTests((_service, account) => ({
+      getPassword: () => keychainMap.get(account) ?? null,
+      setPassword: (secret: string) => { keychainMap.set(account, secret); },
+      deletePassword: () => keychainMap.delete(account),
+    }));
+
+    const ccJsonPath = join(home, "cc-rollback-kc.json");
+    writeFileSync(ccJsonPath, JSON.stringify({
+      openai: {
+        providers: {
+          "ccs-existing": {
+            id: "ccs-existing",
+            settingsConfig: { baseUrl: "https://rb.example.com/v1", apiKey: KEY_OPENAI },
+          },
+        },
+      },
+    }), "utf8");
+
+    expect(() => runCcSwitchLiveProviderImport({
+      mode: "apply",
+      config: cfg,
+      saveConfig: () => { throw new Error("disk write failed"); },
+      sourcePath: ccJsonPath,
+      consent: true,
+      includeApiKeys: true,
+      storeInKeychain: true,
+    })).toThrow(CcSwitchImportError);
+    // Prior secret must survive rollback untouched rather than being deleted.
+    expect(keychainMap.get("ccswitch-ccs-existing")).toBe("prior-super-secret");
+
+    // Management CC-Switch routes include Vary: Origin / Access-Control-Allow-Origin headers on responses.
+    const corsReq = new Request("http://127.0.0.1:10100/api/providers/cc-switch/preview", {
+      method: "POST",
+      headers: {
+        host: "127.0.0.1:10100",
+        origin: "http://127.0.0.1:10100",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ sourcePath: ccJsonPath }),
+    });
+    const corsRes = await handleManagementAPI(corsReq, new URL(corsReq.url), cfg, {});
+    expect(corsRes?.status).toBe(200);
+    expect(corsRes?.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:10100");
+    expect(corsRes?.headers.get("vary")).toContain("Origin");
+  });
 });

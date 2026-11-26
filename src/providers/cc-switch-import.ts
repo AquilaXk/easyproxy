@@ -1167,19 +1167,28 @@ export function runCcSwitchLiveProviderImport(options: {
           throw new CcSwitchImportError("CC-Switch imported provider configuration failed schema validation.");
         }
 
-        const writtenKeychainEntries: Array<{ name: string; account: string; note: string }> = [];
+        const writtenKeychainEntries: Array<{ name: string; account: string; note: string; priorSecret: string | null }> = [];
         try {
           if (storeInKeychain) {
             for (const entry of builtEntries) {
               if (!entry.keychainAccountName || !entry.secret) continue;
               const kcEntry = providerKeychainEntry(entry.keychainAccountName);
+              let priorSecret: string | null = null;
+              try {
+                priorSecret = kcEntry.getPassword();
+              } catch {
+                priorSecret = null;
+              }
+              kcEntry.setPassword(entry.secret.apiKey);
+              const readback = kcEntry.getPassword();
+              const verified = readback === entry.secret.apiKey;
               writtenKeychainEntries.push({
                 name: entry.candidate.name,
                 account: entry.keychainAccountName,
                 note: entry.journalEntry.note,
+                priorSecret: !verified && readback === priorSecret ? null : priorSecret,
               });
-              kcEntry.setPassword(entry.secret.apiKey);
-              if (kcEntry.getPassword() !== entry.secret.apiKey) {
+              if (!verified) {
                 throw new CcSwitchImportError(
                   `OS Keychain verification failed for '${entry.candidate.name}'; no providers were imported.`,
                 );
@@ -1222,10 +1231,16 @@ export function runCcSwitchLiveProviderImport(options: {
           const persistedProviders = snap.diagnostics.source === "file" && snap.diagnostics.error === null
             ? snap.diagnostics.config.providers
             : options.config.providers;
-          for (const written of writtenKeychainEntries) {
+          for (let i = writtenKeychainEntries.length - 1; i >= 0; i--) {
+            const written = writtenKeychainEntries[i]!;
             if (persistedProviders?.[written.name]?.note !== written.note) {
               try {
-                providerKeychainEntry(written.account).deletePassword();
+                const kcEntry = providerKeychainEntry(written.account);
+                if (written.priorSecret !== null) {
+                  kcEntry.setPassword(written.priorSecret);
+                } else {
+                  kcEntry.deletePassword();
+                }
               } catch {
                 // Best-effort rollback of un-committed OS keychain entry.
               }

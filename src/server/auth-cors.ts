@@ -915,6 +915,25 @@ function isProxyCredentialShape(token: string, source: DataPlaneAdmissionSource)
   return PROXY_CREDENTIAL_SHAPE_RE.test(token);
 }
 
+/**
+ * Gemini clients (`agy`, `google-genai` SDK) send vendor credentials via `x-goog-api-key` or
+ * `?key=`. On loopback, only real/expired/proxy-shaped tokens (`epx_*`/`epxrw_*`, live admin, or
+ * matched configured/env tokens) are promoted onto `x-easyproxy-api-key`; opaque vendor strings
+ * such as `"easyproxy-local"` or `"AIza..."` are stripped cleanly so loopback admission matches
+ * non-proxy `Bearer`/`x-api-key` behavior. Non-loopback binds always promote and fail closed.
+ */
+export function shouldPromoteGeminiCredential(token: string, config: RequestPolicyView): boolean {
+  const actual = token.trim();
+  if (!actual) return false;
+  if (isApiAuthRequired(config)) return true;
+  if (isProxyCredentialShape(actual, "dedicated") || isLiveLoopbackAdminSecret(actual)) return true;
+  const outcome = resolveDataPlaneAdmissionOutcome(actual, config, "dedicated", {
+    linkIngress: config.linkIngress?.allowedKeyIds,
+    allowLoopbackOnly: true,
+  });
+  return outcome.status === "matched" || outcome.status === "expired";
+}
+
 function readLiveAdminFileToken(): string | undefined {
   try {
     const path = join(getConfigDir(), "admin-api-token");

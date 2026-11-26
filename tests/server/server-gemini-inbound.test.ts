@@ -342,4 +342,60 @@ describe("Gemini-compatible inbound routes", () => {
       expect(await res.json()).not.toHaveProperty("models");
     });
   });
+
+  test("loopback Gemini requests accept vendor keys (agy & google-genai SDK) while rejecting bad proxy keys and remote vendor keys", async () => {
+    const expiredKey = "epx_data_" + "e".repeat(40);
+    const revokedKey = "epx_data_" + "f".repeat(40);
+    const scopedKey = "epx_data_" + "b".repeat(40);
+    const prevDataToken = process.env.EASYPROXY_API_AUTH_TOKEN;
+    delete process.env.EASYPROXY_API_AUTH_TOKEN;
+    try {
+      const fixture = config(false);
+      fixture.providers.fx!.models = ["m1", "m2"];
+      fixture.apiKeys = [
+        { id: "expired-g", name: "Expired", key: expiredKey, createdAt: "2026-01-01T00:00:00.000Z", expiresAt: "2020-01-01T00:00:00.000Z" },
+        { id: "scoped-g", name: "Scoped", key: scopedKey, createdAt: "2026-01-01T00:00:00.000Z", allowedModels: ["fx/m2"] },
+      ];
+      saveConfig(fixture);
+      await withServer(async base => {
+        // agy placeholder key ("easyproxy-local") & google-genai SDK key (?key=AIza...) pass on loopback and are stripped before upstream.
+        const agyList = await fetch(new URL("/v1beta/models", base), { headers: { "x-goog-api-key": "easyproxy-local" } });
+        expect(agyList.status).toBe(200);
+        const sdkGen = await post(base, "/v1beta/models/fx/m1:generateContent?key=AIzaSyDummySdkKey", request(), {});
+        expect(sdkGen.status).toBe(200);
+        await sdkGen.text();
+        expect(seen.at(-1)?.url).not.toContain("AIzaSyDummySdkKey");
+        expect(seen.at(-1)?.headers.has("x-goog-api-key")).toBe(false);
+
+        // Configured scoped key is promoted & enforces model scope even on loopback.
+        const denied = await post(base, "/v1beta/models/fx/m1:generateContent", request(), { "x-goog-api-key": scopedKey });
+        expect(denied.status).toBe(403);
+        const allowed = await post(base, "/v1beta/models/fx/m2:generateContent", request(), { "x-goog-api-key": scopedKey });
+        expect(allowed.status).toBe(200);
+        await allowed.text();
+
+        // Expired or revoked/unrecognized epx_* proxy keys fail closed (401) even on loopback.
+        for (const badToken of [expiredKey, revokedKey]) {
+          const refusedHdr = await post(base, "/v1beta/models/fx/m1:generateContent", request(), { "x-goog-api-key": badToken });
+          expect(refusedHdr.status).toBe(401);
+          const refusedQuery = await post(base, `/v1beta/models/fx/m1:generateContent?key=${badToken}`, request(), {});
+          expect(refusedQuery.status).toBe(401);
+        }
+      });
+
+      // Non-loopback bind rejects vendor placeholders with 401.
+      const remoteCfg = config(true);
+      remoteCfg.apiKeys = [{ id: "scoped-g", name: "Scoped", key: scopedKey, createdAt: "2026-01-01T00:00:00.000Z" }];
+      saveConfig(remoteCfg);
+      await withServer(async base => {
+        const remoteAgy = await post(base, "/v1beta/models/fx/m1:generateContent", request(), { "x-goog-api-key": "easyproxy-local" });
+        expect(remoteAgy.status).toBe(401);
+        const remoteSdk = await post(base, "/v1beta/models/fx/m1:generateContent?key=AIzaSyDummySdkKey", request(), {});
+        expect(remoteSdk.status).toBe(401);
+      });
+    } finally {
+      if (prevDataToken === undefined) delete process.env.EASYPROXY_API_AUTH_TOKEN;
+      else process.env.EASYPROXY_API_AUTH_TOKEN = prevDataToken;
+    }
+  });
 });

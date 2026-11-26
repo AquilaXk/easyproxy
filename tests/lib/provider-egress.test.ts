@@ -2,13 +2,16 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import {
   InvalidProviderEgressError,
   PROVIDER_EGRESS_DIRECT,
+  bindOAuthSnapshotToProvider,
   describeProviderEgressForLog,
+  getProviderHostPlatform,
   providerEgressConfigError,
   providerEgressFetchInit,
   providerEgressIsExplicit,
   resolveProviderEgress,
   sanitizeProxyUrlForLog,
 } from "../../src/lib/provider-egress";
+import type { EpxProviderConfig } from "../../src/types";
 import { PROXY_ENV_KEYS, configuredOutboundFetch } from "../../src/lib/proxy-env";
 
 const proxyKeys = PROXY_ENV_KEYS.flatMap(key => [key, key.toLowerCase()]);
@@ -179,5 +182,29 @@ describe("direct egress overrides the installed SOCKS transport", () => {
     ).then(() => "base-fetch-used", () => "socks-transport-owned-the-request");
     expect(outcome).toBe("socks-transport-owned-the-request");
     expect(base).not.toHaveBeenCalled();
+  });
+
+  test("bindOAuthSnapshotToProvider preserves hostPlatform across object spreads and drops bindings on rotation", () => {
+    const baseProvider = {
+      adapter: "google",
+      authMode: "oauth",
+      googleMode: "cloud-code-assist",
+      baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+    } as EpxProviderConfig;
+
+    const acctA = bindOAuthSnapshotToProvider(baseProvider, {
+      accessToken: "tok-a",
+      proxy: "http://127.0.0.1:8888",
+      hostPlatform: "linux/amd64",
+    });
+    const clonedA = { ...acctA, baseUrl: "https://cloudcode-pa.googleapis.com" };
+    expect(getProviderHostPlatform(clonedA)).toBe("linux/amd64");
+    expect(Object.keys(clonedA)).not.toContain("hostPlatform");
+    expect(JSON.stringify(clonedA)).not.toContain("linux/amd64");
+
+    // Rotating to an account without hostPlatform or pinned proxy drops acctA's bindings instead of leaking them.
+    const acctB = bindOAuthSnapshotToProvider(clonedA, { accessToken: "tok-b" });
+    expect(acctB.proxy).toBeUndefined();
+    expect(getProviderHostPlatform(acctB)).toBeUndefined();
   });
 });

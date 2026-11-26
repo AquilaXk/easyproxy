@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { confirmAction } from "../../action-dialogs";
 import { readJsonIfOk } from "../../fetch-json";
 import { navigateHash } from "../../hash-routing";
 import { useI18n } from "../../i18n/shared";
@@ -157,6 +158,13 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
       setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
     } finally {
       setBusyKey(null);
+    }
+  };
+
+  const requestAccountMode = async (mode: "pool" | "direct") => {
+    if (busyKey || state?.accountMode === mode) return;
+    if (await confirmAction({ message: t("pws.accountModeConfirm") })) {
+      await setAccountMode(mode);
     }
   };
 
@@ -341,7 +349,7 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
               aria-label={uxT(locale, "codexRoute.modeTitle")}
               value={state?.accountMode === "direct" ? "direct" : "pool"}
               disabled={busyKey !== null || state === null || state.accountMode === "invalid"}
-              onChange={mode => { void setAccountMode(mode); }}
+              onChange={mode => { void requestAccountMode(mode); }}
               items={[
                 { value: "pool", label: uxT(locale, "codexRoute.modePoolShort"), title: uxT(locale, "codexRoute.modePool") },
                 { value: "direct", label: uxT(locale, "codexRoute.modeDirectShort"), title: uxT(locale, "codexRoute.modeDirect") },

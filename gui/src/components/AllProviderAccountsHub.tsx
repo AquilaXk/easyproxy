@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { readJsonIfOk } from "../fetch-json";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
@@ -20,6 +20,7 @@ interface HubProviderConfig {
   authMode?: string;
   disabled?: boolean;
   hasApiKey?: boolean;
+  canonicalOpenAiForward?: boolean;
   codexAccountMode?: "pool" | "direct";
 }
 
@@ -34,6 +35,8 @@ interface HubAccountRow {
   quota?: AccountQuota | null;
   paused?: boolean;
   needsReauth?: boolean;
+  hardLockBlocked?: boolean;
+  validationPending?: boolean;
 }
 
 interface HubProviderCard {
@@ -68,7 +71,9 @@ async function fetchAllProviderHubData(
     const entries = Object.entries(providersObj).filter(([, row]) => row && row.disabled !== true);
     const cards = await Promise.all(entries.map(async ([name, row]): Promise<HubProviderCard | null> => {
       const slot = oauthCredentialSlot(name);
-      if (name === "openai" && row.authMode === "forward") {
+      const isCodexPool = row.canonicalOpenAiForward === true
+        || (name === "openai" && (row.authMode === "forward" || row.authMode === undefined) && row.hasApiKey !== true);
+      if (isCodexPool) {
         const [accountsRes, activeRes] = await Promise.all([
           fetch(`${apiBase}/api/codex-auth/accounts`, signal ? { signal } : undefined).catch(() => null),
           fetch(`${apiBase}/api/codex-auth/active`, signal ? { signal } : undefined).catch(() => null),
@@ -79,36 +84,49 @@ async function fetchAllProviderHubData(
         const activeId = activeBody?.activeCodexAccountId !== undefined
           ? (activeBody.activeCodexAccountId ?? "__main__")
           : body?.activeCodexAccountId;
+        const mappedAccounts: HubAccountRow[] = rows.map((acc, idx) => {
+          const id = String(acc.id ?? idx);
+          const active = activeId ? id === activeId : acc.active === true;
+          const cleanText = (value: unknown): string | undefined => {
+            if (typeof value !== "string") return undefined;
+            const trimmed = value.trim();
+            return trimmed && trimmed !== "__main__" ? trimmed : undefined;
+          };
+          const rawEmail = typeof acc.email === "string" && acc.email.includes("@") ? maskEmail(acc.email) : undefined;
+          const alias = cleanText(acc.alias);
+          const explicitLabel = cleanText(acc.label);
+          const hardLock = acc.mainAccountHardLock && typeof acc.mainAccountHardLock === "object"
+            ? (acc.mainAccountHardLock as { state?: unknown }).state === "blocked"
+            : false;
+          const validationPending = acc.health && typeof acc.health === "object"
+            ? (acc.health as { reason?: unknown }).reason === "validation_pending"
+            : false;
+          return {
+            id,
+            alias,
+            accountLabel: cleanText(acc.accountLabel),
+            maskedLabel: cleanText(acc.maskedLabel) ?? rawEmail,
+            labelFallback: id === "__main__" ? (alias ?? explicitLabel ?? rawEmail ?? codexAppLabel) : explicitLabel,
+            active,
+            plan: typeof acc.plan === "string" ? acc.plan : null,
+            quota: (acc.quota && typeof acc.quota === "object") ? acc.quota as AccountQuota : null,
+            paused: acc.paused === true,
+            needsReauth: acc.needsReauth === true,
+            hardLockBlocked: hardLock,
+            validationPending,
+          };
+        });
+        const activeIndex = mappedAccounts.findIndex(acc => acc.active);
+        const displayedAccounts = mappedAccounts.length <= 6 || activeIndex < 6
+          ? mappedAccounts.slice(0, 6)
+          : [mappedAccounts[activeIndex]!, ...mappedAccounts.slice(0, 5)];
         return {
           name,
           kind: "codex",
           slot: "openai",
           codexAccountMode: row.codexAccountMode === "direct" ? "direct" : "pool",
           quotaReport: quotaMap[name],
-          accounts: rows.slice(0, 6).map((acc, idx) => {
-            const id = String(acc.id ?? idx);
-            const active = activeId ? id === activeId : acc.active === true;
-            const cleanText = (value: unknown): string | undefined => {
-              if (typeof value !== "string") return undefined;
-              const trimmed = value.trim();
-              return trimmed && trimmed !== "__main__" ? trimmed : undefined;
-            };
-            const rawEmail = typeof acc.email === "string" && acc.email.includes("@") ? maskEmail(acc.email) : undefined;
-            const alias = cleanText(acc.alias);
-            const explicitLabel = cleanText(acc.label);
-            return {
-              id,
-              alias,
-              accountLabel: cleanText(acc.accountLabel),
-              maskedLabel: cleanText(acc.maskedLabel) ?? rawEmail,
-              labelFallback: id === "__main__" ? (alias ?? explicitLabel ?? rawEmail ?? codexAppLabel) : explicitLabel,
-              active,
-              plan: typeof acc.plan === "string" ? acc.plan : null,
-              quota: (acc.quota && typeof acc.quota === "object") ? acc.quota as AccountQuota : null,
-              paused: acc.paused === true,
-              needsReauth: acc.needsReauth === true,
-            };
-          }),
+          accounts: displayedAccounts,
         };
       }
       if (row.authMode === "oauth") {
@@ -127,6 +145,12 @@ async function fetchAllProviderHubData(
           accounts: rows.map((acc, idx) => {
             const id = String(acc.id ?? idx);
             const active = activeId ? id === activeId : acc.active === true;
+            const hardLock = acc.mainAccountHardLock && typeof acc.mainAccountHardLock === "object"
+              ? (acc.mainAccountHardLock as { state?: unknown }).state === "blocked"
+              : false;
+            const validationPending = acc.health && typeof acc.health === "object"
+              ? (acc.health as { reason?: unknown }).reason === "validation_pending"
+              : false;
             return {
               id,
               alias: typeof acc.alias === "string" ? acc.alias : undefined,
@@ -137,13 +161,15 @@ async function fetchAllProviderHubData(
               quota: (acc.quota && typeof acc.quota === "object") ? acc.quota as AccountQuota : null,
               paused: acc.paused === true,
               needsReauth: acc.needsReauth === true,
+              hardLockBlocked: hardLock,
+              validationPending,
             };
           }),
         };
       }
       if (row.hasApiKey === true && row.authMode !== "forward") {
         const res = await fetch(
-          `${apiBase}/api/providers/keys?name=${encodeURIComponent(name)}`,
+          `${apiBase}/api/providers/keys?name=${encodeURIComponent(name)}&quota=1`,
           signal ? { signal } : undefined,
         ).catch(() => null);
         const body = res ? await readJsonIfOk<{ keys?: Array<Record<string, unknown>> }>(res) : null;
@@ -184,7 +210,7 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
   const [switchingKey, setSwitchingKey] = useState<string | null>(null);
   const codexAppLabel = t("codexAuth.codexApp");
 
-  const reload = useCallback(async (refreshQuotas = false, signal?: AbortSignal) => {
+  const reload = async (refreshQuotas = false, signal?: AbortSignal) => {
     setRefreshing(refreshQuotas);
     try {
       const next = await fetchAllProviderHubData(apiBase, refreshQuotas, codexAppLabel, signal);
@@ -192,7 +218,7 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
     } finally {
       if (!signal?.aborted) setRefreshing(false);
     }
-  }, [apiBase, codexAppLabel]);
+  };
 
   useEffect(() => {
     const ac = new AbortController();
@@ -342,7 +368,7 @@ export function AllProviderAccountsHub({ apiBase, hideWhenCodexOnly = false }: {
                           <button
                             type="button"
                             className="btn btn-ghost btn-sm shrink-0"
-                            disabled={switchingKey !== null || acc.paused}
+                            disabled={switchingKey !== null || acc.paused === true || acc.hardLockBlocked === true || acc.validationPending === true}
                             onClick={() => { void switchActive(card, acc.id); }}
                           >
                             {uxT(locale, "accountsHub.switchAction")}

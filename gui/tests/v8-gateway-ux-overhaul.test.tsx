@@ -484,4 +484,49 @@ describe("Antigravity v8 gateway UX & polish", () => {
     const sw = host.querySelector<HTMLButtonElement>('button[role="switch"]')!;
     expect(sw.getAttribute("aria-label")).toBe("켜짐");
   });
+
+  test("GatewayGuardrailsPanel preserves unsaved edits across locale switches", async () => {
+    let loadCalls = 0;
+    globalThis.fetch = (async () => {
+      loadCalls += 1;
+      return Response.json({
+        outboundSecretGuard: { mode: "redact" },
+        toolOutputCompression: { enabled: true, minChars: 12000, headChars: 4000, tailChars: 4000, stripAnsi: false },
+        stats: { scannedRequests: 0, secretDetections: 0, secretBlocks: 0, compressedToolOutputs: 0, savedChars: 0 },
+      });
+    }) as unknown as typeof fetch;
+
+    const { useI18n } = await import("../src/i18n/shared");
+    function LocaleBridge() {
+      const { setLocale } = useI18n();
+      return <button type="button" data-test="switch-locale-ko" onClick={() => setLocale("ko")} />;
+    }
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <LocaleBridge />
+          <GatewayGuardrailsPanel apiBase="http://127.0.0.1:8787" />
+        </LanguageProvider>,
+      );
+      await new Promise(r => setTimeout(r, 15));
+    });
+    expect(loadCalls).toBe(1);
+
+    const minCharsInput = host.querySelector<HTMLInputElement>("#guardrails-min-chars")!;
+    await act(async () => { setInputValue(minCharsInput, "25000"); });
+    expect(minCharsInput.value).toBe("25000");
+
+    // Switching UI locale must not re-fetch or hydrate over unsaved edits.
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-test="switch-locale-ko"]')!.click();
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 15)); });
+    expect(loadCalls).toBe(1);
+    expect(host.querySelector<HTMLInputElement>("#guardrails-min-chars")!.value).toBe("25000");
+  });
 });

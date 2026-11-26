@@ -16,7 +16,7 @@ let isolatedCodexHome: IsolatedCodexHome | null = null;
 const CATALOG_FIXTURE_BYTES = '{"models":[{"slug":"mock/test-model","display_name":"Mock Test","description":"fixture","priority":1,"visibility":"list","base_instructions":"You are a helpful coding assistant.","input_modalities":["text"]}]}';
 
 beforeEach(() => {
-  if (previousEasyproxyHome === undefined) mkdirSync(TEST_DIR, { recursive: true });
+  mkdirSync(TEST_DIR, { recursive: true });
   process.env.EASYPROXY_HOME = TEST_DIR;
   isolatedCodexHome = null;
   saveConfig({
@@ -34,10 +34,10 @@ afterEach(() => {
   isolatedCodexHome = null;
   if (previousEasyproxyHome === undefined) {
     delete process.env.EASYPROXY_HOME;
-    removeTreeWithRetry(TEST_DIR);
   } else {
     process.env.EASYPROXY_HOME = previousEasyproxyHome;
   }
+  removeTreeWithRetry(TEST_DIR);
 });
 
 describe("GET /api/catalog route (#709)", () => {

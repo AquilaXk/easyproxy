@@ -167,6 +167,20 @@ test("an untouched model field sends no model, so the current one is kept", asyn
   expect(JSON.parse(requests.find(request => request.method === "POST")?.body ?? "null")).toEqual({});
 });
 
+test("clearing the model field sends an explicit empty string to clear defaultModelId", async () => {
+  await mount();
+  const antigravity = card("antigravity");
+  const input = antigravity.querySelector("input") as HTMLInputElement;
+  const setValue = Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(input, "");
+    input.dispatchEvent(new testWindow.Event("input", { bubbles: true }) as unknown as Event);
+  });
+  await act(async () => { button(antigravity, "Connect").click(); });
+  await settle();
+  expect(JSON.parse(requests.find(request => request.method === "POST")?.body ?? "null")).toEqual({ model: "" });
+});
+
 test("a refusal is translated from its code, and an I/O error keeps the system text", async () => {
   actionResponse = () => json({ ok: false, code: "unsupported-file", message: "settings.json is not a JSON object; left untouched." }, 409);
   clients[0]!.state = "connected";

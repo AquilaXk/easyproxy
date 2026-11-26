@@ -578,7 +578,8 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       const issuedKey = cfg.apiKeys?.find(k => k.id === connected.json.issuedApiKeyId);
       expect(issuedKey).toBeDefined();
       expect(issuedKey!.loopbackOnly).toBe(true);
-      expect(issuedKey!.allowedModels).toEqual(["gemini-3"]);
+      expect(issuedKey!.allowedModels).toBeUndefined();
+      expect(issuedKey!.allowedProviders).toBeUndefined();
       expect(issuedKey!.key).toMatch(/^epx_data_[0-9a-f]{40}$/);
 
       const writtenSettings = JSON.parse(readFileSync(join(gatewayCtx.home, ".antigravity", "settings.json"), "utf8")) as {
@@ -586,12 +587,13 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       };
       expect(writtenSettings.gateway.apiKey).toBe(issuedKey!.key);
 
-      // Reconnecting without model reuses the managed key and tightens provider scope cleanly without duplicates.
+      // Reconnecting without model reuses the unrestricted loopback key cleanly without duplicates.
       const reconnected = await call("POST", "/api/gateway-clients/antigravity/connect", {});
       expect(reconnected.status).toBe(200);
       expect(reconnected.json.issuedApiKeyId).toBe(issuedKey!.id);
       expect(cfg.apiKeys).toHaveLength(1);
-      expect(cfg.apiKeys![0]!.allowedProviders).toEqual(["google-antigravity"]);
+      expect(cfg.apiKeys![0]!.allowedProviders).toBeUndefined();
+      expect(cfg.apiKeys![0]!.allowedModels).toBeUndefined();
 
       const disconnected = await call("POST", "/api/gateway-clients/antigravity/disconnect");
       expect(disconnected.status).toBe(200);
@@ -623,6 +625,26 @@ describe("Stage 2 loopback data-plane security, Direct 401 fix, origin gate, and
       expect(bootRes).not.toBeNull();
       expect(bootRes!.status).toBe(200);
       expect(existsSync(join(dist, "boot.js"))).toBe(true);
+
+      // Direct management mode allows normalized hub HTTP(S) + WS(S) origin in connect-src without opening wildcard or inline script.
+      const httpsDirect = serveGuiFile("/", dist, undefined, "client", undefined, "https://hub.example.test:8443/v1");
+      const httpsCsp = httpsDirect!.headers.get("Content-Security-Policy") ?? "";
+      expect(httpsCsp).toBe("frame-ancestors 'none'; script-src 'self'; connect-src 'self' https://hub.example.test:8443 wss://hub.example.test:8443; object-src 'none'");
+
+      const httpDirect = serveGuiFile("/", dist, undefined, "client", undefined, "http://192.168.1.50:10100");
+      expect(httpDirect!.headers.get("Content-Security-Policy")).toBe(
+        "frame-ancestors 'none'; script-src 'self'; connect-src 'self' http://192.168.1.50:10100 ws://192.168.1.50:10100; object-src 'none'",
+      );
+
+      // Malformed / credential-bearing origin falls back strictly to connect-src 'self'.
+      const rejectedDirect = serveGuiFile("/", dist, undefined, "client", undefined, `https://${"user:secret"}@evil.example`);
+      expect(rejectedDirect!.headers.get("Content-Security-Policy")).toBe(
+        "frame-ancestors 'none'; script-src 'self'; connect-src 'self'; object-src 'none'",
+      );
+      const invalidDirect = serveGuiFile("/", dist, undefined, "client", undefined, "not-a-valid-origin");
+      expect(invalidDirect!.headers.get("Content-Security-Policy")).toBe(
+        "frame-ancestors 'none'; script-src 'self'; connect-src 'self'; object-src 'none'",
+      );
     } finally {
       removeTreeWithRetry(dist);
     }

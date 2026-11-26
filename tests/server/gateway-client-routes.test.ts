@@ -53,6 +53,19 @@ describe("gateway client management routes", () => {
     expect(existsSync(join(gateway.home, ".bashrc"))).toBe(false);
   });
 
+  test("Antigravity connect with empty model string clears defaultModelId while undefined preserves it", async () => {
+    expect((await call("POST", "/api/gateway-clients/antigravity/connect", { model: "gemini-3" })).status).toBe(200);
+    expect(JSON.parse(readFileSync(settings(), "utf8")).models).toEqual({ defaultModelId: "gemini-3" });
+
+    // Omitting model keeps existing defaultModelId.
+    expect((await call("POST", "/api/gateway-clients/antigravity/connect", {})).status).toBe(200);
+    expect(JSON.parse(readFileSync(settings(), "utf8")).models).toEqual({ defaultModelId: "gemini-3" });
+
+    // Explicit model: "" clears defaultModelId.
+    expect((await call("POST", "/api/gateway-clients/antigravity/connect", { model: "" })).status).toBe(200);
+    expect(JSON.parse(readFileSync(settings(), "utf8")).models).toBeUndefined();
+  });
+
   test("refusals are 409 with a code and write nothing", async () => {
     const lan = config({ hostname: "100.64.0.9" });
     const admission = await call("POST", "/api/gateway-clients/antigravity/connect", {}, lan);

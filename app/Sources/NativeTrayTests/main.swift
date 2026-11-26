@@ -213,4 +213,17 @@ let negLocal = NativeTrayLocalClientDetector.detect(homeDirectory: negHome)
 check(negLocal.count == 4 && negLocal.allSatisfy { $0.installed && !$0.connected && $0.state == "detected" },
       "Unrelated localhost/127.0.0.1 configs remain detected, never connected")
 
+let dynHome = FileManager.default.temporaryDirectory.appendingPathComponent("epx-tray-dyn-\(UUID().uuidString)", isDirectory: true)
+try FileManager.default.createDirectory(at: dynHome.appendingPathComponent(".antigravity"), withIntermediateDirectories: true)
+try #"{"gateway":{"enabled":true,"url":"http://127.0.0.1:19090","apiKey":"epx_data_0123456789abcdef"}}"#.write(to: dynHome.appendingPathComponent(".antigravity/settings.json"), atomically: true, encoding: .utf8)
+try FileManager.default.createDirectory(at: dynHome.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+try #"{"env":{"ANTHROPIC_BASE_URL":"http://localhost:24567","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"1"}}"#.write(to: dynHome.appendingPathComponent(".claude/settings.json"), atomically: true, encoding: .utf8)
+try FileManager.default.createDirectory(at: dynHome.appendingPathComponent(".cursor"), withIntermediateDirectories: true)
+try #"{"overrideOpenAiBaseUrl":"http://127.0.0.1:29999/v1","apiKey":"epx_data_cursor"}"#.write(to: dynHome.appendingPathComponent(".cursor/mcp.json"), atomically: true, encoding: .utf8)
+defer { try? FileManager.default.removeItem(at: dynHome) }
+
+let dynLocal = NativeTrayLocalClientDetector.detect(homeDirectory: dynHome)
+check(dynLocal[1].state == "connected" && dynLocal[2].state == "connected" && dynLocal[3].state == "connected",
+      "Dynamic EasyProxy loopback ports with EasyProxy markers/keys report connected")
+
 print("PASS: \(assertions) native tray contract/formatting assertions")

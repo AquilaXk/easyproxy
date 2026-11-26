@@ -384,7 +384,8 @@ export function startMachineListener(
       // client renders as a plain install — no hub usage scope, no "this machine" panel,
       // no connected-client list. This listener only ever serves a connected client, so
       // the role is a constant here rather than a config read.
-      const gui = serveGuiFile(url.pathname, undefined, session ?? undefined, "client");
+      const directConnectOrigin = !relayEnabled ? connection.managementUrl : undefined;
+      const gui = serveGuiFile(url.pathname, undefined, session ?? undefined, "client", undefined, directConnectOrigin);
       if (gui) return gui;
       if (url.pathname === "/") {
         return Response.json({

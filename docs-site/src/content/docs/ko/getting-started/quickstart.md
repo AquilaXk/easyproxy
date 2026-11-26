@@ -22,8 +22,8 @@ epx init
 2. **API 키** — 키를 붙여넣거나 `${ANTHROPIC_API_KEY}` 같은 환경 변수를 참조합니다.
 3. **기본 모델** — 키, 로컬, custom 프로바이더에서는 프리셋을 그대로 쓰거나 모델 ID를 직접 입력합니다.
 4. **프록시 포트** — 기본값은 `10100`입니다.
-5. **Codex에 주입할까요?** — 일반적인 루프백 구성에서는 easyproxy가 `$CODEX_HOME/config.toml`의 루트(`~/.codex/config.toml`이 기본값)에 `openai_base_url`을 추가해 Codex의 내장 `openai` 프로바이더가 프록시를 바라보게 합니다. 원격/LAN 바인딩에서는 API 인증 헤더를 포함한 전용 프로바이더 항목을 대신 사용합니다.
-6. **자동 시작 shim을 설치할까요?** — 켜 두면 `codex`를 실행할 때 먼저 `epx ensure`가 실행됩니다.
+5. **Codex에 주입하시겠습니까?** — 일반적인 루프백 구성에서는 easyproxy가 `$CODEX_HOME/config.toml`의 루트(`~/.codex/config.toml`이 기본값)에 `openai_base_url`을 추가해 Codex의 내장 `openai` 프로바이더가 프록시를 바라보게 합니다. 원격/LAN 바인딩에서는 API 인증 헤더를 포함한 전용 프로바이더 항목을 대신 사용합니다.
+6. **자동 시작 shim을 설치하시겠습니까?** — 켜 두면 `codex`를 실행할 때 먼저 `epx ensure`가 실행됩니다.
 
 결과는 `$EASYPROXY_HOME/config.json`(기본값 `~/.easyproxy/config.json`)에 저장됩니다.
 

@@ -260,6 +260,11 @@ describe("Stage 4A Accounts hub, Route -> Codex controls, and GatewayClients Com
     expect(directRadio.getAttribute("aria-checked")).toBe("false");
     await act(async () => { directRadio.click(); });
     await flushTicks();
+    expect(calls.some(c => c.url.includes("/api/providers?name=openai") && c.method === "PATCH")).toBe(false);
+    const modeConfirmBtn = [...document.querySelectorAll("dialog .modal-actions button.btn-primary, dialog .modal-actions button")].at(-1) as HTMLButtonElement | undefined;
+    expect(modeConfirmBtn).toBeDefined();
+    await act(async () => { modeConfirmBtn!.click(); });
+    await flushTicks();
     expect(calls.some(c => c.url.includes("/api/providers?name=openai") && c.method === "PATCH" && c.body?.codexAccountMode === "direct")).toBe(true);
     expect(directRadio.getAttribute("aria-checked")).toBe("true");
 
@@ -344,7 +349,16 @@ describe("Stage 4A Accounts hub, Route -> Codex controls, and GatewayClients Com
       const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
       calls.push({ url, method, body });
       if (url.endsWith("/api/config")) {
-        return Response.json({ providers: { openai: { authMode: "forward", codexAccountMode: "pool" } } });
+        return Response.json({
+          providers: {
+            openai: {
+              adapter: "openai-responses",
+              authMode: "forward",
+              baseUrl: "https://chatgpt.com/backend-api/codex",
+              codexAccountMode: "pool",
+            },
+          },
+        });
       }
       if (url.includes("/api/provider-quotas")) {
         return Response.json({ reports: [{ provider: "openai", status: "ok", windows: [{ id: "five_hour", label: "5h", remainingPercent: 80 }] }] });
@@ -455,5 +469,125 @@ describe("Stage 4A Accounts hub, Route -> Codex controls, and GatewayClients Com
     expect(agyIdx).toBeGreaterThanOrEqual(0);
     expect(agyIdx).toBeLessThan(antIdx);
     expect(antIdx).toBeLessThan(oaiIdx);
+  });
+
+  test("AllProviderAccountsHub handles keyed openai, preserves active account beyond index 5, sends quota=1, and blocks unsafe switches", async () => {
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.endsWith("/api/config")) {
+        return Response.json({
+          providers: {
+            openai: { adapter: "openai-responses", authMode: "key", hasApiKey: true },
+            "openai-codex": { adapter: "openai-responses", authMode: "forward", canonicalOpenAiForward: true, codexAccountMode: "pool" },
+          },
+        });
+      }
+      if (url.includes("/api/provider-quotas")) {
+        return Response.json([]);
+      }
+      if (url.includes("/api/providers/keys?name=openai")) {
+        return Response.json({ keys: [{ id: "key-1", label: "OpenAI API Key", active: true }] });
+      }
+      if (url.endsWith("/api/codex-auth/accounts")) {
+        return Response.json({
+          activeCodexAccountId: "c-7",
+          accounts: [
+            { id: "c-1", alias: "codex-1", mainAccountHardLock: { state: "blocked" } },
+            { id: "c-2", alias: "codex-2", health: { reason: "validation_pending" } },
+            { id: "c-3", alias: "codex-3" },
+            { id: "c-4", alias: "codex-4" },
+            { id: "c-5", alias: "codex-5" },
+            { id: "c-6", alias: "codex-6" },
+            { id: "c-7", alias: "codex-7-active", active: true, quota: { fiveHourPercent: 42, updatedAt: Date.now() } },
+          ],
+        });
+      }
+      if (url.endsWith("/api/codex-auth/active")) {
+        return Response.json({ activeCodexAccountId: "c-7" });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <AllProviderAccountsHub apiBase="http://127.0.0.1:10100" />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    expect(requestedUrls.some(u => u.endsWith("/api/providers/keys?name=openai&quota=1"))).toBe(true);
+    const keyedOpenAiCard = host.querySelector('[data-hub-provider="openai"]')!;
+    expect(keyedOpenAiCard.textContent).toContain("OpenAI API Key");
+
+    const codexCard = host.querySelector('[data-hub-provider="openai-codex"]')!;
+    // Active account at index 6 stays rendered and supplies topQuota.
+    expect(codexCard.textContent).toContain("codex-7-active");
+    expect(codexCard.textContent).toContain("42%");
+    // Hard-locked (c-1) and validation-pending (c-2) accounts have disabled switch buttons, while c-3 stays enabled.
+    const switchButtons = [...codexCard.querySelectorAll("button")].filter(b => b.textContent === "Set active");
+    expect(switchButtons[0]!.disabled).toBe(true);
+    expect(switchButtons[1]!.disabled).toBe(true);
+    expect(switchButtons[2]!.disabled).toBe(false);
+  });
+
+  test("CodexIntegrationPage mode switch confirmation cancel leaves accountMode unchanged", async () => {
+    const patchCalls: unknown[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/providers?name=openai") && init?.method === "PATCH") {
+        patchCalls.push(init.body);
+        return Response.json({ success: true });
+      }
+      if (url.endsWith("/api/native-integrations")) {
+        return Response.json({ clients: [{ clientId: "codex", state: "current", installed: true, desiredEnabled: true }] });
+      }
+      if (url.endsWith("/api/settings")) {
+        return Response.json({ codexAutoStart: true, codexDesktopAuthless: false, codexAccountPickerEnabled: false });
+      }
+      if (url.endsWith("/api/config")) {
+        return Response.json({
+          providers: {
+            openai: {
+              adapter: "openai-responses",
+              authMode: "forward",
+              baseUrl: "https://chatgpt.com/backend-api/codex",
+              codexAccountMode: "pool",
+            },
+          },
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <CodexIntegrationPage apiBase="http://127.0.0.1:10100" active />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+
+    const directRadio = [...host.querySelectorAll('[role="radio"]')].find(el => el.textContent?.includes("Direct")) as HTMLButtonElement;
+    await act(async () => { directRadio.click(); });
+    await flushTicks();
+    const cancelBtn = [...document.querySelectorAll("dialog .modal-actions button")].find(b => b.textContent === "Cancel") as HTMLButtonElement | undefined;
+    expect(cancelBtn).toBeDefined();
+    await act(async () => { cancelBtn!.click(); });
+    await flushTicks();
+    expect(patchCalls).toHaveLength(0);
+    expect(directRadio.getAttribute("aria-checked")).toBe("false");
   });
 });

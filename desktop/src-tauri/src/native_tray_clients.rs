@@ -17,12 +17,58 @@ fn read_bounded_text(path: &Path) -> Option<String> {
     String::from_utf8(buf).ok()
 }
 
+fn has_loopback_port_url(lower: &str) -> bool {
+    const PREFIXES: [&str; 6] = [
+        "http://127.0.0.1:",
+        "https://127.0.0.1:",
+        "http://localhost:",
+        "https://localhost:",
+        "http://[::1]:",
+        "https://[::1]:",
+    ];
+    for prefix in PREFIXES {
+        let mut search_from = 0usize;
+        while let Some(offset) = lower[search_from..].find(prefix) {
+            let after_colon = search_from + offset + prefix.len();
+            let rest = lower[after_colon..].as_bytes();
+            let digit_count = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+            if digit_count > 0 && digit_count <= 5 {
+                if let Ok(port) = lower[after_colon..after_colon + digit_count].parse::<u32>() {
+                    if (1..=65535).contains(&port) {
+                        let next_byte = rest.get(digit_count).copied();
+                        if next_byte.is_none_or(|b| {
+                            matches!(
+                                b,
+                                b'/' | b'?' | b'#' | b'"' | b'\'' | b' ' | b'\t' | b'\r' | b'\n' | b',' | b'}'
+                            )
+                        }) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            search_from = after_colon;
+        }
+    }
+    false
+}
+
+fn has_easyproxy_key_prefix(lower: &str) -> bool {
+    lower.contains("epx_data_") || lower.contains("epx_admin_") || lower.contains("epxrw_")
+}
+
 fn has_easyproxy_marker(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    lower.contains("easyproxy")
+    if lower.contains("easyproxy")
         || lower.contains("127.0.0.1:10100")
         || lower.contains("localhost:10100")
         || lower.contains("[::1]:10100")
+    {
+        return true;
+    }
+    has_loopback_port_url(&lower)
+        && (has_easyproxy_key_prefix(&lower)
+            || lower.contains("claude_code_enable_gateway_model_discovery"))
 }
 
 fn has_codex_easyproxy_marker(text: &str) -> bool {
@@ -165,7 +211,8 @@ fn detect_cursor(home: Option<&Path>) -> Value {
                 if has_easyproxy_marker(&content)
                     && (content.contains("overrideOpenAiBaseUrl")
                         || lower.contains("easyproxy-loopback")
-                        || lower.contains("easyproxy"))
+                        || lower.contains("easyproxy")
+                        || has_easyproxy_key_prefix(&lower))
                 {
                     connected = true;
                 }
@@ -356,5 +403,37 @@ mod tests {
         assert_eq!(rows[2]["state"], "connected");
         assert_eq!(rows[3]["id"], "cursor");
         assert_eq!(rows[3]["state"], "notDetected");
+    }
+
+    #[test]
+    fn passive_detection_supports_dynamic_loopback_ports_with_easyproxy_markers() {
+        let temp = TestDir::new("epx-tray-clients-dyn");
+        let home = temp.path();
+
+        fs::create_dir_all(home.join(".antigravity")).unwrap();
+        fs::write(
+            home.join(".antigravity").join("settings.json"),
+            r#"{"gateway":{"enabled":true,"url":"http://127.0.0.1:19090","apiKey":"epx_data_0123456789abcdef"}}"#,
+        )
+        .unwrap();
+
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        fs::write(
+            home.join(".claude").join("settings.json"),
+            r#"{"env":{"ANTHROPIC_BASE_URL":"http://localhost:24567","ANTHROPIC_AUTH_TOKEN":"epx_data_abcdef"}}"#,
+        )
+        .unwrap();
+
+        fs::create_dir_all(home.join(".cursor")).unwrap();
+        fs::write(
+            home.join(".cursor").join("mcp.json"),
+            r#"{"overrideOpenAiBaseUrl":"http://127.0.0.1:29999/v1","apiKey":"epx_data_cursor"}}"#,
+        )
+        .unwrap();
+
+        let rows = detect_local_clients(Some(home), None, None);
+        assert_eq!(rows[1]["state"], "connected");
+        assert_eq!(rows[2]["state"], "connected");
+        assert_eq!(rows[3]["state"], "connected");
     }
 }

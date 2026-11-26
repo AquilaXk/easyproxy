@@ -50,12 +50,57 @@ public enum NativeTrayLocalClientDetector {
         return data.flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    private static func hasLoopbackPortURL(_ lower: String) -> Bool {
+        let prefixes = [
+            "http://127.0.0.1:",
+            "https://127.0.0.1:",
+            "http://localhost:",
+            "https://localhost:",
+            "http://[::1]:",
+            "https://[::1]:",
+        ]
+        for prefix in prefixes {
+            var searchStart = lower.startIndex
+            while let range = lower.range(of: prefix, range: searchStart..<lower.endIndex) {
+                var cursor = range.upperBound
+                var digits = ""
+                while cursor < lower.endIndex, let scalar = lower[cursor].unicodeScalars.first, scalar.value >= 48 && scalar.value <= 57, digits.count < 6 {
+                    digits.append(lower[cursor])
+                    cursor = lower.index(after: cursor)
+                }
+                if !digits.isEmpty && digits.count <= 5, let port = Int(digits), (1...65535).contains(port) {
+                    if cursor == lower.endIndex {
+                        return true
+                    }
+                    let ch = lower[cursor]
+                    if "/?#\"' \t\r\n,}".contains(ch) {
+                        return true
+                    }
+                }
+                searchStart = range.upperBound
+            }
+        }
+        return false
+    }
+
+    private static func hasEasyProxyKeyPrefix(_ lower: String) -> Bool {
+        lower.contains("epx_data_")
+            || lower.contains("epx_admin_")
+            || lower.contains("epxrw_")
+    }
+
     private static func hasEasyProxyMarker(_ content: String) -> Bool {
         let lower = content.lowercased()
-        return lower.contains("easyproxy")
+        if lower.contains("easyproxy")
             || lower.contains("127.0.0.1:10100")
             || lower.contains("localhost:10100")
             || lower.contains("[::1]:10100")
+        {
+            return true
+        }
+        return hasLoopbackPortURL(lower)
+            && (hasEasyProxyKeyPrefix(lower)
+                || lower.contains("claude_code_enable_gateway_model_discovery"))
     }
 
     private static func hasCodexEasyProxyMarker(_ content: String) -> Bool {
@@ -141,7 +186,8 @@ public enum NativeTrayLocalClientDetector {
                 if hasEasyProxyMarker(text),
                    (text.contains("overrideOpenAiBaseUrl")
                     || lower.contains("easyproxy-loopback")
-                    || lower.contains("easyproxy")) {
+                    || lower.contains("easyproxy")
+                    || hasEasyProxyKeyPrefix(lower)) {
                     connected = true
                 }
             }

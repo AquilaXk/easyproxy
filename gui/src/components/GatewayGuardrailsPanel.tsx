@@ -83,6 +83,10 @@ export default function GatewayGuardrailsPanel({
   readOnly?: boolean;
 }) {
   const { locale } = useI18n();
+  const localeRef = useRef(locale);
+  useEffect(() => {
+    localeRef.current = locale;
+  }, [locale]);
   const [data, setData] = useState<GuardrailsPayload | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -129,7 +133,7 @@ export default function GatewayGuardrailsPanel({
       .then(body => {
         if (cancelled) return;
         if (!body || !body.outboundSecretGuard || !body.toolOutputCompression) {
-          setLoadError(uxT(locale, "guardrails.loadFailed"));
+          setLoadError(uxT(localeRef.current, "guardrails.loadFailed"));
           return;
         }
         setLoadError(null);
@@ -137,13 +141,13 @@ export default function GatewayGuardrailsPanel({
       })
       .catch((error: unknown) => {
         if (cancelled || (error instanceof Error && error.name === "AbortError")) return;
-        setLoadError(uxT(locale, "guardrails.loadFailed"));
+        setLoadError(uxT(localeRef.current, "guardrails.loadFailed"));
       });
     return () => {
       cancelled = true;
       ac.abort();
     };
-  }, [apiBase, hydrate, locale]);
+  }, [apiBase, hydrate]);
 
   const handleSave = async () => {
     if (readOnly || saving) return;

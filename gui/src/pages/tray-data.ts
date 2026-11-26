@@ -24,7 +24,12 @@ export function providerSources(value: unknown): TrayProviderSource[] {
   return Object.entries(object(object(value).providers)).flatMap<TrayProviderSource>(([name, raw]) => {
     const config = object(raw);
     if (config.disabled === true) return [];
-    if (name === 'openai') return [{ name, path: '/api/codex-auth/accounts', switchKind: 'codex' as const }];
+    if (
+      config.canonicalOpenAiForward === true
+      || (name === 'openai' && (config.authMode === 'forward' || config.authMode === undefined) && config.hasApiKey !== true)
+    ) {
+      return [{ name, path: '/api/codex-auth/accounts', switchKind: 'codex' as const }];
+    }
     if (config.authMode === 'oauth') return [{ name, path: `/api/oauth/accounts?${new URLSearchParams({ provider: name, quota: '1' })}`, switchKind: 'oauth' as const }];
     if (config.hasApiKey === true && config.authMode !== 'forward') return [{ name, path: `/api/providers/keys?${new URLSearchParams({ name, quota: '1' })}`, switchKind: 'apiKey' as const }];
     return [{ name, path: null, switchKind: null }];

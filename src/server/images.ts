@@ -45,6 +45,7 @@ import type { RequestLogContext } from "./request-log";
 import { codexLogAccountId, decodeRequestErrorResponse } from "./responses";
 import { getValidAccessToken, getOAuthCredentialProjectId, OAuthAccountPausedError } from "../oauth/index";
 import { getAccountSet } from "../oauth/store";
+import { bindOAuthSnapshotToProvider } from "../lib/provider-egress";
 import { providerEgressFetch } from "../lib/provider-tls-profile";
 import { safeAntigravityHttpErrorMessage } from "../adapters/google-errors";
 import { sanitizeUpstreamErrorText } from "../adapters/upstream-http-error";
@@ -337,14 +338,19 @@ async function tryCcaImageGeneration(
   const accountSet = getAccountSet("google-antigravity");
   const activeAccount = accountSet?.accounts.find(a => a.id === accountSet.activeAccountId);
   const configuredAntigravity = config.providers["google-antigravity"];
-  const egressFetch = providerEgressFetch("google-antigravity", {
-    ...(configuredAntigravity ?? {}),
-    adapter: "google",
-    authMode: "oauth",
-    googleMode: "cloud-code-assist",
-    baseUrl,
-    ...(activeAccount?.proxy ? { proxy: activeAccount.proxy } : {}),
-  });
+  const egressFetch = providerEgressFetch(
+    "google-antigravity",
+    bindOAuthSnapshotToProvider(
+      {
+        ...(configuredAntigravity ?? {}),
+        adapter: "google",
+        authMode: "oauth",
+        googleMode: "cloud-code-assist",
+        baseUrl,
+      },
+      { proxy: activeAccount?.proxy, hostPlatform: activeAccount?.hostPlatform },
+    ),
+  );
   const envelope = {
     model: CCA_IMAGE_MODEL,
     userAgent: "antigravity",

@@ -36,36 +36,6 @@ async function connectModel(ctx: ManagementContext, id: GatewayClientId): Promis
   return { model };
 }
 
-function deriveAntigravityLoopbackScope(
-  config: EpxConfig,
-  model: string | undefined,
-): { allowedProviders?: string[]; allowedModels?: string[] } {
-  const trimmed = model?.trim();
-  if (trimmed) {
-    const slash = trimmed.indexOf("/");
-    if (slash > 0 && slash < trimmed.length - 1) {
-      return {
-        allowedProviders: [trimmed.slice(0, slash)],
-        allowedModels: [trimmed],
-      };
-    }
-    return { allowedModels: [trimmed] };
-  }
-  const googleProviders = Object.entries(config.providers ?? {})
-    .filter(([name, provider]) =>
-      provider.adapter === "google-antigravity"
-      || provider.adapter === "google"
-      || name === "google-antigravity"
-      || name.startsWith("google")
-      || name.startsWith("gemini"))
-    .map(([name]) => name);
-  if (googleProviders.length > 0) {
-    return { allowedProviders: googleProviders };
-  }
-  const fallbackProvider = config.defaultProvider?.trim();
-  return fallbackProvider ? { allowedProviders: [fallbackProvider] } : {};
-}
-
 export async function handleGatewayClientRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config, deps } = ctx;
   const clientCtx: GatewayClientContext = deps.gatewayClientContext?.() ?? productionGatewayClientContext();
@@ -102,7 +72,6 @@ export async function handleGatewayClientRoutes(ctx: ManagementContext): Promise
       const outcome = connectGatewayClient(id, clientCtx, config, port, parsed.model);
       return jsonResponse(gatewayActionBody(outcome), 409, req, config);
     }
-    const scope = deriveAntigravityLoopbackScope(config, targetCheck.target.defaultModel);
     const existingKeyId = readAntigravityIssuedKeyId(clientCtx);
     const existingEntry = existingKeyId
       ? (config.apiKeys ?? []).find(entry => entry.id === existingKeyId && entry.loopbackOnly === true && !isApiKeyExpired(entry))
@@ -111,16 +80,17 @@ export async function handleGatewayClientRoutes(ctx: ManagementContext): Promise
     let previousScope: { allowedProviders?: string[]; allowedModels?: string[] } | undefined;
     let credential: { apiKey: string; issuedKeyId: string };
     if (existingEntry) {
-      previousScope = {
-        allowedProviders: existingEntry.allowedProviders ? [...existingEntry.allowedProviders] : undefined,
-        allowedModels: existingEntry.allowedModels ? [...existingEntry.allowedModels] : undefined,
-      };
-      if (scope.allowedProviders) existingEntry.allowedProviders = scope.allowedProviders;
-      else delete existingEntry.allowedProviders;
-      if (scope.allowedModels) existingEntry.allowedModels = scope.allowedModels;
-      else delete existingEntry.allowedModels;
-      persistConfig(config);
-      reconcileLiveStateStores();
+      const hadScope = existingEntry.allowedProviders !== undefined || existingEntry.allowedModels !== undefined;
+      if (hadScope) {
+        previousScope = {
+          allowedProviders: existingEntry.allowedProviders ? [...existingEntry.allowedProviders] : undefined,
+          allowedModels: existingEntry.allowedModels ? [...existingEntry.allowedModels] : undefined,
+        };
+        delete existingEntry.allowedProviders;
+        delete existingEntry.allowedModels;
+        persistConfig(config);
+        reconcileLiveStateStores();
+      }
       credential = { apiKey: existingEntry.key, issuedKeyId: existingEntry.id };
     } else {
       const minted = issueApiKeyInProcess(
@@ -129,8 +99,6 @@ export async function handleGatewayClientRoutes(ctx: ManagementContext): Promise
         undefined,
         entry => {
           entry.loopbackOnly = true;
-          if (scope.allowedProviders) entry.allowedProviders = scope.allowedProviders;
-          if (scope.allowedModels) entry.allowedModels = scope.allowedModels;
         },
         persistConfig,
       );

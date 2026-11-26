@@ -483,4 +483,168 @@ describe("Stage 3B provider egress/keychain/historySlim, CC-Switch modal, and 10
     expect(host.textContent).toContain("http://127.0.0.1:10100/v1");
     expect(host.textContent).not.toContain("8787");
   });
+
+  test("ProviderEgressAndKeychainSection resets local state across providers and rolls back tlsEnabled on save failure", async () => {
+    let failPut = false;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/providers") && method === "GET") {
+        return Response.json([
+          { name: "alpha", hasProxy: true, proxyLabel: "http://127.0.0.1:8888", noProxy: "localhost" },
+          { name: "beta", hasProxy: false, noProxy: "" },
+          { name: "google-antigravity", hasProxy: false, tlsProfile: { profile: "antigravity-browser", status: "disabled" } },
+        ]);
+      }
+      if (url.includes("/api/providers/keychain")) {
+        return Response.json({ name: "alpha", store: "plaintext", keychainAvailable: true });
+      }
+      if (url.includes("/api/providers/egress") && method === "PUT") {
+        if (failPut) return Response.json({ error: "egress rejected" }, { status: 400 });
+        return Response.json({ success: true, hasProxy: false, tlsProfile: { profile: "antigravity-browser", status: "pending" } });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            isCanonicalOpenAi={false}
+            item={{ name: "alpha", adapter: "openai-chat", baseUrl: "https://api.example.test/v1", authMode: "key", hasApiKey: true, hasProxy: true, proxyLabel: "http://127.0.0.1:8888", noProxy: "localhost" }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    const proxyInput = host.querySelector<HTMLInputElement>('input[type="password"]')!;
+    await act(async () => { setInputValue(proxyInput, "http://127.0.0.1:9999"); });
+    expect(proxyInput.value).toBe("http://127.0.0.1:9999");
+
+    // Switching to another provider must clear stale draft proxy/noProxy state even without unmounting.
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            isCanonicalOpenAi={false}
+            item={{ name: "beta", adapter: "openai-chat", baseUrl: "https://api.beta.test/v1", authMode: "key", hasApiKey: true, hasProxy: false }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    expect(host.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("");
+    expect(host.textContent).not.toContain("http://127.0.0.1:8888");
+
+    // Switch to google-antigravity and fail PUT /api/providers/egress -> tlsEnabled checkbox rolls back cleanly.
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ProviderEgressAndKeychainSection
+            apiBase="http://127.0.0.1:10100"
+            isCanonicalOpenAi={false}
+            item={{ name: "google-antigravity", adapter: "google", baseUrl: "https://cloudcode-pa.googleapis.com", authMode: "oauth", googleMode: "cloud-code-assist" }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    failPut = true;
+    const tlsBox = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(tlsBox.checked).toBe(false);
+    await act(async () => { tlsBox.click(); });
+    await flushTicks();
+    expect(tlsBox.checked).toBe(false);
+    expect(host.textContent).toContain("egress rejected");
+  });
+
+  test("CcSwitchImportModal invalidates preview/consent when sourcePath or allowPrivateNetwork changes and keeps selection on locale change", async () => {
+    let previewCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/providers/cc-switch/preview")) {
+        previewCalls += 1;
+        return Response.json({
+          available: true,
+          keychainAvailable: false,
+          defaultSources: [{ path: "/tmp/.cc-switch/providers.json", kind: "json" }],
+          journalActive: false,
+          discovered: 2,
+          eligible: 2,
+          conflicts: 0,
+          conflictNames: [],
+          invalid: 0,
+          invalidReasons: {},
+          providers: [
+            { name: "p-one", sourceId: "1", appType: "claude", adapter: "anthropic", baseUrl: "https://a.example.com/v1" },
+            { name: "p-two", sourceId: "2", appType: "openai", adapter: "openai-chat", baseUrl: "https://b.example.com/v1" },
+          ],
+        });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+
+    const { useI18n } = await import("../src/i18n/shared");
+    function LocaleBridge() {
+      const { setLocale } = useI18n();
+      return <button type="button" data-test="switch-locale-ko" onClick={() => setLocale("ko")} />;
+    }
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <LocaleBridge />
+          <CcSwitchImportModal apiBase="http://127.0.0.1:10100" onClose={() => undefined} onChanged={() => undefined} />
+        </LanguageProvider>,
+      );
+    });
+    await flushTicks();
+    expect(previewCalls).toBe(1);
+
+    // Uncheck p-two and check consent, then switch locale: preview MUST NOT re-run and selection stays intact.
+    const boxes = [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    await act(async () => {
+      boxes[2]!.click(); // p-two row checkbox
+      boxes[boxes.length - 1]!.click(); // consent checkbox
+    });
+    expect(boxes[boxes.length - 1]!.checked).toBe(true);
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-test="switch-locale-ko"]')!.click();
+    });
+    await flushTicks();
+    expect(previewCalls).toBe(1);
+    const koBoxes = [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    expect(koBoxes[1]!.checked).toBe(true);
+    expect(koBoxes[2]!.checked).toBe(false);
+    expect(koBoxes[koBoxes.length - 1]!.checked).toBe(true);
+
+    // Editing sourcePath clears preview & consent so stale approval cannot apply to another source.
+    const sourceInput = host.querySelector<HTMLInputElement>('input.input')!;
+    await act(async () => { setInputValue(sourceInput, "/tmp/other.json"); });
+    expect(host.querySelector("table.tbl")).toBeNull();
+    expect([...host.querySelectorAll("button")].find(b => b.disabled && b.classList.contains("btn-primary"))).toBeDefined();
+
+    // Re-preview, check consent again, then toggle allowPrivateNetwork -> preview & consent clear again.
+    const previewBtn = [...host.querySelectorAll("button")].find(b => b.className === "btn")!;
+    await act(async () => { previewBtn.click(); });
+    await flushTicks();
+    expect(previewCalls).toBe(2);
+    const afterBoxes = [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    await act(async () => { afterBoxes[afterBoxes.length - 1]!.click(); });
+    expect(afterBoxes[afterBoxes.length - 1]!.checked).toBe(true);
+    await act(async () => { afterBoxes[0]!.click(); }); // toggle allowPrivateNetwork
+    expect(host.querySelector("table.tbl")).toBeNull();
+  });
 });

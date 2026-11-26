@@ -6,6 +6,7 @@ import { uxT } from "../../i18n/ux-overhaul-copy";
 import { CopyableExample, EndpointUrl } from "../../pages/api-keys-copy";
 import type { AudioApiInfo } from "../../pages/api-keys-utils";
 import { audioSocketExample, audioUploadExample } from "../../audio-api-examples";
+import { resolveAudioBrowserEndpoint } from "./audio-api-endpoint";
 
 function AudioKeyInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const t = useT();
@@ -47,7 +48,7 @@ export function DictationPanel({ audio }: { audio?: AudioApiInfo }) {
     setError(null);
     setText(null);
     try {
-      const result = await transcribeAudio(audio.transcriptionEndpoint, audio.transcriptionModel, key, file, controller.signal);
+      const result = await transcribeAudio(resolveAudioBrowserEndpoint(audio.transcriptionEndpoint), audio.transcriptionModel, key, file, controller.signal);
       if (request.current === controller) setText(result);
     } catch (failure) {
       if (request.current === controller && !controller.signal.aborted) setError(failure instanceof AudioApiError ? failure.code : "network");
@@ -127,7 +128,7 @@ export function LiveVoicePanel({ audio }: { audio?: AudioApiInfo }) {
     const current: { dispose?: () => void } = {};
     connection.current = current;
     try {
-      current.dispose = connectLiveAudio({ endpoint: audio.liveEndpoint, model: audio.liveModel, key,
+      current.dispose = connectLiveAudio({ endpoint: resolveAudioBrowserEndpoint(audio.liveEndpoint), model: audio.liveModel, key,
         onState: (next, code) => {
           if (connection.current !== current) return;
           setState(next); setError(code ?? null);

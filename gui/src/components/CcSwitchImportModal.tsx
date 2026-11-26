@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
 import { IconX } from "../icons";
@@ -60,6 +60,10 @@ async function fetchCcSwitchPreview(
 
 export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
   const { t, locale } = useI18n();
+  const localeRef = useRef(locale);
+  useEffect(() => {
+    localeRef.current = locale;
+  }, [locale]);
   const [sourcePath, setSourcePath] = useState("");
   const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -71,6 +75,14 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
   const [consentChecked, setConsentChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  const invalidateScannedPreview = () => {
+    setPreview(null);
+    setSelectedNames(new Set());
+    setConsentChecked(false);
+    setError(null);
+    setNotice(null);
+  };
 
   const runPreview = async (
     customSource?: string,
@@ -85,7 +97,10 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
     try {
       const { ok, body } = await fetchCcSwitchPreview(apiBase, activeSource, privateNet);
       if (!ok || !body) {
-        setError(body?.error ?? uxT(locale, "ccSwitch.previewFailed"));
+        setPreview(null);
+        setSelectedNames(new Set());
+        setConsentChecked(false);
+        setError(body?.error ?? uxT(localeRef.current, "ccSwitch.previewFailed"));
         return;
       }
       setPreview(body);
@@ -95,7 +110,10 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
       setSelectedNames(new Set(body.providers.map(p => p.name)));
       setConsentChecked(false);
     } catch {
-      setError(uxT(locale, "ccSwitch.previewFailed"));
+      setPreview(null);
+      setSelectedNames(new Set());
+      setConsentChecked(false);
+      setError(uxT(localeRef.current, "ccSwitch.previewFailed"));
     } finally {
       setLoading(false);
     }
@@ -107,7 +125,10 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
       .then(({ ok, body }) => {
         if (ac.signal.aborted) return;
         if (!ok || !body) {
-          setError(body?.error ?? uxT(locale, "ccSwitch.previewFailed"));
+          setPreview(null);
+          setSelectedNames(new Set());
+          setConsentChecked(false);
+          setError(body?.error ?? uxT(localeRef.current, "ccSwitch.previewFailed"));
           return;
         }
         setPreview(body);
@@ -119,14 +140,17 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
       })
       .catch(() => {
         if (!ac.signal.aborted) {
-          setError(uxT(locale, "ccSwitch.previewFailed"));
+          setPreview(null);
+          setSelectedNames(new Set());
+          setConsentChecked(false);
+          setError(uxT(localeRef.current, "ccSwitch.previewFailed"));
         }
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
       });
     return () => ac.abort();
-  }, [apiBase, locale]);
+  }, [apiBase]);
 
   const toggleProvider = (name: string) => {
     setSelectedNames(prev => {
@@ -239,7 +263,10 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
               <input
                 className="input font-mono text-xs"
                 value={sourcePath}
-                onChange={e => setSourcePath(e.target.value)}
+                onChange={e => {
+                  setSourcePath(e.target.value);
+                  invalidateScannedPreview();
+                }}
                 placeholder={uxT(locale, "ccSwitch.sourcePlaceholder")}
                 disabled={loading || applying}
               />
@@ -259,7 +286,10 @@ export function CcSwitchImportModal({ apiBase, onClose, onChanged }: Props) {
               type="checkbox"
               checked={allowPrivateNetwork}
               disabled={loading || applying}
-              onChange={e => setAllowPrivateNetwork(e.target.checked)}
+              onChange={e => {
+                setAllowPrivateNetwork(e.target.checked);
+                invalidateScannedPreview();
+              }}
             />
             <span>{uxT(locale, "ccSwitch.allowPrivateNetwork")}</span>
           </label>

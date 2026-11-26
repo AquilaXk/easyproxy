@@ -15,8 +15,11 @@ import {
 import { assertJsonNestingDepth, JsonNestingDepthExceededError } from "../lib/json-depth-guard";
 import { packageVersion } from "../lib/package-version";
 import { assertNotRealHomeUnderTest } from "../lib/test-home-guard";
+import { publishCredentialSync } from "../local-credentials/generation";
+import { advanceCodexCredentialMutationEpoch } from "../codex/credential-mutation-epoch";
+import { invalidateCodexAccountStoreCache } from "../codex/account-store";
 import { osStoreAccounts } from "../local-credentials/references";
-import { createOAuthFileLock, getAuthStoreLockPath, getAuthStorePath, OAUTH_REFRESH_LOCK_WAIT_MS } from "../oauth/store";
+import { createOAuthFileLock, getAuthStoreLockPath, getAuthStorePath, invalidateAuthStoreCache, OAUTH_REFRESH_LOCK_WAIT_MS } from "../oauth/store";
 import { REDACTED_PROVIDER_FIELDS } from "../server/auth-cors";
 import type { EpxConfig } from "../types";
 import { atomicWriteFileNoFollow, atomicWriteFileNoFollowUnclaimed } from "./atomic-write";
@@ -829,6 +832,16 @@ function writePreRestoreSnapshot(
 interface StoreMutationRollback {
   path: string;
   preBytes: Buffer | null;
+  credentialStore?: "auth.json" | "codex-accounts.json";
+}
+
+function invalidateRestoredCredentialStore(record: Pick<StoreMutationRollback, "path" | "credentialStore">): void {
+  if (record.credentialStore === "auth.json") {
+    invalidateAuthStoreCache(record.path);
+  } else if (record.credentialStore === "codex-accounts.json") {
+    invalidateCodexAccountStoreCache();
+    advanceCodexCredentialMutationEpoch();
+  }
 }
 
 function compensateAuxStoreMutations(rollbackRecords: StoreMutationRollback[]): void {
@@ -836,18 +849,26 @@ function compensateAuxStoreMutations(rollbackRecords: StoreMutationRollback[]): 
   for (let i = rollbackRecords.length - 1; i >= 0; i--) {
     const record = rollbackRecords[i]!;
     try {
-      if (record.preBytes !== null) {
-        mkdirSync(dirname(record.path), { recursive: true, mode: 0o700 });
-        atomicWriteFileNoFollow(record.path, record.preBytes);
-      } else {
-        try {
-          const stat = lstatSync(record.path);
-          if (!stat.isSymbolicLink() && stat.isFile()) {
-            unlinkSync(record.path);
+      const applyRollback = () => {
+        if (record.preBytes !== null) {
+          mkdirSync(dirname(record.path), { recursive: true, mode: 0o700 });
+          atomicWriteFileNoFollow(record.path, record.preBytes);
+        } else {
+          try {
+            const stat = lstatSync(record.path);
+            if (!stat.isSymbolicLink() && stat.isFile()) {
+              unlinkSync(record.path);
+            }
+          } catch (err) {
+            if ((err as { code?: string })?.code !== "ENOENT") throw err;
           }
-        } catch (err) {
-          if ((err as { code?: string })?.code !== "ENOENT") throw err;
         }
+      };
+      if (record.credentialStore) {
+        publishCredentialSync(applyRollback);
+        invalidateRestoredCredentialStore(record);
+      } else {
+        applyRollback();
       }
     } catch (rollbackErr) {
       rollbackErrors.push(rollbackErr);
@@ -962,13 +983,22 @@ export async function restoreProfileBackup(
             for (const store of encryptedStores) {
               const payloadDoc = files[store.key];
               if (payloadDoc) {
-                const diskDoc = store.key === "auth.json"
-                  ? sealAuthStoreDocument(payloadDoc, configDir)
-                  : sealCodexStoreDocument(payloadDoc, configDir);
+                let diskDoc: Record<string, unknown>;
+                try {
+                  diskDoc = store.key === "auth.json"
+                    ? sealAuthStoreDocument(payloadDoc, configDir)
+                    : sealCodexStoreDocument(payloadDoc, configDir);
+                } catch (error) {
+                  if (error instanceof CredentialVaultError) {
+                    throw new ProfileBackupError(error.message, error.status, "backup_vault_unavailable");
+                  }
+                  throw error;
+                }
                 profileBackupTestHooks?.onBeforeWriteStore?.(store.key, store.snap.path);
                 mkdirSync(dirname(store.snap.path), { recursive: true, mode: 0o700 });
-                atomicWriteFileNoFollow(store.snap.path, `${JSON.stringify(diskDoc, null, 2)}\n`);
-                rollbackRecords.push({ path: store.snap.path, preBytes: store.snap.rawBytes });
+                publishCredentialSync(() => atomicWriteFileNoFollow(store.snap.path, `${JSON.stringify(diskDoc, null, 2)}\n`));
+                rollbackRecords.push({ path: store.snap.path, preBytes: store.snap.rawBytes, credentialStore: store.key });
+                invalidateRestoredCredentialStore({ path: store.snap.path, credentialStore: store.key });
                 restoredFiles.push(store.key);
               } else if (store.snap.rawBytes !== null) {
                 profileBackupTestHooks?.onBeforeWriteStore?.(store.key, store.snap.path);
@@ -980,8 +1010,9 @@ export async function restoreProfileBackup(
                     "backup_symlink_refused",
                   );
                 }
-                unlinkSync(store.snap.path);
-                rollbackRecords.push({ path: store.snap.path, preBytes: store.snap.rawBytes });
+                publishCredentialSync(() => unlinkSync(store.snap.path));
+                rollbackRecords.push({ path: store.snap.path, preBytes: store.snap.rawBytes, credentialStore: store.key });
+                invalidateRestoredCredentialStore({ path: store.snap.path, credentialStore: store.key });
                 removedFiles.push(store.key);
               }
             }

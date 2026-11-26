@@ -19,7 +19,11 @@ pub fn sources(config: &Value) -> Option<Vec<Source>> {
             .iter()
             .filter(|(_, row)| row["disabled"].as_bool() != Some(true))
             .map(|(name, row)| {
-                let (path, switch) = if name == "openai" {
+                let (path, switch) = if row["canonicalOpenAiForward"].as_bool() == Some(true)
+                    || (name == "openai"
+                        && (text(row, "authMode").is_empty() || text(row, "authMode") == "forward")
+                        && row["hasApiKey"].as_bool() != Some(true))
+                {
                     (
                         Some("/api/codex-auth/accounts".into()),
                         Some(AccountSwitchKind::Codex),
@@ -39,8 +43,10 @@ pub fn sources(config: &Value) -> Option<Vec<Source>> {
                 } else {
                     (None, None)
                 };
-                let codex_account_mode = if name == "openai"
-                    && (text(row, "authMode").is_empty() || text(row, "authMode") == "forward")
+                let codex_account_mode = if row["canonicalOpenAiForward"].as_bool() == Some(true)
+                    || (name == "openai"
+                        && (text(row, "authMode").is_empty() || text(row, "authMode") == "forward")
+                        && row["hasApiKey"].as_bool() != Some(true))
                 {
                     Some(
                         if text(row, "codexAccountMode") == "direct" {
@@ -549,5 +555,19 @@ mod tests {
             provider(&direct_rows[0], None, false)["codexAccountMode"],
             "direct"
         );
+        let keyed_openai = sources(&json!({
+            "providers": { "openai": { "authMode": "key", "hasApiKey": true } }
+        }))
+        .unwrap();
+        let openai_key_src = keyed_openai.iter().find(|row| row.name == "openai").unwrap();
+        assert_eq!(
+            openai_key_src.path.as_deref(),
+            Some("/api/providers/keys?name=openai&quota=1")
+        );
+        assert!(matches!(
+            openai_key_src.switch,
+            Some(AccountSwitchKind::ApiKey)
+        ));
+        assert!(openai_key_src.codex_account_mode.is_none());
     }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { readJsonIfOk } from "../../fetch-json";
 import { confirmAction } from "../../action-dialogs";
 import { useI18n } from "../../i18n/shared";
@@ -148,7 +148,25 @@ export function ProviderEgressAndKeychainSection({
     if (!signal?.aborted) applySnapshot(snapshot);
   }, [apiBase, applySnapshot, isCanonicalOpenAi, item.name, supportsKeychain]);
 
+  const prevProviderKeyRef = useRef(`${apiBase ?? ""}::${item.name}`);
+
   useEffect(() => {
+    const providerKey = `${apiBase ?? ""}::${item.name}`;
+    if (prevProviderKeyRef.current !== providerKey) {
+      prevProviderKeyRef.current = providerKey;
+      setProxyInput("");
+      setShowProxy(false);
+      setNoProxyInput(formatNoProxyValue(item.noProxy));
+      setHasProxy(item.hasProxy === true);
+      setProxyLabel(item.proxyLabel ?? "");
+      setTlsEnabled(isTlsProfileEnabled(item.tlsProfile));
+      setTlsStatus(item.tlsProfile?.status ?? "disabled");
+      setEgressMsg(null);
+      setKeychainState(null);
+      setKeychainMsg(null);
+      setHistorySlim("off");
+      setHistorySlimMsg(null);
+    }
     if (apiBase === undefined) return;
     const ac = new AbortController();
     fetchLiveDetailsSnapshot(apiBase, item.name, supportsKeychain, isCanonicalOpenAi, ac.signal)
@@ -157,13 +175,18 @@ export function ProviderEgressAndKeychainSection({
       })
       .catch(() => undefined);
     return () => ac.abort();
-  }, [apiBase, applySnapshot, isCanonicalOpenAi, item.name, supportsKeychain]);
+  }, [apiBase, applySnapshot, isCanonicalOpenAi, item.hasProxy, item.name, item.noProxy, item.proxyLabel, item.tlsProfile, supportsKeychain]);
 
   const saveEgress = async (override?: { proxy?: string | null; tlsEnabled?: boolean }) => {
     if (apiBase === undefined || egressSaving) return;
     setEgressSaving(true);
     setEgressMsg(null);
     const nextTls = override?.tlsEnabled ?? tlsEnabled;
+    const rollbackTlsIfOverridden = () => {
+      if (override?.tlsEnabled !== undefined) {
+        setTlsEnabled(!override.tlsEnabled);
+      }
+    };
     const body: Record<string, unknown> = {
       noProxy: noProxyInput.trim() || null,
       ...(supportsTlsProfile ? { tlsProfile: nextTls ? "antigravity-browser" : null } : {}),
@@ -181,6 +204,7 @@ export function ProviderEgressAndKeychainSection({
       });
       const payload = await readJsonIfOk<LiveProviderEgressMeta & { error?: string }>(res);
       if (!res.ok || !payload) {
+        rollbackTlsIfOverridden();
         let errText = payload?.error;
         if (!errText) {
           try {
@@ -208,6 +232,7 @@ export function ProviderEgressAndKeychainSection({
       });
       onRefreshConfig?.();
     } catch {
+      rollbackTlsIfOverridden();
       setEgressMsg({ ok: false, text: uxT(locale, "providerEgress.saveFailed") });
     } finally {
       setEgressSaving(false);

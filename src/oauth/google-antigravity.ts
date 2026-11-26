@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import type { EpxProviderConfig } from "../types";
 import { loadConfig } from "../config";
 import { getConfigPath } from "../config/paths";
+import { bindOAuthSnapshotToProvider } from "../lib/provider-egress";
 import { providerEgressFetch } from "../lib/provider-tls-profile";
 import { OAuthCallbackFlow, type OAuthCallbackFlowOptions } from "./callback-server";
 import { generatePKCE } from "./pkce";
@@ -32,14 +33,17 @@ function antigravityOAuthTransport(egress?: AntigravityOAuthEgressOptions): type
   if (!base && existsSync(getConfigPath())) {
     try { base = loadConfig().providers?.["google-antigravity"]; } catch { base = undefined; }
   }
-  return providerEgressFetch("google-antigravity", {
-    adapter: "google",
-    authMode: "oauth",
-    googleMode: "cloud-code-assist",
-    baseUrl: DAILY_API,
-    ...(base ?? {}),
-    ...(egress?.accountProxy ? { proxy: egress.accountProxy } : {}),
-  });
+  const boundProvider = bindOAuthSnapshotToProvider(
+    {
+      adapter: "google",
+      authMode: "oauth",
+      googleMode: "cloud-code-assist",
+      baseUrl: DAILY_API,
+      ...(base ?? {}),
+    },
+    { proxy: egress?.accountProxy, hostPlatform: egress?.hostPlatform },
+  );
+  return providerEgressFetch("google-antigravity", boundProvider);
 }
 
 const CLIENT_ID = process.env.GOOGLE_ANTIGRAVITY_CLIENT_ID

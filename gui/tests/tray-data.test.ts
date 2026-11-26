@@ -127,6 +127,8 @@ describe('tray account switching (parity with the native panel)', () => {
   test('each source names the switch route the native panel uses, and forward sources have none', () => {
     const sources = providerSources({ providers: { openai: {}, claude: { authMode: 'oauth' }, key: { hasApiKey: true }, fwd: { hasApiKey: true, authMode: 'forward' } } });
     expect(sources.map(s => [s.name, s.switchKind])).toEqual([['openai', 'codex'], ['claude', 'oauth'], ['key', 'apiKey'], ['fwd', null]]);
+    const keyedOpenAi = providerSources({ providers: { openai: { authMode: 'key', hasApiKey: true } } });
+    expect(keyedOpenAi).toEqual([{ name: 'openai', path: '/api/providers/keys?name=openai&quota=1', switchKind: 'apiKey' }]);
     expect(accountSwitchRequest('openai', 'codex', 'a1')).toEqual({ path: '/api/codex-auth/active', body: { accountId: 'a1' } });
     expect(accountSwitchRequest('claude', 'oauth', 'a2')).toEqual({ path: '/api/oauth/accounts/active', body: { provider: 'claude', accountId: 'a2' } });
     expect(accountSwitchRequest('key', 'apiKey', 'k3')).toEqual({ path: '/api/providers/keys/active', body: { name: 'key', id: 'k3' } });

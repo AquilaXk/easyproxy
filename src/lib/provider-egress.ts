@@ -325,36 +325,42 @@ export function providerEgressConfigError(
   }
 }
 
-const unpinnedProviderProxy = new WeakMap<EpxProviderConfig, string | null | undefined>();
-const providerHostPlatform = new WeakMap<EpxProviderConfig, string>();
+const UNPINNED_PROXY_SYM: unique symbol = Symbol("easyproxy.unpinnedProviderProxy");
+const HOST_PLATFORM_SYM: unique symbol = Symbol("easyproxy.providerHostPlatform");
+
+type ProviderWithEgressMeta = EpxProviderConfig & {
+  [UNPINNED_PROXY_SYM]?: string | null;
+  [HOST_PLATFORM_SYM]?: string;
+};
 
 /**
  * Derive an ephemeral provider config bound to an OAuth account's pinned proxy, projectId,
  * accessToken, and hostPlatform without polluting persisted config or leaking one account's proxy
- * onto the next rotated account.
+ * or hostPlatform across fallback rotation, while preserving bindings across `{ ...provider }` spreads.
  */
 export function bindOAuthSnapshotToProvider(
   provider: EpxProviderConfig,
   snapshot: { accessToken?: string; projectId?: string; proxy?: string; hostPlatform?: string },
   options: { setApiKey?: boolean; baseProvider?: EpxProviderConfig } = {},
 ): EpxProviderConfig {
-  const origin = options.baseProvider ?? provider;
-  const baseProxy = unpinnedProviderProxy.has(origin)
-    ? unpinnedProviderProxy.get(origin)
+  const origin = (options.baseProvider ?? provider) as ProviderWithEgressMeta;
+  const baseProxy = Object.hasOwn(origin, UNPINNED_PROXY_SYM)
+    ? origin[UNPINNED_PROXY_SYM]
     : origin.proxy;
   const effectiveProxy = snapshot.proxy ?? baseProxy;
-  const next: EpxProviderConfig = {
+  const next: ProviderWithEgressMeta = {
     ...provider,
     ...(options.setApiKey && snapshot.accessToken ? { apiKey: snapshot.accessToken } : {}),
     ...(snapshot.projectId ? { project: snapshot.projectId } : {}),
   };
   if (effectiveProxy !== undefined) next.proxy = effectiveProxy;
   else delete next.proxy;
-  unpinnedProviderProxy.set(next, baseProxy);
-  if (snapshot.hostPlatform) providerHostPlatform.set(next, snapshot.hostPlatform);
+  next[UNPINNED_PROXY_SYM] = baseProxy;
+  if (snapshot.hostPlatform) next[HOST_PLATFORM_SYM] = snapshot.hostPlatform;
+  else delete next[HOST_PLATFORM_SYM];
   return next;
 }
 
 export function getProviderHostPlatform(provider: EpxProviderConfig): string | undefined {
-  return providerHostPlatform.get(provider);
+  return (provider as ProviderWithEgressMeta)[HOST_PLATFORM_SYM];
 }

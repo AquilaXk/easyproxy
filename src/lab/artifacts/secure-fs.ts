@@ -136,14 +136,13 @@ function detectArtifactIoMode(dir: TrustedArtifactDir): ArtifactIoMode {
     const fd = openWithDir(probe, O_CREAT | O_EXCL | O_RDWR, 0o600, { dir: dir.fd });
     closeSync(fd);
     (renameSync as unknown as RenameSyncWithDir)(probe, finalName, { dir: dir.fd });
-    if (!existsSync(join(dir.path, finalName))) {
-      artifactIoMode = "win32_pinned";
-      return artifactIoMode;
-    }
-    (unlinkSync as unknown as UnlinkSyncWithDir)(finalName, { dir: dir.fd });
-    artifactIoMode = "dirfd";
+    artifactIoMode = existsSync(join(dir.path, finalName)) ? "dirfd" : "win32_pinned";
   } catch {
     artifactIoMode = "win32_pinned";
+  } finally {
+    const unlinkWithDir = unlinkSync as unknown as UnlinkSyncWithDir;
+    try { unlinkWithDir(probe, { dir: dir.fd }); } catch { /* absent or cleaned */ }
+    try { unlinkWithDir(finalName, { dir: dir.fd }); } catch { /* absent or cleaned */ }
   }
   return artifactIoMode;
 }

@@ -8,7 +8,7 @@ import {
   resetProviderTlsProfileForTests,
   setProviderTlsRuntimeForTest,
 } from "../../src/lib/provider-tls-profile";
-import { isEgressTransparentExecutor } from "../../src/lib/provider-egress";
+import { bindOAuthSnapshotToProvider, isEgressTransparentExecutor } from "../../src/lib/provider-egress";
 import { providerManagementConfigError } from "../../src/server/auth-cors";
 import { providerFetch } from "../../src/server/responses/fetch-helpers";
 import type { EpxProviderConfig } from "../../src/types";
@@ -340,5 +340,30 @@ describe("provider TLS profile", () => {
     expect(baseCalls).toBe(1);
     expect(seen.calls).toBe(0);
     expect(getProviderTlsProfileStatus("gemini")).toBe("disabled");
+  });
+
+  test("TLS OS fingerprint follows bound account hostPlatform across provider spreads", async () => {
+    const seenOs: string[] = [];
+    setProviderTlsRuntimeForTest({
+      env: {},
+      fetch: async (_input, init) => {
+        seenOs.push(String((init as { os?: unknown })?.os ?? ""));
+        return new Response("ok");
+      },
+    });
+    for (const [hostPlatform, expectedOs] of [
+      ["darwin/arm64", "macos"],
+      ["windows/amd64", "windows"],
+      ["linux/amd64", "linux"],
+    ] as const) {
+      const bound = bindOAuthSnapshotToProvider(canonical as unknown as EpxProviderConfig, { hostPlatform });
+      const spread = { ...bound };
+      await providerTlsFetch("google-antigravity", spread, fetch)("https://cloudcode-pa.googleapis.com/v1");
+      expect(seenOs.at(-1)).toBe(expectedOs);
+    }
+
+    const fallbackExpected = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
+    await providerTlsFetch("google-antigravity", canonical, fetch)("https://cloudcode-pa.googleapis.com/v1");
+    expect(seenOs.at(-1)).toBe(fallbackExpected);
   });
 });

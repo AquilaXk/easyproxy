@@ -144,18 +144,46 @@ function runtimeRoleMeta(runtimeRole: string): string {
 function managementAuthRequiredMeta(required: boolean): string {
   return `<meta name="easyproxy-management-auth-required" content="${required ? "1" : "0"}">`;
 }
+const GUI_HTML_DEFAULT_CSP = "frame-ancestors 'none'; script-src 'self'; connect-src 'self'; object-src 'none'";
+
+function guiConnectSrcDirective(directConnectOrigin?: string): string {
+  const raw = directConnectOrigin?.trim();
+  if (!raw) return "'self'";
+  try {
+    const parsed = new URL(raw);
+    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password) {
+      return "'self'";
+    }
+    const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+    const wsOrigin = `${wsProtocol}//${parsed.host}`;
+    return `'self' ${parsed.origin} ${wsOrigin}`;
+  } catch {
+    return "'self'";
+  }
+}
+
+function guiHtmlSecurityHeaders(directConnectOrigin?: string): Record<string, string> {
+  const connectSrc = guiConnectSrcDirective(directConnectOrigin);
+  return {
+    ...browserSecurityHeaders(),
+    "Content-Security-Policy": connectSrc === "'self'"
+      ? GUI_HTML_DEFAULT_CSP
+      : `frame-ancestors 'none'; script-src 'self'; connect-src ${connectSrc}; object-src 'none'`,
+  };
+}
+
 const GUI_HTML_SECURITY_HEADERS = {
   ...browserSecurityHeaders(),
-  "Content-Security-Policy": "frame-ancestors 'none'; script-src 'self'; connect-src 'self'; object-src 'none'",
+  "Content-Security-Policy": GUI_HTML_DEFAULT_CSP,
 };
 
-function htmlDocumentResponse(html: string): Response {
+function htmlDocumentResponse(html: string, directConnectOrigin?: string): Response {
   return new Response(html, {
     headers: {
       "Content-Type": "text/html",
       "Cache-Control": "no-store",
       Pragma: "no-cache",
-      ...GUI_HTML_SECURITY_HEADERS,
+      ...guiHtmlSecurityHeaders(directConnectOrigin),
     },
   });
 }
@@ -165,6 +193,7 @@ function htmlResponse(
   session?: GuiSessionBootstrap,
   runtimeRole?: string,
   managementAuthRequired?: boolean,
+  directConnectOrigin?: string,
 ): Response {
   let html = readFileSync(path, "utf8");
   const bootstrap = [
@@ -175,7 +204,7 @@ function htmlResponse(
   if (bootstrap) {
     html = html.includes("</head>") ? html.replace("</head>", `${bootstrap}</head>`) : `${bootstrap}${html}`;
   }
-  return htmlDocumentResponse(html);
+  return htmlDocumentResponse(html, directConnectOrigin);
 }
 
 /**
@@ -203,6 +232,7 @@ export function serveGuiFile(
   session?: GuiSessionBootstrap,
   runtimeRole?: string,
   managementAuthRequired?: boolean,
+  directConnectOrigin?: string,
 ): Response | null {
   if (!guiDist) return null;
   const filePath = resolveGuiFilePath(guiDist, pathname);
@@ -230,7 +260,7 @@ export function serveGuiFile(
     if (!extname(pathname)) {
       const indexPath = join(guiDist, "index.html");
       if (isFile(indexPath)) {
-        return htmlResponse(indexPath, session, runtimeRole, managementAuthRequired);
+        return htmlResponse(indexPath, session, runtimeRole, managementAuthRequired, directConnectOrigin);
       }
     }
     return null;
@@ -238,7 +268,7 @@ export function serveGuiFile(
 
   const ext = extname(servedPath);
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
-  if (ext === ".html") return htmlResponse(servedPath, session, runtimeRole, managementAuthRequired);
+  if (ext === ".html") return htmlResponse(servedPath, session, runtimeRole, managementAuthRequired, directConnectOrigin);
 
   // "assets/" matches Vite's assetsDir for the main build.
   // servedPath is already resolve()-normalized, so rel cannot contain ".." fragments.

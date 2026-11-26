@@ -33,12 +33,18 @@ export function resolveGatewayTarget(config: Pick<EpxConfig, "hostname" | "unaut
   if (destination.requiresAdmissionToken) {
     return { ok: false, code: "requires-admission-token", message: `${destination.origin} requires an easyproxy data-plane credential, and EasyProxy will not write a real secret into client files. Enable \`unauthenticatedLoopbackListener\` or bind the proxy to loopback.` };
   }
-  const defaultModel = model?.trim();
-  const hasControlChar = defaultModel !== undefined && [...defaultModel].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
-  if (defaultModel !== undefined && (defaultModel.length === 0 || defaultModel.length > 200 || hasControlChar)) {
-    return { ok: false, code: "invalid-model", message: "The model selector must be a non-empty single-line string of at most 200 characters." };
+  if (model !== undefined) {
+    if (model === "") {
+      return { ok: true, target: { url: destination.origin, apiKey: GATEWAY_PLACEHOLDER_KEY, clearDefaultModel: true } };
+    }
+    const defaultModel = model.trim();
+    const hasControlChar = [...defaultModel].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
+    if (defaultModel.length === 0 || defaultModel.length > 200 || hasControlChar) {
+      return { ok: false, code: "invalid-model", message: "The model selector must be a non-empty single-line string of at most 200 characters." };
+    }
+    return { ok: true, target: { url: destination.origin, apiKey: GATEWAY_PLACEHOLDER_KEY, defaultModel } };
   }
-  return { ok: true, target: { url: destination.origin, apiKey: GATEWAY_PLACEHOLDER_KEY, ...(defaultModel ? { defaultModel } : {}) } };
+  return { ok: true, target: { url: destination.origin, apiKey: GATEWAY_PLACEHOLDER_KEY } };
 }
 
 export function gatewayClientsStatus(ctx: GatewayClientContext, target?: GatewayTarget): GatewayClientStatus[] {

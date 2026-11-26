@@ -17,6 +17,7 @@ export interface GatewayTarget {
   url: string;
   apiKey: string;
   defaultModel?: string;
+  clearDefaultModel?: boolean;
   /** Managed loopback API key id issued specifically for this client connection, if any. */
   issuedKeyId?: string;
 }

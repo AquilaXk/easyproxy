@@ -225,6 +225,10 @@ interface CodexAccountStoreCacheEntry {
 
 let codexAccountStoreCache: CodexAccountStoreCacheEntry | null = null;
 
+export function invalidateCodexAccountStoreCache(): void {
+  codexAccountStoreCache = null;
+}
+
 function sameBigIntStat(a: BigIntStats, b: BigIntStats | CodexAccountStoreCacheEntry): boolean {
   return a.dev === b.dev
     && a.ino === b.ino

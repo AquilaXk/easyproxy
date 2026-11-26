@@ -693,6 +693,7 @@ function ProviderSettingsForm({
         <ProviderModelDiscovery key={JSON.stringify([targetKey, apiBase, item.name])} apiBase={apiBase} provider={item.name} />
       )}
       <ProviderEgressAndKeychainSection
+        key={JSON.stringify(["egress", targetKey, apiBase, item.name])}
         item={item}
         apiBase={apiBase}
         isCanonicalOpenAi={isCanonicalOpenAi}

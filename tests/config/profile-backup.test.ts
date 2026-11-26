@@ -503,4 +503,55 @@ describe("full profile backup and restore (epx.profile.backup/1)", () => {
       "/api/profile/backup/restore",
     ]);
   });
+
+  test("restoreProfileBackup maps CredentialVaultError to ProfileBackupError offline and invalidates cached credential stores", async () => {
+    const oauthStore = await import("../../src/oauth/store");
+    const codexEpoch = await import("../../src/codex/credential-mutation-epoch");
+    const credentialVault = await import("../../src/lib/credential-vault");
+
+    // Seed an OAuth account + codex-accounts.json and export an encrypted backup.
+    await oauthStore.upsertCredentialByIdentity("xai", {
+      access: "tok-1",
+      refresh: "ref-1",
+      expires: Date.now() + 60_000,
+      email: "a@example.com",
+    });
+    writeFileSync(join(configDir, "codex-accounts.json"), JSON.stringify({
+      accounts: { "codex-1": { refreshToken: "codex-refresh-1" } },
+    }, null, 2), { mode: 0o600 });
+    const bundle = await exportProfileBackup({ mode: "encrypted", passphrase: "vault-sync-passphrase" });
+
+    // Populate peekAuthStoreCache and snapshot Codex mutation epoch.
+    expect(oauthStore.peekAuthStore().xai?.accounts[0]?.credential.access).toBe("tok-1");
+    const epochBefore = codexEpoch.codexCredentialMutationEpoch();
+
+    // Update OAuth account to a different token before restoring older bundle.
+    await oauthStore.upsertCredentialByIdentity("xai", {
+      access: "tok-2",
+      refresh: "ref-2",
+      expires: Date.now() + 60_000,
+      email: "a@example.com",
+    });
+    expect(oauthStore.peekAuthStore().xai?.accounts[0]?.credential.access).toBe("tok-2");
+
+    // Restoring bundle must invalidate cached auth store and advance Codex mutation epoch.
+    await restoreProfileBackup(bundle, { passphrase: "vault-sync-passphrase" });
+    expect(oauthStore.peekAuthStore().xai?.accounts[0]?.credential.access).toBe("tok-1");
+    expect(codexEpoch.codexCredentialMutationEpoch()).toBeGreaterThan(epochBefore);
+
+    // Simulate unavailable credential vault during restore -> maps cleanly to ProfileBackupError (backup_vault_unavailable).
+    const { spyOn } = await import("bun:test");
+    const sealSpy = spyOn(credentialVault, "sealAuthStoreDocument").mockImplementation(() => {
+      throw new credentialVault.CredentialVaultError("VAULT_KEY_UNAVAILABLE", "simulated offline vault missing", 503);
+    });
+    try {
+      await expect(restoreProfileBackup(bundle, { passphrase: "vault-sync-passphrase" })).rejects.toMatchObject({
+        name: "ProfileBackupError",
+        code: "backup_vault_unavailable",
+        status: 503,
+      });
+    } finally {
+      sealSpy.mockRestore();
+    }
+  });
 });

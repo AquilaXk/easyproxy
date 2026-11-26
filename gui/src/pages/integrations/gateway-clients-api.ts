@@ -128,7 +128,7 @@ export async function runGatewayClientAction(
     const response = await fetch(`${apiBase}/api/gateway-clients/${id}/${action}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(model ? { model } : {}),
+      body: JSON.stringify(model !== undefined ? { model } : {}),
     });
     if (!response.ok) {
       // A 4xx refusal may carry an action code. Other failure statuses have no action body.

@@ -142,10 +142,10 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
     rawBody = await readManagementJsonBody(req);
   } catch (error) {
     rethrowManagementBodyTooLarge(error);
-    return jsonResponse({ error: "invalid JSON body", code: "invalid_json" }, 400);
+    return jsonResponse({ error: "invalid JSON body", code: "invalid_json" }, 400, req, config);
   }
   if (!isPlainRecord(rawBody)) {
-    return jsonResponse({ error: "request body must be an object", code: "invalid_request" }, 400);
+    return jsonResponse({ error: "request body must be an object", code: "invalid_request" }, 400, req, config);
   }
 
   const {
@@ -167,10 +167,10 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
       });
       reconcileLiveStateStores();
       const catalogRefresh = await convergeCodexCatalog();
-      return jsonResponse({ ...result, journalActive: hasActiveCcSwitchImportJournal(), catalogRefresh });
+      return jsonResponse({ ...result, journalActive: hasActiveCcSwitchImportJournal(), catalogRefresh }, 200, req, config);
     } catch (error) {
       if (error instanceof CcSwitchImportError) {
-        return jsonResponse({ error: error.message, code: "cc_switch_restore_failed" }, 400);
+        return jsonResponse({ error: error.message, code: "cc_switch_restore_failed" }, 400, req, config);
       }
       throw error;
     }
@@ -179,7 +179,7 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
   let sourcePath: string | undefined;
   if (rawBody.sourcePath !== undefined) {
     if (typeof rawBody.sourcePath !== "string" || !rawBody.sourcePath.trim() || rawBody.sourcePath.includes("\0")) {
-      return jsonResponse({ error: "sourcePath must be a non-empty local file path", code: "invalid_source_path" }, 400);
+      return jsonResponse({ error: "sourcePath must be a non-empty local file path", code: "invalid_source_path" }, 400, req, config);
     }
     try {
       sourcePath = validateCcSwitchRouteSourcePath(rawBody.sourcePath);
@@ -187,7 +187,7 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
       return jsonResponse({
         error: error instanceof Error ? error.message : "invalid CC-Switch source path",
         code: "invalid_source_path",
-      }, 400);
+      }, 400, req, config);
     }
   } else {
     sourcePath = defaultSources[0]?.path;
@@ -199,18 +199,18 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
       ? rawBody.selectedProviders
       : null;
   if (selectedProviders === null) {
-    return jsonResponse({ error: "selectedProviders must be an array of provider IDs", code: "invalid_request" }, 400);
+    return jsonResponse({ error: "selectedProviders must be an array of provider IDs", code: "invalid_request" }, 400, req, config);
   }
   if (rawBody.allowPrivateNetwork !== undefined && typeof rawBody.allowPrivateNetwork !== "boolean") {
-    return jsonResponse({ error: "allowPrivateNetwork must be a boolean", code: "invalid_request" }, 400);
+    return jsonResponse({ error: "allowPrivateNetwork must be a boolean", code: "invalid_request" }, 400, req, config);
   }
   const allowPrivateNetwork = rawBody.allowPrivateNetwork === true;
   if (rawBody.includeApiKeys !== undefined && typeof rawBody.includeApiKeys !== "boolean") {
-    return jsonResponse({ error: "includeApiKeys must be a boolean", code: "invalid_request" }, 400);
+    return jsonResponse({ error: "includeApiKeys must be a boolean", code: "invalid_request" }, 400, req, config);
   }
   const includeApiKeys = rawBody.includeApiKeys !== false;
   if (rawBody.storeInKeychain !== undefined && typeof rawBody.storeInKeychain !== "boolean") {
-    return jsonResponse({ error: "storeInKeychain must be a boolean", code: "invalid_request" }, 400);
+    return jsonResponse({ error: "storeInKeychain must be a boolean", code: "invalid_request" }, 400, req, config);
   }
   const storeInKeychain = rawBody.storeInKeychain === true;
   const keychainAvailable = probeProviderKeychain().available;
@@ -231,7 +231,7 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
         invalid: 0,
         invalidReasons: {},
         providers: [],
-      });
+      }, 200, req, config);
     }
     try {
       const preview = runCcSwitchLiveProviderImport({
@@ -242,10 +242,10 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
         selectedProviders,
         allowPrivateNetwork,
       });
-      return jsonResponse({ available: true, keychainAvailable, defaultSources, journalActive, ...preview });
+      return jsonResponse({ available: true, keychainAvailable, defaultSources, journalActive, ...preview }, 200, req, config);
     } catch (error) {
       if (error instanceof CcSwitchImportError) {
-        return jsonResponse({ error: error.message, code: "cc_switch_preview_failed" }, 400);
+        return jsonResponse({ error: error.message, code: "cc_switch_preview_failed" }, 400, req, config);
       }
       throw error;
     }
@@ -255,10 +255,10 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
     return jsonResponse({
       error: "Explicit user consent (consent: true) is required before importing CC-Switch providers.",
       code: "cc_switch_consent_required",
-    }, 400);
+    }, 400, req, config);
   }
   if (!sourcePath) {
-    return jsonResponse({ error: "No CC-Switch source file was provided or detected.", code: "cc_switch_source_not_found" }, 404);
+    return jsonResponse({ error: "No CC-Switch source file was provided or detected.", code: "cc_switch_source_not_found" }, 404, req, config);
   }
   try {
     const applied = runCcSwitchLiveProviderImport({
@@ -274,10 +274,10 @@ export async function handleCcSwitchRoutes(ctx: ManagementContext): Promise<Resp
     });
     reconcileLiveStateStores();
     const catalogRefresh = await convergeCodexCatalog();
-    return jsonResponse({ ...applied, journalActive: hasActiveCcSwitchImportJournal(), catalogRefresh });
+    return jsonResponse({ ...applied, journalActive: hasActiveCcSwitchImportJournal(), catalogRefresh }, 200, req, config);
   } catch (error) {
     if (error instanceof CcSwitchImportError) {
-      return jsonResponse({ error: error.message, code: "cc_switch_apply_failed" }, 400);
+      return jsonResponse({ error: error.message, code: "cc_switch_apply_failed" }, 400, req, config);
     }
     throw error;
   }
