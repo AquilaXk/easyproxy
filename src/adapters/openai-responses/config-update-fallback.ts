@@ -122,8 +122,12 @@ function candidateInputIndices(param: string | undefined, message: string, menti
   INPUT_MESSAGE_INDEX_RE.lastIndex = 0;
   for (let m = INPUT_MESSAGE_INDEX_RE.exec(message); m !== null; m = INPUT_MESSAGE_INDEX_RE.exec(message)) {
     const suffix = m[3];
-    if (suffix && !mentionsConfigUpdate && EFFORT_ENUM_PARAM_RE.test(suffix)) continue;
-    if (suffix && suffix !== "type" && !suffix.startsWith("type.") && EFFORT_ENUM_PARAM_RE.test(suffix)) continue;
+    if (suffix) {
+      if (EFFORT_ENUM_PARAM_RE.test(suffix)) continue;
+      const isTypeSuffix = suffix === "type" || suffix === "type.";
+      const isConfigTypeSuffix = mentionsConfigUpdate && suffix === "configuration_update";
+      if (!isTypeSuffix && !isConfigTypeSuffix) continue;
+    }
     const idx = Number(m[1] ?? m[2]);
     if (Number.isSafeInteger(idx) && idx >= 0 && !indices.includes(idx)) {
       indices.push(idx);

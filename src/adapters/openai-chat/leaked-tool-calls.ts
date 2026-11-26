@@ -270,7 +270,7 @@ function parseXmlCallAt(
     if (paramCloseIdx === -1) return undefined;
 
     const paramRaw = body.slice(valueStart, paramCloseIdx);
-    if (paramRaw.includes(`<${isAntmlParam ? "antml:" : ""}parameter `)) return undefined;
+    if ((isAntmlParam ? /<antml:parameter\s/ : /<parameter\s/).test(paramRaw)) return undefined;
     args[paramName] = coerceXmlParamValue(paramRaw, paramName, spec.parameters);
     cursor = paramCloseIdx + paramCloseTag.length;
   }
@@ -503,17 +503,17 @@ export function reconcileLeakedToolCallEvents(
   events.splice(contentStart, contentEnd - contentStart, ...replacement);
 }
 
+const XML_FUNCTION_PREFIX = "<function";
+
 const STREAM_OPENERS = [
   "<|start|>assistant<|channel|>",
   "<|channel|>",
   "<antml:function_calls>",
   "<antml:invoke",
-  "<function ",
+  XML_FUNCTION_PREFIX,
   "<function_calls>",
   "<tool_calls>",
 ] as const;
-
-const XML_FUNCTION_PREFIX = "<function";
 
 function startsWithXmlFunctionOpener(text: string, pos: number): boolean {
   if (!text.startsWith(XML_FUNCTION_PREFIX, pos)) return false;

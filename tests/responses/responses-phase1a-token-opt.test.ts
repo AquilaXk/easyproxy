@@ -346,6 +346,14 @@ describe("Phase 1-A: perMessageEffort extensions and 400 recovery", () => {
       sentBodyText: deltaFrame,
     })).toBe(false);
 
+    // Non-type subfield error in message without param MUST fail closed.
+    expect(matchConfigurationUpdate400Rejection({
+      status: 400,
+      nonReplayable: false,
+      errorText: JSON.stringify({ error: { message: "Invalid field input[0].reasoning.summary" } }),
+      sentBodyText: deltaFrame,
+    })).toBe(false);
+
     // Non-replayable response never matches.
     expect(matchConfigurationUpdate400Rejection({
       status: 400,
@@ -744,6 +752,95 @@ describe("Phase 1-A: mocked WebSocket delta frame refusal & configuration_update
           { outboundBody: JSON.stringify({ input: turn2Input }), outboundUrl: CODEX_URL, modelId: "gpt-5.6-sol" },
         )).toBe(false);
         expect(isConfigurationUpdateUnsupportedMemoized("chatgpt.com", "gpt-5.6-sol")).toBe(false);
+      });
+    } finally {
+      releaseSpendHome();
+    }
+  });
+
+  test("handleResponses with preOutputRefusalHold enabled still recovers WS delta frame input[0] configuration_update 400 (status_code alias) and memoizes", async () => {
+    const releaseSpendHome = acquireOwnedSpendHome();
+    try {
+      await withMockedWs((socket, frame) => {
+        const items = Array.isArray(frame.input) ? frame.input as Array<Record<string, unknown>> : [];
+        const cfgIdx = items.findIndex(item => item.type === "configuration_update");
+        if (cfgIdx !== -1) {
+          socket.emit({
+            type: "error",
+            status_code: 400,
+            error: {
+              message: `Unsupported item at input[${cfgIdx}].type.`,
+              type: "invalid_request_error",
+              param: `input[${cfgIdx}].type`,
+              code: "invalid_value",
+            },
+          });
+          return;
+        }
+        const id = `resp_hold_${socket.frames.length}`;
+        socket.emit({ type: "response.created", response: { id, status: "in_progress", output: [] } });
+        socket.emit({
+          type: "response.completed",
+          response: {
+            id,
+            status: "completed",
+            output: [answerItem],
+          },
+        });
+      }, async (sockets) => {
+        const config = {
+          port: 0,
+          defaultProvider: "openai",
+          apiKeys: [{ id: "ws-hold-caller", name: "ws-hold-caller", key: "epx_data_" + "e".repeat(40), createdAt: "2026-01-01T00:00:00.000Z" }],
+          providers: {
+            openai: {
+              adapter: "openai-responses",
+              baseUrl: "https://chatgpt.com/backend-api/codex",
+              authMode: "forward",
+              codexAccountMode: "direct",
+              transientRetryOn5xx: { enabled: true, attempts: 2 },
+            },
+          },
+        } as unknown as EpxConfig;
+
+        const sendTurn = (input: unknown[], turnId: string) => handleResponses(new Request("http://localhost/v1/responses", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer ws-fixture-token",
+            "chatgpt-account-id": "ws-fixture-acct",
+            "thread-id": "ws-thread-hold-config-update",
+          },
+          body: JSON.stringify({
+            model: "openai/gpt-5.6-sol",
+            stream: true,
+            store: false,
+            reasoning: { effort: "high" },
+            client_metadata: { thread_id: "ws-thread-hold-config-update", turn_id: turnId },
+            input,
+          }),
+        }), config, { model: "", provider: "" }, {
+          codexWsRuntimeIdentity: "1.4.4",
+          admission: { kind: "configured", source: "dedicated", keyId: "ws-hold-caller", contextPrincipalId: "ws-hold-caller" },
+        });
+
+        const r1 = await sendTurn([userMsg("turn 1")], "t1");
+        expect(r1.status).toBe(200);
+        expect(await r1.text()).toContain("response.completed");
+
+        const r2 = await sendTurn([userMsg("turn 1"), answerItem, cfgUpdate, userMsg("turn 2")], "t2");
+        expect(r2.status).toBe(200);
+        expect(await r2.text()).toContain("response.completed");
+        expect(sockets).toHaveLength(2);
+        expect(sockets[0]!.frames[1]!.input).toEqual([cfgUpdate, userMsg("turn 2")]);
+        expect(sockets[1]!.frames[0]!.input).toEqual([userMsg("turn 1"), answerItem, userMsg("turn 2")]);
+        expect(isConfigurationUpdateUnsupportedMemoized("chatgpt.com", "gpt-5.6-sol")).toBe(true);
+
+        const r3 = await sendTurn([userMsg("turn 1"), answerItem, userMsg("turn 2"), answerItem, cfgUpdate, userMsg("turn 3")], "t3");
+        expect(r3.status).toBe(200);
+        expect(await r3.text()).toContain("response.completed");
+        expect(sockets).toHaveLength(2);
+        expect(sockets[1]!.frames[1]!.input).toEqual([userMsg("turn 3")]);
       });
     } finally {
       releaseSpendHome();

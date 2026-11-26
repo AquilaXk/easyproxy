@@ -368,7 +368,6 @@ export function deriveKeyLoginMap(): Record<string, DerivedKeyLoginProvider> {
       ...(entry.reasoningSplitModels ? { reasoningSplitModels: [...entry.reasoningSplitModels] } : {}),
       ...(entry.inlineThinkTagModels ? { inlineThinkTagModels: [...entry.inlineThinkTagModels] } : {}),
       ...(entry.leakedToolCallModels ? { leakedToolCallModels: [...entry.leakedToolCallModels] } : {}),
-    ...(entry.leakedToolCallModels ? { leakedToolCallModels: [...entry.leakedToolCallModels] } : {}),
       ...(entry.reasoningDetailsModels ? { reasoningDetailsModels: [...entry.reasoningDetailsModels] } : {}),
       ...(entry.thinkingToggleModels ? { thinkingToggleModels: [...entry.thinkingToggleModels] } : {}),
       ...(entry.thinkingBudgetModels ? { thinkingBudgetModels: [...entry.thinkingBudgetModels] } : {}),

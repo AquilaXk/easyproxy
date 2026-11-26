@@ -285,6 +285,13 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
         expectedArgs: JSON.stringify({ city: "Seoul", days: 2 }),
       },
       {
+        name: "tab separator split directly after <function opener",
+        xml: `Before\n<function\tname="ping"/>`,
+        chunks: ["Before\n<function", "\t", `name="ping"/>`],
+        expectedName: "ping",
+        expectedArgs: "{}",
+      },
+      {
         name: "char-by-char stream with newline before name",
         xml: `Check:<function\nname='ping' />`,
         chunks: [...`Check:<function\nname='ping' />`],
@@ -306,11 +313,14 @@ describe("Phase 2-A openai-chat leaked Harmony and XML tool call recovery", () =
       expect(visible(events), testCase.name).toBe(testCase.xml.startsWith("Before\n") ? "Before\n" : testCase.xml.startsWith("Check:") ? "Check:" : "");
     }
 
-    // Ordinary prose `<function>` or fenced/inlined `<function\nname=...>` must fail closed and stay visible.
+    // Ordinary prose `<function>`, `<function\tfoo>`, fenced/inlined, and nested `<parameter\t...>` fail closed.
     const prose = "Use <function> or <function_name> helper.";
+    const invalidAttr = "<function\tfoo>bar</function>";
     const fenced = "```xml\n<function\nname=\"ping\"/>\n```";
     const inlined = "Syntax: `<function\tname=\"ping\"/>`";
-    for (const content of [prose, fenced, inlined]) {
+    const nestedTabParam = `<function\tname="get_weather"><parameter\tname="city">Seoul<parameter\tname="days">2</parameter></function>`;
+    const nestedAntmlNewlineParam = `<antml:invoke name="get_weather"><antml:parameter name="city">Seoul<antml:parameter\nname="days">2</antml:parameter></antml:invoke>`;
+    for (const content of [prose, invalidAttr, fenced, inlined, nestedTabParam, nestedAntmlNewlineParam]) {
       const events = await runChat({
         mode: "streamed",
         model: "qwen3-coder-30b",
