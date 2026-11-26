@@ -63,6 +63,7 @@ import {
   classifyRequestOutcome,
   type RequestOutcomeClass,
 } from "../../../src/usage/request-outcome";
+import { LogDetailTokenEfficiencyBar, LogsTelemetryStrip } from "../components/v2-logs/logs-telemetry-strip";
 
 function logsCacheKey(apiBase: string): string {
   return `epx.logs.list.v1:${apiBase}`;
@@ -118,6 +119,7 @@ type CostResult =
     kind: "value";
     estimate: {
       cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+      netCacheSavingsUsd?: number;
       estimated: boolean;
       priorityLowerBound?: boolean;
       price?: MatchedPriceInfo;
@@ -713,7 +715,6 @@ export default function Logs({
     [filteredLogs],
   );
   const { columns, toggle: toggleColumn } = useLogsColumns();
-  const columnCount = 5 + LOGS_OPTIONAL_COLUMNS.filter(column => columns[column.key]).length;
 
   // TanStack Virtual returns unstable function identities; React Compiler skips this call.
   // eslint-disable-next-line react-hooks/incompatible-library -- known useVirtualizer limitation
@@ -924,6 +925,7 @@ export default function Logs({
         </div>
       ) : (
         <div className={panelBody}>
+        <LogsTelemetryStrip logs={filteredLogs} locale={locale} />
         <div ref={scrollContainerRef} className="logs-table-wrap min-h-[180px] max-h-[max(180px,calc(100dvh-300px))] overflow-auto [overflow-anchor:none]">
           <table
             className={cn(
@@ -961,8 +963,8 @@ export default function Logs({
             </thead>
             <tbody>
               {paddingTop > 0 && (
-                <tr>
-                  <td colSpan={columnCount} className="logs-virtual-spacer p-0!" style={{ height: paddingTop }} />
+                <tr aria-hidden="true">
+                  <td className="logs-virtual-spacer p-0!" style={{ height: paddingTop }} />
                 </tr>
               )}
               {virtualRows.map(virtualRow => {
@@ -1010,20 +1012,24 @@ export default function Logs({
                    <StatusPill status={log.status} outcome={classifyRequestOutcome(log)} label={t(outcomeKey(log))} />
                  </td>
                  <td title={modelTitle(log, t)}>
-                   <span className="flex min-w-0 flex-col gap-1">
-                     <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-                       <span className="inline-flex shrink-0 items-center gap-1.5 text-fg-muted">
-                         <span>{formatProviderDisplayName(log.provider, t)}</span>
-                         <span aria-hidden className="text-fg-subtle">·</span>
+                   <span className="flex min-w-0 flex-col gap-0.5">
+                     <span className="logs-model-primary flex min-w-0">
+                       <span className="logs-model-provider inline-flex max-w-full min-w-0 items-center gap-1.5 text-fg-muted">
+                         <span className="truncate">{formatProviderDisplayName(log.provider, t)}</span>
+                         <span aria-hidden className="logs-model-sep shrink-0 text-fg-subtle">·</span>
                        </span>
-                       <span className="min-w-0 font-mono text-[13px] break-words text-fg">{servedModelLabel(log)}</span>
-                       {log.shadowCallRewrittenFrom && (
-                         <span className="badge badge-muted whitespace-nowrap" title={t("logs.badge.interceptedHelperTitle")}>
-                           {t("logs.badge.interceptedHelper", { model: log.shadowCallRewrittenFrom })}
+                       <span className="block max-w-full min-w-0 truncate font-mono text-[13px] text-fg">{servedModelLabel(log)}</span>
+                       {Boolean(log.shadowCallRewrittenFrom || speedLabel(log) || log.protocolTrace) && (
+                         <span className="inline-flex max-w-full min-w-0 flex-wrap items-center gap-1">
+                           {log.shadowCallRewrittenFrom && (
+                             <span className="badge badge-muted max-w-full truncate" title={t("logs.badge.interceptedHelperTitle")}>
+                               {t("logs.badge.interceptedHelper", { model: log.shadowCallRewrittenFrom })}
+                             </span>
+                           )}
+                           {speedLabel(log) && <span className="badge badge-amber">{speedLabel(log)}</span>}
+                           <ProtocolBadge trace={log.protocolTrace} t={t} />
                          </span>
                        )}
-                       {speedLabel(log) && <span className="badge badge-amber">{speedLabel(log)}</span>}
-                       <ProtocolBadge trace={log.protocolTrace} t={t} />
                      </span>
                      <span className="log-reqid block max-w-full truncate font-mono text-xs text-fg-subtle" title={log.requestId}>{log.requestId ?? "-"}</span>
                    </span>
@@ -1113,8 +1119,8 @@ export default function Logs({
                 );
               })}
               {paddingBottom > 0 && (
-                <tr>
-                  <td colSpan={columnCount} className="logs-virtual-spacer p-0!" style={{ height: paddingBottom }} />
+                <tr aria-hidden="true">
+                  <td className="logs-virtual-spacer p-0!" style={{ height: paddingBottom }} />
                 </tr>
               )}
             </tbody>
@@ -1316,40 +1322,7 @@ function LogDetailDialog({
             <StatusPill status={detail.status} outcome={classifyRequestOutcome(detail)} label={t(outcomeKey(detail))} announce={false} className="h-6 text-[13px]" />
             {summary.label && <span className="logs-detail-info m-0">{summary.label}</span>}
           </h3>
-          <div className="flex shrink-0 flex-wrap items-center gap-1">
-            {onReplayInPlayground && (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  const seed = playgroundSeedFromLog(detail);
-                  onClose();
-                  onReplayInPlayground(seed);
-                }}
-              >
-                {uxT(localeCode, "logs.replayPlayground")}
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => curlCopy.copy(buildLogReplayCurl(detail, apiBase), "curl")}
-            >
-              {curlCopyOutcome === "copied"
-                ? uxT(localeCode, "playground.copied")
-                : curlCopyOutcome === "unavailable"
-                  ? uxT(localeCode, "playground.copyFailed")
-                  : uxT(localeCode, "logs.copyCurl")}
-            </button>
-            {onFilterModel && filterModelTarget && (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => onFilterModel(filterModelTarget)}
-              >
-                {uxT(localeCode, "logs.filterModel")}
-              </button>
-            )}
+          <div className="flex shrink-0 items-center gap-1">
             {onStep && (
               <>
                 <button type="button" className="btn btn-ghost btn-sm" disabled={!hasPrev} onClick={() => onStep(-1)} aria-label={t("logs.detail.prevRequest")} title={`${t("logs.detail.prevRequest")} ([)`}>
@@ -1362,6 +1335,41 @@ function LogDetailDialog({
             )}
             <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.close")}><IconX /></button>
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 border-0 border-b border-solid border-line bg-inset/40 px-4 py-2">
+          {onReplayInPlayground && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                const seed = playgroundSeedFromLog(detail);
+                onClose();
+                onReplayInPlayground(seed);
+              }}
+            >
+              {uxT(localeCode, "logs.replayPlayground")}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => curlCopy.copy(buildLogReplayCurl(detail, apiBase), "curl")}
+          >
+            {curlCopyOutcome === "copied"
+              ? uxT(localeCode, "playground.copied")
+              : curlCopyOutcome === "unavailable"
+                ? uxT(localeCode, "playground.copyFailed")
+                : uxT(localeCode, "logs.copyCurl")}
+          </button>
+          {onFilterModel && filterModelTarget && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => onFilterModel(filterModelTarget)}
+            >
+              {uxT(localeCode, "logs.filterModel")}
+            </button>
+          )}
         </div>
         {summary.description && <p className="modal-desc">{summary.description}</p>}
 
@@ -1431,6 +1439,33 @@ function LogDetailDialog({
             {detailUpstreamReason && detailUpstreamReason !== detailFailure.cause && (<><span className="muted">{t("logs.col.upstreamReason")}</span><span>{detailUpstreamReason}</span></>)}
             {failureDetailLabel(detail.failureDetail, t) && (<><span className="muted">{t("logs.col.failureDetail")}</span><span>{failureDetailLabel(detail.failureDetail, t)}</span></>)}
           </div>
+        </section>
+
+        <section className="log-detail-section" aria-labelledby="log-detail-usage">
+          <h4 id="log-detail-usage" className="log-detail-section-title">{t("logs.detail.section.usage")}</h4>
+          <LogDetailTokenEfficiencyBar
+            usage={detail.usage}
+            tokenSplit={tokenSplit}
+            netCacheSavingsUsd={cost?.kind === "value" ? cost.estimate.netCacheSavingsUsd : undefined}
+            locale={localeCode}
+          />
+          <div className="log-detail-grid">
+            <span className="muted">{t("logs.tokens.input")}</span><span className="mono">{detail.usage ? formatTokens(detail.usage.inputTokens, localeCode) : "\u2014"}</span>
+            <span className="muted">{t("logs.tokens.output")}</span><span className="mono">{detail.usage ? formatTokens(detail.usage.outputTokens, localeCode) : "\u2014"}</span>
+            <span className="muted">{t("logs.tokens.cacheRead")}</span><span className="mono">{tokenSplit.read !== undefined ? formatTokens(tokenSplit.read, localeCode) : "\u2014"}</span>
+            <span className="muted">{t("logs.tokens.cacheWrite")}</span><span className="mono">{tokenSplit.write !== undefined ? formatTokens(tokenSplit.write, localeCode) : "\u2014"}</span>
+            <span className="muted">{t("logs.tokens.reasoning")}</span><span className="mono">{detail.usage?.reasoningOutputTokens !== undefined ? formatTokens(detail.usage.reasoningOutputTokens, localeCode) : "\u2014"}</span>
+            <span className="muted">{t("logs.detail.totalTokens")}</span><span className="mono">{displayContextTokenTotal(detail) !== undefined ? formatTokens(displayContextTokenTotal(detail)!, localeCode) : "\u2014"}</span>
+            {detail.usage?.contextTotalTokens !== undefined && (
+              <>
+                <span className="muted">{t("logs.tokens.contextTotal")}</span>
+                <span className="mono">{formatTokens(detail.usage.contextTotalTokens, localeCode)}</span>
+              </>
+            )}
+          </div>
+          {detail.usageStatus === "estimated" && (
+            <p className="log-detail-notes-line muted">{t("logs.tokens.estimatedNote")}</p>
+          )}
         </section>
 
         <section className="log-detail-section" aria-labelledby="log-detail-route">
@@ -1683,27 +1718,6 @@ function LogDetailDialog({
             </div>
           </section>
         ) : null}
-
-        <section className="log-detail-section" aria-labelledby="log-detail-usage">
-          <h4 id="log-detail-usage" className="log-detail-section-title">{t("logs.detail.section.usage")}</h4>
-          <div className="log-detail-grid">
-            <span className="muted">{t("logs.tokens.input")}</span><span className="mono">{detail.usage ? formatTokens(detail.usage.inputTokens, localeCode) : "\u2014"}</span>
-            <span className="muted">{t("logs.tokens.output")}</span><span className="mono">{detail.usage ? formatTokens(detail.usage.outputTokens, localeCode) : "\u2014"}</span>
-            <span className="muted">{t("logs.tokens.cacheRead")}</span><span className="mono">{tokenSplit.read !== undefined ? formatTokens(tokenSplit.read, localeCode) : "\u2014"}</span>
-            <span className="muted">{t("logs.tokens.cacheWrite")}</span><span className="mono">{tokenSplit.write !== undefined ? formatTokens(tokenSplit.write, localeCode) : "\u2014"}</span>
-            <span className="muted">{t("logs.tokens.reasoning")}</span><span className="mono">{detail.usage?.reasoningOutputTokens !== undefined ? formatTokens(detail.usage.reasoningOutputTokens, localeCode) : "\u2014"}</span>
-            <span className="muted">{t("logs.detail.totalTokens")}</span><span className="mono">{displayContextTokenTotal(detail) !== undefined ? formatTokens(displayContextTokenTotal(detail)!, localeCode) : "\u2014"}</span>
-            {detail.usage?.contextTotalTokens !== undefined && (
-              <>
-                <span className="muted">{t("logs.tokens.contextTotal")}</span>
-                <span className="mono">{formatTokens(detail.usage.contextTotalTokens, localeCode)}</span>
-              </>
-            )}
-          </div>
-          {detail.usageStatus === "estimated" && (
-            <p className="log-detail-notes-line muted">{t("logs.tokens.estimatedNote")}</p>
-          )}
-        </section>
 
         <details className="log-detail-raw">
           <summary>{t("logs.detailRaw")}</summary>

@@ -93,6 +93,7 @@ import {
   telemetryConfigSchema,
   memoryModelsSchema,
   toolOutputCompressionSchema,
+  promptCacheInjectionSchema,
   outboundSecretGuardSchema,
 } from "./schema/leaf-validators";
 import { scenarioRoutingConfigError } from "./schema/scenario-routing";
@@ -786,6 +787,10 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Epx
   if (rawTop && Object.hasOwn(rawTop, "toolOutputCompression") && rawTop.toolOutputCompression !== undefined
     && !toolOutputCompressionSchema.safeParse(rawTop.toolOutputCompression).success) {
     return { ok: false, error: "schema_invalid: toolOutputCompression: invalid tool output compression settings" };
+  }
+  if (rawTop && Object.hasOwn(rawTop, "promptCacheInjection") && rawTop.promptCacheInjection !== undefined
+    && !promptCacheInjectionSchema.safeParse(rawTop.promptCacheInjection).success) {
+    return { ok: false, error: "schema_invalid: promptCacheInjection: invalid prompt cache injection settings" };
   }
   if (rawTop && Object.hasOwn(rawTop, "otlp") && rawTop.otlp !== undefined) {
     const otlpParsed = otlpConfigSchema.safeParse(rawTop.otlp);

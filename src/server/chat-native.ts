@@ -19,7 +19,7 @@ import {
   collectChatCompletion,
   isChatCompletionsStreamError,
 } from "../chat/outbound";
-import { applyChatEffortCap, chatCollabSurface, effortCapAppliesTo, resolvePinnedEffort, supportedLadderFor } from "./effort-policy";
+import { applyChatEffortCap, chatCollabSurface, effortCapAppliesTo, resolveCappedEffort, resolvePinnedEffort, supportedLadderFor } from "./effort-policy";
 import { mapReasoningEffort } from "../reasoning-effort";
 import {
   classifyError,
@@ -160,6 +160,13 @@ function normalizePinnedChatEffort(options: HandleNativeChatOptions): void {
     if (pinned === "none") delete chatBody.reasoning_effort;
     else chatBody.reasoning_effort = pinned;
     normalizeForWire = true;
+  } else if (!compaction && route.scenarioMatch?.effort) {
+    const scenarioEffort = resolveCappedEffort(route.scenarioMatch.effort, supportedLadderFor(route));
+    if (scenarioEffort !== null) {
+      logCtx.requestedEffort = from && from !== scenarioEffort ? `${from}->${scenarioEffort}` : scenarioEffort;
+      chatBody.reasoning_effort = scenarioEffort;
+      normalizeForWire = true;
+    }
   }
   // A qualifying turn's ceiling is independent of whether an operator pin resolved.
   if (effortCapAppliesTo(chatCollabSurface(chatBody), req.headers, config, compaction)) {

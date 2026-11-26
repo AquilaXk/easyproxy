@@ -18,6 +18,7 @@ import {
   type PlaygroundTurn,
 } from "../lib/playground-client";
 import { parseCurlToPlaygroundRequest, type CurlImportErrorCode } from "../lib/curl-import";
+import { ContextInspectorPanel } from "./ContextInspectorPanel";
 import "./request-playground.css";
 
 export type { PlaygroundSeed };
@@ -893,6 +894,26 @@ export default function RequestPlaygroundModal({
             )}
           </div>
         </form>
+
+        <details className="rounded-control border border-solid border-line bg-inset/40">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-fg-muted select-none hover:text-fg">
+            {uxT(locale, "inspector.title")}
+          </summary>
+          <div className="border-0 border-t border-solid border-line p-3">
+            <ContextInspectorPanel
+              compact
+              payload={buildPlaygroundPayload(
+                endpoint,
+                modelA.trim() || DEFAULT_PLAYGROUND_MODEL,
+                systemPrompt,
+                userPrompt || " ",
+                stream,
+                parseOptionalMaxTokens(maxTokensDraft),
+                buildPayloadOptions(userPrompt || " "),
+              )}
+            />
+          </div>
+        </details>
 
         {validationError && <div className="notice notice-err" role="alert">{validationError}</div>}
 

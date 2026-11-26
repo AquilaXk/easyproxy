@@ -79,3 +79,34 @@
 
 /* Advisor activity table: sticky header inside the inset, numbers right-aligned. */
 .pv2-table th { position: sticky; top: 0; z-index: 1; background: var(--epx-raised); }
+
+/* ---- context & prompt-cache prefix inspector ------------------------------ */
+.ctx-inspector-grid {
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  gap: 3px;
+}
+@media (max-width: 720px) {
+  .ctx-inspector-grid {
+    grid-template-columns: repeat(16, minmax(0, 1fr));
+  }
+}
+.ctx-inspector-cell {
+  height: 14px;
+  border-radius: 3px;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.ctx-inspector-cell--cached {
+  box-shadow:
+    inset 0 -3px 0 0 light-dark(rgb(15 23 42 / 0.45), rgb(255 255 255 / 0.58)),
+    inset 0 0 0 1px light-dark(rgb(15 23 42 / 0.22), rgb(255 255 255 / 0.32));
+}
+.ctx-swatch--system { background: var(--epx-chart-1); }
+.ctx-swatch--tools { background: var(--epx-chart-4); }
+.ctx-swatch--mcp { background: var(--epx-chart-6); }
+.ctx-swatch--user { background: var(--epx-chart-2); }
+.ctx-swatch--assistant { background: color-mix(in oklab, var(--epx-fg) 68%, var(--epx-surface)); }
+.ctx-swatch--toolResults { background: var(--epx-chart-3); }
+.ctx-swatch--reasoning { background: var(--epx-chart-5); }
+.ctx-swatch--attachments { background: var(--epx-success); }
+.ctx-swatch--free { background: var(--epx-surface-2); box-shadow: inset 0 0 0 var(--epx-hairline) var(--epx-line); }

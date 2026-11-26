@@ -45,6 +45,13 @@
   font-weight: 500;
   white-space: nowrap;
 }
+.usage-v2-tbl .tbl thead th:has(> button) { padding: 0; }
+.usage-v2-tbl .tbl.usage-providers-tbl {
+  width: max-content;
+  min-width: 100%;
+}
+.usage-v2-tbl .tbl.usage-providers-tbl :is(th, td) { white-space: nowrap; }
+.usage-v2-tbl .tbl.usage-providers-tbl :is(th, td):nth-child(2) { min-width: 9rem; }
 .usage-v2-tbl .tbl tbody td {
   padding: 10px 12px;
   border-bottom-color: var(--epx-line);
@@ -60,11 +67,38 @@
   background: var(--epx-surface);
   box-shadow: 0 -12px 0 var(--epx-surface), inset 0 -1px 0 var(--epx-line);
 }
+.usage-v2-tbl .tbl.usage-models-tbl :is(th, td) { padding-inline: 9px; white-space: nowrap; }
+.usage-v2-tbl .tbl.usage-models-tbl thead th:has(> button) { padding-inline: 0; }
+.usage-v2-tbl .tbl.usage-models-tbl thead th > button { padding-inline: 9px; }
 .usage-v2-tbl .tbl.usage-models-tbl th:nth-child(-n + 2),
 .usage-v2-tbl .tbl.usage-models-tbl td:nth-child(-n + 2) { background: var(--epx-surface); }
 .usage-v2-tbl .tbl.usage-models-tbl tbody tr:hover td:nth-child(-n + 2) { background: var(--epx-surface-2); }
 .usage-v2-tbl .tbl.usage-models-tbl tbody td:nth-child(2) { box-shadow: inset -1px 0 0 var(--epx-line); }
 .usage-v2-tbl .usage-cost-note { margin-top: 2px; font-family: var(--font-ui); font-size: 12px; color: var(--epx-fg-subtle); }
+
+/* ---- expandable provider -> model child rows ------------------------------ */
+.usage-v2-tbl .tbl tbody tr.usage-provider-child-row td {
+  padding-block: 7px;
+  background: color-mix(in oklab, var(--epx-surface-2) 52%, var(--epx-surface));
+  font-size: 12px;
+}
+.usage-v2-tbl .tbl tbody tr.usage-provider-child-row:hover td {
+  background: var(--epx-surface-2);
+}
+.usage-provider-tree-branch {
+  position: relative;
+  padding-inline-start: 22px;
+}
+.usage-provider-tree-branch::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 8px;
+  inset-block: -8px 50%;
+  width: 8px;
+  border-inline-start: 1px solid var(--epx-line-strong);
+  border-bottom: 1px solid var(--epx-line-strong);
+  border-bottom-left-radius: 4px;
+}
 
 /* ---- menu bar & widget tab ---------------------------------------------------- */
 .usage-companion-panel { padding-top: 0; }

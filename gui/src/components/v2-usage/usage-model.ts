@@ -27,10 +27,14 @@ export interface UsageSummaryTotals {
   cachedInputTokens: number;
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheObservedInputTokens?: number;
+  cacheObservedRequests?: number;
+  cacheHitRate?: number | null;
   reasoningOutputTokens: number;
   totalTokens: number;
   coverageRatio: number;
   estimatedCostUsd?: number;
+  estimatedCacheSavingsUsd?: number;
   pricedRequests?: number;
   unpricedRequests?: number;
   unmeteredRequests?: number;
@@ -75,6 +79,8 @@ export interface UsageModel {
   cacheObservedInputTokens?: number;
   /** API list-price estimate for the priced portion of this row. */
   estimatedCostUsd?: number;
+  /** Net USD saved vs uncached input rates across priced cached requests. */
+  estimatedCacheSavingsUsd?: number;
   /** Requests included in the API list-price estimate. */
   pricedRequests?: number;
   /** Requests excluded from the estimate because price or usable usage is unavailable. */
@@ -89,10 +95,19 @@ export interface UsageProvider {
   reportedRequests: number;
   estimatedRequests: number;
   totalTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
   throughputTokensPerSec?: number;
   throughputSamples?: number;
+  cachedInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheHitRate?: number | null;
+  cacheObservedInputTokens?: number;
   /** API list-price estimate for the priced portion of this row. */
   estimatedCostUsd?: number;
+  /** Net USD saved vs uncached input rates across priced cached requests. */
+  estimatedCacheSavingsUsd?: number;
   /** Requests included in the API list-price estimate. */
   pricedRequests?: number;
   /** Requests excluded from the estimate because price or usable usage is unavailable. */
@@ -159,17 +174,28 @@ export function formatOptionalPct(value: number | null | undefined, unavailable:
  * provider that reports reads and never reports writes still has one. Only a row where nothing
  * reported cache detail has nothing to average, and that is the row that shows an em dash.
  */
-export function cacheHitRateTitle(model: UsageModel, locale: Locale, t: TFn): string | undefined {
-  if (typeof model.cacheHitRate !== "number" || !Number.isFinite(model.cacheHitRate)) {
+export function cacheHitRateTitle(
+  row: { cacheHitRate?: number | null; cacheObservedInputTokens?: number; inputTokens?: number },
+  locale: Locale,
+  t: TFn,
+): string | undefined {
+  if (typeof row.cacheHitRate !== "number" || !Number.isFinite(row.cacheHitRate)) {
     return t("usage.cacheHitRate.unmeasured");
   }
-  const observed = model.cacheObservedInputTokens;
-  if (typeof observed !== "number" || !Number.isFinite(observed) || observed >= model.inputTokens) {
+  const observed = row.cacheObservedInputTokens;
+  const totalInput = row.inputTokens;
+  if (
+    typeof observed !== "number"
+    || !Number.isFinite(observed)
+    || typeof totalInput !== "number"
+    || !Number.isFinite(totalInput)
+    || observed >= totalInput
+  ) {
     return undefined;
   }
   return t("usage.cacheHitRate.partial", {
     measured: formatTokens(observed, locale),
-    total: formatTokens(model.inputTokens, locale),
+    total: formatTokens(totalInput, locale),
   });
 }
 

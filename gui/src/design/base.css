@@ -66,6 +66,30 @@
 :where(p, li, dd, summary, figcaption, label, .muted, .page-sub) { text-wrap: pretty; }
 :where(h1, h2, h3, h4) { text-wrap: balance; }
 
+/* ---- coarse-pointer touch target floor (WCAG 2.5.5, 44x44 CSS px) ---------- */
+@media (pointer: coarse) {
+  :root {
+    --epx-control-h: 44px;
+    --epx-control-h-sm: 38px;
+  }
+}
+
+/* ---- smooth native <details> disclosure (progressive enhancement) --------- */
+details::details-content {
+  interpolate-size: allow-keywords;
+  overflow: clip;
+  contain: layout;
+}
+details:not([open])::details-content {
+  block-size: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  details::details-content {
+    transition: block-size 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), content-visibility 0.2s allow-discrete, display 0.2s allow-discrete;
+    transition-behavior: allow-discrete;
+  }
+}
+
 /* ---- native <select> popup: never the OS list -------------------------------
    Native selects are banned in source (form-controls-rule.test.ts; the app's
    own Select replaces them). If one slips through, Chromium's customizable

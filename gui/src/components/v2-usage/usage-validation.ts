@@ -44,7 +44,7 @@ export function isUsageReport(value: unknown): value is UsageResponse {
     || !finite(summary.coverageRatio) || (summary.coverageRatio as number) > 1
     || !optional(summary, ["cacheReadInputTokens", "cacheCreationInputTokens", "cacheObservedInputTokens", "throughputOutputTokens", "throughputDurationMs"], finite)
     || !optional(summary, ["pricedRequests", "unpricedRequests", "unmeteredRequests", "throughputSamples", "attemptCount", "sends", "settledSends", "unresolvedSends", "spendRequests", "cacheObservedRequests", "cacheSynthesizedRequests", "cacheUnknownRequests"], integer)
-    || !optional(summary, ["estimatedCostUsd", "throughputTokensPerSec"], finite)
+    || !optional(summary, ["estimatedCostUsd", "estimatedCacheSavingsUsd", "throughputTokensPerSec"], finite)
     || !optional(value, ["legacyUnclassifiedRequests"], integer)) return false;
   if (!value.days.every(day => record(day) && typeof day.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day.date)
     && numeric(day, ["requests", "measuredRequests", "reportedRequests"]) && finite(day.totalTokens) && optional(day, ["estimatedCostUsd"], finite)
@@ -55,7 +55,7 @@ export function isUsageReport(value: unknown): value is UsageResponse {
     && finite(row.shareRatio)
     && optional(row, ["inputTokens", "outputTokens", "cachedInputTokens", "cacheReadInputTokens", "cacheCreationInputTokens", "cacheObservedInputTokens"], finite)
     && optional(row, ["pricedRequests", "unpricedRequests", "unmeteredRequests", "throughputSamples", "attemptCount"], integer)
-    && optional(row, ["estimatedCostUsd", "throughputTokensPerSec"], finite)
+    && optional(row, ["estimatedCostUsd", "estimatedCacheSavingsUsd", "throughputTokensPerSec"], finite)
     && (row.cacheHitRate === undefined || row.cacheHitRate === null || finite(row.cacheHitRate))
     && (row.resolvedModel === undefined || typeof row.resolvedModel === "string");
   return value.models.every(model => validRow(model, true)) && value.providers.every(provider => validRow(provider, false));

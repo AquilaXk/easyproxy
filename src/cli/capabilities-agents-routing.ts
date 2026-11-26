@@ -572,8 +572,8 @@ export const AGENT_ROUTING_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: ["agent","scenario-routing","set"],
-    usage: "epx agent scenario-routing set (--file <FILE|-> | [--enabled <on|off>] [--long-context <route|->] [--think <route|->] [--background <route|->] [--web-search <route|->] [--long-context-threshold <tokens>] [--think-budget-threshold <tokens>] [--precedence <kind,kind...>] [--match-models <pattern,...|->] [--override-explicit <on|off>]) [--json]",
-    summary: "Configure heuristic scenario routing targets and thresholds.",
+    usage: "epx agent scenario-routing set (--file <FILE|-> | [--enabled <on|off>] [--long-context <route|->] [--think <route|->] [--background <route|->] [--web-search <route|->] [--long-context-effort <effort|->] [--think-effort <effort|->] [--background-effort <effort|->] [--web-search-effort <effort|->] [--long-context-threshold <tokens>] [--think-budget-threshold <tokens>] [--precedence <kind,kind...>] [--match-models <pattern,...|->] [--override-explicit <on|off>]) [--json]",
+    summary: "Configure heuristic scenario routing targets, per-scenario efforts, and thresholds.",
     routes: [{"method":"GET","path":"/api/routing/scenario"},{"method":"PUT","path":"/api/routing/scenario"}],
     flags: [
       {"name":"--file","value":"string","summary":"Bounded scenarioRouting JSON file or - for stdin; exclusive with scalar flags."},
@@ -582,6 +582,10 @@ export const AGENT_ROUTING_CAPABILITIES: readonly Capability[] = [
       {"name":"--think","value":"string","summary":"Target selector for think; - clears."},
       {"name":"--background","value":"string","summary":"Target selector for background; - clears."},
       {"name":"--web-search","value":"string","summary":"Target selector for webSearch; - clears."},
+      {"name":"--long-context-effort","value":"string","summary":"Reasoning effort override (low|medium|high|xhigh) for longContext; - clears."},
+      {"name":"--think-effort","value":"string","summary":"Reasoning effort override (low|medium|high|xhigh) for think; - clears."},
+      {"name":"--background-effort","value":"string","summary":"Reasoning effort override (low|medium|high|xhigh) for background; - clears."},
+      {"name":"--web-search-effort","value":"string","summary":"Reasoning effort override (low|medium|high|xhigh) for webSearch; - clears."},
       {"name":"--long-context-threshold","value":"number","summary":"Estimated token threshold 1000..10000000."},
       {"name":"--think-budget-threshold","value":"number","summary":"Anthropic thinking budget threshold 1..1000000."},
       {"name":"--precedence","value":"string","summary":"Comma-separated priority order across background, longContext, webSearch, think."},

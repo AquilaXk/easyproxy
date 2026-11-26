@@ -1,4 +1,5 @@
 import { inspectAndApplyOutboundSecretGuard } from "../lib/outbound-secret-guard";
+import { injectPromptCacheBreakpointsInPlace } from "../lib/prompt-cache-injection";
 import { compressResponsesToolOutputsInPlace } from "../lib/tool-output-compression";
 import type { EpxConfig } from "../types";
 import { markLocalRequestLogRefusal, type RequestLogContext } from "./request-log";
@@ -10,6 +11,7 @@ export interface OutboundPayloadHygieneOutcome {
   blocked: boolean;
   redactions: number;
   compressedItems: number;
+  injectedCacheBreakpoints?: number;
 }
 
 export interface OutboundPayloadHygieneStats {
@@ -17,7 +19,13 @@ export interface OutboundPayloadHygieneStats {
   secretDetections: number;
   secretBlocks: number;
   compressedToolOutputs: number;
+  compactedJsonOutputs: number;
+  foldedLogOutputs: number;
+  deduplicatedToolOutputs: number;
+  injectedCacheBreakpoints: number;
+  normalizedSystemTimestamps: number;
   savedChars: number;
+  estimatedSavedTokens: number;
 }
 
 const hygieneStats: OutboundPayloadHygieneStats = {
@@ -25,7 +33,13 @@ const hygieneStats: OutboundPayloadHygieneStats = {
   secretDetections: 0,
   secretBlocks: 0,
   compressedToolOutputs: 0,
+  compactedJsonOutputs: 0,
+  foldedLogOutputs: 0,
+  deduplicatedToolOutputs: 0,
+  injectedCacheBreakpoints: 0,
+  normalizedSystemTimestamps: 0,
   savedChars: 0,
+  estimatedSavedTokens: 0,
 };
 
 export function getOutboundHygieneStats(): OutboundPayloadHygieneStats {
@@ -37,7 +51,13 @@ export function resetOutboundHygieneStatsForTests(): void {
   hygieneStats.secretDetections = 0;
   hygieneStats.secretBlocks = 0;
   hygieneStats.compressedToolOutputs = 0;
+  hygieneStats.compactedJsonOutputs = 0;
+  hygieneStats.foldedLogOutputs = 0;
+  hygieneStats.deduplicatedToolOutputs = 0;
+  hygieneStats.injectedCacheBreakpoints = 0;
+  hygieneStats.normalizedSystemTimestamps = 0;
   hygieneStats.savedChars = 0;
+  hygieneStats.estimatedSavedTokens = 0;
 }
 
 export function recordOutboundSecretOutcome(matches: number, blocked: boolean): void {
@@ -47,12 +67,13 @@ export function recordOutboundSecretOutcome(matches: number, blocked: boolean): 
 }
 
 /**
- * Applies configured outbound secret guarding and tool-output compression across both
- * translated and native passthrough request payloads before upstream dispatch.
+ * Applies configured outbound secret guarding, tool-output compression, and opt-in
+ * prompt-cache breakpoint / prefix hygiene across translated and native passthrough
+ * request payloads before upstream dispatch.
  */
 export function applyOutboundPayloadHygiene(
   body: unknown,
-  config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression">,
+  config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
   logCtx?: RequestLogContext,
 ): OutboundPayloadHygieneOutcome {
   if ((config.outboundSecretGuard?.mode ?? "off") !== "off") hygieneStats.scannedRequests += 1;
@@ -64,15 +85,25 @@ export function applyOutboundPayloadHygiene(
       markLocalRequestLogRefusal(logCtx, "outbound_secret_guard");
       logCtx.errorCode = "outbound_secret_guard";
     }
-    return { blocked: true, redactions: 0, compressedItems: 0 };
+    return { blocked: true, redactions: 0, compressedItems: 0, injectedCacheBreakpoints: 0 };
   }
   const compression = compressResponsesToolOutputsInPlace(body, config.toolOutputCompression);
   if (compression.compressedItems > 0) hygieneStats.compressedToolOutputs += compression.compressedItems;
-  if (compression.savedChars > 0) hygieneStats.savedChars += compression.savedChars;
+  if ((compression.compactedJsonItems ?? 0) > 0) hygieneStats.compactedJsonOutputs += compression.compactedJsonItems!;
+  if ((compression.foldedLogItems ?? 0) > 0) hygieneStats.foldedLogOutputs += compression.foldedLogItems!;
+  if ((compression.deduplicatedItems ?? 0) > 0) hygieneStats.deduplicatedToolOutputs += compression.deduplicatedItems!;
+  if (compression.savedChars > 0) {
+    hygieneStats.savedChars += compression.savedChars;
+    hygieneStats.estimatedSavedTokens = Math.floor(hygieneStats.savedChars / 4);
+  }
+  const cachePass = injectPromptCacheBreakpointsInPlace(body, config.promptCacheInjection);
+  if (cachePass.injectedBreakpoints > 0) hygieneStats.injectedCacheBreakpoints += cachePass.injectedBreakpoints;
+  if (cachePass.normalizedTimestamps > 0) hygieneStats.normalizedSystemTimestamps += cachePass.normalizedTimestamps;
   return {
     blocked: false,
     redactions: secretGuard.redactions,
     compressedItems: compression.compressedItems,
+    injectedCacheBreakpoints: cachePass.injectedBreakpoints,
   };
 }
 
@@ -83,7 +114,7 @@ export function applyOutboundPayloadHygiene(
  */
 export function prepareCompactionBodyHygiene(
   body: unknown,
-  config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression">,
+  config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
   logCtx?: RequestLogContext,
 ): boolean {
   redactHostedImageDisplayPaths(body);

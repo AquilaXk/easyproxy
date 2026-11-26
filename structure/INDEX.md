@@ -405,6 +405,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/lib/client-retry-after.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/lib/config-ownership-removal.ts` | [`config-ownership.md`](config-ownership.md) |
 | `src/lib/config-ownership.ts` | [`config-ownership.md`](config-ownership.md)<br>[`providers/codex-pool-affinity.md`](providers/codex-pool-affinity.md) |
+| `src/lib/context-inspector.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/lib/decision-quota-sink.ts` | [`providers/jev-decision.md`](providers/jev-decision.md) |
 | `src/lib/error-destination.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/lib/failure-detail.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
@@ -414,9 +415,11 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/lib/messages-error-body.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/lib/messages-sse-error-presentation.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/lib/model-identity.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
+| `src/lib/prompt-cache-injection.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/lib/response-service-tier.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/lib/state-store-registrations.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/lib/tool-argument-integers.ts` | [`providers-and-adapters.md`](providers-and-adapters.md) |
+| `src/lib/tool-output-compression.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/lib/upstream-condition.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/lib/upstream-retry.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/lib/upstream-validation-detail.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
@@ -546,6 +549,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/management/companion-routes.ts` | [`desktop-shell.md`](desktop-shell.md) |
 | `src/server/management/consent-session.ts` | [`telemetry.md`](telemetry.md) |
 | `src/server/management/gateway-client-routes.ts` | [`clients/antigravity-gateway.md`](clients/antigravity-gateway.md) |
+| `src/server/management/guardrails-routes.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/server/management/link-child-ops-routes.ts` | [`remote-link.md`](remote-link.md) |
 | `src/server/management/link-enrollment.ts` | [`remote-link.md`](remote-link.md) |
 | `src/server/management/link-recover-route.ts` | [`remote-link.md`](remote-link.md) |
@@ -570,6 +574,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/ollama-inbound.ts` | [`data-planes/ollama-inbound.md`](data-planes/ollama-inbound.md) |
 | `src/server/ollama-native-paths.ts` | [`data-planes/ollama-inbound.md`](data-planes/ollama-inbound.md) |
 | `src/server/ollama-route-policy.ts` | [`data-planes/ollama-inbound.md`](data-planes/ollama-inbound.md) |
+| `src/server/outbound-payload-hygiene.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/server/request-log-failure-detail.ts` | [`data-planes/error-detail.md`](data-planes/error-detail.md) |
 | `src/server/request-log.ts` | [`usage-client-attribution.md`](usage-client-attribution.md) |
 | `src/server/reserve-capability-startup.ts` | [`codex-reserve-capability.md`](codex-reserve-capability.md) |

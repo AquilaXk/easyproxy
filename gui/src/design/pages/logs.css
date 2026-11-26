@@ -35,13 +35,14 @@
 .logs-page col.logs-col-client { width: 48px; }
 .logs-page col.logs-col-time { width: 120px; }
 .logs-page col.logs-col-status { width: 80px; }
-.logs-page col.logs-col-model { width: 280px; }
+.logs-page col.logs-col-model { width: auto; }
 .logs-page col.logs-col-effort { width: 104px; }
 .logs-page col.logs-col-tokens,
 .logs-page col.logs-col-rate,
-.logs-page col.logs-col-cost,
-.logs-page col.logs-col-duration { width: 84px; }
+.logs-page col.logs-col-cost { width: 84px; }
+.logs-page col.logs-col-duration { width: 108px; }
 .logs-page col.logs-col-actions { width: 40px; }
+.logs-page .logs-model-primary { flex-wrap: wrap; align-items: center; gap: 2px 6px; }
 
 .logs-page .logs-status-badge {
   border-radius: 6px;
@@ -55,15 +56,18 @@
   .logs-page .logs-table td { padding-inline: 8px; }
   .logs-page .logs-table th:first-child,
   .logs-page .logs-table td:first-child { padding-inline: 6px; }
-  .logs-page col.logs-col-client { width: 44px; }
+  .logs-page col.logs-col-client { width: 40px; }
   .logs-page col.logs-col-time { width: 96px; }
-  .logs-page col.logs-col-status { width: 72px; }
+  .logs-page col.logs-col-status { width: 68px; }
   .logs-page col.logs-col-model { width: auto !important; }
-  .logs-page col.logs-col-tokens { width: 76px; }
+  .logs-page col.logs-col-tokens { width: 74px; }
   .logs-page col.logs-col-rate { width: 72px; }
-  .logs-page col.logs-col-cost { width: 72px; }
-  .logs-page col.logs-col-duration { width: 72px; }
-  .logs-page col.logs-col-actions { width: 34px; }
+  .logs-page col.logs-col-cost { width: 74px; }
+  .logs-page col.logs-col-duration { width: 96px; }
+  .logs-page col.logs-col-actions { width: 32px; }
+  .logs-page .logs-model-primary { flex-direction: column; flex-wrap: nowrap; align-items: flex-start; gap: 2px; }
+  .logs-page .logs-model-provider { font-size: 12px; line-height: 1.25; }
+  .logs-page .logs-model-sep { display: none; }
   .logs-page colgroup col.logs-col-effort,
   .logs-page .logs-table th.log-col-effort,
   .logs-page .logs-table td.log-reasoning-cell {

@@ -53,6 +53,7 @@ import {
   providerRelativeSendPathConfigError,
   isValidCreditPriceUsd,
   toolOutputCompressionSchema,
+  promptCacheInjectionSchema,
   outboundSecretGuardSchema,
 } from "./leaf-validators";
 import { scenarioRoutingSchema } from "./scenario-routing";
@@ -215,6 +216,7 @@ export const configSchema = z.object({
     .optional()
     .catch(undefined),
   toolOutputCompression: toolOutputCompressionSchema.optional().catch(undefined),
+  promptCacheInjection: promptCacheInjectionSchema.optional().catch(undefined),
   // Degrade damaged configs fail-closed to `"block"` without wiping providers/apiKeys to defaults;
   // write boundaries validate strictly via validateConfigCandidate.
   outboundSecretGuard: outboundSecretGuardSchema.optional().catch({ mode: "block" as const }),

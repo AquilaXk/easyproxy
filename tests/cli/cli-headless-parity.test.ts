@@ -648,6 +648,7 @@ describe("headless GUI parity CLI", () => {
       // `epx route policy`. Analytics is GUI-first for now; the same request
       // history remains available through observe/index tooling.
       ["/api/routing-profiles", "epx route policy"],
+      ["/api/routing/scenario", "epx agent scenario-routing"],
       ["/api/fallback", "epx fallback"],
       ["/api/routing-analytics", "(none — GUI analytics surface; history via epx observe/logs)"],
       // Remote Workspace is one product family in both surfaces. The current CLI owns

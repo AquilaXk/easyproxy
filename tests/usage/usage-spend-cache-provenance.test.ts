@@ -6,6 +6,8 @@ import {
   type PersistedUsageEntry,
 } from "../../src/usage/log";
 import { cacheObservationFromUsage, summarizeUsage } from "../../src/usage/summary";
+import { calculateNetCacheSavingsUsd, estimateRequestCost } from "../../src/usage/cost";
+import { EXPECTED_PRICE_OVERLAYS } from "../../src/usage/expected-prices";
 
 const NOW = Date.UTC(2026, 8, 14, 12, 0, 0);
 
@@ -188,5 +190,131 @@ describe("usage summary spend and cache provenance", () => {
     expect(sonnet?.cacheHitRate).toBeCloseTo(0.5);
     expect(opus?.cacheHitRate).toBeNull();
     expect(opus?.cacheObservedInputTokens).toBe(0);
+    expect(summary.summary.cacheObservedInputTokens).toBe(1000);
+    expect(summary.summary.cacheHitRate).toBeCloseTo(0.5);
+  });
+
+  test("summary surfaces overall cacheHitRate and positive estimatedCacheSavingsUsd while omitting write-only surcharges and credit billing", () => {
+    // Direct unit check on calculateNetCacheSavingsUsd with 5m and 1h writes
+    const rate = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
+    const netHit = calculateNetCacheSavingsUsd(
+      { input: 20_000, output: 1_000, cacheRead: 100_000, cacheWrite: 10_000 },
+      rate,
+      { input: 0.06, output: 0.015, cacheRead: 0.03, cacheWrite: 0.0375, total: 0.1425 },
+    );
+    // Savings on 100k read = (3 - 0.3) * 0.1 = $0.27; surcharge on 10k 5m write = (3.75 - 3) * 0.01 = $0.0075 -> net $0.2625
+    expect(netHit).toBeCloseTo(0.2625, 8);
+
+    const net1hWriteOnly = calculateNetCacheSavingsUsd(
+      { input: 10_000, output: 500, cacheRead: 0, cacheWrite: 20_000, cacheWrite1h: 20_000 },
+      rate,
+      { input: 0.03, output: 0.0075, cacheRead: 0, cacheWrite: 0.12, total: 0.1575 },
+    );
+    // 1h write costs 2x input ($6/M vs $3/M -> -$0.06 net)
+    expect(net1hWriteOnly).toBeCloseTo(-0.06, 8);
+
+    // Summary aggregation: positive net savings surfaced alongside overall cacheHitRate
+    const positiveSummary = summarizeUsage([
+      entry({
+        requestId: "epx-cache-save-1",
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+        usage: {
+          inputTokens: 120_000,
+          outputTokens: 2_000,
+          cachedInputTokens: 100_000,
+          cacheReadInputTokens: 100_000,
+          cacheCreationInputTokens: 0,
+        },
+        cacheProvenance: "observed",
+      }),
+    ], "7d", NOW);
+    expect(positiveSummary.summary.cacheHitRate).toBeCloseTo(100_000 / 120_000, 6);
+    expect(positiveSummary.summary.estimatedCacheSavingsUsd).toBeGreaterThan(0.2);
+
+    // Write-only window has negative net cache delta -> estimatedCacheSavingsUsd stays undefined
+    const writeOnlySummary = summarizeUsage([
+      entry({
+        requestId: "epx-cache-write-only",
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+        usage: {
+          inputTokens: 50_000,
+          outputTokens: 1_000,
+          cachedInputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 40_000,
+        },
+        cacheProvenance: "observed",
+      }),
+    ], "7d", NOW);
+    expect(writeOnlySummary.summary.cacheHitRate).toBe(0);
+    expect(writeOnlySummary.summary.estimatedCacheSavingsUsd).toBeUndefined();
+
+    // Credit-billed provider must never synthesize token cache USD savings
+    const creditEstimate = estimateRequestCost(
+      entry({
+        requestId: "epx-credit-1",
+        provider: "creditprov",
+        model: "custom-m",
+        usage: {
+          inputTokens: 100_000,
+          outputTokens: 1_000,
+          cachedInputTokens: 80_000,
+          cacheReadInputTokens: 80_000,
+          providerCredits: 5,
+        },
+      }),
+      EXPECTED_PRICE_OVERLAYS,
+      [
+        {
+          provider: "creditprov",
+          modelId: "custom-m",
+          cost4: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+          status: "verified",
+        },
+      ],
+      new Map([["creditprov", 0.01]]),
+    );
+    expect(creditEstimate).not.toBeNull();
+    expect(creditEstimate!.billing?.source).toBe("provider-credits");
+    expect(creditEstimate!.netCacheSavingsUsd).toBeUndefined();
+
+    // Per-model and per-provider breakdowns surface positive net cache savings and omit non-positive rows
+    const breakdownSummary = summarizeUsage([
+      entry({
+        requestId: "epx-prov-save-1",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        cacheProvenance: "observed",
+        usage: {
+          inputTokens: 100_000,
+          outputTokens: 1_000,
+          cachedInputTokens: 90_000,
+          cacheReadInputTokens: 90_000,
+          cacheCreationInputTokens: 5_000,
+        },
+      }),
+      entry({
+        requestId: "epx-prov-nosave-1",
+        provider: "openai",
+        model: "gpt-5.4",
+        cacheProvenance: "observed",
+        usage: {
+          inputTokens: 10_000,
+          outputTokens: 500,
+          cachedInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      }),
+    ], "7d", NOW);
+    const sonnetRow = breakdownSummary.models.find(m => m.model === "claude-sonnet-4-6");
+    const gptRow = breakdownSummary.models.find(m => m.model === "gpt-5.4");
+    const anthropicProv = breakdownSummary.providers.find(p => p.provider === "anthropic");
+    const openaiProv = breakdownSummary.providers.find(p => p.provider === "openai");
+    expect(sonnetRow?.estimatedCacheSavingsUsd).toBeGreaterThan(0.2);
+    expect(anthropicProv?.estimatedCacheSavingsUsd).toBeCloseTo(sonnetRow!.estimatedCacheSavingsUsd!, 6);
+    expect(gptRow?.estimatedCacheSavingsUsd).toBeUndefined();
+    expect(openaiProv?.estimatedCacheSavingsUsd).toBeUndefined();
   });
 });

@@ -8,13 +8,15 @@ import type { EpxTelemetryConfig } from "./telemetry";
 import type { EpxClaudeCodeToolLoadingConfig } from "./claude-tool-loading";
 import type { EpxLinkHomeConfig, EpxLinkTransportConfig } from "./link";
 import type { EpxRoutingProfileConfig } from "./routing-profile";
-import type { EpxComboEwmaLatencyConfig, EpxScenarioKind, EpxScenarioRoutingConfig } from "./scenario-ewma";
+import type { EpxComboEwmaLatencyConfig, EpxScenarioEffort, EpxScenarioKind, EpxScenarioRoutingConfig } from "./scenario-ewma";
 import type { EpxOtlpConfig } from "./otlp";
 import type { ToolOutputCompressionConfig } from "../lib/tool-output-compression";
+import type { PromptCacheInjectionConfig } from "../lib/prompt-cache-injection";
 import type { OutboundSecretGuardConfig } from "../lib/outbound-secret-guard";
 export type { ToolOutputCompressionConfig } from "../lib/tool-output-compression";
+export type { PromptCacheInjectionConfig, PromptCacheInjectionTtl } from "../lib/prompt-cache-injection";
 export type { OutboundSecretGuardConfig, OutboundSecretGuardMode } from "../lib/outbound-secret-guard";
-export type { EpxComboEwmaLatencyConfig, EpxScenarioKind, EpxScenarioRoutingConfig } from "./scenario-ewma";
+export type { EpxComboEwmaLatencyConfig, EpxScenarioEffort, EpxScenarioKind, EpxScenarioRoutingConfig } from "./scenario-ewma";
 export type { EpxOtlpConfig } from "./otlp";
 export type { AnthropicAccountPoolConfig, AnthropicModelRoute, EpxAccountPoolRotationStrategy, EpxAccountPoolQuotaWindow } from "./anthropic-account-pool";
 export type { EpxFallbackConfig, EpxFallbackDeviceConfig, EpxFallbackKind, EpxFallbackSwitches } from "./fallback";
@@ -1432,6 +1434,7 @@ export interface EpxConfig extends EpxLinkHomeConfig, CodexAccountLoginConfig {
    */
   maxConcurrentInboundBodyBytes?: number;
   toolOutputCompression?: ToolOutputCompressionConfig;
+  promptCacheInjection?: PromptCacheInjectionConfig;
   outboundSecretGuard?: OutboundSecretGuardConfig;
   otlp?: EpxOtlpConfig;
   /**

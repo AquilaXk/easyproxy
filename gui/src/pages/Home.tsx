@@ -2,7 +2,7 @@ import { useId, useRef, useState, type ReactNode } from "react";
 import { useKeyedClientResource } from "../client-resource";
 import { useI18n } from "../i18n/shared";
 import { uxT } from "../i18n/ux-overhaul-copy";
-import { cachedNumberFormat } from "../intl-formatters";
+import { cachedNumberFormat, formatEstimatedUsdValue } from "../intl-formatters";
 import { buildQuickstartSnippet, type EndpointProtocol, type QuickstartLang } from "../lib/home-quickstart";
 import type { Page } from "../app-routing";
 import { IconCheck, IconChevron, IconCopy, IconRefresh } from "../icons";
@@ -47,9 +47,21 @@ class HttpStatusError extends Error {
 }
 
 interface UsageDay { requests?: number; totalTokens?: number }
-interface UsageBody { summary?: { requests?: number; totalTokens?: number }; days?: UsageDay[] }
+interface UsageBody {
+  summary?: {
+    requests?: number;
+    totalTokens?: number;
+    cacheHitRate?: number | null;
+    estimatedCacheSavingsUsd?: number;
+  };
+  days?: UsageDay[];
+}
 interface ConfigBody { defaultProvider?: string; providers?: Record<string, unknown> }
-interface GuardrailsSummaryBody { outboundSecretGuard?: { mode?: "off" | "redact" | "block" } }
+interface GuardrailsSummaryBody {
+  outboundSecretGuard?: { mode?: "off" | "redact" | "block" };
+  toolOutputCompression?: { enabled?: boolean };
+  stats?: { savedChars?: number; estimatedSavedTokens?: number };
+}
 interface LogRow extends HomeLogRow { model?: string; provider?: string; errorCode?: string; upstreamError?: string }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -277,6 +289,17 @@ export default function Home({
                 })}
               </button>
             )}
+            {(guardrails.data?.stats?.estimatedSavedTokens ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={() => navigate("dashboard", "proxy-guardrails")}
+                className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-full bg-success-soft px-2.5 text-xs font-medium text-success transition-opacity hover:opacity-90 tabular-nums"
+              >
+                {uxT(locale, "home.tokenSavingsPill", {
+                  tokens: compact.format(guardrails.data?.stats?.estimatedSavedTokens ?? 0),
+                })}
+              </button>
+            )}
           </div>
           <div className="ml-auto flex items-center gap-3 text-xs text-fg-muted">
             <span>{t("shellV2.tileVersion")} <b className="font-semibold text-fg tabular-nums">{health.data?.version ? `v${health.data.version}` : "—"}</b></span>
@@ -333,7 +356,26 @@ export default function Home({
         <Stat label={t("shellV2.tileProviders")} value={number.format(providerCount)} />
         <Stat label={t("shellV2.tileUptime")} value={online && uptime !== null ? t("shellV2.uptimeValue", { h: String(Math.floor(uptime / 3600)), m: String(Math.floor((uptime % 3600) / 60)) }) : "—"} />
         <Stat label={t("shellV2.tileRequests")} value={number.format(requests7d)} />
-        <Stat label={t("shellV2.tileTokens")} value={compact.format(tokens7d)} />
+        <Stat
+          label={t("shellV2.tileTokens")}
+          value={compact.format(tokens7d)}
+          foot={(() => {
+            const parts: string[] = [];
+            if (typeof usage.data?.summary?.cacheHitRate === "number" && Number.isFinite(usage.data.summary.cacheHitRate)) {
+              parts.push(uxT(locale, "home.cacheHitFoot", { rate: `${Math.round(usage.data.summary.cacheHitRate * 100)}%` }));
+            }
+            if (
+              typeof usage.data?.summary?.estimatedCacheSavingsUsd === "number"
+              && Number.isFinite(usage.data.summary.estimatedCacheSavingsUsd)
+              && usage.data.summary.estimatedCacheSavingsUsd > 0
+            ) {
+              parts.push(uxT(locale, "tokenMix.estSavings", {
+                amount: formatEstimatedUsdValue(usage.data.summary.estimatedCacheSavingsUsd, locale).replace(/^~/, ""),
+              }));
+            }
+            return parts.length > 0 ? parts.join(" · ") : undefined;
+          })()}
+        />
       </section>
 
       <TelemetryProfileCard apiBase={apiBase} />
@@ -443,11 +485,12 @@ function renderStatValue(value: string) {
   return parts;
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, foot }: { label: string; value: string; foot?: string }) {
   return (
     <div className="flex min-w-0 flex-col gap-1 rounded-card border border-line bg-surface px-4 py-3.5">
       <span className="text-xs font-medium text-fg-subtle">{label}</span>
       <span className="truncate text-stat font-semibold tracking-[-0.02em] tabular-nums">{renderStatValue(value)}</span>
+      {foot && <span className="truncate text-xs text-fg-subtle tabular-nums">{foot}</span>}
     </div>
   );
 }

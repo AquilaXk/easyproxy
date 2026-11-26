@@ -1,6 +1,6 @@
 import { applyChatDestinationPolicy, mistralNativeChatEffort } from "./destination-policy";
 import { protectGlmSummaryBudget } from "./summary-budget";
-import { openAIChatTransport, stripBracketedModelSuffix } from "./wire";
+import { isNativeOpenAIChatTarget, openAIChatTransport, stripBracketedModelSuffix } from "./wire";
 import type { AdapterRequest } from "../base";
 import { frameAgentRouterMessages } from "../agentrouter";
 import { applyExplicitChatDeveloperRole } from "./developer-role";
@@ -183,6 +183,18 @@ export function buildOpenAIChatPassthroughRequest(
   }
   if (provider.promptCacheKey && rawBody.prompt_cache_key !== undefined) {
     body.prompt_cache_key = rawBody.prompt_cache_key;
+  }
+  const wireModelId = typeof body.model === "string" ? body.model : modelId;
+  if (
+    provider.promptCacheKey
+    && isNativeOpenAIChatTarget(provider)
+    && wireModelId !== "gpt-5.6"
+    && !wireModelId.startsWith("gpt-5.6-")
+    && (rawBody.prompt_cache_retention === "in_memory"
+      || rawBody.prompt_cache_retention === "in-memory"
+      || rawBody.prompt_cache_retention === "24h")
+  ) {
+    body.prompt_cache_retention = rawBody.prompt_cache_retention;
   }
   if (hasTools) {
     // Same three provider states as the translated path, and the same defect in the unset one:

@@ -683,6 +683,13 @@ function applyChatSettings(raw: ChatCompletionsRoutingBody, body: Rec): void {
   if (typeof raw.parallel_tool_calls === "boolean") body.parallel_tool_calls = raw.parallel_tool_calls;
   if (typeof raw.service_tier === "string") body.service_tier = raw.service_tier;
   if (typeof raw.prompt_cache_key === "string") body.prompt_cache_key = raw.prompt_cache_key;
+  if (
+    raw.prompt_cache_retention === "in_memory"
+    || raw.prompt_cache_retention === "in-memory"
+    || raw.prompt_cache_retention === "24h"
+  ) {
+    body.prompt_cache_retention = raw.prompt_cache_retention;
+  }
   if (raw.metadata !== undefined) body.metadata = raw.metadata;
 
   const effort = resolveReasoningEffort(raw);

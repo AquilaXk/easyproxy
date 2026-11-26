@@ -44,9 +44,11 @@ This file lists direct third-party runtime, UI, and desktop dependencies used by
 | `windows-sys` | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | `winreg` | MIT | https://github.com/gentoo90/winreg-rs |
 
-## Reference Designs & Attributions (MIT)
+## Reference Designs & Attributions (MIT / Apache-2.0)
 
 | Reference | License | Applied Scope |
 | :--- | :--- | :--- |
 | `anomalyco/opencode` (https://github.com/anomalyco/opencode) | MIT | Model metadata and pricing table conventions (`src/usage/`). |
-| Open-source API gateway reference patterns | MIT | Integer microdollar per-key daily spend budgets (`src/server/api-key-budget.ts`), outbound secret detection/redaction (`src/lib/outbound-secret-guard.ts`), tool-output compression (`src/lib/tool-output-compression.ts`), and read-only guardrail dry-run previews (`src/server/management/guardrails-routes.ts`). |
+| `tribgames/mixdog` (https://github.com/tribgames/mixdog) | Apache-2.0 | Usage token-mix and expandable provider-to-model breakdown patterns (`gui/src/components/v2-usage/`), 128-cell context composition and cache-prefix inspection (`src/lib/context-inspector.ts`, `gui/src/components/ContextInspectorPanel.tsx`), Anthropic cache breakpoint TTL ordering and per-turn cache-preserving effort overrides (`src/lib/prompt-cache-injection.ts`, `src/routing/scenario.ts`), device-pixel hairline tokens (`gui/src/design/theme.css`), line-boundary excerpt snapping, and cross-turn identical non-error tool-output deduplication (`src/lib/tool-output-compression.ts`). |
+| `BerriAI/litellm` (https://github.com/BerriAI/litellm) & `rtk-ai/rtk` (https://github.com/rtk-ai/rtk) | MIT / Apache-2.0 | Provider-aware `cache_control` injection point conventions (`src/lib/prompt-cache-injection.ts`) and diff/stack-trace-safe repetitive CLI/build/test output line folding (`src/lib/tool-output-compression.ts`). |
+| Open-source API gateway reference patterns | MIT | Integer microdollar per-key daily spend budgets (`src/server/api-key-budget.ts`), outbound secret detection/redaction (`src/lib/outbound-secret-guard.ts`), bounded JSON tool-output minification and compression (`src/lib/tool-output-compression.ts`), prompt-cache retention forwarding (`src/chat/inbound.ts`, `src/adapters/openai-chat/passthrough.ts`), and read-only guardrail dry-run previews (`src/server/management/guardrails-routes.ts`). |

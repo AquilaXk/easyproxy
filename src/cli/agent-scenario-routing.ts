@@ -19,12 +19,15 @@ import {
   MIN_THINK_BUDGET_THRESHOLD,
   SCENARIO_KINDS,
 } from "../routing/scenario";
-import type { EpxScenarioKind } from "../types";
+import type { EpxScenarioEffort, EpxScenarioKind } from "../types";
+
+const VALID_EFFORTS = new Set<EpxScenarioEffort>(["low", "medium", "high", "xhigh"]);
 
 const USAGE = `Usage:
   epx agent scenario-routing show [--json]
   epx agent scenario-routing set (--file <FILE|-> | [--enabled <on|off>]
       [--long-context <route|->] [--think <route|->] [--background <route|->] [--web-search <route|->]
+      [--long-context-effort <effort|->] [--think-effort <effort|->] [--background-effort <effort|->] [--web-search-effort <effort|->]
       [--long-context-threshold <tokens>] [--think-budget-threshold <tokens>]
       [--precedence <kind,kind...>] [--match-models <pattern,...|->] [--override-explicit <on|off>]) [--json]
   epx agent scenario-routing clear [--json]
@@ -37,6 +40,10 @@ const SCENARIO_SET_FLAGS = [
   "--think",
   "--background",
   "--web-search",
+  "--long-context-effort",
+  "--think-effort",
+  "--background-effort",
+  "--web-search-effort",
   "--long-context-threshold",
   "--think-budget-threshold",
   "--precedence",
@@ -50,6 +57,16 @@ function clearableRoute(value: string | undefined): string | null | undefined {
   if (trimmed === "-") return null;
   if (!trimmed) throw new CliUsageError("route target cannot be empty", USAGE);
   return trimmed;
+}
+
+function clearableEffort(value: string | undefined, flag: string): EpxScenarioEffort | null | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed === "-") return null;
+  if (!VALID_EFFORTS.has(trimmed as EpxScenarioEffort)) {
+    throw new CliUsageError(`${flag} must be one of low, medium, high, xhigh, or -`, USAGE);
+  }
+  return trimmed as EpxScenarioEffort;
 }
 
 function parseBooleanSwitch(raw: string | undefined, flag: string): boolean | undefined {
@@ -81,10 +98,13 @@ function parsePrecedenceList(raw: string | undefined): EpxScenarioKind[] | undef
 function formatScenarioLines(scenarioRouting: Record<string, unknown> | null): string[] {
   if (!scenarioRouting) return ["Scenario routing: not configured (disabled)"];
   const routes = (scenarioRouting.routes ?? {}) as Record<string, unknown>;
+  const efforts = (scenarioRouting.efforts ?? {}) as Record<string, unknown>;
   const routeParts = SCENARIO_KINDS.map(kind => `${kind}=${typeof routes[kind] === "string" ? routes[kind] : "-"}`);
+  const effortParts = SCENARIO_KINDS.map(kind => `${kind}=${typeof efforts[kind] === "string" ? efforts[kind] : "-"}`);
   return [
     `Scenario routing: ${scenarioRouting.enabled === true ? "enabled" : "disabled"}`,
     `Routes: ${routeParts.join("  ")}`,
+    `Efforts: ${effortParts.join("  ")}`,
     `Long-context threshold: ${typeof scenarioRouting.longContextThresholdTokens === "number" ? scenarioRouting.longContextThresholdTokens : 60000} tokens`,
     `Precedence: ${Array.isArray(scenarioRouting.precedence) ? scenarioRouting.precedence.join(" > ") : DEFAULT_SCENARIO_PRECEDENCE.join(" > ")}`,
   ];
@@ -115,6 +135,10 @@ async function handleSet(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const think = clearableRoute(takeOption(args, "--think"));
   const background = clearableRoute(takeOption(args, "--background"));
   const webSearch = clearableRoute(takeOption(args, "--web-search"));
+  const longContextEffort = clearableEffort(takeOption(args, "--long-context-effort"), "--long-context-effort");
+  const thinkEffort = clearableEffort(takeOption(args, "--think-effort"), "--think-effort");
+  const backgroundEffort = clearableEffort(takeOption(args, "--background-effort"), "--background-effort");
+  const webSearchEffort = clearableEffort(takeOption(args, "--web-search-effort"), "--web-search-effort");
   const longThreshold = takeIntegerOption(args, "--long-context-threshold", {
     min: MIN_LONG_CONTEXT_THRESHOLD_TOKENS,
     max: MAX_LONG_CONTEXT_THRESHOLD_TOKENS,
@@ -133,6 +157,10 @@ async function handleSet(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     || think !== undefined
     || background !== undefined
     || webSearch !== undefined
+    || longContextEffort !== undefined
+    || thinkEffort !== undefined
+    || backgroundEffort !== undefined
+    || webSearchEffort !== undefined
     || longThreshold !== undefined
     || thinkThreshold !== undefined
     || precedence !== undefined
@@ -167,6 +195,16 @@ async function handleSet(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     if (webSearch === null) delete existingRoutes.webSearch;
     else if (webSearch !== undefined) existingRoutes.webSearch = webSearch;
 
+    const existingEfforts = { ...((base.efforts ?? {}) as Record<string, EpxScenarioEffort>) };
+    if (longContextEffort === null) delete existingEfforts.longContext;
+    else if (longContextEffort !== undefined) existingEfforts.longContext = longContextEffort;
+    if (thinkEffort === null) delete existingEfforts.think;
+    else if (thinkEffort !== undefined) existingEfforts.think = thinkEffort;
+    if (backgroundEffort === null) delete existingEfforts.background;
+    else if (backgroundEffort !== undefined) existingEfforts.background = backgroundEffort;
+    if (webSearchEffort === null) delete existingEfforts.webSearch;
+    else if (webSearchEffort !== undefined) existingEfforts.webSearch = webSearchEffort;
+
     const enabled = parseBooleanSwitch(enabledRaw, "--enabled") ?? (typeof base.enabled === "boolean" ? base.enabled : true);
     const draft: Record<string, unknown> = {
       ...base,
@@ -177,6 +215,8 @@ async function handleSet(argv: string[], deps: RuntimeApiDeps): Promise<void> {
       ...(precedence !== undefined ? { precedence } : {}),
       ...(overrideExplicit !== undefined ? { overrideExplicitRoutes: overrideExplicit } : {}),
     };
+    if (Object.keys(existingEfforts).length > 0) draft.efforts = existingEfforts;
+    else delete draft.efforts;
     if (matchModelsRaw !== undefined) {
       if (matchModelsRaw === "-") delete draft.matchModels;
       else draft.matchModels = matchModelsRaw.split(",").map(s => s.trim()).filter(Boolean);
@@ -218,6 +258,7 @@ async function handleClassify(argv: string[], deps: RuntimeApiDeps): Promise<voi
     matched: string | null;
     targetSelector: string | null;
     resolvedTarget: { provider: string; model: string; routeKind: string } | null;
+    resolvedEffort?: string | null;
     classification: { estimatedTokens: number; matchedScenarios: string[] };
   }>(
     "/api/routing/scenario/classify",
@@ -237,6 +278,7 @@ async function handleClassify(argv: string[], deps: RuntimeApiDeps): Promise<voi
     `Scenario routing: ${result.active ? "active" : "inactive"}`,
     `Matched: ${result.matched ?? "none"} (signals: ${result.classification.matchedScenarios.join(", ") || "none"}, ~${result.classification.estimatedTokens} tokens)`,
     ...(result.resolvedTarget ? [`Target: ${result.resolvedTarget.provider}/${result.resolvedTarget.model} (${result.resolvedTarget.routeKind})`] : []),
+    ...(result.resolvedEffort ? [`Effort: ${result.resolvedEffort}`] : []),
   ];
   printData(result, wantsJson, lines);
 }

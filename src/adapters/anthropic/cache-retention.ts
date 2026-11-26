@@ -70,6 +70,34 @@ export function collectAnthropicCacheTtls(body: unknown): unknown[] {
 }
 
 /**
+ * Early-exit structural check for whether an Anthropic Messages wire body carries any real
+ * `cache_control` breakpoint, avoiding whole-body `JSON.stringify` allocations and false
+ * positives from literal `"cache_control"` text inside user prompts or tool payloads.
+ */
+export function hasAnthropicCacheControl(body: unknown): boolean {
+  if (!isRec(body)) return false;
+  if (isRec(body.cache_control)) return true;
+  const visit = (node: unknown, depth: number): boolean => {
+    if (depth > MAX_DEPTH) return false;
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        if (visit(item, depth + 1)) return true;
+      }
+      return false;
+    }
+    if (!isRec(node)) return false;
+    if (isRec(node.cache_control)) return true;
+    for (const [key, value] of Object.entries(node)) {
+      if (!isDataKey(key) && (Array.isArray(value) || isRec(value)) && visit(value, depth + 1)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  return visit(body.system, 0) || visit(body.tools, 0) || visit(body.messages, 0);
+}
+
+/**
  * Native Messages passthrough: give the caller's TTL-less breakpoints the 1-hour default.
  *
  * Applies only when the resolved retention is "long". A caller that pinned any breakpoint to a

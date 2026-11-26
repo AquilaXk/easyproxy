@@ -1,4 +1,5 @@
-import type { EpxScenarioKind, EpxScenarioRoutingConfig } from "../types";
+import { claudeFamilyVersion } from "../adapters/anthropic-model-contract";
+import type { EpxScenarioEffort, EpxScenarioKind, EpxScenarioRoutingConfig } from "../types";
 
 export const SCENARIO_KINDS = ["longContext", "think", "background", "webSearch"] as const;
 export const DEFAULT_SCENARIO_PRECEDENCE: readonly EpxScenarioKind[] = [
@@ -345,12 +346,17 @@ export function classifyRequestScenario(input: ScenarioClassifyInput): ScenarioC
   if (cfg && cfg.enabled !== true) return EMPTY_CLASSIFICATION;
 
   const configuredRoutes = cfg?.routes;
+  const configuredEfforts = cfg?.efforts;
   const hasConfiguredFilter = cfg !== undefined;
   const activeScenarios = new Set<EpxScenarioKind>();
-  if (configuredRoutes) {
+  if (configuredRoutes || configuredEfforts) {
     for (const kind of SCENARIO_KINDS) {
-      const target = configuredRoutes[kind];
-      if (typeof target === "string" && target.trim().length > 0) {
+      const target = configuredRoutes?.[kind];
+      const effort = configuredEfforts?.[kind];
+      if (
+        (typeof target === "string" && target.trim().length > 0)
+        || (typeof effort === "string" && effort.trim().length > 0)
+      ) {
         activeScenarios.add(kind);
       }
     }
@@ -406,4 +412,84 @@ export function classifyRequestScenario(input: ScenarioClassifyInput): ScenarioC
   }
   const matched = matchedScenarios.find(kind => !hasConfiguredFilter || activeScenarios.has(kind)) ?? null;
   return { matched, matchedScenarios, estimatedTokens, signals, truncated };
+}
+
+/**
+ * True when the Claude family/version accepts `output_config.effort` on `/v1/messages`
+ * without triggering an upstream `400 invalid_request_error`:
+ * - Opus >= 4.6 (`4.6`, `4.7`, `4.8`, `5.0`, `5.5`+)
+ * - Sonnet >= 4.6 (`4.6`, `5.0`, `5.5`+)
+ * - Haiku >= 5.5 (`haiku-4-5` rejects `output_config.effort`)
+ * - Fable >= 0.0 and Mythos >= 5.0
+ */
+export function supportsAnthropicOutputConfigEffort(modelId: string): boolean {
+  const parsed = claudeFamilyVersion(modelId);
+  if (!parsed) return false;
+  const atLeast = (maj: number, min: number) =>
+    parsed.major > maj || (parsed.major === maj && parsed.minor >= min);
+  switch (parsed.family) {
+    case "opus":
+    case "sonnet":
+      return atLeast(4, 6);
+    case "haiku":
+      return atLeast(5, 5);
+    case "fable":
+      return true;
+    case "mythos":
+      return atLeast(5, 0);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Applies an explicit `effort` value onto an Anthropic Messages `body.output_config.effort`
+ * only when `modelId` supports `output_config.effort` and `body.thinking` carries no
+ * conflicting `disabled`/`enabled` mode (`between_tools` clamps `xhigh` to `high`).
+ */
+export function applyAnthropicEffortInPlace(
+  body: Record<string, unknown>,
+  modelId: string,
+  effort: EpxScenarioEffort,
+): EpxScenarioEffort | null {
+  if (!supportsAnthropicOutputConfigEffort(modelId)) return null;
+  let effectiveEffort: EpxScenarioEffort = effort;
+  if (isPlainRecord(body.thinking)) {
+    const tType = typeof body.thinking.type === "string" ? body.thinking.type.toLowerCase() : "";
+    if (tType === "disabled" || tType === "enabled") return null;
+    if (tType === "between_tools" && effectiveEffort === "xhigh") {
+      effectiveEffort = "high";
+    }
+  }
+  body.output_config = {
+    ...(isPlainRecord(body.output_config) ? body.output_config : {}),
+    effort: effectiveEffort,
+  };
+  return effectiveEffort;
+}
+
+/**
+ * Applies a matched scenario's `efforts[scenario]` override onto an Anthropic Messages
+ * payload (`output_config.effort`) without rewriting `system`, `tools`, or prior
+ * conversation blocks, preserving byte-prefix prompt caches on supported Claude models.
+ */
+export function applyAnthropicScenarioEffort(
+  body: Record<string, unknown>,
+  config: EpxScenarioRoutingConfig | undefined,
+  headers?: Headers | Readonly<Record<string, string | undefined>>,
+  selector?: string,
+): { scenario: EpxScenarioKind; effort: EpxScenarioEffort } | null {
+  if (!config?.enabled || !config.efforts) return null;
+  const hasAnyEffort = SCENARIO_KINDS.some(k => Boolean(config.efforts?.[k]));
+  if (!hasAnyEffort) return null;
+  const classification = classifyRequestScenario({ body, headers, selector, config });
+  if (!classification.matched) return null;
+  const effort = config.efforts[classification.matched];
+  if (!effort) return null;
+  const targetModel = typeof body.model === "string" && body.model.trim()
+    ? body.model.trim()
+    : (selector ?? "");
+  const applied = applyAnthropicEffortInPlace(body, targetModel, effort);
+  if (!applied) return null;
+  return { scenario: classification.matched, effort: applied };
 }

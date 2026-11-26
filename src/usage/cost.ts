@@ -113,6 +113,8 @@ export interface AttemptCostEstimate {
    * `providerCredits x creditPriceUsd` and its four token fields carry no allocation.
    */
   billing?: CreditBilling;
+  /** Net USD saved vs uncached input pricing (`uncachedBaseline - (cacheRead + cacheWrite)`). */
+  netCacheSavingsUsd?: number;
 }
 
 export interface CostEstimate {
@@ -135,6 +137,8 @@ export interface CostEstimate {
    * same way, so the total is real but the split is only available per attempt.
    */
   billing?: CreditBilling;
+  /** Net USD saved vs uncached input pricing (`uncachedBaseline - (cacheRead + cacheWrite)`). */
+  netCacheSavingsUsd?: number;
 }
 
 function finiteNonNegative(value: number): boolean {
@@ -209,6 +213,21 @@ export function calculateCost(tokens: CostTokens, cost4: Cost4): CostBreakdown {
   const cacheWrite = (cost4.cacheWrite * (tokens.cacheWrite - write1h)
     + cost4.cacheWrite * CACHE_WRITE_1H_OVER_5M * write1h) / 1_000_000;
   return { input, output, cacheRead, cacheWrite, total: input + output + cacheRead + cacheWrite };
+}
+
+/**
+ * Net prompt-cache cost delta vs paying the uncached `cost4.input` rate on cached read/write tokens.
+ * Positive when cache reads save more than cache creation premiums cost; 0 when no cached tokens exist.
+ */
+export function calculateNetCacheSavingsUsd(
+  tokens: CostTokens | null,
+  cost4: Cost4,
+  cost: CostBreakdown,
+): number | undefined {
+  if (!tokens || (tokens.cacheRead === 0 && tokens.cacheWrite === 0)) return undefined;
+  const uncachedBaseline = cost4.input * (tokens.cacheRead + tokens.cacheWrite) / 1_000_000;
+  const delta = uncachedBaseline - (cost.cacheRead + cost.cacheWrite);
+  return Number.isFinite(delta) && delta !== 0 ? delta : undefined;
 }
 
 /**
@@ -756,6 +775,9 @@ export function estimateAttemptCost(
   // is only honest for the rate that actually priced the row.
   const priorityLowerBound = billed.billing === undefined
     && (contextPriorityLowerBound || isOpenRouterPriorityLowerBound(price.provider, attempt.tierOutcome));
+  const netCacheSavingsUsd = billed.billing === undefined
+    ? calculateNetCacheSavingsUsd(tokens, effectiveCost4, billed.cost)
+    : undefined;
   return {
     ordinal: attempt.ordinal,
     provider: attempt.provider,
@@ -769,6 +791,7 @@ export function estimateAttemptCost(
     ...(customThresholdApplied ? { customThresholdApplied } : {}),
     ...(priorityLowerBound ? { priorityLowerBound: true } : {}),
     ...(billed.billing ? { billing: billed.billing } : {}),
+    ...(netCacheSavingsUsd !== undefined ? { netCacheSavingsUsd } : {}),
   };
 }
 
@@ -863,6 +886,10 @@ export function estimateComboCost(
   // closed rather than serve a total that serializes as null.
   if (!Number.isFinite(cost.total) || (tokens && Object.values(tokens).some(value => !Number.isFinite(value)))) return null;
   const billing = comboBilling(estimates, cost.total);
+  const hasSavings = estimates.some(est => est.netCacheSavingsUsd !== undefined);
+  const savingsSum = hasSavings
+    ? estimates.reduce((sum, est) => sum + (est.netCacheSavingsUsd ?? 0), 0)
+    : undefined;
   return {
     tokens,
     cost,
@@ -875,6 +902,7 @@ export function estimateComboCost(
     ...(estimates.some(est => est.contextTier) ? { contextTier: "long" as const } : {}),
     ...(estimates.some(est => est.customThresholdApplied) ? { customThresholdApplied: true as const } : {}),
     ...(comboIsLowerBound(attempts, estimates, billing) ? { priorityLowerBound: true as const } : {}),
+    ...(savingsSum !== undefined && Number.isFinite(savingsSum) && savingsSum !== 0 ? { netCacheSavingsUsd: savingsSum } : {}),
   };
 }
 
@@ -910,6 +938,9 @@ export function estimateRequestCost(
     price.provider,
     typeof input.serviceTier === "object" ? input.serviceTier.tierOutcome : undefined,
   ));
+  const netCacheSavingsUsd = billed.billing === undefined
+    ? calculateNetCacheSavingsUsd(tokens, effectiveCost4, billed.cost)
+    : undefined;
   return {
     tokens,
     price,
@@ -920,6 +951,7 @@ export function estimateRequestCost(
     ...(customThresholdApplied ? { customThresholdApplied } : {}),
     ...(priorityLowerBound ? { priorityLowerBound: true } : {}),
     ...(billed.billing ? { billing: billed.billing } : {}),
+    ...(netCacheSavingsUsd !== undefined ? { netCacheSavingsUsd } : {}),
   };
 }
 

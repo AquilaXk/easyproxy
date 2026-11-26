@@ -168,4 +168,9 @@ export type {
   EpxTelemetryConfig,
   EpxTelemetryDecision,
 } from "./types/telemetry";
-export type { EpxOtlpConfig } from "./types/config";
+export type {
+  EpxOtlpConfig,
+  EpxScenarioEffort,
+  PromptCacheInjectionConfig,
+  PromptCacheInjectionTtl,
+} from "./types/config";

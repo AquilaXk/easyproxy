@@ -119,6 +119,8 @@ import { recordProtocolShadowPlan } from "../protocols/shadow-plan";
 import { captureAnthropicClientIdentity } from "../adapters/anthropic/client-identity";
 import { nativeMessagesDeclineReason, type NativeMessagesSelector } from "./messages-native-eligibility";
 import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
+import { applyAnthropicEffortInPlace, applyAnthropicScenarioEffort } from "../routing/scenario";
+import { applyAnthropicNativeCacheTtlDefault, resolveAnthropicCacheRetention } from "../adapters/anthropic/cache-retention";
 import {
   isApiAuthRequired,
   isDataPlaneAdmissionSecret,
@@ -389,6 +391,10 @@ async function anthropicNativePassthrough(
     enforceAnthropicImageLimits(body.messages);
     sanitizePassthroughToolCallIds(body.messages);
   }
+  const outboundBody = config.promptCacheInjection?.enabled === true
+    && (config.promptCacheInjection.ttl ?? "auto") === "auto"
+    ? applyAnthropicNativeCacheTtlDefault(body, resolveAnthropicCacheRetention(config.cacheRetention, { baseUrl: base, authMode: "forward" }))
+    : body;
   const headers = new Headers();
   req.headers.forEach((value, name) => {
     if (shouldForwardNativeHeader(name, value, config)) headers.set(name, value);
@@ -401,7 +407,7 @@ async function anthropicNativePassthrough(
   const reserveKey = callerSubscriptionObservationKey(config, headers);
   const result = await fetchWithHeaderDeadline(
     `${base}${pathname}${search}`,
-    { method: "POST", headers, body: JSON.stringify(body) },
+    { method: "POST", headers, body: JSON.stringify(outboundBody) },
     // Local Anthropic-compatible endpoints (a self-hosted base URL) disable the header deadline
     // when the operator sets none, so a slow local prefill is not cut before the first header.
     resolveConnectTimeoutMs(config.connectTimeoutMs, { localUpstream: isLocalUpstream(base) }),
@@ -829,6 +835,11 @@ async function handleClaudeMessagesWithBudget(
         if (!isTranslatorBudgetExceededError(err)) throw err;
         if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 413, { closeReason: "non_stream" });
         return anthropicErrorResponse(413, "request translation buffer exceeded the safe limit", "request_too_large", "translation_buffer_limit");
+      }
+      if (config.scenarioRouting?.enabled && config.scenarioRouting.efforts) {
+        if (projectedBody === anthropicBody) projectedBody = { ...anthropicBody };
+        const applied = applyAnthropicScenarioEffort(projectedBody, config.scenarioRouting, req.headers, requestedModel);
+        if (applied) logCtx.requestedEffort = applied.effort;
       }
       return await anthropicNativePassthrough(req, config, logCtx, logIds, projectedBody, "/v1/messages");
     }
@@ -1267,6 +1278,15 @@ async function handleClaudeMessagesWithBudget(
       if (!isTranslatorBudgetExceededError(err)) throw err;
       if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 413, { closeReason: "non_stream" });
       return anthropicErrorResponse(413, "request translation buffer exceeded the safe limit", "request_too_large", "translation_buffer_limit");
+    }
+    if (nativeMessagesRoute.scenarioMatch?.effort && !effortOverride) {
+      if (nativeBody === anthropicBody) nativeBody = { ...(anthropicBody as Rec) };
+      const applied = applyAnthropicEffortInPlace(
+        nativeBody,
+        nativeMessagesRoute.modelId,
+        nativeMessagesRoute.scenarioMatch.effort,
+      );
+      if (applied) logCtx.requestedEffort = applied;
     }
     const { handleNativeMessages } = await import("./messages-native");
     return await handleNativeMessages({

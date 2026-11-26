@@ -1,10 +1,11 @@
-import type { ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import type { Locale, TFn } from "../../i18n/shared";
+import { uxT } from "../../i18n/ux-overhaul-copy";
 import { formatTokens } from "../../format-tokens";
 import { cachedNumberFormat, formatEstimatedUsdValue as formatUsdEstimate } from "../../intl-formatters";
 import { formatProviderDisplayName } from "../../provider-icons";
 import { modelLabel } from "../../model-display";
-import { IconSearch } from "../../icons";
+import { IconChevron, IconSearch } from "../../icons";
 import { cn } from "@/lib/utils";
 import {
   cacheHitRateTitle, formatOptionalPct, formatOptionalTokens, formatPct, hasThroughput, throughputTitle,
@@ -17,7 +18,60 @@ import {
  * here; the identity and the three comparison figures lead, the per-request detail follows.
  */
 
-type UsageCostRow = Pick<UsageModel, "estimatedCostUsd" | "pricedRequests" | "unpricedRequests">;
+type UsageCostRow = Pick<UsageModel, "estimatedCostUsd" | "estimatedCacheSavingsUsd" | "pricedRequests" | "unpricedRequests">;
+type SortDirection = "ascending" | "descending";
+type ModelSortColumn = "model" | "tokens" | "cost" | "requests" | "tokPerSec" | "cacheHitRate";
+type ProviderSortColumn = "provider" | "tokens" | "cost" | "requests" | "tokPerSec" | "cacheHitRate";
+
+function SortableHeader<C extends string>({
+  column,
+  label,
+  activeColumn,
+  direction,
+  onSort,
+  numeric = false,
+  describedBy,
+}: {
+  column: C;
+  label: string;
+  activeColumn: C;
+  direction: SortDirection;
+  onSort: (column: C, label: string) => void;
+  numeric?: boolean;
+  describedBy?: string;
+}) {
+  const active = activeColumn === column;
+  return (
+    <th
+      scope="col"
+      className={cn(numeric && "num")}
+      {...(active ? { "aria-sort": direction } : {})}
+      {...(describedBy ? { "aria-describedby": describedBy } : {})}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column, label)}
+        className={cn(
+          "inline-flex min-h-6 w-full cursor-pointer appearance-none items-center gap-1 rounded-[4px] border-0 bg-transparent px-3 py-2 font-inherit text-inherit transition-colors hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-highlight",
+          numeric ? "justify-end" : "justify-start",
+          active && "text-fg",
+        )}
+      >
+        <span>{label}</span>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "inline-flex shrink-0 transition-transform",
+            active ? "opacity-90" : "opacity-35",
+            active && direction === "ascending" ? "-rotate-90" : "rotate-90",
+          )}
+        >
+          <IconChevron size={11} />
+        </span>
+      </button>
+    </th>
+  );
+}
 
 /**
  * Renders a row's API list-price estimate with explicit pricing coverage.
@@ -52,9 +106,19 @@ function UsageListPrice({ row, locale, t }: { row: UsageCostRow; locale: Locale;
       </>
     );
   }
+  const netSaved = typeof row.estimatedCacheSavingsUsd === "number"
+    && Number.isFinite(row.estimatedCacheSavingsUsd)
+    && row.estimatedCacheSavingsUsd > 0
+    ? row.estimatedCacheSavingsUsd
+    : null;
   return (
     <>
       <span className="mono">{formatUsdEstimate(row.estimatedCostUsd ?? 0, locale)}</span>
+      {netSaved !== null && (
+        <span className="block font-sans text-[11px] font-medium text-success tabular-nums">
+          {uxT(locale, "tokenMix.estSavings", { amount: formatUsdEstimate(netSaved, locale).replace(/^~/, "") })}
+        </span>
+      )}
       {excludedRequests > 0 && (
         <span className="muted text-caption usage-cost-note"> {excludedCaption}</span>
       )}
@@ -121,6 +185,50 @@ export function UsageModelsTable({
   const searchLabel = t("usage.search.models");
   const listPriceDisclaimerId = "usage-models-list-price-disclaimer";
   const unavailable = t("usage.unavailable");
+  const [sortCol, setSortCol] = useState<ModelSortColumn>("tokens");
+  const [sortDir, setSortDir] = useState<SortDirection>("descending");
+  const [sortAnnouncement, setSortAnnouncement] = useState("");
+
+  const handleSort = (nextCol: ModelSortColumn, label: string) => {
+    const defaultDir: SortDirection = nextCol === "model" ? "ascending" : "descending";
+    const nextDir: SortDirection = sortCol === nextCol
+      ? (sortDir === "descending" ? "ascending" : "descending")
+      : defaultDir;
+    setSortCol(nextCol);
+    setSortDir(nextDir);
+    setSortAnnouncement(
+      uxT(locale, "usageSort.status", {
+        column: label,
+        direction: uxT(locale, nextDir === "ascending" ? "usageSort.asc" : "usageSort.desc"),
+      }),
+    );
+  };
+
+  const collator = useMemo(() => new Intl.Collator(locale, { numeric: true, sensitivity: "base" }), [locale]);
+
+  const sortedModels = useMemo(() => {
+    const factor = sortDir === "ascending" ? 1 : -1;
+    if (sortCol === "model") {
+      return models.toSorted((a, b) => factor * collator.compare(a.model, b.model));
+    }
+    const metric = (row: UsageModel): number => {
+      switch (sortCol) {
+        case "cost":
+          return row.estimatedCostUsd ?? -1;
+        case "requests":
+          return row.requests;
+        case "tokPerSec":
+          return hasThroughput(row.throughputTokensPerSec) ? row.throughputTokensPerSec : -1;
+        case "cacheHitRate":
+          return typeof row.cacheHitRate === "number" && Number.isFinite(row.cacheHitRate) ? row.cacheHitRate : -1;
+        case "tokens":
+        default:
+          return row.totalTokens;
+      }
+    };
+    return models.toSorted((a, b) => factor * (metric(a) - metric(b)));
+  }, [models, sortCol, sortDir, collator]);
+
   return (
     <UsageWorkspaceSection
       title={t("usage.section.models")}
@@ -139,7 +247,8 @@ export function UsageModelsTable({
         </label>
       )}
     >
-      <div className="tbl-wrap usage-v2-tbl">
+      <span role="status" aria-live="polite" className="sr-only">{sortAnnouncement}</span>
+      <div className="tbl-wrap usage-v2-tbl" tabIndex={0} role="region" aria-labelledby="usage-models-title">
         {/*
           Identity, then the three figures a reader compares models on, then the detail behind
           them. The pair in front is also the pair the stylesheet pins while the rest scrolls
@@ -148,23 +257,23 @@ export function UsageModelsTable({
         <table className="tbl usage-models-tbl">
           <thead>
             <tr>
-              <th>{t("logs.col.model")}</th>
-              <th>{t("logs.col.provider")}</th>
-              <th>{t("usage.col.share")}</th>
-              <th className="num">{t("usage.col.tokens")}</th>
-              <th className="num" aria-describedby={listPriceDisclaimerId}>{t("usage.col.apiListPrice")}</th>
-              <th className="num">{t("usage.col.requests")}</th>
-              <th className="num">{t("usage.col.measured")}</th>
-              <th className="num">{t("usage.col.inputTokens")}</th>
-              <th className="num">{t("usage.col.outputTokens")}</th>
-              <th className="num">{t("usage.col.tokPerSec")}</th>
-              <th className="num">{t("usage.col.cacheHits")}</th>
-              <th className="num">{t("usage.col.cacheWrites")}</th>
-              <th className="num">{t("usage.col.cacheHitRate")}</th>
+              <SortableHeader column="model" label={t("logs.col.model")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} />
+              <th scope="col">{t("logs.col.provider")}</th>
+              <th scope="col">{t("usage.col.share")}</th>
+              <SortableHeader column="tokens" label={t("usage.col.tokens")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric />
+              <SortableHeader column="cost" label={t("usage.col.apiListPrice")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric describedBy={listPriceDisclaimerId} />
+              <SortableHeader column="requests" label={t("usage.col.requests")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric />
+              <th scope="col" className="num">{t("usage.col.measured")}</th>
+              <th scope="col" className="num">{t("usage.col.inputTokens")}</th>
+              <th scope="col" className="num">{t("usage.col.outputTokens")}</th>
+              <SortableHeader column="tokPerSec" label={t("usage.col.tokPerSec")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric />
+              <th scope="col" className="num">{t("usage.col.cacheHits")}</th>
+              <th scope="col" className="num">{t("usage.col.cacheWrites")}</th>
+              <SortableHeader column="cacheHitRate" label={t("usage.col.cacheHitRate")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric />
             </tr>
           </thead>
           <tbody>
-            {models.map(model => {
+            {sortedModels.map(model => {
               const providerName = formatProviderDisplayName(model.provider, t);
               const cacheCoverage = cacheHitRateTitle(model, locale, t);
               const throughputNote = throughputTitle(model, t);
@@ -195,16 +304,8 @@ export function UsageModelsTable({
                   </td>
                   <td className={cn("num", cacheReadText !== unavailable ? "mono" : "font-sans text-fg-subtle")}>{cacheReadText}</td>
                   <td className={cn("num", cacheWriteText !== unavailable ? "mono" : "font-sans text-fg-subtle")}>{cacheWriteText}</td>
-                  {/*
-                    The summary already averages only the input tokens whose cache detail was
-                    reported, so whatever number it returns has a basis. Suppressing it unless that
-                    basis covered the row's whole input is what hid a measured hit rate behind an em
-                    dash for every provider that leaves some requests unreported; the coverage is a
-                    note on the cell now, not a gate.
-                  */}
                   <td className={cn("num", cacheHitText !== unavailable ? "mono" : "font-sans text-fg-subtle")} title={cacheCoverage}>
                     <span className="usage-hit-rate">{cacheHitText}</span>
-                    {/* A `title` reaches a pointer and nothing else, so the sentence is also read. */}
                     {cacheCoverage !== undefined && <span className="sr-only">{cacheCoverage}</span>}
                   </td>
                 </tr>
@@ -229,13 +330,13 @@ export function UsageAppsTable({ apps, locale, t }: { apps?: UsageApp[]; locale:
       {!apps || apps.length === 0 ? (
         <p className="m-0 text-[13px] text-fg-muted" role="status">{t(apps ? "usageV2.appsEmpty" : "usageV2.appsUnavailable")}</p>
       ) : <>
-        <div className="tbl-wrap usage-v2-tbl">
+        <div className="tbl-wrap usage-v2-tbl" tabIndex={0} role="region" aria-labelledby="usage-apps-title">
           <table className="tbl">
             <thead><tr>
-              <th>{t("usageV2.app")}</th><th>{t("usage.col.share")}</th>
-              <th className="num">{t("usage.col.tokens")}</th>
-              <th className="num" aria-describedby={disclaimerId}>{t("usage.col.apiListPrice")}</th>
-              <th className="num">{t("usage.col.requests")}</th><th className="num">{t("usage.col.measured")}</th>
+              <th scope="col">{t("usageV2.app")}</th><th scope="col">{t("usage.col.share")}</th>
+              <th scope="col" className="num">{t("usage.col.tokens")}</th>
+              <th scope="col" className="num" aria-describedby={disclaimerId}>{t("usage.col.apiListPrice")}</th>
+              <th scope="col" className="num">{t("usage.col.requests")}</th><th scope="col" className="num">{t("usage.col.measured")}</th>
             </tr></thead>
             <tbody>{apps.toSorted((a, b) => b.totalTokens - a.totalTokens).map(app => (
               <tr key={app.client}>
@@ -254,41 +355,185 @@ export function UsageAppsTable({ apps, locale, t }: { apps?: UsageApp[]; locale:
   );
 }
 
-export function UsageProvidersTable({ providers, locale, t }: { providers: UsageProvider[]; locale: Locale; t: TFn }) {
+const EMPTY_USAGE_MODELS: readonly UsageModel[] = [];
+
+export function UsageProvidersTable({
+  providers,
+  models = EMPTY_USAGE_MODELS,
+  locale,
+  t,
+}: {
+  providers: UsageProvider[];
+  models?: readonly UsageModel[];
+  locale: Locale;
+  t: TFn;
+}) {
   const unavailable = t("usage.unavailable");
   const listPriceDisclaimerId = "usage-providers-list-price-disclaimer";
+  const [sortCol, setSortCol] = useState<ProviderSortColumn>("tokens");
+  const [sortDir, setSortDir] = useState<SortDirection>("descending");
+  const [sortAnnouncement, setSortAnnouncement] = useState("");
+  const [expandedProviders, setExpandedProviders] = useState<ReadonlySet<string>>(() => new Set());
+
+  const toggleProvider = (providerKey: string) => {
+    setExpandedProviders(prev => {
+      const next = new Set(prev);
+      if (next.has(providerKey)) next.delete(providerKey);
+      else next.add(providerKey);
+      return next;
+    });
+  };
+
+  const modelsByProvider = useMemo(() => {
+    const grouped = new Map<string, UsageModel[]>();
+    for (const model of models) {
+      const list = grouped.get(model.provider);
+      if (list) list.push(model);
+      else grouped.set(model.provider, [model]);
+    }
+    for (const list of grouped.values()) {
+      list.sort((a, b) => b.totalTokens - a.totalTokens);
+    }
+    return grouped;
+  }, [models]);
+
+  const handleSort = (nextCol: ProviderSortColumn, label: string) => {
+    const defaultDir: SortDirection = nextCol === "provider" ? "ascending" : "descending";
+    const nextDir: SortDirection = sortCol === nextCol
+      ? (sortDir === "descending" ? "ascending" : "descending")
+      : defaultDir;
+    setSortCol(nextCol);
+    setSortDir(nextDir);
+    setSortAnnouncement(
+      uxT(locale, "usageSort.status", {
+        column: label,
+        direction: uxT(locale, nextDir === "ascending" ? "usageSort.asc" : "usageSort.desc"),
+      }),
+    );
+  };
+
+  const collator = useMemo(() => new Intl.Collator(locale, { numeric: true, sensitivity: "base" }), [locale]);
+
+  const orderedProviders = useMemo(() => {
+    const factor = sortDir === "ascending" ? 1 : -1;
+    if (sortCol === "provider") {
+      return providers.toSorted((a, b) =>
+        factor * collator.compare(formatProviderDisplayName(a.provider, t), formatProviderDisplayName(b.provider, t)),
+      );
+    }
+    const metric = (row: UsageProvider): number => {
+      switch (sortCol) {
+        case "cost":
+          return row.estimatedCostUsd ?? -1;
+        case "requests":
+          return row.requests;
+        case "tokPerSec":
+          return hasThroughput(row.throughputTokensPerSec) ? row.throughputTokensPerSec : -1;
+        case "cacheHitRate":
+          return typeof row.cacheHitRate === "number" && Number.isFinite(row.cacheHitRate) ? row.cacheHitRate : -1;
+        case "tokens":
+        default:
+          return row.totalTokens;
+      }
+    };
+    return providers.toSorted((a, b) => factor * (metric(a) - metric(b)));
+  }, [providers, sortCol, sortDir, collator, t]);
+
   return (
     <UsageWorkspaceSection title={t("usage.section.providers")} titleId="usage-providers-title" meta={String(providers.length)}>
-      <div className="tbl-wrap usage-v2-tbl">
+      <span role="status" aria-live="polite" className="sr-only">{sortAnnouncement}</span>
+      <div className="tbl-wrap usage-v2-tbl" tabIndex={0} role="region" aria-labelledby="usage-providers-title">
         <table className="tbl usage-providers-tbl">
           <thead>
             <tr>
-              <th>{t("logs.col.provider")}</th>
-              <th>{t("usage.col.share")}</th>
-              <th className="num">{t("usage.col.tokens")}</th>
-              <th className="num" aria-describedby={listPriceDisclaimerId}>{t("usage.col.apiListPrice")}</th>
-              <th className="num">{t("usage.col.requests")}</th>
-              <th className="num">{t("usage.col.measured")}</th>
-              <th className="num">{t("usage.col.tokPerSec")}</th>
+              <SortableHeader column="provider" label={t("logs.col.provider")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} />
+              <th scope="col">{t("usage.col.share")}</th>
+              <SortableHeader column="tokens" label={t("usage.col.tokens")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric />
+              <SortableHeader column="cost" label={t("usage.col.apiListPrice")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric describedBy={listPriceDisclaimerId} />
+              <SortableHeader column="requests" label={t("usage.col.requests")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric />
+              <th scope="col" className="num">{t("usage.col.measured")}</th>
+              <th scope="col" className="num">{t("usage.col.cacheHits")}</th>
+              <SortableHeader column="cacheHitRate" label={t("usage.col.cacheHitRate")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric />
+              <SortableHeader column="tokPerSec" label={t("usage.col.tokPerSec")} activeColumn={sortCol} direction={sortDir} onSort={handleSort} numeric />
             </tr>
           </thead>
           <tbody>
-            {providers.map(provider => (
-              <tr key={provider.provider}>
-                <td className="font-medium text-fg">{formatProviderDisplayName(provider.provider, t)}</td>
-                <td><ShareBar ratio={provider.shareRatio} /></td>
-                <td className="num mono">{formatTokens(provider.totalTokens, locale)}</td>
-                <td className="num"><UsageListPrice row={provider} locale={locale} t={t} /></td>
-                <td className="num mono">{cachedNumberFormat(locale).format(provider.requests)}</td>
-                <td className="num mono">{cachedNumberFormat(locale).format(provider.measuredRequests)}</td>
-                <td className="num mono" title={throughputTitle(provider, t)}>
-                  <span className="usage-hit-rate">
-                    {hasThroughput(provider.throughputTokensPerSec) ? `${provider.throughputTokensPerSec.toFixed(1)} tok/s` : unavailable}
-                  </span>
-                  {hasThroughput(provider.throughputTokensPerSec) && <span className="sr-only">{throughputTitle(provider, t)}</span>}
-                </td>
-              </tr>
-            ))}
+            {orderedProviders.map(provider => {
+              const displayName = formatProviderDisplayName(provider.provider, t);
+              const childModels = modelsByProvider.get(provider.provider) ?? [];
+              const canExpand = childModels.length > 0;
+              const isExpanded = canExpand && expandedProviders.has(provider.provider);
+              const cacheCoverage = cacheHitRateTitle(provider, locale, t);
+              const cacheReadText = formatOptionalTokens(provider.cacheReadInputTokens ?? provider.cachedInputTokens, locale, unavailable);
+              const cacheHitText = formatOptionalPct(provider.cacheHitRate, unavailable);
+              return (
+                <Fragment key={provider.provider}>
+                  <tr>
+                    <td className="font-medium text-fg">
+                      {canExpand ? (
+                        <button
+                          type="button"
+                          data-provider-expand={provider.provider}
+                          aria-expanded={isExpanded}
+                          aria-label={uxT(locale, isExpanded ? "usage.providerCollapse" : "usage.providerExpand", { provider: displayName })}
+                          onClick={() => toggleProvider(provider.provider)}
+                          className="inline-flex min-h-6 cursor-pointer appearance-none items-center gap-1.5 rounded-[4px] border-0 bg-transparent p-0 font-inherit text-fg transition-colors hover:text-highlight focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-highlight"
+                        >
+                          <span aria-hidden="true" className={cn("inline-flex shrink-0 text-fg-subtle transition-transform", isExpanded && "rotate-90")}>
+                            <IconChevron size={12} />
+                          </span>
+                          <span>{displayName}</span>
+                          <span className="rounded-full bg-surface-2 px-1.5 py-0.2 text-[11px] font-normal text-fg-subtle tabular-nums">
+                            {childModels.length}
+                          </span>
+                        </button>
+                      ) : (
+                        displayName
+                      )}
+                    </td>
+                    <td><ShareBar ratio={provider.shareRatio} /></td>
+                    <td className="num mono">{formatTokens(provider.totalTokens, locale)}</td>
+                    <td className="num"><UsageListPrice row={provider} locale={locale} t={t} /></td>
+                    <td className="num mono">{cachedNumberFormat(locale).format(provider.requests)}</td>
+                    <td className="num mono">{cachedNumberFormat(locale).format(provider.measuredRequests)}</td>
+                    <td className={cn("num", cacheReadText !== unavailable ? "mono" : "font-sans text-fg-subtle")}>{cacheReadText}</td>
+                    <td className={cn("num", cacheHitText !== unavailable ? "mono" : "font-sans text-fg-subtle")} title={cacheCoverage}>
+                      <span className="usage-hit-rate">{cacheHitText}</span>
+                      {cacheCoverage !== undefined && <span className="sr-only">{cacheCoverage}</span>}
+                    </td>
+                    <td className="num mono" title={throughputTitle(provider, t)}>
+                      <span className="usage-hit-rate">
+                        {hasThroughput(provider.throughputTokensPerSec) ? `${provider.throughputTokensPerSec.toFixed(1)} tok/s` : unavailable}
+                      </span>
+                      {hasThroughput(provider.throughputTokensPerSec) && <span className="sr-only">{throughputTitle(provider, t)}</span>}
+                    </td>
+                  </tr>
+                  {isExpanded && childModels.map(child => {
+                    const childCacheRead = formatOptionalTokens(child.cacheReadInputTokens ?? child.cachedInputTokens, locale, unavailable);
+                    const childHitText = formatOptionalPct(child.cacheHitRate, unavailable);
+                    const childTp = hasThroughput(child.throughputTokensPerSec)
+                      ? `${child.throughputTokensPerSec.toFixed(1)} tok/s`
+                      : unavailable;
+                    const shareWithinProvider = provider.totalTokens > 0 ? child.totalTokens / provider.totalTokens : 0;
+                    return (
+                      <tr key={`${provider.provider}::${child.model}`} className="usage-provider-child-row">
+                        <td className="mono text-fg-muted" title={child.model}>
+                          <span className="usage-provider-tree-branch inline-block">{modelLabel(child.model)}</span>
+                        </td>
+                        <td><ShareBar ratio={shareWithinProvider} /></td>
+                        <td className="num mono">{formatTokens(child.totalTokens, locale)}</td>
+                        <td className="num"><UsageListPrice row={child} locale={locale} t={t} /></td>
+                        <td className="num mono">{cachedNumberFormat(locale).format(child.requests)}</td>
+                        <td className="num mono">{cachedNumberFormat(locale).format(child.measuredRequests)}</td>
+                        <td className={cn("num", childCacheRead !== unavailable ? "mono" : "font-sans text-fg-subtle")}>{childCacheRead}</td>
+                        <td className={cn("num", childHitText !== unavailable ? "mono" : "font-sans text-fg-subtle")}>{childHitText}</td>
+                        <td className={cn("num", hasThroughput(child.throughputTokensPerSec) ? "mono" : "font-sans text-fg-subtle")}>{childTp}</td>
+                      </tr>
+                    );
+                  })}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

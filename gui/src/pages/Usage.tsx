@@ -13,6 +13,7 @@ import {
   type Range, type UsageDay, type UsageModel, type UsageProvider, type UsageResponse,
 } from "../components/v2-usage/usage-model";
 import { UsageSummaryCards } from "../components/v2-usage/usage-metrics";
+import { UsageTokenMixPanel } from "../components/v2-usage/usage-token-mix";
 import { UsageHeatmapPanel } from "../components/v2-usage/usage-activity";
 import { UsageLatencyPanel } from "../components/v2-usage/usage-latency-panel";
 import { UsageAppsTable, UsageCoveragePanel, UsageModelsTable, UsageProvidersTable } from "../components/v2-usage/usage-breakdown";
@@ -90,6 +91,7 @@ function UsageWorkspaceBody({
       body: (
         <>
           <UsageSummaryCards summary={data.summary} days={bars} activeDays={activeDays} locale={locale} t={t} />
+          <UsageTokenMixPanel summary={data.summary} locale={locale} t={t} />
           <UsageHeatmapPanel key={`${range}:${customWindow}`} defaultView={defaultView} heatmap={heatmap} bars={bars}
             totalTokens={data.summary.totalTokens} locale={locale} t={t} />
           <UsageLatencyPanel apiBase={apiBase} locale={locale} enabled={latencyEnabled} />
@@ -100,7 +102,7 @@ function UsageWorkspaceBody({
       id: "models",
       body: <UsageModelsTable models={filteredModels} totalModels={data.models.length} modelQuery={modelQuery} onModelQuery={onModelQuery} locale={locale} t={t} />,
     },
-    { id: "providers", body: <UsageProvidersTable providers={sortedProviders} locale={locale} t={t} /> },
+    { id: "providers", body: <UsageProvidersTable providers={sortedProviders} models={data.models} locale={locale} t={t} /> },
     ...(allApps ? [{ id: "apps", body: <UsageAppsTable apps={data.apps} locale={locale} t={t} /> }] : []),
     { id: "coverage", body: <UsageCoveragePanel summary={data.summary} locale={locale} t={t} /> },
   ];

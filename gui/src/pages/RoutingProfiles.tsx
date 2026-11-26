@@ -22,6 +22,7 @@ import { Combobox } from "../components/ui-v2/combobox";
 import { confirmAction } from "../action-dialogs";
 import { useI18n, useT } from "../i18n/shared";
 import { ROUTING_COMPATIBILITY_FIELD_LABELS } from "../i18n/routing-compatibility-labels";
+import { ScenarioRoutingPanel } from "../components/ScenarioRoutingPanel";
 
 type DryRunCandidate = {
   provider: string;
@@ -613,6 +614,24 @@ export default function RoutingProfiles({
     () => UNKNOWN_EVIDENCE_OPTIONS.map(mode => ({ value: mode, label: t(`routing.unknownEvidence.${mode}` as const) })),
     [t],
   );
+  const scenarioRouteSuggestions = useMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const profile of profiles) {
+      if (profile.model && !seen.has(profile.model)) {
+        seen.add(profile.model);
+        out.push(profile.model);
+      }
+    }
+    for (const model of models) {
+      const selector = `${model.provider}/${model.id}`;
+      if (!seen.has(selector)) {
+        seen.add(selector);
+        out.push(selector);
+      }
+    }
+    return out;
+  }, [models, profiles]);
 
   return (
     <div className="page" data-page="routing">
@@ -1142,6 +1161,12 @@ export default function RoutingProfiles({
         )}
       </div>
       )}
+
+      <ScenarioRoutingPanel
+        apiBase={apiBase}
+        active={active}
+        routeSuggestions={scenarioRouteSuggestions}
+      />
     </div>
   );
 }

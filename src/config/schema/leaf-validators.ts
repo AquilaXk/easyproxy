@@ -932,6 +932,16 @@ export const toolOutputCompressionSchema = z.object({
   headChars: z.number().int().min(0).max(100_000).optional(),
   tailChars: z.number().int().min(0).max(100_000).optional(),
   stripAnsi: z.boolean().optional(),
+  compactJson: z.boolean().optional(),
+  foldRepetitiveLines: z.boolean().optional(),
+  deduplicateIdentical: z.boolean().optional(),
+  dedupMinChars: z.number().int().min(128).max(500_000).optional(),
+}).strict();
+
+export const promptCacheInjectionSchema = z.object({
+  enabled: z.boolean().optional(),
+  ttl: z.enum(["auto", "5m", "1h"]).optional(),
+  stripVolatileSystemTimestamps: z.boolean().optional(),
 }).strict();
 
 export const outboundSecretGuardSchema = z.object({

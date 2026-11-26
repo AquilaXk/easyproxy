@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Locale, TFn } from "../../i18n/shared";
+import { uxT } from "../../i18n/ux-overhaul-copy";
 import { formatTokens } from "../../format-tokens";
 import { formatEstimatedUsdValue as formatUsdEstimate } from "../../intl-formatters";
 import { IconInfo } from "../../icons";
@@ -87,10 +88,18 @@ export function UsageSummaryCards({
   const costSpark = days.some(day => day.estimatedCostUsd !== undefined) ? days.map(day => day.estimatedCostUsd ?? 0) : undefined;
   const cacheReads = summary.cacheReadInputTokens ?? summary.cachedInputTokens;
   const cacheWrites = summary.cacheCreationInputTokens ?? 0;
-  const facts: { label: string; value: string; title?: string }[] = [
+  const netCacheSaved = typeof summary.estimatedCacheSavingsUsd === "number"
+    && Number.isFinite(summary.estimatedCacheSavingsUsd)
+    && summary.estimatedCacheSavingsUsd > 0
+    ? summary.estimatedCacheSavingsUsd
+    : null;
+  const facts: { label: string; value: string; title?: string; highlight?: boolean }[] = [
     { label: t("usage.card.measured"), value: number.format(summary.measuredRequests) },
     { label: t("usage.card.cachedTokens"), value: formatTokens(cacheReads, locale), title: t("usage.card.cachedTokensHint") },
     ...(cacheWrites > 0 ? [{ label: t("usage.card.cacheWriteTokens"), value: formatTokens(cacheWrites, locale) }] : []),
+    ...(netCacheSaved !== null
+      ? [{ label: uxT(locale, "usage.netCacheSavings"), value: formatUsdEstimate(netCacheSaved, locale), highlight: true }]
+      : []),
     {
       label: t("usage.col.tokPerSec"),
       value: hasThroughput(summary.throughputTokensPerSec) ? summary.throughputTokensPerSec.toFixed(1) : t("usage.unavailable"),
@@ -140,7 +149,7 @@ export function UsageSummaryCards({
               {/* A `title` reaches a pointer and nothing else, so the sentence is also read. */}
               {fact.title && <span className="sr-only"> ({fact.title})</span>}
             </dt>
-            <dd className="usage-fact-value m-0 font-medium text-fg-muted tabular-nums">{fact.value}</dd>
+            <dd className={`usage-fact-value m-0 font-medium tabular-nums ${fact.highlight ? "text-success" : "text-fg-muted"}`}>{fact.value}</dd>
           </div>
         ))}
       </dl>

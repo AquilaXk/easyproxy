@@ -19,6 +19,7 @@
 import { codexLineageScopeKey } from "../../codex/lineage";
 import { readBoundedResponseBody } from "../../lib/bounded-body";
 import { mergeAnthropicBetaHeader } from "../../providers/anthropic-fast";
+import { hasAnthropicCacheControl } from "./cache-retention";
 import { SUMMARY_PREFIX } from "../../responses/compaction";
 import {
   abandon,
@@ -189,7 +190,7 @@ function requestFor(build: PerMessageEffortBuild, input: unknown[]): EffortHisto
     emittedMaxTokens: typeof body.max_tokens === "number" ? body.max_tokens : undefined,
     frame: frameOf(body),
     generation: KEY_GENERATION,
-    cacheControl: JSON.stringify(body).includes("\"cache_control\""),
+    cacheControl: hasAnthropicCacheControl(body),
     stripped: parsed._stripReasoningEncryptedContent === true,
     transport: "http",
     apiKind: parsed._anthropicInbound === true || parsed._chatCompletionsInput === true ? "messages" : "responses",

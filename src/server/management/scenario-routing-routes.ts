@@ -141,16 +141,38 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
 
     const requestBody = rawBody.body ?? {};
     const selector = typeof rawBody.selector === "string" ? rawBody.selector : undefined;
+    const hasConfiguredRules = candidateConfig !== undefined
+      && SCENARIO_KINDS.some(kind =>
+        Boolean(candidateConfig.routes[kind]?.trim()) || Boolean(candidateConfig.efforts?.[kind]),
+      );
+    const probeConfig: EpxScenarioRoutingConfig | undefined = candidateConfig
+      ? {
+          ...candidateConfig,
+          enabled: true,
+          routes: hasConfiguredRules
+            ? candidateConfig.routes
+            : { background: "_", longContext: "_", webSearch: "_", think: "_" },
+        }
+      : undefined;
     const heuristicProbe = classifyRequestScenario({
       body: requestBody,
       headers: parsedHeaders,
       isCompaction: rawBody.isCompaction === true,
       selector,
-      ...(candidateConfig && candidateConfig.enabled ? { config: candidateConfig } : {}),
+      ...(probeConfig ? { config: probeConfig } : {}),
     });
+    if (probeConfig && !probeConfig.routes.longContext && !probeConfig.efforts?.longContext && heuristicProbe.estimatedTokens === 0) {
+      const tokenProbe = classifyRequestScenario({ body: requestBody });
+      heuristicProbe.estimatedTokens = tokenProbe.estimatedTokens;
+      heuristicProbe.truncated ||= tokenProbe.truncated;
+    }
 
-    const activeMatch: EpxScenarioKind | null = candidateConfig?.enabled ? heuristicProbe.matched : null;
-    const targetSelector = activeMatch ? candidateConfig?.routes[activeMatch] : undefined;
+    const activeMatch: EpxScenarioKind | null = candidateConfig?.enabled && hasConfiguredRules
+      ? heuristicProbe.matched
+      : null;
+    const previewMatch: EpxScenarioKind | null = hasConfiguredRules ? heuristicProbe.matched : null;
+    const targetSelector = previewMatch ? candidateConfig?.routes[previewMatch] : undefined;
+    const resolvedEffort = previewMatch ? (candidateConfig?.efforts?.[previewMatch] ?? null) : null;
     let resolvedTarget: { provider: string; model: string; routeKind: string } | null = null;
     let resolveError: string | undefined;
     if (targetSelector) {
@@ -167,10 +189,11 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
     }
 
     return jsonResponse({
-      active: Boolean(candidateConfig?.enabled),
+      active: Boolean(candidateConfig?.enabled && hasConfiguredRules),
       matched: activeMatch,
       targetSelector: targetSelector ?? null,
       resolvedTarget,
+      resolvedEffort,
       ...(resolveError ? { resolveError } : {}),
       classification: heuristicProbe,
     });

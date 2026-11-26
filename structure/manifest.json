@@ -1686,6 +1686,11 @@
       "scope": "Cross-bridge cache_control preservation, virtual API key TPM/expiry/in-flight USD holds, /v1/embeddings data plane, and optional OTLP trace export.",
       "documents": [
         "src/protocols/cache-control.ts",
+        "src/lib/tool-output-compression.ts",
+        "src/lib/prompt-cache-injection.ts",
+        "src/lib/context-inspector.ts",
+        "src/server/outbound-payload-hygiene.ts",
+        "src/server/management/guardrails-routes.ts",
         "src/server/api-key-budget-estimate.ts",
         "src/server/embeddings.ts",
         "src/config/schema/otlp.ts",

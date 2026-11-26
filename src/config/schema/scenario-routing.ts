@@ -19,6 +19,15 @@ const scenarioRoutesSchema = z.object({
   webSearch: z.string().trim().min(1).max(MAX_SELECTOR_LENGTH).optional(),
 }).strict();
 
+const scenarioEffortLevelSchema = z.enum(["low", "medium", "high", "xhigh"]);
+
+const scenarioEffortsSchema = z.object({
+  longContext: scenarioEffortLevelSchema.optional(),
+  think: scenarioEffortLevelSchema.optional(),
+  background: scenarioEffortLevelSchema.optional(),
+  webSearch: scenarioEffortLevelSchema.optional(),
+}).strict();
+
 export const scenarioRoutingSchema = z.object({
   enabled: z.boolean(),
   precedence: z.array(scenarioKindSchema)
@@ -36,14 +45,17 @@ export const scenarioRoutingSchema = z.object({
     .max(MAX_THINK_BUDGET_THRESHOLD)
     .optional(),
   routes: scenarioRoutesSchema,
+  efforts: scenarioEffortsSchema.optional(),
   matchModels: z.array(z.string().trim().min(1).max(MAX_SELECTOR_LENGTH))
     .max(MAX_MATCH_MODELS)
     .refine(list => new Set(list).size === list.length, "matchModels must not contain duplicates")
     .optional(),
   overrideExplicitRoutes: z.boolean().optional(),
 }).strict().refine(
-  value => !value.enabled || Object.values(value.routes).some(target => typeof target === "string" && target.length > 0),
-  { message: "scenarioRouting with enabled: true requires at least one configured route target" },
+  value => !value.enabled
+    || Object.values(value.routes).some(target => typeof target === "string" && target.length > 0)
+    || (value.efforts !== undefined && Object.values(value.efforts).some(effort => typeof effort === "string" && effort.length > 0)),
+  { message: "scenarioRouting with enabled: true requires at least one configured route target or effort override" },
 );
 
 export function scenarioRoutingConfigError(value: unknown): string | null {

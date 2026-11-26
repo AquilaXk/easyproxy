@@ -1,4 +1,5 @@
 export type EpxScenarioKind = "longContext" | "think" | "background" | "webSearch";
+export type EpxScenarioEffort = "low" | "medium" | "high" | "xhigh";
 
 export interface EpxScenarioRoutingConfig {
   enabled: boolean;
@@ -10,6 +11,8 @@ export interface EpxScenarioRoutingConfig {
   thinkBudgetThreshold?: number;
   /** Model selectors (`provider/model`, combo/policy alias, or native model) per scenario. */
   routes: Partial<Record<EpxScenarioKind, string>>;
+  /** Optional per-scenario reasoning effort overrides (`low` | `medium` | `high` | `xhigh`) applied without forcing a model switch. */
+  efforts?: Partial<Record<EpxScenarioKind, EpxScenarioEffort>>;
   /** Optional inbound selector allowlist (exact match or trailing `*` prefix). */
   matchModels?: string[];
   /** Allow scenario routing even when the caller requested an explicit `combo/*` or `policy/*` selector. Default false. */

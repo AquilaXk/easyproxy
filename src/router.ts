@@ -60,7 +60,7 @@ import {
   type TraceCandidateInput,
 } from "./routing/trace";
 import { classifyRequestScenario } from "./routing/scenario";
-import type { EpxScenarioKind } from "./types";
+import type { EpxScenarioEffort, EpxScenarioKind } from "./types";
 import { getRoutingProfile, resolvePolicyProfileId, POLICY_NAMESPACE } from "./routing/profile";
 import { evaluatePolicyProfile, type PolicyRequestEvidence } from "./routing/evaluator";
 import { assemblePolicyCandidateEvidence } from "./routing/compatibility/assemble";
@@ -126,6 +126,7 @@ export interface RouteResult {
   scenarioMatch?: {
     scenario: EpxScenarioKind;
     target: string;
+    effort?: EpxScenarioEffort;
     matchedScenarios: EpxScenarioKind[];
     estimatedTokens: number;
   };
@@ -503,10 +504,12 @@ function routeModelInternal(
         config: scenarioCfg,
       });
       const targetSelector = classification.matched ? scenarioCfg.routes[classification.matched]?.trim() : undefined;
-      if (classification.matched && targetSelector) {
+      const effortOverride = classification.matched ? scenarioCfg.efforts?.[classification.matched] : undefined;
+      if (classification.matched && (targetSelector || effortOverride)) {
+        const effectiveSelector = targetSelector || modelId;
         const routed = routeModelInternal(
           config,
-          targetSelector,
+          effectiveSelector,
           false,
           policyEvidence,
           allowCompactionNativeFallback,
@@ -518,10 +521,11 @@ function routeModelInternal(
         return {
           ...routed,
           routeReason: routed.routeReason === "blocked-model-redirect" ? "blocked-model-redirect" : `scenario:${classification.matched}`,
-          ...(targetSelector !== modelId ? { credentialDomainRewrite: true as const } : {}),
+          ...(effectiveSelector !== modelId ? { credentialDomainRewrite: true as const } : {}),
           scenarioMatch: {
             scenario: classification.matched,
-            target: targetSelector,
+            target: effectiveSelector,
+            ...(effortOverride ? { effort: effortOverride } : {}),
             matchedScenarios: classification.matchedScenarios,
             estimatedTokens: classification.estimatedTokens,
           },

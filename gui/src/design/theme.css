@@ -111,6 +111,11 @@
      so controls that sit side by side line up (foundations.md, "Control sizes") */
   --epx-control-h: 34px;
   --epx-control-h-sm: 28px;
+  --epx-hairline: 1px;
+
+  --epx-scrollbar-track: transparent;
+  --epx-scrollbar-thumb: light-dark(rgb(71 85 105 / 0.56), rgb(148 163 184 / 0.46));
+  scrollbar-color: var(--epx-scrollbar-thumb) var(--epx-scrollbar-track);
 
   --epx-shadow-sm: 0 1px 2px rgb(16 24 40 / 0.06);
   --epx-shadow-md: 0 1px 2px rgb(16 24 40 / 0.05), 0 12px 32px -16px rgb(16 42 67 / 0.25);
@@ -118,6 +123,11 @@
   /* the primary button's sheen (Aceternity button): a top highlight that firms up on hover */
   --epx-glow: inset 0 1px 0 0 rgb(255 255 255 / 0.18), 0 1px 2px rgb(0 0 0 / 0.2);
   --epx-glow-hover: inset 0 1px 0 0 rgb(255 255 255 / 0.3), 0 1px 3px rgb(0 0 0 / 0.24);
+}
+@media (min-resolution: 1.5dppx) {
+  :root {
+    --epx-hairline: 0.5px;
+  }
 }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
@@ -228,13 +238,10 @@
 /* ---- Antigravity scrollbar & modal depth guarantees -----------------------
    Static color-only styling: never transition or animate scrollbar-color
    (WebKit flicker guard). Modal native dialogs lock background overscroll. */
-:root {
-  scrollbar-color: var(--epx-line-strong) transparent;
-}
 @supports not (scrollbar-color: auto) {
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--epx-line-strong); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb { background: var(--epx-scrollbar-thumb); border-radius: 9999px; }
 }
 
 dialog:modal,

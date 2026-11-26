@@ -89,6 +89,10 @@ export interface UsageSummaryTotals {
   throughputSamples?: number;
   /** Derived at finalize time: throughputOutputTokens / throughputDurationMs * 1000. */
   throughputTokensPerSec?: number;
+  /** Observed window-level prompt cache hit rate (`cacheReadInputTokens / cacheObservedInputTokens`). */
+  cacheHitRate?: number | null;
+  /** Net USD saved across priced cached requests vs paying uncached input rates (`> 0` when net positive). */
+  estimatedCacheSavingsUsd?: number;
 }
 
 export interface UsageDay {
@@ -149,6 +153,7 @@ export interface UsageModel {
   unpricedRequests?: number;
   shareRatio: number;
   estimatedCostUsd?: number;
+  estimatedCacheSavingsUsd?: number;
 }
 
 export interface UsageProvider {
@@ -178,6 +183,7 @@ export interface UsageProvider {
   unpricedRequests?: number;
   shareRatio: number;
   estimatedCostUsd?: number;
+  estimatedCacheSavingsUsd?: number;
 }
 
 export interface UsageAccount {
@@ -254,6 +260,7 @@ export interface EntryCostInfo {
   estimate: CostEstimate | null;
   attemptEstimates?: (AttemptCostEstimate | null)[];
   costTotal: number;
+  cacheSavingsTotal?: number;
   isPriced: boolean;
 }
 
@@ -274,17 +281,31 @@ export function computeEntryCost(entry: PersistedUsageEntry): EntryCostInfo {
       estimateAttemptCost({ ...attempt, ...usageModelPriceOptions(entry, attempt) }, undefined, tier)
     );
     let costTotal = 0;
+    let cacheSavingsTotal = 0;
+    let hasSavings = false;
     let isPriced = false;
     for (const est of attemptEstimates) {
       if (est) {
         costTotal += est.cost.total;
+        if (est.netCacheSavingsUsd !== undefined) {
+          cacheSavingsTotal += est.netCacheSavingsUsd;
+          hasSavings = true;
+        }
         isPriced = true;
       }
     }
     // An unmeasured leg that may have generated billed tokens leaves the total unknown, not short.
     const unknownCost = entry.attempts.some((attempt, index) =>
       !attemptEstimates[index] && (!attempt.usage || !isMeasuredStatus(attempt.usageStatus)) && !spentNothing(attempt));
-    return { tier, estimate: null, attemptEstimates, costTotal, isPriced: isPriced && !unknownCost };
+    const priced = isPriced && !unknownCost;
+    return {
+      tier,
+      estimate: null,
+      attemptEstimates,
+      costTotal,
+      ...(priced && hasSavings ? { cacheSavingsTotal } : {}),
+      isPriced: priced,
+    };
   }
   const estimate = estimateRequestCost({
     ...usageModelPriceOptions(entry, entry),
@@ -298,6 +319,7 @@ export function computeEntryCost(entry: PersistedUsageEntry): EntryCostInfo {
     tier,
     estimate,
     costTotal: estimate ? estimate.cost.total : 0,
+    ...(estimate?.netCacheSavingsUsd !== undefined ? { cacheSavingsTotal: estimate.netCacheSavingsUsd } : {}),
     isPriced: estimate !== null,
   };
 }
@@ -565,12 +587,25 @@ function bumpStatus(totals: UsageSummaryTotals, status: UsageStatus): void {
 
 function addTokens(
   totals: UsageSummaryTotals,
-  entry: Pick<PersistedUsageEntry, "usage" | "totalTokens">,
+  entry: Pick<PersistedUsageEntry, "usage" | "totalTokens" | "attempts">,
 ): void {
   if (!entry.usage) return;
   totals.inputTokens += entry.usage.inputTokens;
   totals.outputTokens += entry.usage.outputTokens;
-  const { read, creation } = cacheTokensFromUsage(entry.usage);
+  let { read, creation, hasCacheTelemetry } = cacheTokensFromUsage(entry.usage);
+  if (!hasCacheTelemetry && entry.attempts?.length) {
+    let sumRead = 0;
+    let sumCreation = 0;
+    let sawRead = false;
+    let sawCreation = false;
+    for (const attempt of entry.attempts) {
+      const child = cacheTokensFromUsage(attempt.usage);
+      if (typeof child.read === "number") { sawRead = true; sumRead += child.read; }
+      if (typeof child.creation === "number") { sawCreation = true; sumCreation += child.creation; }
+    }
+    if (sawRead) read = sumRead;
+    if (sawCreation) creation = sumCreation;
+  }
   if (typeof read === "number") {
     totals.cachedInputTokens += read;
     totals.cacheReadInputTokens += read;
@@ -602,8 +637,33 @@ function addSpendTotals(
 /** Keep the three cache provenances countable, and let only observed input tokens be averaged. */
 function addCacheProvenanceTotals(
   totals: UsageSummaryTotals,
-  entry: Pick<PersistedUsageEntry, "usage" | "cacheProvenance">,
+  entry: Pick<PersistedUsageEntry, "usage" | "cacheProvenance" | "attempts">,
 ): void {
+  if (entry.attempts?.length) {
+    let anyObserved = false;
+    let anySynthesized = false;
+    let observedInput = 0;
+    for (const attempt of entry.attempts) {
+      const { provenance } = cacheObservationFromUsage(attempt.usage, attempt.cacheProvenance ?? entry.cacheProvenance);
+      if (provenance === "observed") {
+        anyObserved = true;
+        observedInput += attempt.usage?.inputTokens ?? 0;
+      } else if (provenance === "synthesized") {
+        anySynthesized = true;
+      }
+    }
+    if (anyObserved) {
+      totals.cacheObservedRequests = (totals.cacheObservedRequests ?? 0) + 1;
+      totals.cacheObservedInputTokens = (totals.cacheObservedInputTokens ?? 0) + observedInput;
+      return;
+    }
+    if (anySynthesized) {
+      totals.cacheSynthesizedRequests = (totals.cacheSynthesizedRequests ?? 0) + 1;
+      return;
+    }
+    totals.cacheUnknownRequests = (totals.cacheUnknownRequests ?? 0) + 1;
+    return;
+  }
   const { provenance } = cacheObservationFromUsage(entry.usage, entry.cacheProvenance);
   if (provenance === "observed") {
     totals.cacheObservedRequests = (totals.cacheObservedRequests ?? 0) + 1;
@@ -641,8 +701,18 @@ function addThroughputTotals(totals: UsageSummaryTotals, entry: PersistedUsageEn
 
 /** Fold the raw throughput sums into the rate the dashboard and API expose. */
 function finalizeThroughput(totals: UsageSummaryTotals): void {
-  if ((totals.throughputDurationMs ?? 0) <= 0) return;
-  totals.throughputTokensPerSec = tokensPerSecond(totals.throughputOutputTokens ?? 0, totals.throughputDurationMs!) ?? undefined;
+  if ((totals.throughputDurationMs ?? 0) > 0) {
+    totals.throughputTokensPerSec = tokensPerSecond(totals.throughputOutputTokens ?? 0, totals.throughputDurationMs!) ?? undefined;
+  }
+  const hitRate = calculateCacheHitRate(
+    (totals.cacheObservedRequests ?? 0) > 0,
+    totals.cacheObservedInputTokens ?? 0,
+    totals.cacheReadInputTokens,
+  );
+  if (hitRate !== null) totals.cacheHitRate = hitRate;
+  if (totals.estimatedCacheSavingsUsd !== undefined && totals.estimatedCacheSavingsUsd <= 0) {
+    delete totals.estimatedCacheSavingsUsd;
+  }
 }
 
 function addEstimatedCost(
@@ -665,6 +735,9 @@ function addEstimatedCost(
   }
   totals.pricedRequests += 1;
   totals.estimatedCostUsd += costInfo.costTotal;
+  if (costInfo.cacheSavingsTotal !== undefined) {
+    totals.estimatedCacheSavingsUsd = (totals.estimatedCacheSavingsUsd ?? 0) + costInfo.cacheSavingsTotal;
+  }
 }
 
 const REQUEST_REPORTED = 1 << 0;
@@ -712,6 +785,7 @@ interface UsageModelAccumulator {
   throughputDurationMs: number;
   throughputSamples: number;
   estimatedCostUsd?: number;
+  estimatedCacheSavingsUsd?: number;
   requestCounts: UsageRequestCounts;
   requestFacts?: Map<number, number>;
 }
@@ -899,6 +973,7 @@ function mergeTotals(target: UsageSummaryTotals, source: UsageSummaryTotals): vo
   target.throughputOutputTokens = mergeOptionalTotal(target.throughputOutputTokens, source.throughputOutputTokens);
   target.throughputDurationMs = mergeOptionalTotal(target.throughputDurationMs, source.throughputDurationMs);
   target.throughputSamples = mergeOptionalTotal(target.throughputSamples, source.throughputSamples);
+  target.estimatedCacheSavingsUsd = mergeOptionalTotal(target.estimatedCacheSavingsUsd, source.estimatedCacheSavingsUsd);
 }
 
 /** Sum an optional total. Absent on one side means "not computed there", so it contributes nothing. */
@@ -964,6 +1039,9 @@ function mergeModelAccumulator(target: UsageModelAccumulator, source: UsageModel
   target.throughputSamples += source.throughputSamples;
   if (source.estimatedCostUsd !== undefined) {
     target.estimatedCostUsd = (target.estimatedCostUsd ?? 0) + source.estimatedCostUsd;
+  }
+  if (source.estimatedCacheSavingsUsd !== undefined) {
+    target.estimatedCacheSavingsUsd = (target.estimatedCacheSavingsUsd ?? 0) + source.estimatedCacheSavingsUsd;
   }
   if (target.requestFacts && source.requestFacts) mergeRequestFacts(target.requestFacts, source.requestFacts);
   else mergeRequestCounts(target.requestCounts, source.requestCounts);
@@ -1185,6 +1263,7 @@ function buildUsageModels(
       unpricedRequests: counts.unpricedRequests,
       shareRatio: totalTokens === 0 ? 0 : model.summaryTotalTokens / totalTokens,
       ...(model.estimatedCostUsd !== undefined ? { estimatedCostUsd: model.estimatedCostUsd } : {}),
+      ...((model.estimatedCacheSavingsUsd ?? 0) > 0 ? { estimatedCacheSavingsUsd: model.estimatedCacheSavingsUsd } : {}),
     };
   });
 }
@@ -1230,6 +1309,7 @@ function buildUsageProviders(
         unpricedRequests: counts.unpricedRequests,
         shareRatio: totalTokens === 0 ? 0 : provider.summaryTotalTokens / totalTokens,
         ...(provider.estimatedCostUsd !== undefined ? { estimatedCostUsd: provider.estimatedCostUsd } : {}),
+        ...((provider.estimatedCacheSavingsUsd ?? 0) > 0 ? { estimatedCacheSavingsUsd: provider.estimatedCacheSavingsUsd } : {}),
       };
     });
 }
@@ -1443,7 +1523,12 @@ class StreamingUsageSummaryAccumulator implements UsageSummaryAccumulator {
       breakdown.summaryTotalTokens += usageDisplayTotalTokens(attribution.usage, attribution.totalTokens) ?? 0;
     }
     breakdown.dayTotalTokens += usageDisplayTotalTokens(attribution.usage, attribution.totalTokens) ?? 0;
-    if (estimate) breakdown.estimatedCostUsd = (breakdown.estimatedCostUsd ?? 0) + estimate.cost.total;
+    if (estimate) {
+      breakdown.estimatedCostUsd = (breakdown.estimatedCostUsd ?? 0) + estimate.cost.total;
+      if (estimate.netCacheSavingsUsd !== undefined) {
+        breakdown.estimatedCacheSavingsUsd = (breakdown.estimatedCacheSavingsUsd ?? 0) + estimate.netCacheSavingsUsd;
+      }
+    }
   }
 
   private addModelAttribution(

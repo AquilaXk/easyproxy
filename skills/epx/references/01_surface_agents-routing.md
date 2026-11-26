@@ -1353,9 +1353,9 @@ State-changing: no. JSON mode: `payload`.
 
 ### `epx agent scenario-routing set`
 
-Usage: `epx agent scenario-routing set (--file <FILE|-> | [--enabled <on|off>] [--long-context <route|->] [--think <route|->] [--background <route|->] [--web-search <route|->] [--long-context-threshold <tokens>] [--think-budget-threshold <tokens>] [--precedence <kind,kind...>] [--match-models <pattern,...|->] [--override-explicit <on|off>]) [--json]`
+Usage: `epx agent scenario-routing set (--file <FILE|-> | [--enabled <on|off>] [--long-context <route|->] [--think <route|->] [--background <route|->] [--web-search <route|->] [--long-context-effort <effort|->] [--think-effort <effort|->] [--background-effort <effort|->] [--web-search-effort <effort|->] [--long-context-threshold <tokens>] [--think-budget-threshold <tokens>] [--precedence <kind,kind...>] [--match-models <pattern,...|->] [--override-explicit <on|off>]) [--json]`
 
-Configure heuristic scenario routing targets and thresholds.
+Configure heuristic scenario routing targets, per-scenario efforts, and thresholds.
 
 State-changing: yes. JSON mode: `payload`.
 
@@ -1372,6 +1372,10 @@ State-changing: yes. JSON mode: `payload`.
 | `--think` | string | Target selector for think; - clears. |
 | `--background` | string | Target selector for background; - clears. |
 | `--web-search` | string | Target selector for webSearch; - clears. |
+| `--long-context-effort` | string | Reasoning effort override (low\|medium\|high\|xhigh) for longContext; - clears. |
+| `--think-effort` | string | Reasoning effort override (low\|medium\|high\|xhigh) for think; - clears. |
+| `--background-effort` | string | Reasoning effort override (low\|medium\|high\|xhigh) for background; - clears. |
+| `--web-search-effort` | string | Reasoning effort override (low\|medium\|high\|xhigh) for webSearch; - clears. |
 | `--long-context-threshold` | number | Estimated token threshold 1000..10000000. |
 | `--think-budget-threshold` | number | Anthropic thinking budget threshold 1..1000000. |
 | `--precedence` | string | Comma-separated priority order across background, longContext, webSearch, think. |

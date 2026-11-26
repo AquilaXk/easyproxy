@@ -109,7 +109,7 @@ import { evidenceFromBody } from "../../routing/request-evidence";
 import { resolvePolicyProfileId } from "../../routing/profile";
 import { OPENAI_CODEX_PROVIDER_ID, isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
 import { resolveNativeReasoningRetention } from "../../config/schema/native-reasoning-retention";
-import { isThreadSpawnRequest } from "../effort-policy";
+import { isThreadSpawnRequest, resolveCappedEffort, supportedLadderFor } from "../effort-policy";
 import {
   resolveSubagentFallbackChain,
   maybePrimeSubagentQuota,
@@ -559,6 +559,7 @@ export async function prepareResponsesRequest(
   let parsed: EpxParsedRequest;
   let toolBridgeMaps: ReturnType<typeof buildToolBridgeMaps>;
   let clientToolCatalogRestriction: ClientToolCatalogRestriction | undefined;
+  let hadSyntheticEffortRow = false;
   try {
     parsed = parseRequest(body);
     // Antigravity direct lane: the body carried only the request settings, so the parse above
@@ -610,6 +611,7 @@ export async function prepareResponsesRequest(
     rebindCacheDiagnosticBody(parsed._rawBody, logCtx.cacheDiagnosticDraft);
     // Captured before any parser mutates it, so both grammars see the client's id.
     const { fastRow, effortRow } = parseSyntheticRowId(parsed.modelId, config);
+    hadSyntheticEffortRow = Boolean(effortRow);
     if (fastRow) {
       parsed.modelId = fastRow.baseId;
       parsed.options.serviceTier = "priority";
@@ -954,6 +956,20 @@ export async function prepareResponsesRequest(
       && !isCanonicalOpenAiForwardProvider(route.provider)) parsed._portableCompaction = true;
     logCtx.routeDecision = route.routeDecision;
     logCtx.policyEligibility = route.policyEligibility;
+    if (route.scenarioMatch?.effort && !hadSyntheticEffortRow) {
+      const resolvedScenarioEffort = resolveCappedEffort(route.scenarioMatch.effort, supportedLadderFor(route));
+      if (resolvedScenarioEffort !== null) {
+        parsed.options.reasoning = resolvedScenarioEffort;
+        logCtx.requestedEffort = resolvedScenarioEffort;
+        if (parsed._rawBody && typeof parsed._rawBody === "object" && !Array.isArray(parsed._rawBody)) {
+          const raw = parsed._rawBody as Record<string, unknown>;
+          const prevReasoning = raw.reasoning && typeof raw.reasoning === "object" && !Array.isArray(raw.reasoning)
+            ? (raw.reasoning as Record<string, unknown>)
+            : {};
+          raw.reasoning = { ...prevReasoning, effort: resolvedScenarioEffort };
+        }
+      }
+    }
   } catch (err) {
     if (err instanceof AnthropicSecondaryInstanceUnavailableError) {
       return markProxyError(formatErrorResponse(401, "authentication_error", err.message));
