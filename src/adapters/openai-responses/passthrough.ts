@@ -7,7 +7,8 @@ import { isOpenCodeGoResponsesUrl, isXaiResponsesUrl, promoteResponsesAdditional
 import { isXaiResponsesDestination } from "../../providers/xai-transport";
 import { applyGithubCopilotContextTier } from "../../providers/github-copilot-context";
 import { Buffer } from "node:buffer";
-import type { AdapterRequest, IncomingMeta, ProviderAdapter } from "../base";
+import type { AdapterRequest, AdapterStreamContext, IncomingMeta, ProviderAdapter } from "../base";
+import type { AdapterTierMetadata } from "../../providers/fastwire";
 import { namespacedToolName, type AdapterEvent, type EpxParsedRequest, type EpxProviderConfig, type EpxUsage, type TierDecision } from "../../types";
 import { applyCodexRoutingHint, CODEX_RESPONSES_LITE_HEADER, CODEX_RESPONSES_LITE_METADATA_KEY, CODEX_ROUTING_HINT_HEADER, isolateCodexPoolClientMetadata } from "../../codex/forward-transport-headers";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType, transferCompactionCiphertextLease } from "../../responses/compaction";
@@ -202,6 +203,9 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         outBody,
         forward || parsed._previousResponseInputExpanded === true,
       );
+      if (parsed._gatewayToolSearchProjectBody) {
+        outBody = parsed._gatewayToolSearchProjectBody(outBody, parsed);
+      }
       if (isMetaAiResponsesDestination(url)) {
         outBody = normalizeMuseToolCatalog(outBody, parsed._replayPrefixLen, provider.supportsResponsesCustomTools);
       }
@@ -606,14 +610,21 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
     // The passthrough normally relays the upstream stream verbatim and never parses.
     // The exception is a routed compaction turn: the server drives this adapter like
     // an ordinary one so the bridge can build the single compaction item (#422).
-    async *parseStream(response: Response, budget: TranslatorBudget): AsyncGenerator<AdapterEvent> {
+    async *parseStream(
+      response: Response,
+      budget: TranslatorBudget,
+      _tierMetadata?: AdapterTierMetadata,
+      streamContext?: AdapterStreamContext,
+    ): AsyncGenerator<AdapterEvent> {
       if (!response.body) {
         yield { type: "error", message: "passthrough adapter received no response body" };
         return;
       }
+      const bufferForCompaction = streamContext?.routedCompaction !== false;
       let deltas = "";
       let deltasBytes = 0;
       let deltasLastCodeUnit = 0;
+      let streamedDeltasLen = 0;
       let doneText = "";
       let doneTextBytes = 0;
       let doneTextLastCodeUnit = 0;
@@ -625,12 +636,96 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
       let compactionEncryptedContentBytes = 0;
       let completedSeen = false;
       let ciphertextTransferred = false;
+      const toolCalls = new Map<string, { id: string; name: string; streamedArgs: boolean; ended: boolean }>();
+      const toolCallKey = (item: Record<string, unknown>, fallbackIndex?: unknown): string | undefined => {
+        if (typeof item.call_id === "string" && item.call_id.length > 0) return item.call_id;
+        if (typeof item.id === "string" && item.id.length > 0) return item.id;
+        if (typeof fallbackIndex === "number") return `fc_idx_${fallbackIndex}`;
+        return undefined;
+      };
+      const toolCallByItemId = new Map<string, string>();
+      const flushUnstreamedText = (candidateText: string): string => {
+        if (!candidateText) return "";
+        if (streamedDeltasLen === 0) return candidateText;
+        const streamed = streamedDeltasLen === deltas.length ? deltas : deltas.slice(0, streamedDeltasLen);
+        if (candidateText.length > streamed.length && candidateText.startsWith(streamed)) {
+          return candidateText.slice(streamed.length);
+        }
+        return "";
+      };
+      function* reconcileFunctionCallItem(
+        item: Record<string, unknown>,
+        fallbackIndex?: unknown,
+        forceIncomplete = false,
+      ): Generator<AdapterEvent> {
+        if (item.type !== "function_call" || typeof item.name !== "string") return;
+        const callId = (typeof item.id === "string" ? toolCallByItemId.get(item.id) : undefined)
+          ?? toolCallKey(item, fallbackIndex);
+        if (!callId) return;
+        if (typeof item.id === "string" && item.id.length > 0) toolCallByItemId.set(item.id, callId);
+        let state = toolCalls.get(callId);
+        if (!state) {
+          state = { id: callId, name: item.name, streamedArgs: false, ended: false };
+          toolCalls.set(callId, state);
+          yield { type: "tool_call_start", id: callId, name: item.name };
+        }
+        if (!state.streamedArgs && typeof item.arguments === "string" && item.arguments.length > 0) {
+          state.streamedArgs = true;
+          yield { type: "tool_call_delta", arguments: item.arguments };
+        }
+        if (!state.ended) {
+          state.ended = true;
+          const incomplete = item.status === "incomplete" || (forceIncomplete && item.status !== "completed");
+          yield { type: "tool_call_end", ...(incomplete ? { incomplete: true } : {}) };
+        }
+      }
       try {
         for await (const event of decodeServerSentEvents(response.body, { translatorBudget: budget })) {
           let payload: unknown;
           try { payload = JSON.parse(event.data); } catch { continue; }
           if (!isPlainObject(payload)) continue;
           switch (payload.type) {
+            case "response.output_item.added": {
+              const item = isPlainObject(payload.item) ? payload.item : undefined;
+              if (item?.type === "function_call" && typeof item.name === "string") {
+                const callId = toolCallKey(item, payload.output_index);
+                if (callId) {
+                  if (typeof item.id === "string" && item.id.length > 0) toolCallByItemId.set(item.id, callId);
+                  if (!toolCalls.has(callId)) {
+                    toolCalls.set(callId, { id: callId, name: item.name, streamedArgs: false, ended: false });
+                    yield { type: "tool_call_start", id: callId, name: item.name };
+                  }
+                }
+              }
+              break;
+            }
+            case "response.function_call_arguments.delta": {
+              const callId = typeof payload.item_id === "string"
+                ? (toolCallByItemId.get(payload.item_id) ?? payload.item_id)
+                : typeof payload.call_id === "string" ? payload.call_id : undefined;
+              if (callId && typeof payload.delta === "string" && payload.delta.length > 0) {
+                const state = toolCalls.get(callId);
+                if (state) state.streamedArgs = true;
+                yield { type: "tool_call_delta", arguments: payload.delta };
+              }
+              break;
+            }
+            case "response.function_call_arguments.done": {
+              const callId = typeof payload.item_id === "string"
+                ? (toolCallByItemId.get(payload.item_id) ?? payload.item_id)
+                : typeof payload.call_id === "string" ? payload.call_id : undefined;
+              const state = callId ? toolCalls.get(callId) : undefined;
+              if (callId && state && !state.streamedArgs && typeof payload.arguments === "string" && payload.arguments.length > 0) {
+                state.streamedArgs = true;
+                yield { type: "tool_call_delta", arguments: payload.arguments };
+              }
+              break;
+            }
+            case "response.output_item.done": {
+              const item = isPlainObject(payload.item) ? payload.item : undefined;
+              if (item) yield* reconcileFunctionCallItem(item, payload.output_index);
+              break;
+            }
             case "response.output_text.delta":
               if (typeof payload.delta === "string") {
                 const next = deltas + payload.delta;
@@ -641,6 +736,10 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
                 budget.releaseRetained(deltasBytes, { kind: "retained_collectors" });
                 deltasBytes = nextBytes;
                 if (payload.delta.length > 0) deltasLastCodeUnit = payload.delta.charCodeAt(payload.delta.length - 1);
+                if (!bufferForCompaction && !completedSeen && payload.delta.length > 0) {
+                  streamedDeltasLen = deltas.length;
+                  yield { type: "text_delta", text: payload.delta };
+                }
               }
               break;
             case "response.output_text.done":
@@ -661,6 +760,38 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
               return;
             case "response.incomplete": {
               const reason = responsesErrorMessage(payload.response ?? payload);
+              if (!bufferForCompaction) {
+                const responsePayload = isPlainObject(payload.response) ? payload.response : undefined;
+                const output = Array.isArray(responsePayload?.output) ? responsePayload.output : [];
+                for (let idx = 0; idx < output.length; idx++) {
+                  const item = output[idx];
+                  if (isPlainObject(item)) yield* reconcileFunctionCallItem(item, idx, true);
+                }
+                for (const state of toolCalls.values()) {
+                  if (!state.ended) {
+                    state.ended = true;
+                    yield { type: "tool_call_end", incomplete: true };
+                  }
+                }
+                const next = responsesPayloadText(payload.response);
+                if (next) {
+                  const nextBytes = Buffer.byteLength(next, "utf8");
+                  const reservation = budget.reserveTransient(nextBytes, { kind: "retained_collectors" });
+                  snapshot = next;
+                  reservation.commitRetained();
+                  budget.releaseRetained(snapshotBytes, { kind: "retained_collectors" });
+                  snapshotBytes = nextBytes;
+                }
+                const remaining = flushUnstreamedText(snapshot || doneText || deltas);
+                if (remaining) yield { type: "text_delta", text: remaining };
+                const incompleteUsage = usageFromResponsesPayload(payload.response);
+                yield {
+                  type: "incomplete",
+                  reason: truncationReasonFor(reason) ?? reason,
+                  ...(incompleteUsage ? { usage: incompleteUsage } : {}),
+                };
+                return;
+              }
               yield { type: "incomplete", reason: truncationReasonFor(reason) ?? reason };
               return;
             }
@@ -678,6 +809,10 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
                   reservation.commitRetained();
                   budget.releaseRetained(compactionEncryptedContentBytes, { kind: "retained_collectors" });
                   compactionEncryptedContentBytes = nextEncryptedContentBytes;
+                }
+                for (let idx = 0; idx < output.length; idx++) {
+                  const item = output[idx];
+                  if (isPlainObject(item)) yield* reconcileFunctionCallItem(item, idx);
                 }
                 const next = responsesPayloadText(payload.response);
                 const nextBytes = Buffer.byteLength(next, "utf8");
@@ -712,7 +847,7 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
           // Yield after accounting, directly to the consumer: no progress queue or content leak.
           if (
             !completedSeen
-            && (payload.type === "response.output_text.delta"
+            && ((bufferForCompaction && payload.type === "response.output_text.delta")
               || payload.type === "response.reasoning_summary_text.delta"
               || payload.type === "response.reasoning_text.delta")
             && typeof payload.delta === "string"
@@ -722,9 +857,10 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
           }
         }
         // Gateways differ in which of these they emit; prefer the authoritative
-        // completed snapshot so text is never double-counted.
+        // completed snapshot without duplicating text already streamed incrementally.
         const text = snapshot || doneText || deltas;
-        if (text) yield { type: "text_delta", text };
+        const remainder = bufferForCompaction ? text : flushUnstreamedText(text);
+        if (remainder) yield { type: "text_delta", text: remainder };
         const done: AdapterEvent = {
           type: "done",
           ...(usage ? { usage } : {}),
@@ -765,17 +901,36 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
       const compactionEncryptedContent = isPlainObject(compaction) && typeof compaction.encrypted_content === "string"
         ? compaction.encrypted_content
         : undefined;
+      const toolEvents: AdapterEvent[] = [];
+      for (let idx = 0; idx < output.length; idx++) {
+        const item = output[idx];
+        if (!isPlainObject(item) || item.type !== "function_call" || typeof item.name !== "string") continue;
+        const callId = typeof item.call_id === "string" && item.call_id.length > 0
+          ? item.call_id
+          : typeof item.id === "string" && item.id.length > 0
+            ? item.id
+            : `fc_idx_${idx}`;
+        toolEvents.push({ type: "tool_call_start", id: callId, name: item.name });
+        if (typeof item.arguments === "string" && item.arguments.length > 0) {
+          toolEvents.push({ type: "tool_call_delta", arguments: item.arguments });
+        }
+        toolEvents.push({ type: "tool_call_end" });
+      }
       const text = responsesPayloadText(payload);
-      if (!text && !compactionEncryptedContent) {
-        // A completed turn with neither text nor a native compaction blob cannot become a
+      if (!text && !compactionEncryptedContent && toolEvents.length === 0) {
+        // A completed turn with neither text nor tool calls nor a native compaction blob cannot become a
         // replacement-history item. A ciphertext-only native completion is valid, though.
         return [{ type: "error", message: "upstream compaction returned no summary text" }];
       }
-      return [...(text ? [{ type: "text_delta" as const, text }] : []), {
-        type: "done",
-        ...(usage ? { usage } : {}),
-        ...(compactionEncryptedContent ? { compactionEncryptedContent } : {}),
-      }];
+      return [
+        ...(text ? [{ type: "text_delta" as const, text }] : []),
+        ...toolEvents,
+        {
+          type: "done",
+          ...(usage ? { usage } : {}),
+          ...(compactionEncryptedContent ? { compactionEncryptedContent } : {}),
+        },
+      ];
     },
   };
 }

@@ -286,6 +286,8 @@ export interface HandleResponsesOptions {
   callerDirectAuth?: CallerDirectAuth | null;
   /** Internal recursion guard; callers outside this module must not set it. */
   comboAttempt?: boolean;
+  /** Outbound payload hygiene already ran cleanly on this request graph upstream of handleResponses. */
+  outboundPayloadHygieneApplied?: boolean;
   /** `union` combo with no member whose window fits: the child keeps the loose direct admission. */
   comboContextDegraded?: boolean;
   /** A union combo admitted this image-bearing child through a dispatchable vision plan. */

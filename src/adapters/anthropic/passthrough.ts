@@ -32,11 +32,13 @@ import { bindAnthropicAccountMetadata, extractAnthropicCallerSessionId } from ".
 import { shouldPreserveNativeClientPreamble } from "./native-client-preamble";
 import { allowlistAnthropicBetas } from "./beta-allowlist";
 import { pairAnthropicBetaBody } from "./beta-body-pairs";
-import { applyAnthropicNativeCacheTtlDefault, resolveAnthropicCacheRetention } from "./cache-retention";
-import { rejectsOneHourCacheTtl } from "../../lib/prompt-cache-injection";
+import { applyAnthropicNativeCacheTtlDefault, effectiveAnthropicCacheRetention, resolveAnthropicCacheRetention } from "./cache-retention";
 import { injectOtlpTraceparent } from "../../lib/trace-context";
 import { ANTHROPIC_SLOW_USAGE_LIMIT, ANTHROPIC_USAGE_LIMIT_HEADER, normalizeInboundAnthropicUsageLimit } from "./slow-mode";
-import { rectifyAnthropicThinkingBudgetPreRequest } from "./thinking-rectifier";
+import {
+  rectifyAnthropicThinkingBudgetPreRequest,
+  resolveAnthropicThinkingModelMaxOutputTokens,
+} from "./thinking-rectifier";
 export { contextManagementForWire } from "./beta-body-pairs";
 
 /**
@@ -274,7 +276,10 @@ export function anthropicOAuthWireBody(body: Rec, clientIdentity?: AnthropicClie
  * provider. `count_tokens` counts this; the builder below sends it.
  */
 export function anthropicMessagesNativeWireBody(
-  provider: Pick<EpxProviderConfig, "baseUrl" | "authMode" | "thinkingBudgetRectifier">,
+  provider: Pick<
+    EpxProviderConfig,
+    "baseUrl" | "authMode" | "thinkingBudgetRectifier" | "defaultMaxOutputTokens" | "modelMaxOutputTokens"
+  >,
   modelId: string,
   body: Readonly<Record<string, unknown>>,
   options: Pick<AnthropicMessagesPassthroughOptions, "clientIdentity" | "rectifyThinkingBudget"> = {},
@@ -283,7 +288,10 @@ export function anthropicMessagesNativeWireBody(
   const shouldPreRectify = options.rectifyThinkingBudget === true
     || (options.rectifyThinkingBudget !== false && provider.thinkingBudgetRectifier === true);
   const rectified = shouldPreRectify
-    ? rectifyAnthropicThinkingBudgetPreRequest(allowlisted)
+    ? rectifyAnthropicThinkingBudgetPreRequest(allowlisted, {
+      modelId,
+      modelMaxOutputTokens: resolveAnthropicThinkingModelMaxOutputTokens(modelId, provider),
+    })
     : { body: allowlisted, applied: false };
   const opaque = opaqueStateForDestination(rectified.body, credentialDomainFor(provider));
   if (provider.authMode !== "oauth") return { wireBody: opaque.body, strippedOpaqueState: opaque.stripped };
@@ -320,13 +328,10 @@ export function buildAnthropicMessagesPassthroughRequest(
   const url = resolveAnthropicMessagesUrl(provider);
   const native = anthropicMessagesNativeWireBody(provider, modelId, body, options);
   const { strippedOpaqueState, oauthToolNames } = native;
-  const cacheInjectionTtl = config?.promptCacheInjection?.ttl ?? "auto";
-  const resolvedRetention = config?.promptCacheInjection?.enabled === true
-    && cacheInjectionTtl === "1h"
-    && config.cacheRetention === undefined
-    && !rejectsOneHourCacheTtl(modelId)
-    ? "long"
-    : resolveAnthropicCacheRetention(config?.cacheRetention, provider);
+  const resolvedRetention = resolveAnthropicCacheRetention(
+    effectiveAnthropicCacheRetention(config, modelId),
+    provider,
+  );
   const ttlBody = applyAnthropicNativeCacheTtlDefault(native.wireBody, resolvedRetention);
   const wireBody = oauth ? bindAnthropicAccountMetadata(ttlBody, options.providerAccountUuid) : ttlBody;
   const headers = anthropicBaseRequestHeaders(wireBody.stream === true);

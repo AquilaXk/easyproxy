@@ -559,4 +559,10 @@ export const uxOverhaulCopyRu = {
   "ux.inspector.sampleResponses": "Пример Responses",
   "ux.inspector.previewTruncated": "Предпросмотр ограничен 8 192 символами.",
   "ux.inspector.clearFilter": "Все категории",
+  "ux.inspector.breakevenTitle": "Окупаемость кэша ({ttl})",
+  "ux.inspector.breakevenHits": "Окупаемость: {hits} повторных попаданий",
+  "ux.inspector.breakevenNoBreakEven": "Не окупается по текущим тарифам",
+  "ux.inspector.breakevenEconomics": "Запись +${premium} · Попадание -${hitSavings} · Ожид. (актив./простой): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "Выгодно",
+  "ux.inspector.breakevenMarginal": "Низкая выгода",
 } as const;

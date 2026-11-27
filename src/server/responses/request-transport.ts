@@ -17,6 +17,7 @@ import { anthropicModelQuotaFor } from "../../oauth/anthropic-model-quota";
 import { anthropicRatePolicyFor } from "../../oauth/anthropic-rate-limit-policy";
 import { configuredAnthropicInstance } from "../../providers/anthropic-instance";
 import { anthropicApiKeyForRequest, resolveAnthropicMessagesUrl } from "../../adapters/anthropic";
+import { effectiveAnthropicCacheRetention } from "../../adapters/anthropic/cache-retention";
 import { hostedAdvisorCredentials, stripHostedAdvisorBeta } from "../../adapters/anthropic/advisor-tool";
 import { bindAnthropicRefusalCredentialForSend } from "../../oauth/anthropic-account-refusal";
 import { captureAnthropicPhysicalSendOwnership, anthropicPhysicalSendOwnershipIsCurrent, type AnthropicPhysicalSendOwnership } from "../../oauth/anthropic-send-ownership";
@@ -771,9 +772,9 @@ export async function prepareResponsesTransport(
       && credentialGeneration(row.credential) === binding.snapshot.generation;
   };
   /** Bind the negotiated wire adapter and its built requests to the serving credential's authority. */
-  const resolveSelectionAdapter = (provider: EpxProviderConfig, retention = config.cacheRetention): ProviderAdapter => {
+  const resolveSelectionAdapter = (provider: EpxProviderConfig, retention = effectiveAnthropicCacheRetention(config, route.modelId)): ProviderAdapter => {
     if (copilotAutoAdapter) provider = { ...provider, adapter: copilotAutoAdapter };
-    const resolved = resolveAdapter(provider, retention, route.providerName);
+    const resolved = resolveAdapter(provider, retention ?? effectiveAnthropicCacheRetention(config, route.modelId), route.providerName);
     // Capture this physical adapter's destination. A retry/rebind gets a fresh decision, and
     // each build projects a copy so unselected fallbacks retain the original tool catalog.
     const discovery = options.anthropicToolLoadingSource;

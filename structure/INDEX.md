@@ -508,6 +508,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/audio-dictation.ts` | [`providers/codex-installation-identity.md`](providers/codex-installation-identity.md) |
 | `src/server/audio-live.ts` | [`providers/codex-installation-identity.md`](providers/codex-installation-identity.md) |
 | `src/server/auth-cors.ts` | [`transports/response-turn-membership.md`](transports/response-turn-membership.md)<br>[`providers/lm-studio-chat.md`](providers/lm-studio-chat.md)<br>[`providers/hosted-tool-denials.md`](providers/hosted-tool-denials.md) |
+| `src/server/auxiliary-upstream.ts` | [`cache-budget-embeddings-otlp.md`](cache-budget-embeddings-otlp.md) |
 | `src/server/background-lifecycle.ts` | [`telemetry.md`](telemetry.md) |
 | `src/server/capture-admission-policy.ts` | [`advisor.md`](advisor.md) |
 | `src/server/chat-native-eligibility.ts` | [`data-planes/chat-reasoning-details.md`](data-planes/chat-reasoning-details.md) |

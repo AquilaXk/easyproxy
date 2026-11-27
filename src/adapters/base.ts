@@ -81,6 +81,8 @@ export interface IncomingMeta {
 export interface AdapterStreamContext {
   /** Per-exchange authority: this parser feeds a bridge with signed structural output IDs. */
   completedToolBlocks?: boolean;
+  /** Routed compaction turns buffer streamed text until completion and emit heartbeats instead. */
+  routedCompaction?: boolean;
 }
 
 export interface ProviderAdapter {

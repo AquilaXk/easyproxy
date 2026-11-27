@@ -85,7 +85,7 @@ async function parseUpstreamSse(adapter: ReturnType<typeof createOpenAIChatAdapt
   const budget = createTranslatorBudget();
   try {
     const response = new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
-    return await collectAdapterEvents(adapter.parseStream(response, budget));
+    return await collectAdapterEvents(adapter.parseStream(response, budget, undefined, { routedCompaction: false }));
   } finally {
     budget.dispose();
   }
@@ -618,7 +618,7 @@ async function executeStreamScenario(caseRecord: CaseRecord): Promise<Normalized
         const responsesSse = bridgeToResponsesSSE((async function* () {
           const passthrough = createResponsesPassthroughAdapter(fixtureProviderConfig("openai-responses"));
           const response = new Response(caseRecord.fixture.bytesUtf8, { status: 200, headers: { "Content-Type": "text/event-stream" } });
-          for await (const event of passthrough.parseStream(response, passthroughBudget)) yield event;
+          for await (const event of passthrough.parseStream(response, passthroughBudget, undefined, { routedCompaction: false })) yield event;
         })(), "fixture-model");
         const anthropicStream = responsesSseToAnthropicSse(responsesSse, "fixture-model", { translatorBudget: budget });
         const reader = anthropicStream.getReader();

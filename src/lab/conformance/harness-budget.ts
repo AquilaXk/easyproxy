@@ -1,4 +1,5 @@
-import type { IncomingMeta, ProviderAdapter } from "../../adapters/base";
+import type { AdapterStreamContext, IncomingMeta, ProviderAdapter } from "../../adapters/base";
+import type { AdapterTierMetadata } from "../../providers/fastwire";
 import { createTranslatorBudget, type TranslatorBudget } from "../../lib/translator-budget";
 
 type TestAdapter<T extends ProviderAdapter> = Omit<T, "buildRequest" | "parseStream" | "parseResponse"> & {
@@ -6,10 +7,16 @@ type TestAdapter<T extends ProviderAdapter> = Omit<T, "buildRequest" | "parseStr
     parsed: Parameters<T["buildRequest"]>[0],
     incoming?: Partial<IncomingMeta>,
   ): ReturnType<T["buildRequest"]>;
-  parseStream(response: Response, budget?: TranslatorBudget): ReturnType<T["parseStream"]>;
+  parseStream(
+    response: Response,
+    budget?: TranslatorBudget,
+    tierMetadata?: AdapterTierMetadata,
+    streamContext?: AdapterStreamContext,
+  ): ReturnType<T["parseStream"]>;
   parseResponse?: (
     response: Response,
     budget?: TranslatorBudget,
+    tierMetadata?: AdapterTierMetadata,
   ) => ReturnType<NonNullable<T["parseResponse"]>>;
   dispose(): void;
 };
@@ -30,12 +37,21 @@ export function withHarnessTranslatorBudget<T extends ProviderAdapter>(adapter: 
         translatorBudget: incoming?.translatorBudget ?? budget,
       });
     },
-    parseStream(response: Response, explicitBudget?: TranslatorBudget) {
-      return parseStream(response, explicitBudget ?? budget);
+    parseStream(
+      response: Response,
+      explicitBudget?: TranslatorBudget,
+      tierMetadata?: AdapterTierMetadata,
+      streamContext?: AdapterStreamContext,
+    ) {
+      return parseStream(response, explicitBudget ?? budget, tierMetadata, streamContext);
     },
     ...(parseResponse ? {
-      parseResponse(response: Response, explicitBudget?: TranslatorBudget) {
-        return parseResponse(response, explicitBudget ?? budget);
+      parseResponse(
+        response: Response,
+        explicitBudget?: TranslatorBudget,
+        tierMetadata?: AdapterTierMetadata,
+      ) {
+        return parseResponse(response, explicitBudget ?? budget, tierMetadata);
       },
     } : {}),
     dispose() {

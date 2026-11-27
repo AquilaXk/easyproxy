@@ -48,16 +48,36 @@ function wireKeyForTool(tool: Pick<EpxTool, "namespace" | "name">): string {
   return namespacedToolName(tool.namespace, tool.name);
 }
 
-function hasExplicitClientToolSearch(parsed: EpxParsedRequest): boolean {
-  const raw = parsed._rawBody;
-  if (isPlainObject(raw) && Array.isArray(raw.tools)) {
-    for (const entry of raw.tools) {
-      if (isPlainObject(entry) && entry.type === "tool_search" && entry.execution !== "server") {
-        return true;
-      }
+export function hasClientToolSearchDeclaration(tools: unknown): boolean {
+  if (!Array.isArray(tools)) return false;
+  for (const entry of tools) {
+    if (!isPlainObject(entry)) continue;
+    if (entry.type === "tool_search" && entry.execution !== "server") return true;
+    if (entry.name === "ToolSearch") return true;
+    if (entry.type === "function" && isPlainObject(entry.function) && entry.function.name === "ToolSearch") return true;
+  }
+  return false;
+}
+
+export function hasAnyNonAnthropicGatewayToolSearchProvider(
+  providers: Record<string, Pick<EpxProviderConfig, "adapter" | "gatewayToolSearch">> | undefined,
+): boolean {
+  if (!providers) return false;
+  for (const provider of Object.values(providers)) {
+    if (provider && provider.gatewayToolSearch === true && provider.adapter !== "anthropic") {
+      return true;
     }
   }
   return false;
+}
+
+function hasExplicitClientToolSearch(parsed: EpxParsedRequest): boolean {
+  const raw = parsed._rawBody;
+  if (isPlainObject(raw) && hasClientToolSearchDeclaration(raw.tools)) {
+    return true;
+  }
+  return Array.isArray(parsed.context.tools)
+    && parsed.context.tools.some(tool => tool.name === "ToolSearch" && !tool.namespace);
 }
 
 /**
@@ -260,13 +280,21 @@ function createGatewayToolSearchSession(parsed: EpxParsedRequest): GatewayToolSe
   if (deferred.length === 0) return null;
 
   const loaded = new Set<string>();
-  const deferredKeys = new Set(deferred.map(wireKeyForTool));
+  const deferredByKey = new Map<string, EpxTool>();
+  for (const tool of deferred) {
+    deferredByKey.set(wireKeyForTool(tool), stripDeferFlag(tool));
+  }
+  const deferredKeys = new Set(deferredByKey.keys());
 
-  // Preload deferred tools already called in conversation history.
+  // Preload deferred tools already called in conversation history (including namespaced calls).
   for (const msg of parsed.context.messages) {
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     for (const part of msg.content) {
-      if (part.type === "toolCall" && typeof part.name === "string" && deferredKeys.has(part.name)) {
+      if (part.type !== "toolCall" || typeof part.name !== "string") continue;
+      const wireKey = namespacedToolName(part.namespace, part.name);
+      if (deferredKeys.has(wireKey)) {
+        loaded.add(wireKey);
+      } else if (part.namespace === undefined && deferredKeys.has(part.name)) {
         loaded.add(part.name);
       }
     }
@@ -283,6 +311,35 @@ function createGatewayToolSearchSession(parsed: EpxParsedRequest): GatewayToolSe
 
   const wireName = chooseGatewaySearchWireName(allTools);
 
+  // Build static search tool once from the immutable request-level deferred catalog so
+  // prefix caches stay warm across repeated search hops and multi-turn continuations.
+  const staticLines: string[] = [
+    "Search deferred tools that are available on this request and load matching schemas for subsequent calls.",
+    'Pass descriptive keywords (query) or "select:<name1>,<name2>" to load tools by exact name.',
+    "Available deferred tools:",
+  ];
+  for (let i = 0; i < deferred.length && i < GATEWAY_TOOL_SEARCH_MAX_LISTED_TOOLS; i++) {
+    const tool = deferred[i]!;
+    const desc = (tool.description ?? "").replace(/\s+/g, " ").trim().slice(0, GATEWAY_TOOL_SEARCH_MAX_DESC_CHARS);
+    staticLines.push(desc ? `- ${wireKeyForTool(tool)}: ${desc}` : `- ${wireKeyForTool(tool)}`);
+  }
+  if (deferred.length > GATEWAY_TOOL_SEARCH_MAX_LISTED_TOOLS) {
+    staticLines.push(`- ... and ${deferred.length - GATEWAY_TOOL_SEARCH_MAX_LISTED_TOOLS} more`);
+  }
+  const staticSearchTool: EpxTool = {
+    name: wireName,
+    description: staticLines.join("\n"),
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Keywords or select:<tool_names> query." },
+        limit: { type: "integer", minimum: 1, maximum: GATEWAY_TOOL_SEARCH_MAX_LIMIT, description: "Max tools to load (default 5)." },
+      },
+      required: ["query"],
+    },
+    gatewayToolSearch: true,
+  };
+
   const session: GatewayToolSearchSession = {
     wireName,
     deferred,
@@ -290,44 +347,16 @@ function createGatewayToolSearchSession(parsed: EpxParsedRequest): GatewayToolSe
     loaded,
     remainingTurns: GATEWAY_TOOL_SEARCH_MAX_TURNS,
     buildSearchTool(): EpxTool {
-      const unloaded = deferred.filter(tool => !loaded.has(wireKeyForTool(tool)));
-      const lines: string[] = [
-        "Search deferred tools that are available on this request and load matching schemas for subsequent calls.",
-        'Pass descriptive keywords (query) or "select:<name1>,<name2>" to load tools by exact name.',
-        "Available deferred tools:",
-      ];
-      for (let i = 0; i < unloaded.length && i < GATEWAY_TOOL_SEARCH_MAX_LISTED_TOOLS; i++) {
-        const tool = unloaded[i]!;
-        const desc = (tool.description ?? "").replace(/\s+/g, " ").trim().slice(0, GATEWAY_TOOL_SEARCH_MAX_DESC_CHARS);
-        lines.push(desc ? `- ${wireKeyForTool(tool)}: ${desc}` : `- ${wireKeyForTool(tool)}`);
-      }
-      if (unloaded.length > GATEWAY_TOOL_SEARCH_MAX_LISTED_TOOLS) {
-        lines.push(`- ... and ${unloaded.length - GATEWAY_TOOL_SEARCH_MAX_LISTED_TOOLS} more`);
-      }
-      return {
-        name: wireName,
-        description: lines.join("\n"),
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "Keywords or select:<tool_names> query." },
-            limit: { type: "integer", minimum: 1, maximum: GATEWAY_TOOL_SEARCH_MAX_LIMIT, description: "Max tools to load (default 5)." },
-          },
-          required: ["query"],
-        },
-        gatewayToolSearch: true,
-      };
+      return staticSearchTool;
     },
     buildActiveTools(includeSearch: boolean): EpxTool[] {
       const next: EpxTool[] = [...eager];
-      for (const tool of deferred) {
-        if (loaded.has(wireKeyForTool(tool))) {
-          next.push(stripDeferFlag(tool));
-        }
+      if (includeSearch && deferredByKey.size > 0 && session.remainingTurns > 0) {
+        next.push(staticSearchTool);
       }
-      const hasUnloaded = loaded.size < deferred.length;
-      if (includeSearch && hasUnloaded && session.remainingTurns > 0) {
-        next.push(session.buildSearchTool());
+      for (const key of loaded) {
+        const tool = deferredByKey.get(key);
+        if (tool) next.push(tool);
       }
       return next;
     },
@@ -576,6 +605,118 @@ function createGatewayToolSearchGuard(session: GatewayToolSearchSession): NonNul
   };
 }
 
+function indexRawResponsesToolsByWireKey(rawBody: unknown): Map<string, Record<string, unknown>> {
+  const byKey = new Map<string, Record<string, unknown>>();
+  if (!isPlainObject(rawBody) || !Array.isArray(rawBody.tools)) return byKey;
+  const stripDeferRaw = (entry: Record<string, unknown>, wireName?: string): Record<string, unknown> => {
+    const { defer_loading: _drop, ...rest } = entry;
+    return wireName ? { ...rest, name: wireName } : rest;
+  };
+  for (const entry of rawBody.tools) {
+    if (!isPlainObject(entry)) continue;
+    if (entry.type === "namespace" && typeof entry.name === "string" && Array.isArray(entry.tools)) {
+      for (const child of entry.tools) {
+        if (!isPlainObject(child) || typeof child.name !== "string") continue;
+        const wireKey = entry.name === "functions"
+          ? child.name
+          : namespacedToolName(entry.name, child.name);
+        if (!byKey.has(wireKey)) byKey.set(wireKey, stripDeferRaw(child, wireKey));
+      }
+      continue;
+    }
+    if (typeof entry.name === "string") {
+      if (!byKey.has(entry.name)) byKey.set(entry.name, stripDeferRaw(entry));
+    }
+  }
+  return byKey;
+}
+
+function responsesWireToolFromEpx(
+  tool: EpxTool,
+  rawToolsByKey: ReadonlyMap<string, Record<string, unknown>>,
+): Record<string, unknown> {
+  if (tool.gatewayToolSearch) {
+    return {
+      type: "function",
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    };
+  }
+  const key = wireKeyForTool(tool);
+  const existing = rawToolsByKey.get(key);
+  if (existing) return existing;
+  if (tool.webSearch) return { type: "web_search" };
+  return {
+    type: "function",
+    name: key,
+    ...(tool.description ? { description: tool.description } : {}),
+    parameters: tool.parameters,
+    ...(tool.strict !== undefined ? { strict: tool.strict } : {}),
+  };
+}
+
+function createResponsesBodyProjector(
+  initialParsed: EpxParsedRequest,
+): NonNullable<EpxParsedRequest["_gatewayToolSearchProjectBody"]> {
+  const initialMessageCount = initialParsed.context.messages.length;
+  const rawToolsByKey = indexRawResponsesToolsByWireKey(initialParsed._rawBody);
+  return function projectGatewayToolSearchResponsesBody(outBody, currentParsed) {
+    if (!isPlainObject(outBody)) return outBody;
+    const tools = (currentParsed.context.tools ?? []).map(tool => responsesWireToolFromEpx(tool, rawToolsByKey));
+    const appendedMessages = currentParsed.context.messages.slice(initialMessageCount);
+    let nextInput: unknown[] | undefined;
+    if (appendedMessages.length > 0) {
+      nextInput = Array.isArray(outBody.input)
+        ? [...outBody.input]
+        : typeof outBody.input === "string" && outBody.input.length > 0
+          ? [{ type: "message", role: "user", content: [{ type: "input_text", text: outBody.input }] }]
+          : [];
+      for (const msg of appendedMessages) {
+        if (msg.role === "assistant") {
+          if (Array.isArray(msg.content)) {
+            const textParts: Array<{ type: "output_text"; text: string }> = [];
+            for (const part of msg.content) {
+              if (part.type === "text" && part.text.length > 0) {
+                textParts.push({ type: "output_text", text: part.text });
+              }
+            }
+            if (textParts.length > 0) {
+              nextInput.push({ type: "message", role: "assistant", content: textParts });
+            }
+            for (const part of msg.content) {
+              if (part.type === "toolCall") {
+                nextInput.push({
+                  type: "function_call",
+                  call_id: part.id,
+                  name: wireKeyForTool(part),
+                  arguments: JSON.stringify(part.arguments ?? {}),
+                });
+              }
+            }
+          }
+        } else if (msg.role === "toolResult") {
+          nextInput.push({
+            type: "function_call_output",
+            call_id: msg.toolCallId,
+            output: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
+          });
+        }
+      }
+    }
+    const resetToolChoice = appendedMessages.length > 0
+      && currentParsed.options.toolChoice === "auto"
+      && outBody.tool_choice !== undefined
+      && outBody.tool_choice !== "auto";
+    return {
+      ...outBody,
+      tools,
+      ...(nextInput ? { input: nextInput } : {}),
+      ...(resetToolChoice ? { tool_choice: "auto" } : {}),
+    };
+  };
+}
+
 /**
  * Installs gateway `defer_loading` (`epx_tool_search`) emulation onto `parsed` in place
  * for the initial request turn while leaving caller-owned `toolBridgeMaps` intact so
@@ -593,5 +734,6 @@ export function installGatewayToolSearchEmulation(
     tools: session.buildActiveTools(true),
   };
   parsed._gatewayToolSearchGuard = createGatewayToolSearchGuard(session);
+  parsed._gatewayToolSearchProjectBody = createResponsesBodyProjector(parsed);
   return true;
 }

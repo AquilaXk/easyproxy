@@ -22,6 +22,7 @@ import { effectiveGoogleMode } from "../providers/registry";
 import type { RouteResult } from "../router";
 import type { EpxConfig } from "../types";
 import { requiresVisionPreprocessing } from "../vision";
+import { hasClientToolSearchDeclaration } from "../responses/gateway-tool-search";
 
 /** Why the Antigravity direct lane declines a route, as a protocol reason code. */
 export type AntigravityDirectDeclineReason = Extract<
@@ -123,6 +124,14 @@ export function antigravityDirectDeclineReason(
     return "vision-preprocessing";
   }
   if (shadowInterceptMayApply(body.model, config)) return "bridge-only-policy";
+  if (
+    route.provider.gatewayToolSearch === true
+    && !hasClientToolSearchDeclaration(body.tools)
+    && Array.isArray(body.tools)
+    && body.tools.some(t => isRec(t) && (t.defer_loading === true || (isRec(t.function) && t.function.defer_loading === true)))
+  ) {
+    return "bridge-only-policy";
+  }
   if (carriesBridgeRewrittenText(body) || runtime.cacheDiagnostics === true) return "bridge-only-policy";
   return undefined;
 }
@@ -203,6 +212,14 @@ export function antigravityMessagesDeclineReason(
     return "vision-preprocessing";
   }
   if (shadowInterceptMayApply(model, config)) return "bridge-only-policy";
+  if (
+    route.provider.gatewayToolSearch === true
+    && !hasClientToolSearchDeclaration(body.tools)
+    && Array.isArray(body.tools)
+    && body.tools.some(t => isRec(t) && t.defer_loading === true)
+  ) {
+    return "bridge-only-policy";
+  }
   if (messagesCarryBridgeRewrittenText(body) || runtime.cacheDiagnostics === true) return "bridge-only-policy";
   return undefined;
 }

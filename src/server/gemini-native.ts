@@ -27,8 +27,7 @@ import { recordGenerationOutput } from "./request-log-generation-window";
 import { noteCredentialAttemptSend, sealCredentialRefusal } from "./credential-recovery-attempt";
 import { DEFAULT_STALL_TIMEOUT_SEC, resolveStallTimeoutMs } from "../stall-timeout";
 import { isLocalUpstream } from "../lib/local-upstream";
-import { inspectAndApplyOutboundSecretGuard } from "../lib/outbound-secret-guard";
-import { OUTBOUND_SECRET_BLOCKED_MESSAGE, recordOutboundSecretOutcome } from "./outbound-payload-hygiene";
+import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 import { assertProviderDestinationAllowed } from "../lib/destination-policy";
 import { clientFacingModelLabel, type ClientFacingModelLabel } from "../lib/error-destination";
 import { registerTurn, unregisterTurn, type ActiveTurnLease } from "./lifecycle";
@@ -167,20 +166,19 @@ export async function handleGeminiNative(
         }
       }
     } catch { finish(); return geminiNativeError(400, "Expected a Gemini JSON object"); }
-    const secretGuard = inspectAndApplyOutboundSecretGuard(requestPayload, config.outboundSecretGuard);
-    if ((config.outboundSecretGuard?.mode ?? "off") !== "off") {
-      recordOutboundSecretOutcome(secretGuard.matches, secretGuard.blocked);
-    }
-    if (secretGuard.blocked) {
-      if (logCtx) {
-        markLocalRequestLogRefusal(logCtx, "outbound_secret_guard");
-        logCtx.errorCode = "outbound_secret_guard";
-      }
+    const hygiene = applyOutboundPayloadHygiene(requestPayload, config, logCtx);
+    if (hygiene.blocked) {
       finish();
       return geminiNativeError(400, OUTBOUND_SECRET_BLOCKED_MESSAGE, "outbound_secret_guard");
     }
-    if (secretGuard.redactions > 0) {
-      raw = JSON.stringify(secretGuard.body ?? requestPayload);
+    if (
+      hygiene.redactions > 0
+      || hygiene.compressedItems > 0
+      || (hygiene.injectedCacheBreakpoints ?? 0) > 0
+      || (hygiene.normalizedSystemTimestamps ?? 0) > 0
+      || hygiene.body !== requestPayload
+    ) {
+      raw = JSON.stringify(hygiene.body ?? requestPayload);
     }
     ac.signal.throwIfAborted();
     const clientModel = clientFacingModelLabel(logCtx?.requestedModel ?? model);

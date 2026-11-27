@@ -559,4 +559,10 @@ export const uxOverhaulCopyZhTw = {
   "ux.inspector.sampleResponses": "載入 Responses 範例",
   "ux.inspector.previewTruncated": "預覽最多顯示前 8,192 個字元。",
   "ux.inspector.clearFilter": "全部分類",
+  "ux.inspector.breakevenTitle": "快取損益平衡 ({ttl})",
+  "ux.inspector.breakevenHits": "損益平衡：需後續命中 {hits} 次",
+  "ux.inspector.breakevenNoBreakEven": "目前費率下無法回本",
+  "ux.inspector.breakevenEconomics": "寫入 +${premium} · 命中 -${hitSavings} · 預期淨省 (活躍/閒置): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "划算",
+  "ux.inspector.breakevenMarginal": "邊際收益",
 } as const;

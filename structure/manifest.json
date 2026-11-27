@@ -1693,6 +1693,7 @@
         "src/server/management/guardrails-routes.ts",
         "src/server/api-key-budget-estimate.ts",
         "src/server/embeddings.ts",
+        "src/server/auxiliary-upstream.ts",
         "src/config/schema/otlp.ts",
         "src/telemetry/otlp.ts",
         "src/telemetry/otlp-routes.ts"

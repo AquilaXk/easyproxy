@@ -5,6 +5,7 @@ import type { RouteResult } from "../router";
 import type { EpxConfig } from "../types";
 import { isModelTextOnly, requiresVisionPreprocessing } from "../vision";
 import { isCommandCodeDecisionRoute } from "../providers/command-code-decision-models";
+import { hasClientToolSearchDeclaration } from "../responses/gateway-tool-search";
 
 type Rec = Record<string, unknown>;
 
@@ -74,10 +75,14 @@ export function nativeChatDeclineReason(
     if (needsVision) return "vision-preprocessing";
   }
   if (Array.isArray(rawBody.tools)) {
+    const gatewayDeferredEligible = provider.gatewayToolSearch === true && !hasClientToolSearchDeclaration(rawBody.tools);
     for (const tool of rawBody.tools) {
       if (!isRec(tool)) continue;
       if (tool.type === "web_search" || tool.type === "web_search_preview" || tool.type === "image_generation") {
         return "hosted-tool";
+      }
+      if (gatewayDeferredEligible && (tool.defer_loading === true || (isRec(tool.function) && tool.function.defer_loading === true))) {
+        return "responses-only-feature";
       }
     }
   }

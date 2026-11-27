@@ -46,6 +46,8 @@ import {
   type AnthropicMessagesPassthroughRequest,
 } from "../adapters/anthropic/passthrough";
 import { ANTHROPIC_SLOW_USAGE_LIMIT, ANTHROPIC_USAGE_LIMIT_HEADER } from "../adapters/anthropic/slow-mode";
+import { effectiveAnthropicCacheRetention } from "../adapters/anthropic/cache-retention";
+import { applyPromptCacheBreakpointsOnly } from "./outbound-payload-hygiene";
 import { effortFromOutputConfig, nativeAnthropicProjection, resolveInboundModel } from "../claude/inbound";
 import { anthropicErrorBody, claudeOverflowSsePayload, claudePromptTooLongMessage, collectAnthropicMessage, isContextOverflowText, isThroughputLimitText } from "../claude/outbound";
 import type { AdmissionLease } from "../lib/admission";
@@ -102,7 +104,11 @@ import { captureRouteStaticPolicy, routedProviderConfig, routeModel, type RouteR
 import { POLICY_NAMESPACE, resolvePolicyProfileId } from "../routing/profile";
 import type { AnthropicClientIdentity } from "../adapters/anthropic/client-identity";
 import { logDroppedAnthropicBetas } from "../adapters/anthropic/beta-allowlist";
-import { rectifyAnthropicThinkingBudgetOnError, shouldRectifyAnthropicThinkingBudgetError } from "../adapters/anthropic/thinking-rectifier";
+import {
+  rectifyAnthropicThinkingBudgetOnError,
+  resolveAnthropicThinkingModelMaxOutputTokens,
+  shouldRectifyAnthropicThinkingBudgetError,
+} from "../adapters/anthropic/thinking-rectifier";
 import type { EpxConfig, EpxProviderConfig, EpxUsage } from "../types";
 import { resolveWireProtocolOverride } from "./adapter-resolve";
 import {
@@ -246,14 +252,20 @@ export function createNativeMessagesComboSource(input: Omit<HandleNativeMessages
     inbound: "messages",
     envelope: input.envelope,
     selector: input.selector,
-    dispatchNativeChild: child => runNativeMessagesAttempt({
-      ...input, logIds: undefined, logCtx: child.childLog, route: child.route,
-      body: nativeAnthropicProjection(child.body, input.translatorBudget),
-      selector: { ...input.selector, routeSelector: String(child.body.model ?? "") },
-      finishLog: child.finishLog, sendBudget: child.sendBudget,
-      comboDispatchPermit: child.comboDispatchPermit, turnAdmissionLease: child.turnAdmissionLease,
-      onFirstOutput: child.onFirstOutput,
-    }, child.attemptHandle),
+    dispatchNativeChild: child => {
+      let body = nativeAnthropicProjection(child.body, input.translatorBudget);
+      if (input.config.promptCacheInjection?.enabled === true) {
+        body = applyPromptCacheBreakpointsOnly(body, input.config, child.route.modelId).body as Rec;
+      }
+      return runNativeMessagesAttempt({
+        ...input, logIds: undefined, logCtx: child.childLog, route: child.route,
+        body,
+        selector: { ...input.selector, routeSelector: String(child.body.model ?? "") },
+        finishLog: child.finishLog, sendBudget: child.sendBudget,
+        comboDispatchPermit: child.comboDispatchPermit, turnAdmissionLease: child.turnAdmissionLease,
+        onFirstOutput: child.onFirstOutput,
+      }, child.attemptHandle);
+    },
   };
 }
 
@@ -698,7 +710,10 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
   const rejectUnrepresentable = resolveProtocolSettings(config).unrepresentable === "reject";
   const buildActiveRequest = () => {
     // Exact combo replay preserves TTL-less breakpoints; an explicit operator TTL still wins.
-    const wireConfig = options.sendBudget && config.cacheRetention === undefined ? { ...config, cacheRetention: "short" as const } : config;
+    const explicitRetention = effectiveAnthropicCacheRetention(config, route.modelId);
+    const wireConfig = options.sendBudget && explicitRetention === undefined
+      ? { ...config, cacheRetention: "short" as const }
+      : config;
     const built = buildAnthropicMessagesPassthroughRequest(activeProvider, route.modelId, activeBody, wireConfig, {
       callerAnthropicBeta: options.callerAnthropicBeta,
       callerAnthropicUsageLimit: options.callerAnthropicUsageLimit,
@@ -1099,7 +1114,10 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
         if (upstream.signal.aborted) throw upstream.signal.reason;
       }
       if (thinkingRetrySendAvailable() && shouldRectifyAnthropicThinkingBudgetError(errorPreview.slice(0, 8192))) {
-        const rectified = rectifyAnthropicThinkingBudgetOnError(activeBody);
+        const rectified = rectifyAnthropicThinkingBudgetOnError(activeBody, {
+          modelId: route.modelId,
+          modelMaxOutputTokens: resolveAnthropicThinkingModelMaxOutputTokens(route.modelId, activeProvider),
+        });
         if (rectified.applied) {
           activeBody = rectified.body;
           discard(response);

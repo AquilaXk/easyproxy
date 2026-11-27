@@ -43,8 +43,8 @@ const RULE_SLACK     = 1 << 7;
 
 // High-confidence token prefixes with strictly non-backtracking character classes.
 const SECRET_RULES: readonly SecretRule[] = [
-  { kind: "openai_key", mask: RULE_OPENAI, pattern: /\bsk-(?:proj|live)-[A-Za-z0-9_-]{20,}/g },
-  { kind: "anthropic_key", mask: RULE_ANTHROPIC, pattern: /\bsk-ant-api03-[A-Za-z0-9_-]{20,}/g },
+  { kind: "openai_key", mask: RULE_OPENAI, pattern: /\bsk-(?:proj|live|svcacct)-[A-Za-z0-9_-]{20,}/g },
+  { kind: "anthropic_key", mask: RULE_ANTHROPIC, pattern: /\bsk-ant-(?:api03|oat\d*|ort\d*|admin\d*)-[A-Za-z0-9_-]{20,}/g },
   { kind: "github_token", mask: RULE_GITHUB, pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
   { kind: "aws_access_key", mask: RULE_AWS, pattern: /\bAKIA[0-9A-Z]{16}\b/g },
   { kind: "google_api_key", mask: RULE_GOOGLE, pattern: /\bAIza[0-9A-Za-z_-]{35}\b/g },
@@ -53,6 +53,102 @@ const SECRET_RULES: readonly SecretRule[] = [
 ];
 
 const PEM_BEGIN_RE = /-----BEGIN [A-Z0-9 ]{0,24}PRIVATE KEY-----/;
+const BINARY_MEDIA_DATA_URL_RE = /^data:(?:(?:image|audio|video)\/[a-z0-9!#$&^_.+-]{1,64}|application\/(?:pdf|octet-stream))(?:;[^,\r\n]{0,128})?;base64,/i;
+const BINARY_MEDIA_MIME_RE = /^(?:image\/|audio\/|video\/|application\/pdf(?:;|$)|application\/octet-stream(?:;|$))/i;
+const TEXT_FILE_EXT_RE = /\.(?:txt|md|markdown|csv|tsv|json|ya?ml|xml|html?|log|env|ini|conf|cfg|toml|sh|bash|zsh|py|ts|tsx|js|jsx|mjs|cjs|rb|go|rs|java|c|cpp|h|hpp|sql)$/i;
+const TEXT_FORMAT_RE = /^(?:txt|text|json|csv|xml|html?|md|yaml|yml)$/i;
+const MIN_EXEMPT_BINARY_MEDIA_CHARS = 256;
+
+// Strict standard Base64 character classes (`A-Z`, `a-z`, `0-9`, `+`, `/`, trailing `=`, CR/LF wrap).
+// Excludes '-', '_', ' ', and ':' so plaintext secrets or PEM headers cannot spoof binary media.
+const BASE64_PAYLOAD_CHAR_TABLE = (() => {
+  const table = new Uint8Array(128);
+  for (let c = 0x41; c <= 0x5a; c += 1) table[c] = 1;
+  for (let c = 0x61; c <= 0x7a; c += 1) table[c] = 1;
+  for (let c = 0x30; c <= 0x39; c += 1) table[c] = 1;
+  table[0x2b] = 1;
+  table[0x2f] = 1;
+  table[0x3d] = 2;
+  table[0x0a] = 3;
+  table[0x0d] = 3;
+  return table;
+})();
+
+function isValidStrictBase64Payload(value: string, start: number): boolean {
+  const len = value.length;
+  if (len - start < MIN_EXEMPT_BINARY_MEDIA_CHARS) return false;
+  let nonWsCount = 0;
+  let padCount = 0;
+  for (let i = start; i < len; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 128) return false;
+    const cls = BASE64_PAYLOAD_CHAR_TABLE[code]!;
+    if (cls === 0) return false;
+    if (cls === 3) continue;
+    if (cls === 2) {
+      padCount += 1;
+      if (padCount > 2) return false;
+    } else if (padCount > 0) {
+      return false;
+    }
+    nonWsCount += 1;
+  }
+  return nonWsCount >= MIN_EXEMPT_BINARY_MEDIA_CHARS;
+}
+
+function isAllowedBinaryMimeOrOmitted(rawMime: unknown): boolean {
+  if (rawMime === undefined) return true;
+  return typeof rawMime === "string" && BINARY_MEDIA_MIME_RE.test(rawMime.trim());
+}
+
+function isVerifiedBinaryBase64Media(
+  frame: GuardFrame,
+  record: Record<string, unknown> | undefined,
+  key: string | undefined,
+  value: string,
+): boolean {
+  if (value.length < MIN_EXEMPT_BINARY_MEDIA_CHARS) return false;
+
+  if (
+    value.length >= 5
+    && (value.charCodeAt(0) === 0x64 || value.charCodeAt(0) === 0x44)
+    && value.slice(0, 5).toLowerCase() === "data:"
+  ) {
+    const match = BINARY_MEDIA_DATA_URL_RE.exec(value);
+    if (!match) return false;
+    const header = value.slice(0, match[0].length);
+    const headerMask = measureAndCheckSecretCandidate(header).ruleMask;
+    if (headerMask !== 0 && scanAndTransformString(header, false, new Set(), headerMask).matches > 0) {
+      return false;
+    }
+    return isValidStrictBase64Payload(value, match[0].length);
+  }
+
+  if (!record || !key) return false;
+
+  if (key === "data") {
+    if (frame.parentKey === "source" && record.type === "base64") {
+      return isAllowedBinaryMimeOrOmitted(record.media_type) && isValidStrictBase64Payload(value, 0);
+    }
+    if (frame.parentKey === "inlineData" || frame.parentKey === "inline_data") {
+      return isAllowedBinaryMimeOrOmitted(record.mimeType ?? record.mime_type) && isValidStrictBase64Payload(value, 0);
+    }
+    if (frame.parentKey === "input_audio") {
+      if (record.format !== undefined && (typeof record.format !== "string" || TEXT_FORMAT_RE.test(record.format.trim()))) {
+        return false;
+      }
+      return isValidStrictBase64Payload(value, 0);
+    }
+  }
+
+  if (key === "file_data") {
+    if (!isAllowedBinaryMimeOrOmitted(record.mime_type ?? record.mimeType)) return false;
+    if (typeof record.filename === "string" && TEXT_FILE_EXT_RE.test(record.filename.trim())) return false;
+    return isValidStrictBase64Payload(value, 0);
+  }
+
+  return false;
+}
 
 // Minimum length across all SECRET_RULES and PEM headers is 15 chars (`xox[baprs]-[A-Za-z0-9-]{10,}`).
 const MIN_SECRET_CANDIDATE_CHARS = 14;
@@ -93,6 +189,9 @@ function verifySecretPrefixMask(value: string, len: number, secondIndex: number,
   if ((hint & (RULE_OPENAI | RULE_ANTHROPIC)) !== 0 && c0 === 0x73 && c1 === 0x6b) {
     if (c2 !== 0x2d) return 0;
     if (c3 === 0x70 || c3 === 0x6c) return RULE_OPENAI;
+    if (c3 === 0x73) {
+      return secondIndex + 3 < len && value.charCodeAt(secondIndex + 3) === 0x76 ? RULE_OPENAI : 0;
+    }
     if (c3 === 0x61) return RULE_ANTHROPIC;
     return 0;
   }
@@ -310,6 +409,71 @@ export function inspectAndApplyOutboundSecretGuard(
     return mutator!.root;
   };
 
+  const inspectStringLeaf = (
+    container: unknown[] | Record<string, unknown>,
+    key: number | string,
+    value: string,
+    frame: GuardFrame,
+    frameProtected: boolean,
+    isBinaryMedia: boolean,
+  ): OutboundSecretGuardResult | undefined => {
+    if (!isBinaryMedia && scannedBytes + value.length > MAX_SECRET_SCAN_BYTES) {
+      if (mode === "block") findings.add("scan_budget_exceeded");
+      return {
+        mode,
+        blocked: mode === "block",
+        limitExceeded: true,
+        matches,
+        redactions,
+        findings: [...findings],
+        body: finalizeRedactedBody(true),
+      };
+    }
+    const pre = measureAndCheckSecretCandidate(value);
+    if (!isBinaryMedia) {
+      scannedBytes += pre.utf8Bytes;
+      if (scannedBytes > MAX_SECRET_SCAN_BYTES) {
+        if (mode === "block") findings.add("scan_budget_exceeded");
+        return {
+          mode,
+          blocked: mode === "block",
+          limitExceeded: true,
+          matches,
+          redactions,
+          findings: [...findings],
+          body: finalizeRedactedBody(true),
+        };
+      }
+    }
+    if (pre.ruleMask === 0) return undefined;
+    const result = scanAndTransformString(value, redact, findings, pre.ruleMask);
+    matches += result.matches;
+    redactions += result.redactions;
+    if (redact && result.next !== value) {
+      if (!frameProtected && canWriteProperty(container, key) && mutator!.resolve(container) === container) {
+        if (typeof key === "number") {
+          (container as unknown[])[key] = result.next;
+        } else {
+          writePropertySafe(container as Record<string, unknown>, key, result.next);
+        }
+      } else {
+        mutator!.write(buildCopyOnWritePath(frame, key), result.next);
+      }
+    }
+    if (mode === "block" && matches > 0) {
+      return {
+        mode,
+        blocked: true,
+        limitExceeded: false,
+        matches,
+        redactions: 0,
+        findings: [...findings],
+        body: originalBody,
+      };
+    }
+    return undefined;
+  };
+
   while (stack.length > 0) {
     const frame = stack.pop()!;
     const { container, depth } = frame;
@@ -355,54 +519,15 @@ export function inspectAndApplyOutboundSecretGuard(
         }
         const value = container[i];
         if (typeof value === "string") {
-          if (scannedBytes + value.length > MAX_SECRET_SCAN_BYTES) {
-            if (mode === "block") findings.add("scan_budget_exceeded");
-            return {
-              mode,
-              blocked: mode === "block",
-              limitExceeded: true,
-              matches,
-              redactions,
-              findings: [...findings],
-              body: finalizeRedactedBody(true),
-            };
-          }
-          const pre = measureAndCheckSecretCandidate(value);
-          scannedBytes += pre.utf8Bytes;
-          if (scannedBytes > MAX_SECRET_SCAN_BYTES) {
-            if (mode === "block") findings.add("scan_budget_exceeded");
-            return {
-              mode,
-              blocked: mode === "block",
-              limitExceeded: true,
-              matches,
-              redactions,
-              findings: [...findings],
-              body: finalizeRedactedBody(true),
-            };
-          }
-          if (pre.ruleMask === 0) continue;
-          const result = scanAndTransformString(value, redact, findings, pre.ruleMask);
-          matches += result.matches;
-          redactions += result.redactions;
-          if (redact && result.next !== value) {
-            if (!frameProtected && canWriteProperty(container, i) && mutator!.resolve(container) === container) {
-              container[i] = result.next;
-            } else {
-              mutator!.write(buildCopyOnWritePath(frame, i), result.next);
-            }
-          }
-          if (mode === "block" && matches > 0) {
-            return {
-              mode,
-              blocked: true,
-              limitExceeded: false,
-              matches,
-              redactions: 0,
-              findings: [...findings],
-              body: originalBody,
-            };
-          }
+          const stopped = inspectStringLeaf(
+            container,
+            i,
+            value,
+            frame,
+            frameProtected,
+            isVerifiedBinaryBase64Media(frame, undefined, undefined, value),
+          );
+          if (stopped) return stopped;
         } else if (value && typeof value === "object") {
           stack.push({
             container: value,
@@ -433,54 +558,15 @@ export function inspectAndApplyOutboundSecretGuard(
       }
       const value = record[key];
       if (typeof value === "string") {
-        if (scannedBytes + value.length > MAX_SECRET_SCAN_BYTES) {
-          if (mode === "block") findings.add("scan_budget_exceeded");
-          return {
-            mode,
-            blocked: mode === "block",
-            limitExceeded: true,
-            matches,
-            redactions,
-            findings: [...findings],
-            body: finalizeRedactedBody(true),
-          };
-        }
-        const pre = measureAndCheckSecretCandidate(value);
-        scannedBytes += pre.utf8Bytes;
-        if (scannedBytes > MAX_SECRET_SCAN_BYTES) {
-          if (mode === "block") findings.add("scan_budget_exceeded");
-          return {
-            mode,
-            blocked: mode === "block",
-            limitExceeded: true,
-            matches,
-            redactions,
-            findings: [...findings],
-            body: finalizeRedactedBody(true),
-          };
-        }
-        if (pre.ruleMask === 0) continue;
-        const result = scanAndTransformString(value, redact, findings, pre.ruleMask);
-        matches += result.matches;
-        redactions += result.redactions;
-        if (redact && result.next !== value) {
-          if (!frameProtected && canWriteProperty(record, key) && mutator!.resolve(record) === record) {
-            writePropertySafe(record, key, result.next);
-          } else {
-            mutator!.write(buildCopyOnWritePath(frame, key), result.next);
-          }
-        }
-        if (mode === "block" && matches > 0) {
-          return {
-            mode,
-            blocked: true,
-            limitExceeded: false,
-            matches,
-            redactions: 0,
-            findings: [...findings],
-            body: originalBody,
-          };
-        }
+        const stopped = inspectStringLeaf(
+          record,
+          key,
+          value,
+          frame,
+          frameProtected,
+          isVerifiedBinaryBase64Media(frame, record, key, value),
+        );
+        if (stopped) return stopped;
       } else if (value && typeof value === "object") {
         stack.push({
           container: value,

@@ -995,9 +995,12 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
     let anthropicReplay: AnthropicReplaySnapshot | undefined;
     let releaseCapture = () => {};
     try {
-      const parse: ProviderAdapter["parseStream"] = (response, budget) => {
+      const parse: ProviderAdapter["parseStream"] = (response, budget, tierMetadata, streamContext) => {
         if (prepared.responseAdapter.name === "anthropic") releaseCapture = enableAnthropicReplayCapture(response);
-        return prepared.responseAdapter.parseStream(response, budget);
+        return prepared.responseAdapter.parseStream(response, budget, tierMetadata, {
+          ...streamContext,
+          routedCompaction: false,
+        });
       };
       for await (const event of parseStreamWithProgress(prepared.response, parse, {
         signal,

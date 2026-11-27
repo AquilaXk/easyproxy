@@ -907,11 +907,20 @@ export async function runWithImageBridge(deps: ImageBridgeDeps): Promise<Respons
             return;
           }
           try {
-            yield* parseStreamWithProgress(current.response, current.responseAdapter.parseStream.bind(current.responseAdapter), {
-              signal, inactivityTimeoutMs: stallTimeoutMs, translatorBudget,
-              preserveAdapterError: deps.thinkingRecovery !== undefined,
-              onErrorUsage: takeUsage,
-            });
+            yield* parseStreamWithProgress(
+              current.response,
+              (response, budget, tierMetadata, streamContext) => current.responseAdapter.parseStream(
+                response,
+                budget,
+                tierMetadata,
+                { ...streamContext, routedCompaction: false },
+              ),
+              {
+                signal, inactivityTimeoutMs: stallTimeoutMs, translatorBudget,
+                preserveAdapterError: deps.thinkingRecovery !== undefined,
+                onErrorUsage: takeUsage,
+              },
+            );
           } catch (error) {
             if (!(error instanceof WebSearchAdapterEventError)) throw error;
             if (!error.replaySafe) yield { type: "heartbeat", replayUnsafe: true };

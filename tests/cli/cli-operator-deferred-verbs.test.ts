@@ -437,6 +437,32 @@ describe("epx guardrails CLI", () => {
       expect(dryFileResult.savedChars).toBeGreaterThan(0);
       expect(dryFileResult.previewText).not.toContain("\x1b[");
 
+      // Dry-run human-readable text formats Context inspection + Cache breakeven lines for Anthropic JSON payloads
+      consoleCap.out.length = 0;
+      const anthropicSample = JSON.stringify({
+        model: "claude-sonnet-4-6",
+        stream: false,
+        max_tokens: 128,
+        system: [{ type: "text", text: "S".repeat(8_000), cache_control: { type: "ephemeral", ttl: "1h" } }],
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(
+        await handleGuardrailsCommand(
+          ["dry-run", "--text", anthropicSample],
+          deps,
+        ),
+      ).toBe(0);
+      const dryTextHuman = consoleCap.out.join("\n");
+      expect(dryTextHuman).toContain("Context inspection: wireFormat=anthropic-messages");
+      expect(dryTextHuman).toContain("cacheablePrefixTokens=");
+      expect(dryTextHuman).toContain("Cache breakeven: ttl=");
+      expect(dryTextHuman).toContain("economicsAvailable=true");
+      expect(dryTextHuman).toContain("breakevenHits=");
+      expect(dryTextHuman).toContain("writePremiumUsd=");
+      expect(dryTextHuman).toContain("perHitSavingsUsd=");
+      expect(dryTextHuman).toContain("activeSavingsUsd=");
+      expect(dryTextHuman).toContain("worthwhileActive=");
+
       // Dry-run leaves persisted/live guardrails and hygieneStats untouched
       expect(env.config.outboundSecretGuard?.mode).toBe("redact");
       expect(env.config.toolOutputCompression?.stripAnsi).toBe(false);

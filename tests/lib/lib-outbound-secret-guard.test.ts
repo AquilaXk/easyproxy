@@ -640,4 +640,209 @@ describe("outbound-secret-guard", () => {
     expect(rootArr[0]).toBe(k1);
     expect(rootArr[1]).toBe(k2);
   });
+
+  test("redacts and blocks Claude OAuth, Anthropic Admin, and OpenAI service-account keys", () => {
+    const claudeOat = ["sk", "ant", "oat01", "abcdefghijklmnopqrstuvwxyz0123456789"].join("-");
+    const claudeOrt = ["sk", "ant", "ort01", "abcdefghijklmnopqrstuvwxyz0123456789"].join("-");
+    const anthropicAdmin = ["sk", "ant", "admin01", "abcdefghijklmnopqrstuvwxyz0123456789"].join("-");
+    const openaiSvcAcct = ["sk", "svcacct", "abcdefghijklmnopqrstuvwxyz0123456789"].join("-");
+
+    for (const [token, expectedKind] of [
+      [claudeOat, "anthropic_key"],
+      [claudeOrt, "anthropic_key"],
+      [anthropicAdmin, "anthropic_key"],
+      [openaiSvcAcct, "openai_key"],
+    ] as const) {
+      const blocked = inspectAndApplyOutboundSecretGuard({ input: `key=${token}` }, { mode: "block" });
+      expect(blocked.blocked).toBe(true);
+      expect(blocked.findings).toContain(expectedKind);
+
+      const payload = { input: `key=${token}` };
+      const redacted = inspectAndApplyOutboundSecretGuard(payload, { mode: "redact" });
+      expect(redacted.blocked).toBe(false);
+      expect(redacted.redactions).toBe(1);
+      expect(payload.input).toBe(`key=[REDACTED:${expectedKind}]`);
+    }
+  });
+
+  test("exempts verified >8 MiB binary Base64 media from MAX_SECRET_SCAN_BYTES while still scanning text/secrets and blocking spoofed media", () => {
+    const bigB64 = "AAAA".repeat(Math.ceil((MAX_SECRET_SCAN_BYTES + 4096) / 4));
+    const secret = fakeOpenAiKey();
+
+    // 1. Oversized data:image URL before user text secret: does NOT trip scan_budget_exceeded and still redacts/blocks real text secret.
+    const dataUrlPayload = {
+      input: [
+        { type: "input_image", image_url: `data:image/png;base64,${bigB64}` },
+        { type: "input_text", text: `leak ${secret}` },
+      ],
+    };
+    const redactDataUrl = inspectAndApplyOutboundSecretGuard(structuredClone(dataUrlPayload), { mode: "redact" });
+    expect(redactDataUrl.blocked).toBe(false);
+    expect(redactDataUrl.limitExceeded).toBe(false);
+    expect(redactDataUrl.redactions).toBe(1);
+    expect(((redactDataUrl.body as typeof dataUrlPayload).input[1] as { text: string }).text).toBe("leak [REDACTED:openai_key]");
+
+    const blockDataUrl = inspectAndApplyOutboundSecretGuard(dataUrlPayload, { mode: "block" });
+    expect(blockDataUrl.blocked).toBe(true);
+    expect(blockDataUrl.limitExceeded).toBe(false);
+    expect(blockDataUrl.findings).toEqual(["openai_key"]);
+
+    // 2. Clean Anthropic source.base64, Gemini inlineData, Responses file_data, input_audio.data >8 MiB pass without scan_budget_exceeded.
+    const multimodalSafe = {
+      messages: [
+        { role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: bigB64 } }] },
+      ],
+      contents: [
+        { role: "user", parts: [{ inlineData: { mimeType: "image/webp", data: bigB64 } }] },
+      ],
+      input: [
+        { role: "user", content: [{ type: "input_file", filename: "spec.pdf", file_data: bigB64 }] },
+        { role: "user", content: [{ type: "input_audio", input_audio: { format: "wav", data: bigB64 } }] },
+      ],
+    };
+    const safeBlockRes = inspectAndApplyOutboundSecretGuard(multimodalSafe, { mode: "block" });
+    expect(safeBlockRes.blocked).toBe(false);
+    expect(safeBlockRes.limitExceeded).toBe(false);
+
+    // 3. Adversarial bypass checks: data:text/plain;base64, media_type text/plain, or raw secrets hidden inside media fields fail closed / get caught.
+    const textDataUrl = inspectAndApplyOutboundSecretGuard(
+      { input: [{ type: "input_file", file_data: `data:text/plain;base64,${bigB64}` }] },
+      { mode: "block" },
+    );
+    expect(textDataUrl.blocked).toBe(true);
+    expect(textDataUrl.limitExceeded).toBe(true);
+    expect(textDataUrl.findings).toContain("scan_budget_exceeded");
+
+    const textSource = inspectAndApplyOutboundSecretGuard(
+      { messages: [{ role: "user", content: [{ type: "document", source: { type: "base64", media_type: "text/plain", data: bigB64 } }] }] },
+      { mode: "block" },
+    );
+    expect(textSource.blocked).toBe(true);
+    expect(textSource.limitExceeded).toBe(true);
+
+    const secretInsideSpoofedImage = inspectAndApplyOutboundSecretGuard(
+      { contents: [{ role: "user", parts: [{ inlineData: { mimeType: "image/png", data: `${bigB64.slice(0, 512)}-${secret}` } }] }] },
+      { mode: "redact" },
+    );
+    expect(secretInsideSpoofedImage.redactions).toBe(1);
+    expect(JSON.stringify(secretInsideSpoofedImage.body)).toContain("[REDACTED:openai_key]");
+
+    // 4. Secret or oversized padding smuggled inside binary data: URL header parameters is caught/blocked.
+    const anthSecret = fakeAnthropicKey();
+    const headerSecretBlock = inspectAndApplyOutboundSecretGuard(
+      { input: [{ type: "input_image", image_url: `data:image/png;name=${anthSecret};base64,${"A".repeat(256)}` }] },
+      { mode: "block" },
+    );
+    expect(headerSecretBlock.blocked).toBe(true);
+    expect(headerSecretBlock.findings).toContain("anthropic_key");
+
+    const headerSecretRedact = inspectAndApplyOutboundSecretGuard(
+      { input: [{ type: "input_image", image_url: `data:image/png;name=${anthSecret};base64,${"A".repeat(256)}` }] },
+      { mode: "redact" },
+    );
+    expect(headerSecretRedact.blocked).toBe(false);
+    expect(headerSecretRedact.redactions).toBe(1);
+    expect(JSON.stringify(headerSecretRedact.body)).toContain("[REDACTED:anthropic_key]");
+    expect(JSON.stringify(headerSecretRedact.body)).not.toContain(anthSecret);
+
+    const headerPaddingBlock = inspectAndApplyOutboundSecretGuard(
+      { input: [{ type: "input_image", image_url: `data:image/png;pad=${"x".repeat(MAX_SECRET_SCAN_BYTES + 1024)};base64,${"A".repeat(256)}` }] },
+      { mode: "block" },
+    );
+    expect(headerPaddingBlock.blocked).toBe(true);
+    expect(headerPaddingBlock.limitExceeded).toBe(true);
+    expect(headerPaddingBlock.findings).toContain("scan_budget_exceeded");
+
+    const spoofedMimeBlock = inspectAndApplyOutboundSecretGuard(
+      { input: [{ type: "input_image", image_url: `data:image-notbinary/plain;base64,${bigB64}` }] },
+      { mode: "block" },
+    );
+    expect(spoofedMimeBlock.blocked).toBe(true);
+    expect(spoofedMimeBlock.limitExceeded).toBe(true);
+  });
+
+  test("catches pure-alphanumeric AWS and Google keys hidden in verified binary Base64 media while still exempting >8 MiB clean media from scan byte budget", () => {
+    const awsKey = fakeAwsKey();
+    const googleAlnumKey = "AIza" + "SyDaGmWKa4JsXZ0HjGw7ISLn13namBG6623";
+    const openAiKey = fakeOpenAiKey();
+    const pad = "A".repeat(256);
+
+    // 1. data:image/png;base64,... with AWS AKIA... & Google AIza... (pure alnum, no '-'/'_') in object & array containers
+    const mediaWithAws = `data:image/png;base64,${pad}+${awsKey}+${pad}`;
+    const mediaWithGoogle = `data:image/png;base64,${pad}/${googleAlnumKey}/${pad}`;
+
+    for (const [label, payload, expectedFinding] of [
+      ["object image_url AWS", { input: [{ type: "input_image", image_url: mediaWithAws }] }, "aws_access_key"],
+      ["array data URL Google", { urls: [mediaWithGoogle] }, "google_api_key"],
+      ["file_data AWS", { input: [{ type: "input_file", filename: "scan.png", mime_type: "image/png", file_data: `${pad}+${awsKey}+${pad}` }] }, "aws_access_key"],
+      ["file_data Google", { input: [{ type: "input_file", filename: "scan.pdf", mime_type: "application/pdf", file_data: `${pad}/${googleAlnumKey}/${pad}` }] }, "google_api_key"],
+    ] as const) {
+      const blockedRes = inspectAndApplyOutboundSecretGuard(payload, { mode: "block" });
+      expect(blockedRes.blocked, label).toBe(true);
+      expect(blockedRes.limitExceeded, label).toBe(false);
+      expect(blockedRes.findings, label).toContain(expectedFinding);
+
+      const cloneInput = structuredClone(payload);
+      const redactedRes = inspectAndApplyOutboundSecretGuard(cloneInput, { mode: "redact" });
+      expect(redactedRes.blocked, label).toBe(false);
+      expect(redactedRes.redactions, label).toBe(1);
+      expect(redactedRes.findings, label).toContain(expectedFinding);
+      const serialized = JSON.stringify(redactedRes.body);
+      expect(serialized, label).toContain(`[REDACTED:${expectedFinding}]`);
+      expect(serialized, label).not.toContain(expectedFinding === "aws_access_key" ? awsKey : googleAlnumKey);
+    }
+
+    // 2. Clean >8 MiB binary Base64 image does NOT exhaust MAX_SECRET_SCAN_BYTES, so sibling text secrets are still redacted/blocked
+    const overBudgetCleanImage = `data:image/png;base64,${"B".repeat(MAX_SECRET_SCAN_BYTES + 65_536)}`;
+    const mixedRedact = inspectAndApplyOutboundSecretGuard(
+      {
+        input: [
+          { type: "input_image", image_url: overBudgetCleanImage },
+          { type: "input_text", text: `token=${openAiKey}` },
+        ],
+      },
+      { mode: "redact" },
+    );
+    expect(mixedRedact.limitExceeded).toBe(false);
+    expect(mixedRedact.redactions).toBe(1);
+    expect(mixedRedact.findings).toEqual(["openai_key"]);
+    const mixedRedactJson = JSON.stringify(mixedRedact.body);
+    expect(mixedRedactJson).not.toContain(openAiKey);
+    expect(mixedRedactJson).toContain("[REDACTED:openai_key]");
+
+    const mixedBlock = inspectAndApplyOutboundSecretGuard(
+      {
+        input: [
+          { type: "input_image", image_url: overBudgetCleanImage },
+          { type: "input_text", text: `token=${openAiKey}` },
+        ],
+      },
+      { mode: "block" },
+    );
+    expect(mixedBlock.blocked).toBe(true);
+    expect(mixedBlock.limitExceeded).toBe(false);
+    expect(mixedBlock.findings).toEqual(["openai_key"]);
+
+    // 3. >8 MiB verified binary Base64 image containing an embedded AWS key is still blocked and redacted without limitExceeded
+    const overBudgetTaintedImage = `data:image/png;base64,${"B".repeat(MAX_SECRET_SCAN_BYTES + 1024)}+${awsKey}+${pad}`;
+    const largeSecretBlock = inspectAndApplyOutboundSecretGuard(
+      { input: [{ type: "input_image", image_url: overBudgetTaintedImage }] },
+      { mode: "block" },
+    );
+    expect(largeSecretBlock.blocked).toBe(true);
+    expect(largeSecretBlock.limitExceeded).toBe(false);
+    expect(largeSecretBlock.findings).toEqual(["aws_access_key"]);
+
+    const largeSecretRedact = inspectAndApplyOutboundSecretGuard(
+      { input: [{ type: "input_image", image_url: overBudgetTaintedImage }] },
+      { mode: "redact" },
+    );
+    expect(largeSecretRedact.blocked).toBe(false);
+    expect(largeSecretRedact.limitExceeded).toBe(false);
+    expect(largeSecretRedact.redactions).toBe(1);
+    expect(largeSecretRedact.findings).toEqual(["aws_access_key"]);
+    const largeSecretRedactedUrl = ((largeSecretRedact.body as { input: Array<{ image_url: string }> }).input[0]!).image_url;
+    expect(largeSecretRedactedUrl).toContain("[REDACTED:aws_access_key]");
+    expect(largeSecretRedactedUrl).not.toContain(awsKey);
+  });
 });

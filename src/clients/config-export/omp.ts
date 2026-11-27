@@ -41,7 +41,7 @@ export interface OmpProviderBlock {
   api: typeof PI_API_DIALECT;
   apiKey: string;
   headers?: Record<string, string>;
-  compat?: OmpProviderCompat;
+  compat: OmpProviderCompat;
   models: OmpModelEntry[];
 }
 
@@ -112,7 +112,8 @@ export function buildOmpClientConfig(ctx: ExportContext): OmpGeneratedConfig {
         baseUrl: ctx.baseUrl,
         api: PI_API_DIALECT,
         apiKey: LOOPBACK_API_KEY_PLACEHOLDER,
-        ...(headers ? { headers, compat: { supportsDeveloperRole: false } } : {}),
+        ...(headers ? { headers } : {}),
+        compat: { supportsDeveloperRole: false },
         models,
       },
     },

@@ -6,11 +6,25 @@ import {
   promptCacheInjectionSchema,
   toolOutputCompressionSchema,
 } from "../../config/schema/leaf-validators";
-import { inspectPromptContextJson, type ContextInspectionReport, type PromptCacheBreakevenRates } from "../../lib/context-inspector";
+import {
+  applyAnthropicNativeCacheTtlDefault,
+  collectAnthropicCacheTtls,
+  effectiveAnthropicCacheRetention,
+  resolveAnthropicCacheRetention,
+} from "../../adapters/anthropic/cache-retention";
+import {
+  inspectPromptContextJson,
+  inspectPromptContextPayload,
+  promptCacheRateLookupCandidates,
+  type ContextInspectionReport,
+  type PromptCacheBreakevenRates,
+} from "../../lib/context-inspector";
+import { routeModel } from "../../router";
 import { resolveMatchedPrice } from "../../usage/cost";
 import { inspectAndApplyOutboundSecretGuard } from "../../lib/outbound-secret-guard";
 import { injectPromptCacheBreakpointsInPlace } from "../../lib/prompt-cache-injection";
 import { compressResponsesToolOutputsInPlace } from "../../lib/tool-output-compression";
+import type { EpxConfig, EpxProviderConfig } from "../../types";
 import { getOutboundHygieneStats } from "../outbound-payload-hygiene";
 import { readBoundedJsonRequestBody } from "../request-decompress";
 import { managementBodyTooLargeResponse, readManagementJsonBody } from "./body";
@@ -30,21 +44,40 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function resolveDryRunAnthropicProvider(
+  config: EpxConfig,
+  model: string | null,
+): Pick<EpxProviderConfig, "baseUrl" | "authMode"> {
+  if (model) {
+    try {
+      const routed = routeModel(config, model);
+      if (routed.provider.adapter === "anthropic") {
+        return routed.provider;
+      }
+    } catch {
+      // Unmatched dry-run sample model falls back to first-party Anthropic defaults.
+    }
+  }
+  return { baseUrl: "https://api.anthropic.com", authMode: "key" };
+}
+
 function resolveDryRunBreakevenRates(model: string | null): PromptCacheBreakevenRates | undefined {
   if (!model) return undefined;
   const slash = model.indexOf("/");
   const candidates = slash > 0
     ? [[model.slice(0, slash), model.slice(slash + 1)]] as const
     : [["anthropic", model], ["openai", model], ["google", model]] as const;
-  for (const [provider, modelId] of candidates) {
-    const matched = resolveMatchedPrice(provider, modelId);
-    if (matched) {
-      return {
-        inputPerMTok: matched.cost4.input,
-        outputPerMTok: matched.cost4.output,
-        cacheReadPerMTok: matched.cost4.cacheRead,
-        cacheWritePerMTok: matched.cost4.cacheWrite,
-      };
+  for (const [provider, rawModelId] of candidates) {
+    for (const modelId of promptCacheRateLookupCandidates(rawModelId)) {
+      const matched = resolveMatchedPrice(provider, modelId);
+      if (matched) {
+        return {
+          inputPerMTok: matched.cost4.input,
+          outputPerMTok: matched.cost4.output,
+          cacheReadPerMTok: matched.cost4.cacheRead,
+          cacheWritePerMTok: matched.cost4.cacheWrite,
+        };
+      }
     }
   }
   return undefined;
@@ -191,11 +224,40 @@ async function dryRunGuardrails(ctx: ManagementContext): Promise<Response> {
           const compCtx = compressResponsesToolOutputsInPlace(guardedCtxPayload, previewCompression);
           const compressedCtxPayload = compCtx.body ?? guardedCtxPayload;
           const cacheRes = injectPromptCacheBreakpointsInPlace(compressedCtxPayload, previewCacheInjection);
-          const finalCtxPayload = cacheRes.body ?? compressedCtxPayload;
+          const injectedCtxPayload = (cacheRes.body ?? compressedCtxPayload) as Record<string, unknown>;
+          let finalCtxPayload: Record<string, unknown> = injectedCtxPayload;
+          let dryRunWriteTtl: "5m" | "1h" | undefined;
+          if (preInspect.cache.wireFormat === "anthropic-messages") {
+            const previewConfig: EpxConfig = {
+              ...config,
+              ...(previewCacheInjection !== undefined ? { promptCacheInjection: previewCacheInjection } : {}),
+            };
+            const resolvedRetention = resolveAnthropicCacheRetention(
+              effectiveAnthropicCacheRetention(previewConfig, preInspect.model),
+              resolveDryRunAnthropicProvider(config, preInspect.model),
+            );
+            finalCtxPayload = applyAnthropicNativeCacheTtlDefault(injectedCtxPayload, resolvedRetention);
+            const finalTtls = collectAnthropicCacheTtls(finalCtxPayload);
+            if (finalTtls.includes("1h")) {
+              dryRunWriteTtl = "1h";
+            } else if (finalTtls.some(ttl => ttl === "5m")) {
+              dryRunWriteTtl = "5m";
+            } else if (finalTtls.length > 0 && resolvedRetention === "short") {
+              dryRunWriteTtl = "5m";
+            }
+          }
           injectedCacheBreakpoints = cacheRes.injectedBreakpoints;
           normalizedTimestamps = cacheRes.normalizedTimestamps;
           const dryRunRates = resolveDryRunBreakevenRates(preInspect.model);
-          const postInspect = inspectPromptContextJson(JSON.stringify(finalCtxPayload), dryRunRates ? { rates: dryRunRates } : undefined);
+          const postInspect = inspectPromptContextPayload(
+            finalCtxPayload,
+            dryRunRates || dryRunWriteTtl
+              ? {
+                  ...(dryRunRates ? { rates: dryRunRates } : {}),
+                  ...(dryRunWriteTtl ? { writeTtl: dryRunWriteTtl } : {}),
+                }
+              : undefined,
+          );
           if (postInspect.ok) contextInspection = postInspect;
         }
       } catch {

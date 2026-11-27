@@ -12,6 +12,7 @@ export interface OutboundPayloadHygieneOutcome {
   redactions: number;
   compressedItems: number;
   injectedCacheBreakpoints?: number;
+  normalizedSystemTimestamps?: number;
   body: unknown;
 }
 
@@ -74,6 +75,11 @@ export interface OutboundPayloadHygieneEvaluation {
   body: unknown;
 }
 
+export interface OutboundPayloadHygieneOptions {
+  skipCacheBreakpoints?: boolean;
+  skipScannedCounter?: boolean;
+}
+
 /**
  * Evaluates and applies configured outbound secret guarding, tool-output compression,
  * and prompt-cache injection to `body` without mutating process hygiene counters.
@@ -81,6 +87,7 @@ export interface OutboundPayloadHygieneEvaluation {
 export function evaluateOutboundPayloadHygiene(
   body: unknown,
   config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
+  options?: OutboundPayloadHygieneOptions,
 ): OutboundPayloadHygieneEvaluation {
   const secretGuard = inspectAndApplyOutboundSecretGuard(body, config.outboundSecretGuard);
   const afterSecretBody = secretGuard.body !== undefined ? secretGuard.body : body;
@@ -94,7 +101,10 @@ export function evaluateOutboundPayloadHygiene(
   }
   const compression = compressResponsesToolOutputsInPlace(afterSecretBody, config.toolOutputCompression);
   const afterCompressionBody = compression.body !== undefined ? compression.body : afterSecretBody;
-  const cachePass = injectPromptCacheBreakpointsInPlace(afterCompressionBody, config.promptCacheInjection);
+  const cacheConfig = options?.skipCacheBreakpoints && config.promptCacheInjection
+    ? { ...config.promptCacheInjection, enabled: false }
+    : config.promptCacheInjection;
+  const cachePass = injectPromptCacheBreakpointsInPlace(afterCompressionBody, cacheConfig);
   const finalBody = cachePass.body !== undefined ? cachePass.body : afterCompressionBody;
   return { secretGuard, compression, cachePass, body: finalBody };
 }
@@ -107,8 +117,11 @@ export function commitOutboundPayloadHygiene(
   evaluation: OutboundPayloadHygieneEvaluation,
   config: Pick<EpxConfig, "outboundSecretGuard">,
   logCtx?: RequestLogContext,
+  options?: OutboundPayloadHygieneOptions,
 ): OutboundPayloadHygieneOutcome {
-  if ((config.outboundSecretGuard?.mode ?? "off") !== "off") hygieneStats.scannedRequests += 1;
+  if ((config.outboundSecretGuard?.mode ?? "off") !== "off" && options?.skipScannedCounter !== true) {
+    hygieneStats.scannedRequests += 1;
+  }
   const { secretGuard, compression, cachePass } = evaluation;
   if (secretGuard.matches > 0) hygieneStats.secretDetections += secretGuard.matches;
   if (secretGuard.blocked) {
@@ -117,7 +130,14 @@ export function commitOutboundPayloadHygiene(
       markLocalRequestLogRefusal(logCtx, "outbound_secret_guard");
       logCtx.errorCode = "outbound_secret_guard";
     }
-    return { blocked: true, redactions: 0, compressedItems: 0, injectedCacheBreakpoints: 0, body: evaluation.body };
+    return {
+      blocked: true,
+      redactions: 0,
+      compressedItems: 0,
+      injectedCacheBreakpoints: 0,
+      normalizedSystemTimestamps: 0,
+      body: evaluation.body,
+    };
   }
   if (compression.compressedItems > 0) hygieneStats.compressedToolOutputs += compression.compressedItems;
   if ((compression.compactedJsonItems ?? 0) > 0) hygieneStats.compactedJsonOutputs += compression.compactedJsonItems!;
@@ -134,6 +154,7 @@ export function commitOutboundPayloadHygiene(
     redactions: secretGuard.redactions,
     compressedItems: compression.compressedItems,
     injectedCacheBreakpoints: cachePass.injectedBreakpoints,
+    normalizedSystemTimestamps: cachePass.normalizedTimestamps,
     body: evaluation.body,
   };
 }
@@ -147,12 +168,59 @@ export function applyOutboundPayloadHygiene(
   body: unknown,
   config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
   logCtx?: RequestLogContext,
+  options?: OutboundPayloadHygieneOptions,
 ): OutboundPayloadHygieneOutcome {
   return commitOutboundPayloadHygiene(
-    evaluateOutboundPayloadHygiene(body, config),
+    evaluateOutboundPayloadHygiene(body, config, options),
     config,
     logCtx,
+    options,
   );
+}
+
+/**
+ * Injects Anthropic prompt-cache breakpoints on native Anthropic wire bodies only,
+ * updating breakpoint telemetry without re-running secret guard or incrementing scannedRequests.
+ */
+export function applyPromptCacheBreakpointsOnly(
+  body: unknown,
+  config: Pick<EpxConfig, "promptCacheInjection">,
+  targetModelId?: string,
+): { injectedBreakpoints: number; body: unknown } {
+  if (config.promptCacheInjection?.enabled !== true) {
+    return { injectedBreakpoints: 0, body };
+  }
+  const hasModelOverride = typeof targetModelId === "string"
+    && targetModelId.length > 0
+    && body !== null
+    && typeof body === "object"
+    && !Array.isArray(body);
+  const originalModel = hasModelOverride ? (body as Record<string, unknown>).model : undefined;
+  const inputBody = hasModelOverride && originalModel !== targetModelId
+    ? { ...(body as Record<string, unknown>), model: targetModelId }
+    : body;
+  const pass = injectPromptCacheBreakpointsInPlace(inputBody, {
+    ...config.promptCacheInjection,
+    // Timestamps were already stripped on inbound; keep delta counters exact.
+    stripVolatileSystemTimestamps: false,
+  });
+  if (pass.injectedBreakpoints > 0) hygieneStats.injectedCacheBreakpoints += pass.injectedBreakpoints;
+  let resultBody = pass.body !== undefined ? pass.body : inputBody;
+  if (hasModelOverride && originalModel !== targetModelId) {
+    if (pass.injectedBreakpoints === 0 && pass.normalizedTimestamps === 0 && resultBody === inputBody) {
+      return { injectedBreakpoints: 0, body };
+    }
+    if (resultBody !== null && typeof resultBody === "object" && !Array.isArray(resultBody)) {
+      const rest = { ...(resultBody as Record<string, unknown>) };
+      if (originalModel === undefined) delete rest.model;
+      else rest.model = originalModel;
+      resultBody = rest;
+    }
+  }
+  return {
+    injectedBreakpoints: pass.injectedBreakpoints,
+    body: resultBody,
+  };
 }
 
 /**
@@ -167,4 +235,46 @@ export function prepareCompactionBodyHygiene(
 ): OutboundPayloadHygieneOutcome {
   const redacted = redactHostedImageDisplayPaths(body);
   return applyOutboundPayloadHygiene(redacted, config, logCtx);
+}
+
+/**
+ * Sanitizes restored `previous_response_id` prefix items after continuation expansion so
+ * historical turns carry no missed secrets or uncompressed tool outputs before upstream dispatch.
+ */
+export function sanitizeExpandedPreviousResponsePrefix(
+  expandedBody: unknown,
+  originalBody: unknown,
+  expandedPrefixLen: number,
+  config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
+  logCtx?: RequestLogContext,
+  skipScannedCounter = false,
+): { blocked: boolean; body: unknown } {
+  if (expandedBody === originalBody) return { blocked: false, body: expandedBody };
+  if (expandedPrefixLen > 0 && Array.isArray((expandedBody as { input?: unknown }).input)) {
+    const bodyRec = expandedBody as Record<string, unknown>;
+    const currentInput = bodyRec.input as unknown[];
+    const prefixSlice = currentInput.slice(0, expandedPrefixLen);
+    const expandedHygiene = applyOutboundPayloadHygiene(
+      { input: prefixSlice },
+      config,
+      logCtx,
+      { skipCacheBreakpoints: true, skipScannedCounter },
+    );
+    if (expandedHygiene.blocked) return { blocked: true, body: expandedBody };
+    const cleanedSlice = (expandedHygiene.body as { input?: unknown[] } | undefined)?.input;
+    if (cleanedSlice && cleanedSlice !== prefixSlice) {
+      bodyRec.input = [...cleanedSlice, ...currentInput.slice(expandedPrefixLen)];
+    }
+    return { blocked: false, body: expandedBody };
+  }
+  const expandedHygiene = applyOutboundPayloadHygiene(
+    expandedBody,
+    config,
+    logCtx,
+    { skipCacheBreakpoints: true, skipScannedCounter },
+  );
+  return {
+    blocked: expandedHygiene.blocked,
+    body: expandedHygiene.blocked ? expandedBody : expandedHygiene.body,
+  };
 }

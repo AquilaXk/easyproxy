@@ -23,6 +23,7 @@ export function linkRouteAllowed(url: URL, req: Request): boolean {
   if (pathname === "/v1/responses" || pathname === "/v1/responses/compact"
     || pathname === "/v1/messages" || pathname === "/v1/messages/count_tokens"
     || pathname === "/v1/chat/completions" || pathname === "/v1/audio/transcriptions"
+    || pathname === "/v1/audio/speech" || pathname === "/v1/embeddings" || pathname === "/v1/rerank"
     || pathname === "/v1/alpha/search" || pathname === "/v1/images/generations"
     || pathname === "/v1/images/edits" || pathname === "/v1/live"
     || pathname === "/v1/realtime/calls" || CONTEXT_PATHS.has(pathname)) {

@@ -13,23 +13,21 @@ import {
 import type { NormalizedComboTarget } from "../combos/types";
 import { sanitizeUpstreamErrorText } from "../adapters/upstream-http-error";
 import { formatErrorResponse } from "../bridge";
-import { signalWithTimeout } from "../lib/abort";
-import { readBoundedResponseBytes } from "../lib/bounded-body";
 import { markProxyError } from "../lib/client-error-body";
 import { providerDestinationConfigError, providerDestinationResolvedError } from "../lib/destination-policy";
 import { clientFacingModelLabel } from "../lib/error-destination";
-import { redactSecretString } from "../lib/redact";
 import { isTransientUpstreamStatus } from "../lib/upstream-retry";
-import { getValidAccessToken } from "../oauth/index";
-import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "../providers/api-key-pause";
-import { resolveCurrentProviderApiKeyTransport } from "../providers/api-key-selection";
-import { isCanonicalOpenAiForwardProvider } from "../providers/openai-forward-destination";
 import type { EpxProviderTransport } from "../providers/xai-transport";
 import { NoEligiblePolicyCandidateError, routeConcreteModel, routeModel, type RouteResult } from "../router";
 import type { EpxConfig, EpxProviderConfig, EpxUsage } from "../types";
 import { AdmissionModelDeniedError, assertRouteAllowedByScope, resolveAdmissionModelScope } from "./admission-model-scope";
 import { reservePreDispatchApiKeyHold } from "./api-key-budget-estimate";
 import type { DataPlaneAdmission } from "./auth-cors";
+import {
+  adapterSupportsAuxiliaryEndpoint,
+  resolveAuxiliaryUpstreamHeaders,
+  sendAuxiliaryUpstreamRequest,
+} from "./auxiliary-upstream";
 import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 import { readJsonRequestBody, resolveInboundBodyLimitBytes } from "./request-decompress";
 import { addFinalRequestLog, markLocalRequestLogRefusal, type RequestLogContext } from "./request-log";
@@ -39,7 +37,6 @@ const MAX_SPEECH_INSTRUCTIONS_CHARS = 4_096;
 const MAX_SPEECH_RESPONSE_BYTES = 32 * 1024 * 1024;
 const SPEECH_TIMEOUT_MS = 120_000;
 
-const SUPPORTED_SPEECH_ADAPTERS = new Set(["openai-responses", "openai-chat", "openai-compatible"]);
 const SPEECH_FORMAT_CONTENT_TYPES: Readonly<Record<string, string>> = {
   mp3: "audio/mpeg",
   opus: "audio/opus",
@@ -144,9 +141,7 @@ export function resolveAudioSpeechUrl(provider: Pick<EpxProviderConfig, "baseUrl
 }
 
 function adapterSupportsSpeech(provider: Pick<EpxProviderConfig, "adapter" | "authMode" | "baseUrl">): boolean {
-  if (!SUPPORTED_SPEECH_ADAPTERS.has(provider.adapter)) return false;
-  if (isCanonicalOpenAiForwardProvider(provider as EpxProviderConfig)) return false;
-  return Boolean(provider.baseUrl && provider.baseUrl.trim().length > 0);
+  return adapterSupportsAuxiliaryEndpoint(provider);
 }
 
 interface ResolvedSpeechCandidate {
@@ -400,68 +395,21 @@ export async function handleAudioSpeech(
     }
 
     const url = resolveAudioSpeechUrl(candidate.provider);
-    const headers = new Headers({ "content-type": "application/json" });
-    if (candidate.provider.headers) {
-      for (const [k, v] of Object.entries(candidate.provider.headers)) {
-        headers.set(k, v);
-      }
+    const headerResolution = await resolveAuxiliaryUpstreamHeaders(req, config, candidate, logCtx);
+    if ("error" in headerResolution) {
+      const authErr = headerResolution.error;
+      if (authErr.shouldFailover) recordComboFailure(candidate);
+      lastErrorStatus = authErr.status;
+      lastErrorMessage = authErr.message;
+      lastErrorCode = authErr.code;
+      if (authErr.shouldFailover && hasMore) continue;
+      releaseSpeechLeaseOnRefusal(logCtx, upstreamAttempted);
+      markLocalRequestLogRefusal(logCtx, lastErrorCode);
+      logCtx.errorCode = lastErrorCode;
+      addFinalRequestLog(options.requestId, options.start, logCtx, authErr.status, { closeReason: "non_stream" });
+      return markProxyError(formatErrorResponse(authErr.status, authErr.errorType, lastErrorMessage));
     }
-    if (candidate.provider.authMode === "oauth") {
-      let token: string | null = null;
-      try {
-        token = await getValidAccessToken(candidate.providerName);
-      } catch {
-        token = null;
-      }
-      if (!token) {
-        recordComboFailure(candidate);
-        lastErrorStatus = 401;
-        lastErrorMessage = `OAuth access token unavailable for provider ${candidate.providerName}`;
-        lastErrorCode = "oauth_token_unavailable";
-        if (hasMore) continue;
-        releaseSpeechLeaseOnRefusal(logCtx, upstreamAttempted);
-        markLocalRequestLogRefusal(logCtx, lastErrorCode);
-        logCtx.errorCode = lastErrorCode;
-        addFinalRequestLog(options.requestId, options.start, logCtx, 401, { closeReason: "non_stream" });
-        return markProxyError(formatErrorResponse(401, "authentication_error", lastErrorMessage));
-      }
-      headers.set("authorization", `Bearer ${token}`);
-    } else if (candidate.provider.authMode !== "forward") {
-      if (isProviderApiKeyPaused(candidate.provider)) {
-        recordComboFailure(candidate);
-        lastErrorStatus = 403;
-        lastErrorMessage = new ProviderApiKeyPausedError().message;
-        lastErrorCode = "provider_key_paused";
-        if (hasMore) continue;
-        releaseSpeechLeaseOnRefusal(logCtx, upstreamAttempted);
-        markLocalRequestLogRefusal(logCtx, lastErrorCode);
-        logCtx.errorCode = lastErrorCode;
-        addFinalRequestLog(options.requestId, options.start, logCtx, 403, { closeReason: "non_stream" });
-        return markProxyError(formatErrorResponse(403, "permission_error", lastErrorMessage));
-      }
-      const transport = resolveCurrentProviderApiKeyTransport(config, candidate.providerName, candidate.provider);
-      if (!transport) {
-        if (candidate.provider.keyOptional) {
-          if (candidate.provider.apiKey) headers.set("authorization", `Bearer ${candidate.provider.apiKey}`);
-        } else {
-          recordComboFailure(candidate);
-          lastErrorStatus = 403;
-          lastErrorMessage = `no active API key available for provider ${candidate.providerName}`;
-          lastErrorCode = "provider_key_unavailable";
-          if (hasMore) continue;
-          releaseSpeechLeaseOnRefusal(logCtx, upstreamAttempted);
-          markLocalRequestLogRefusal(logCtx, lastErrorCode);
-          logCtx.errorCode = lastErrorCode;
-          addFinalRequestLog(options.requestId, options.start, logCtx, 403, { closeReason: "non_stream" });
-          return markProxyError(formatErrorResponse(403, "permission_error", lastErrorMessage));
-        }
-      } else if (transport.apiKey) {
-        headers.set("authorization", `Bearer ${transport.apiKey}`);
-      }
-    }
-    if (logCtx.otlpSpan?.traceparent && !headers.has("traceparent")) {
-      headers.set("traceparent", logCtx.otlpSpan.traceparent);
-    }
+    const { headers } = headerResolution;
 
     const upstreamPayload: Record<string, unknown> = {
       model: candidate.modelId,
@@ -473,113 +421,119 @@ export async function handleAudioSpeech(
     };
 
     const fetchImpl = candidateTransport.fetch ?? globalThis.fetch;
-    const timeoutMs = typeof candidate.provider.connectTimeoutMs === "number" && candidate.provider.connectTimeoutMs > 0
-      ? Math.max(1_000, Math.min(candidate.provider.connectTimeoutMs, SPEECH_TIMEOUT_MS))
-      : SPEECH_TIMEOUT_MS;
-    const deadline = signalWithTimeout(timeoutMs, req.signal);
     const attemptStartMs = Date.now();
-    try {
-      upstreamAttempted = true;
-      const upstreamRes = await fetchImpl(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(upstreamPayload),
-        redirect: "error",
-        signal: deadline.signal,
-      });
-      const bytesResult = await readBoundedResponseBytes(upstreamRes, {
-        maxBytes: MAX_SPEECH_RESPONSE_BYTES,
-        signal: deadline.signal,
-      });
-      if (bytesResult.oversized) {
-        recordComboFailure(candidate);
-        lastErrorStatus = 502;
-        lastErrorMessage = `upstream audio speech response exceeded ${MAX_SPEECH_RESPONSE_BYTES} bytes`;
-        lastErrorCode = "upstream_response_too_large";
-        if (hasMore) continue;
-        logCtx.errorCode = lastErrorCode;
-        addFinalRequestLog(options.requestId, options.start, logCtx, 502, { closeReason: "non_stream" });
-        return markProxyError(formatErrorResponse(502, "upstream_error", lastErrorMessage));
-      }
-      if (!upstreamRes.ok) {
-        const text = new TextDecoder().decode(bytesResult.bytes);
-        lastErrorStatus = upstreamRes.status;
-        lastErrorMessage = sanitizeUpstreamErrorText(text) || `upstream returned HTTP ${upstreamRes.status}`;
-        lastErrorCode = `upstream_${upstreamRes.status}`;
-        const shouldFailoverOrPenalize =
-          isTransientUpstreamStatus(upstreamRes.status)
-          || upstreamRes.status >= 500
-          || upstreamRes.status === 429
-          || upstreamRes.status === 401
-          || upstreamRes.status === 403
-          || upstreamRes.status === 408
-          || upstreamRes.status === 402;
-        if (shouldFailoverOrPenalize) {
-          recordComboFailure(candidate);
-          if (hasMore) continue;
-        }
-        logCtx.errorCode = lastErrorCode;
-        addFinalRequestLog(options.requestId, options.start, logCtx, upstreamRes.status, { closeReason: "non_stream" });
-        return formatErrorResponse(upstreamRes.status, upstreamRes.status === 429 ? "rate_limit_error" : "upstream_error", lastErrorMessage);
-      }
-
-      const contentType = safeAudioResponseContentType(upstreamRes.headers.get("content-type"), parsed.responseFormat);
-      if (!contentType || bytesResult.bytes.byteLength === 0) {
-        recordComboFailure(candidate);
-        lastErrorStatus = 502;
-        lastErrorMessage = "upstream returned invalid or empty audio payload";
-        lastErrorCode = "invalid_upstream_audio";
-        if (hasMore) continue;
-        logCtx.errorCode = lastErrorCode;
-        addFinalRequestLog(options.requestId, options.start, logCtx, 502, { closeReason: "non_stream" });
-        return formatErrorResponse(502, "upstream_error", lastErrorMessage);
-      }
-
-      if (route.combo && comboConfig && candidate.comboTarget) {
-        noteComboSuccess(
-          route.combo.comboId,
-          comboConfig,
-          candidate.comboTarget,
-          route.combo.writerGeneration,
-          { latencyMs: Math.max(1, Date.now() - attemptStartMs) },
-        );
-        if (targetKey(candidate.comboTarget) === targetKey(route.combo.target)) {
-          settleComboReprobeSuccess(route.combo);
-        }
-      }
-
-      const usage: EpxUsage = {
-        inputTokens: parsed.estimatedTokens,
-        outputTokens: 0,
-        totalTokens: parsed.estimatedTokens,
-        estimated: true,
-      };
-      logCtx.usage = usage;
-      addFinalRequestLog(options.requestId, options.start, logCtx, 200, { closeReason: "non_stream" });
-      return new Response(bytesResult.bytes.buffer.slice(bytesResult.bytes.byteOffset, bytesResult.bytes.byteOffset + bytesResult.bytes.byteLength) as ArrayBuffer, {
-        status: 200,
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": "no-store",
-        },
-      });
-    } catch (error) {
-      if (req.signal.aborted) {
-        logCtx.errorCode = "client_cancel";
-        addFinalRequestLog(options.requestId, options.start, logCtx, 499, { closeReason: "client_cancel" });
-        return formatErrorResponse(499, "client_closed_request", "request cancelled by client");
-      }
+    const outcome = await sendAuxiliaryUpstreamRequest({
+      url,
+      headers,
+      payload: upstreamPayload,
+      reqSignal: req.signal,
+      fetchImpl,
+      config,
+      provider: candidate.provider,
+      maxResponseBytes: MAX_SPEECH_RESPONSE_BYTES,
+      defaultBodyTimeoutMs: SPEECH_TIMEOUT_MS,
+      onAttemptStart: () => {
+        upstreamAttempted = true;
+      },
+    });
+    if (outcome.kind === "client_cancel") {
+      logCtx.errorCode = "client_cancel";
+      addFinalRequestLog(options.requestId, options.start, logCtx, 499, { closeReason: "client_cancel" });
+      return formatErrorResponse(499, "client_closed_request", "request cancelled by client");
+    }
+    if (outcome.kind === "fetch_error") {
       lastErrorStatus = 502;
-      lastErrorMessage = redactSecretString(error instanceof Error ? error.message : String(error));
+      lastErrorMessage = outcome.message;
       lastErrorCode = "upstream_fetch_failed";
       recordComboFailure(candidate);
       if (hasMore) continue;
       logCtx.errorCode = lastErrorCode;
       addFinalRequestLog(options.requestId, options.start, logCtx, 502, { closeReason: "non_stream" });
       return formatErrorResponse(502, "upstream_error", lastErrorMessage);
-    } finally {
-      deadline.cleanup();
     }
+    if (outcome.kind === "redirect") {
+      recordComboFailure(candidate);
+      lastErrorStatus = 502;
+      lastErrorMessage = `upstream redirected with HTTP ${outcome.status}`;
+      lastErrorCode = "upstream_redirect_rejected";
+      if (hasMore) continue;
+      logCtx.errorCode = lastErrorCode;
+      addFinalRequestLog(options.requestId, options.start, logCtx, 502, { closeReason: "non_stream" });
+      return markProxyError(formatErrorResponse(502, "upstream_error", lastErrorMessage));
+    }
+    if (outcome.kind === "oversized") {
+      recordComboFailure(candidate);
+      lastErrorStatus = 502;
+      lastErrorMessage = `upstream audio speech response exceeded ${MAX_SPEECH_RESPONSE_BYTES} bytes`;
+      lastErrorCode = "upstream_response_too_large";
+      if (hasMore) continue;
+      logCtx.errorCode = lastErrorCode;
+      addFinalRequestLog(options.requestId, options.start, logCtx, 502, { closeReason: "non_stream" });
+      return markProxyError(formatErrorResponse(502, "upstream_error", lastErrorMessage));
+    }
+    const { upstreamRes, bytes } = outcome;
+    if (!upstreamRes.ok) {
+      const text = new TextDecoder().decode(bytes);
+      lastErrorStatus = upstreamRes.status;
+      lastErrorMessage = sanitizeUpstreamErrorText(text) || `upstream returned HTTP ${upstreamRes.status}`;
+      lastErrorCode = `upstream_${upstreamRes.status}`;
+      const shouldFailoverOrPenalize =
+        isTransientUpstreamStatus(upstreamRes.status)
+        || upstreamRes.status >= 500
+        || upstreamRes.status === 429
+        || upstreamRes.status === 401
+        || upstreamRes.status === 403
+        || upstreamRes.status === 408
+        || upstreamRes.status === 402;
+      if (shouldFailoverOrPenalize) {
+        recordComboFailure(candidate);
+        if (hasMore) continue;
+      }
+      logCtx.errorCode = lastErrorCode;
+      addFinalRequestLog(options.requestId, options.start, logCtx, upstreamRes.status, { closeReason: "non_stream" });
+      return formatErrorResponse(upstreamRes.status, upstreamRes.status === 429 ? "rate_limit_error" : "upstream_error", lastErrorMessage);
+    }
+
+    const contentType = safeAudioResponseContentType(upstreamRes.headers.get("content-type"), parsed.responseFormat);
+    if (!contentType || bytes.byteLength === 0) {
+      recordComboFailure(candidate);
+      lastErrorStatus = 502;
+      lastErrorMessage = "upstream returned invalid or empty audio payload";
+      lastErrorCode = "invalid_upstream_audio";
+      if (hasMore) continue;
+      logCtx.errorCode = lastErrorCode;
+      addFinalRequestLog(options.requestId, options.start, logCtx, 502, { closeReason: "non_stream" });
+      return formatErrorResponse(502, "upstream_error", lastErrorMessage);
+    }
+
+    if (route.combo && comboConfig && candidate.comboTarget) {
+      noteComboSuccess(
+        route.combo.comboId,
+        comboConfig,
+        candidate.comboTarget,
+        route.combo.writerGeneration,
+        { latencyMs: Math.max(1, Date.now() - attemptStartMs) },
+      );
+      if (targetKey(candidate.comboTarget) === targetKey(route.combo.target)) {
+        settleComboReprobeSuccess(route.combo);
+      }
+    }
+
+    const usage: EpxUsage = {
+      inputTokens: parsed.estimatedTokens,
+      outputTokens: 0,
+      totalTokens: parsed.estimatedTokens,
+      estimated: true,
+    };
+    logCtx.usage = usage;
+    addFinalRequestLog(options.requestId, options.start, logCtx, 200, { closeReason: "non_stream" });
+    return new Response(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "no-store",
+      },
+    });
   }
 
   logCtx.errorCode = lastErrorCode;

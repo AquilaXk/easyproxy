@@ -88,7 +88,11 @@ function isRestrictedSearch(raw: unknown): boolean {
     && ["allowed_domains", "blocked_domains", "user_location"].some(key => Object.hasOwn(raw, key));
 }
 
-export function toolsToResponses(tools: unknown): Rec[] | undefined {
+export interface ToolsToResponsesOptions {
+  preserveDeferLoading?: boolean;
+}
+
+export function toolsToResponses(tools: unknown, options?: ToolsToResponsesOptions): Rec[] | undefined {
   if (!Array.isArray(tools) || tools.length === 0) return undefined;
   // The shared hosted-search lane cannot enforce these constraints on every destination or
   // sidecar backend. Omit search rather than broaden it; a duplicate declaration cannot opt out.
@@ -120,6 +124,7 @@ export function toolsToResponses(tools: unknown): Rec[] | undefined {
         ...(Array.isArray(raw.allowed_callers)
           ? { allowed_callers: raw.allowed_callers.filter((c): c is string => typeof c === "string") }
           : {}),
+        ...(options?.preserveDeferLoading === true && raw.defer_loading === true ? { defer_loading: true } : {}),
         ...cacheControlWireField(raw.cache_control),
       });
       continue;

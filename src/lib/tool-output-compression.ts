@@ -159,35 +159,270 @@ export function normalizeToolLogText(input: string, stripAnsi: boolean): string 
   return text.indexOf("\n\n\n\n") === -1 ? text : text.replace(/\n{4,}/g, "\n\n\n");
 }
 
-/**
- * Fail-closed O(N) bracket-depth scanner so hostile deeply nested JSON strings
- * cannot trigger recursive parser stack overflows.
- */
-function hasBoundedJsonDepth(trimmed: string, maxDepth: number): boolean {
-  let depth = 0;
-  let inString = false;
-  const len = trimmed.length;
-  for (let i = 0; i < len; i++) {
-    const ch = trimmed.charCodeAt(i);
-    if (inString) {
-      if (ch === 0x5c) {
-        i += 1;
-      } else if (ch === 0x22) {
-        inString = false;
+const RFC_OBJ_FIRST = 1;
+const RFC_OBJ_KEY   = 2;
+const RFC_OBJ_COLON = 3;
+const RFC_OBJ_VAL   = 4;
+const RFC_OBJ_NEXT  = 5;
+const RFC_ARR_FIRST = 6;
+const RFC_ARR_VAL   = 7;
+const RFC_ARR_NEXT  = 8;
+
+function isRfc8259Whitespace(ch: number): boolean {
+  return ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d;
+}
+
+function isHexDigit(ch: number): boolean {
+  return (ch >= 0x30 && ch <= 0x39)
+    || (ch >= 0x41 && ch <= 0x46)
+    || (ch >= 0x61 && ch <= 0x66);
+}
+
+function scanJsonStringEnd(src: string, start: number): number {
+  const len = src.length;
+  let i = start + 1;
+  while (i < len) {
+    const ch = src.charCodeAt(i);
+    if (ch === 0x22) return i + 1;
+    if (ch < 0x20) return -1;
+    if (ch === 0x5c) {
+      if (i + 1 >= len) return -1;
+      const esc = src.charCodeAt(i + 1);
+      if (esc === 0x75) {
+        if (i + 5 >= len) return -1;
+        if (
+          !isHexDigit(src.charCodeAt(i + 2))
+          || !isHexDigit(src.charCodeAt(i + 3))
+          || !isHexDigit(src.charCodeAt(i + 4))
+          || !isHexDigit(src.charCodeAt(i + 5))
+        ) {
+          return -1;
+        }
+        i += 6;
+        continue;
       }
+      if (
+        esc !== 0x22 && esc !== 0x5c && esc !== 0x2f && esc !== 0x62
+        && esc !== 0x66 && esc !== 0x6e && esc !== 0x72 && esc !== 0x74
+      ) {
+        return -1;
+      }
+      i += 2;
+      continue;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+function scanJsonNumberEnd(src: string, start: number): number {
+  const len = src.length;
+  let i = start;
+  if (i < len && src.charCodeAt(i) === 0x2d) i += 1;
+  if (i >= len) return -1;
+  const firstDigit = src.charCodeAt(i);
+  if (firstDigit === 0x30) {
+    i += 1;
+    if (i < len) {
+      const next = src.charCodeAt(i);
+      if (next >= 0x30 && next <= 0x39) return -1;
+    }
+  } else if (firstDigit >= 0x31 && firstDigit <= 0x39) {
+    i += 1;
+    while (i < len) {
+      const ch = src.charCodeAt(i);
+      if (ch < 0x30 || ch > 0x39) break;
+      i += 1;
+    }
+  } else {
+    return -1;
+  }
+  if (i < len && src.charCodeAt(i) === 0x2e) {
+    i += 1;
+    if (i >= len) return -1;
+    const fracDigit = src.charCodeAt(i);
+    if (fracDigit < 0x30 || fracDigit > 0x39) return -1;
+    i += 1;
+    while (i < len) {
+      const ch = src.charCodeAt(i);
+      if (ch < 0x30 || ch > 0x39) break;
+      i += 1;
+    }
+  }
+  if (i < len) {
+    const exp = src.charCodeAt(i);
+    if (exp === 0x65 || exp === 0x45) {
+      i += 1;
+      if (i < len) {
+        const sign = src.charCodeAt(i);
+        if (sign === 0x2b || sign === 0x2d) i += 1;
+      }
+      if (i >= len) return -1;
+      const expDigit = src.charCodeAt(i);
+      if (expDigit < 0x30 || expDigit > 0x39) return -1;
+      i += 1;
+      while (i < len) {
+        const ch = src.charCodeAt(i);
+        if (ch < 0x30 || ch > 0x39) break;
+        i += 1;
+      }
+    }
+  }
+  return i;
+}
+
+/**
+ * Single-pass iterative RFC 8259 JSON validator and lossless lexical minifier.
+ * Preserves exact original number, escape, and duplicate-key token substrings verbatim.
+ */
+function minifyRfc8259JsonBounded(input: string, maxDepth: number): string | null {
+  const len = input.length;
+  let i = 0;
+  while (i < len && isRfc8259Whitespace(input.charCodeAt(i))) i += 1;
+  if (i >= len) return null;
+
+  const first = input.charCodeAt(i);
+  if (first !== 0x7b && first !== 0x5b) return null;
+
+  const stack = new Uint8Array(maxDepth);
+  stack[0] = first === 0x7b ? RFC_OBJ_FIRST : RFC_ARR_FIRST;
+  let depth = 1;
+  let keepStart = i;
+  i += 1;
+  let out = "";
+
+  const finishValue = () => {
+    if (depth === 0) return;
+    const top = stack[depth - 1]!;
+    if (top === RFC_OBJ_VAL) stack[depth - 1] = RFC_OBJ_NEXT;
+    else if (top === RFC_ARR_FIRST || top === RFC_ARR_VAL) stack[depth - 1] = RFC_ARR_NEXT;
+  };
+
+  while (i < len) {
+    if (isRfc8259Whitespace(input.charCodeAt(i))) {
+      if (i > keepStart) out += input.slice(keepStart, i);
+      while (i < len && isRfc8259Whitespace(input.charCodeAt(i))) i += 1;
+      keepStart = i;
+      if (i >= len) break;
+    }
+
+    if (depth === 0) return null;
+    const ch = input.charCodeAt(i);
+    const state = stack[depth - 1]!;
+
+    if (state === RFC_OBJ_FIRST || state === RFC_OBJ_KEY) {
+      if (ch === 0x7d && state === RFC_OBJ_FIRST) {
+        depth -= 1;
+        i += 1;
+        if (depth === 0) break;
+        finishValue();
+        continue;
+      }
+      if (ch !== 0x22) return null;
+      const end = scanJsonStringEnd(input, i);
+      if (end < 0) return null;
+      i = end;
+      stack[depth - 1] = RFC_OBJ_COLON;
+      continue;
+    }
+
+    if (state === RFC_OBJ_COLON) {
+      if (ch !== 0x3a) return null;
+      i += 1;
+      stack[depth - 1] = RFC_OBJ_VAL;
+      continue;
+    }
+
+    if (state === RFC_OBJ_NEXT) {
+      if (ch === 0x2c) {
+        i += 1;
+        stack[depth - 1] = RFC_OBJ_KEY;
+        continue;
+      }
+      if (ch === 0x7d) {
+        depth -= 1;
+        i += 1;
+        if (depth === 0) break;
+        finishValue();
+        continue;
+      }
+      return null;
+    }
+
+    if (state === RFC_ARR_NEXT) {
+      if (ch === 0x2c) {
+        i += 1;
+        stack[depth - 1] = RFC_ARR_VAL;
+        continue;
+      }
+      if (ch === 0x5d) {
+        depth -= 1;
+        i += 1;
+        if (depth === 0) break;
+        finishValue();
+        continue;
+      }
+      return null;
+    }
+
+    if (ch === 0x5d && state === RFC_ARR_FIRST) {
+      depth -= 1;
+      i += 1;
+      if (depth === 0) break;
+      finishValue();
+      continue;
+    }
+    if (ch === 0x7b) {
+      if (depth >= maxDepth) return null;
+      stack[depth++] = RFC_OBJ_FIRST;
+      i += 1;
+      continue;
+    }
+    if (ch === 0x5b) {
+      if (depth >= maxDepth) return null;
+      stack[depth++] = RFC_ARR_FIRST;
+      i += 1;
       continue;
     }
     if (ch === 0x22) {
-      inString = true;
-    } else if (ch === 0x7b || ch === 0x5b) {
-      depth += 1;
-      if (depth > maxDepth) return false;
-    } else if (ch === 0x7d || ch === 0x5d) {
-      depth -= 1;
-      if (depth < 0) return false;
+      const end = scanJsonStringEnd(input, i);
+      if (end < 0) return null;
+      i = end;
+      finishValue();
+      continue;
     }
+    if (ch === 0x74 && input.startsWith("true", i)) {
+      i += 4;
+      finishValue();
+      continue;
+    }
+    if (ch === 0x66 && input.startsWith("false", i)) {
+      i += 5;
+      finishValue();
+      continue;
+    }
+    if (ch === 0x6e && input.startsWith("null", i)) {
+      i += 4;
+      finishValue();
+      continue;
+    }
+    if (ch === 0x2d || (ch >= 0x30 && ch <= 0x39)) {
+      const end = scanJsonNumberEnd(input, i);
+      if (end < 0) return null;
+      i = end;
+      finishValue();
+      continue;
+    }
+    return null;
   }
-  return !inString && depth === 0;
+
+  if (depth !== 0) return null;
+  if (i > keepStart) out += input.slice(keepStart, i);
+  while (i < len) {
+    if (!isRfc8259Whitespace(input.charCodeAt(i))) return null;
+    i += 1;
+  }
+  return out;
 }
 
 /**
@@ -201,25 +436,12 @@ export function compactJsonToolText(input: string): { text: string; compacted: b
   if (input.indexOf("\n") === -1 && input.indexOf("  ") === -1 && input.indexOf("\t") === -1) {
     return { text: input, compacted: false };
   }
-  const trimmed = input.trim();
-  const first = trimmed.charCodeAt(0);
-  const last = trimmed.charCodeAt(trimmed.length - 1);
-  const isObj = first === 0x7b && last === 0x7d;
-  const isArr = first === 0x5b && last === 0x5d;
-  if (!isObj && !isArr) return { text: input, compacted: false };
-  if (trimmed.length * 3 > MAX_JSON_COMPACT_BYTES && Buffer.byteLength(trimmed, "utf8") > MAX_JSON_COMPACT_BYTES) {
+  if (input.length * 3 > MAX_JSON_COMPACT_BYTES && Buffer.byteLength(input, "utf8") > MAX_JSON_COMPACT_BYTES) {
     return { text: input, compacted: false };
   }
-  if (!hasBoundedJsonDepth(trimmed, MAX_JSON_NESTING_DEPTH)) {
-    return { text: input, compacted: false };
-  }
-  try {
-    const minified = JSON.stringify(JSON.parse(trimmed));
-    if (typeof minified === "string" && input.length - minified.length >= MIN_JSON_COMPACT_SAVINGS) {
-      return { text: minified, compacted: true };
-    }
-  } catch {
-    // Not valid JSON; keep normalized text unchanged.
+  const minified = minifyRfc8259JsonBounded(input, MAX_JSON_NESTING_DEPTH);
+  if (minified !== null && input.length - minified.length >= MIN_JSON_COMPACT_SAVINGS) {
+    return { text: minified, compacted: true };
   }
   return { text: input, compacted: false };
 }
@@ -663,9 +885,9 @@ function recordCallId(counts: Map<string, number>, rawId: unknown): void {
 }
 
 /**
- * Counts tool-call and tool-result IDs across the request payload. Returns false when
- * `MAX_SCAN_ITEMS` is reached so cross-turn deduplication fails closed rather than
- * trusting partial ID uniqueness counts on truncated scans.
+ * Counts tool-call and tool-result IDs across the scanned prefix (up to `MAX_SCAN_ITEMS`)
+ * so prefix tool outputs remain deterministically deduplicated even when a conversation
+ * grows beyond `MAX_SCAN_ITEMS`, while any IDs beyond the horizon remain unrecorded.
  */
 function precountToolCallIds(
   record: Record<string, unknown>,
@@ -727,11 +949,33 @@ function precountToolCallIds(
       }
     }
   }
+  if (Array.isArray(record.contents)) {
+    for (const content of record.contents) {
+      if (visited >= MAX_SCAN_ITEMS) return false;
+      visited += 1;
+      if (!content || typeof content !== "object" || Array.isArray(content)) continue;
+      const parts = (content as Record<string, unknown>).parts;
+      if (!Array.isArray(parts)) continue;
+      for (const part of parts) {
+        if (visited >= MAX_SCAN_ITEMS) return false;
+        visited += 1;
+        if (!part || typeof part !== "object" || Array.isArray(part)) continue;
+        const partRec = part as Record<string, unknown>;
+        const fnCall = partRec.functionCall;
+        if (fnCall && typeof fnCall === "object" && !Array.isArray(fnCall)) {
+          recordCallId(assistantCallCounts, (fnCall as Record<string, unknown>).id);
+        }
+        const fnResp = partRec.functionResponse;
+        if (fnResp && typeof fnResp === "object" && !Array.isArray(fnResp)) {
+          recordCallId(resultCounts, (fnResp as Record<string, unknown>).id);
+        }
+      }
+    }
+  }
   return true;
 }
 
 function isUnambiguousCallId(callId: unknown, state: CompressionWalkState): callId is string {
-  if (!state.dedupScanComplete) return false;
   if (typeof callId !== "string" || !SAFE_CALL_ID_RE.test(callId)) return false;
   if (state.resultIdCounts.get(callId) !== 1) return false;
   return (state.assistantCallCounts.get(callId) ?? 0) <= 1;
@@ -990,6 +1234,58 @@ export function compressResponsesToolOutputsInPlace(
               [...blockPath, { container: blockRec, key: "content" }],
             );
           }
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(record.contents)) {
+    for (let i = 0; i < record.contents.length; i += 1) {
+      const content = record.contents[i];
+      if (state.visited >= MAX_SCAN_ITEMS) break;
+      state.visited += 1;
+      if (!content || typeof content !== "object" || Array.isArray(content)) continue;
+      const contentRec = content as Record<string, unknown>;
+      if (!Array.isArray(contentRec.parts)) continue;
+      const contentPath: CopyOnWriteSegment[] = [
+        { container: record, key: "contents" },
+        { container: record.contents, key: i },
+        { container: contentRec, key: "parts" },
+      ];
+      for (let j = 0; j < contentRec.parts.length; j += 1) {
+        const part = contentRec.parts[j];
+        if (state.visited >= MAX_SCAN_ITEMS) break;
+        state.visited += 1;
+        if (!part || typeof part !== "object" || Array.isArray(part)) continue;
+        const partRec = part as Record<string, unknown>;
+        const fnResp = partRec.functionResponse;
+        if (!fnResp || typeof fnResp !== "object" || Array.isArray(fnResp)) continue;
+        const fnRespRec = fnResp as Record<string, unknown>;
+        const respObj = fnRespRec.response;
+        if (!respObj || typeof respObj !== "object" || Array.isArray(respObj)) continue;
+        const respRec = respObj as Record<string, unknown>;
+        const respPath: CopyOnWriteSegment[] = [
+          ...contentPath,
+          { container: contentRec.parts, key: j },
+          { container: partRec, key: "functionResponse" },
+          { container: fnRespRec, key: "response" },
+        ];
+        const hasErrorField = respRec.error !== undefined || respRec.is_error === true;
+        const errorHint = hasErrorField ? { ...fnRespRec, is_error: true } : fnRespRec;
+        const callId = typeof fnRespRec.id === "string" ? fnRespRec.id : undefined;
+        const stringKeys = Object.keys(respRec).filter(k => typeof respRec[k] === "string");
+        const canDedupField = callId !== undefined && stringKeys.length === 1;
+        for (const key of stringKeys) {
+          compressOutputPart(
+            respRec,
+            key,
+            config,
+            state,
+            canDedupField ? callId : undefined,
+            errorHint,
+            mutator,
+            [...respPath, { container: respRec, key }],
+          );
         }
       }
     }

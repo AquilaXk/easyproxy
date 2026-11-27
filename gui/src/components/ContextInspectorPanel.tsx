@@ -7,6 +7,7 @@ import {
   type ContextEntryItem,
   type ContextInspectionReport,
   type ContextWarningCode,
+  type PromptCacheBreakevenRates,
 } from "../../../src/lib/context-inspector";
 import { formatTokens } from "../format-tokens";
 import { useI18n, type Locale } from "../i18n/shared";
@@ -45,7 +46,18 @@ export interface ContextInspectorPanelProps {
   payload?: unknown;
   initialJson?: string;
   contextWindowTokens?: number;
+  rates?: PromptCacheBreakevenRates;
+  writeTtl?: "5m" | "1h";
   compact?: boolean;
+}
+
+function fmtUsd(value: number): string {
+  const abs = Math.abs(value);
+  return abs > 0 && abs < 0.0001 ? abs.toFixed(5) : abs.toFixed(4);
+}
+
+function fmtSignedUsd(value: number): string {
+  return value < 0 ? `-$${fmtUsd(value)}` : `$${fmtUsd(value)}`;
 }
 
 function formatCategoryReadout(
@@ -68,6 +80,8 @@ export function ContextInspectorPanel({
   payload,
   initialJson = SAMPLE_ANTHROPIC_CACHE_PAYLOAD,
   contextWindowTokens,
+  rates,
+  writeTtl,
   compact = false,
 }: ContextInspectorPanelProps) {
   const { locale } = useI18n();
@@ -78,12 +92,16 @@ export function ContextInspectorPanel({
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
 
   const report = useMemo<ContextInspectionReport>(() => {
-    const opts = contextWindowTokens ? { contextWindowTokens } : undefined;
+    const opts = {
+      ...(contextWindowTokens ? { contextWindowTokens } : {}),
+      ...(rates ? { rates } : { autoResolveRates: true }),
+      ...(writeTtl ? { writeTtl } : {}),
+    };
     if (payload !== undefined) {
       return inspectPromptContextPayload(payload, opts);
     }
     return inspectPromptContextJson(jsonInput, opts);
-  }, [payload, jsonInput, contextWindowTokens]);
+  }, [payload, jsonInput, contextWindowTokens, rates, writeTtl]);
 
   const usedPct = Math.min(100, Math.round(report.utilizationRatio * 100));
   const cachedPrefixPct = Math.round(report.cache.cacheablePrefixShare * 100);
@@ -191,6 +209,49 @@ export function ContextInspectorPanel({
               )}
             </div>
           </div>
+
+          {report.cache.breakeven && report.cache.breakeven.economicsAvailable && (
+            <div
+              data-inspector-breakeven="true"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-solid border-line bg-surface px-3 py-2 text-xs"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-fg">
+                  {uxT(locale, "inspector.breakevenTitle", { ttl: report.cache.breakeven.writeTtl })}
+                </span>
+                <span className="badge badge-muted font-mono tabular-nums">
+                  {report.cache.breakeven.breakevenHitCount !== null
+                    ? uxT(locale, "inspector.breakevenHits", { hits: report.cache.breakeven.breakevenHitCount })
+                    : uxT(locale, "inspector.breakevenNoBreakEven")}
+                </span>
+                <span
+                  className={cn(
+                    "badge tabular-nums",
+                    report.cache.breakeven.worthwhileIdle
+                      ? "badge-green"
+                      : report.cache.breakeven.worthwhileActive
+                        ? "badge-amber"
+                        : "badge-muted",
+                  )}
+                >
+                  {uxT(
+                    locale,
+                    report.cache.breakeven.worthwhileIdle || report.cache.breakeven.worthwhileActive
+                      ? "inspector.breakevenWorthwhile"
+                      : "inspector.breakevenMarginal",
+                  )}
+                </span>
+              </div>
+              <span className="font-mono text-[11px] text-fg-muted tabular-nums">
+                {uxT(locale, "inspector.breakevenEconomics", {
+                  premium: fmtUsd(report.cache.breakeven.writePremiumUsd),
+                  hitSavings: fmtUsd(report.cache.breakeven.perHitSavingsUsd),
+                  active: fmtSignedUsd(report.cache.breakeven.activeExpectedSavingsUsd),
+                  idle: fmtSignedUsd(report.cache.breakeven.idleExpectedSavingsUsd),
+                })}
+              </span>
+            </div>
+          )}
 
           {/* 128-cell proportional context wafer map with Fit / Window toggle */}
           <div className="flex flex-col gap-2 rounded-card border border-solid border-line bg-surface p-3">

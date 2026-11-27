@@ -559,4 +559,10 @@ export const uxOverhaulCopyVi = {
   "ux.inspector.sampleResponses": "Tải mẫu Responses",
   "ux.inspector.previewTruncated": "Xem trước giới hạn 8.192 ký tự.",
   "ux.inspector.clearFilter": "Tất cả danh mục",
+  "ux.inspector.breakevenTitle": "Điểm hòa vốn cache ({ttl})",
+  "ux.inspector.breakevenHits": "Hòa vốn: {hits} lượt trúng tiếp theo",
+  "ux.inspector.breakevenNoBreakEven": "Không hòa vốn ở mức giá hiện tại",
+  "ux.inspector.breakevenEconomics": "Ghi +${premium} · Trúng -${hitSavings} · Dự kiến (hoạt động/nhàn): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "Hiệu quả",
+  "ux.inspector.breakevenMarginal": "ROI thấp",
 } as const;

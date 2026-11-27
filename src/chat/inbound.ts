@@ -251,7 +251,7 @@ function legacyFunctionCallToItem(
   return { callId, name: value.name };
 }
 
-function toolsToResponses(tools: unknown): Rec[] | undefined {
+function toolsToResponses(tools: unknown, options?: { preserveDeferLoading?: boolean }): Rec[] | undefined {
   if (!Array.isArray(tools) || tools.length === 0) return undefined;
   const out: Rec[] = [];
   for (const raw of tools) {
@@ -263,6 +263,7 @@ function toolsToResponses(tools: unknown): Rec[] | undefined {
         ...(typeof raw.description === "string" ? { description: raw.description } : {}),
         ...(isRec(raw.parameters) ? { parameters: raw.parameters } : {}),
         ...(typeof raw.strict === "boolean" ? { strict: raw.strict } : {}),
+        ...(options?.preserveDeferLoading === true && raw.defer_loading === true ? { defer_loading: true } : {}),
       });
       continue;
     }
@@ -273,6 +274,9 @@ function toolsToResponses(tools: unknown): Rec[] | undefined {
         ...(typeof raw.function.description === "string" ? { description: raw.function.description } : {}),
         ...(isRec(raw.function.parameters) ? { parameters: raw.function.parameters } : {}),
         ...(typeof raw.function.strict === "boolean" ? { strict: raw.function.strict } : {}),
+        ...(options?.preserveDeferLoading === true && (raw.defer_loading === true || raw.function.defer_loading === true)
+          ? { defer_loading: true }
+          : {}),
       });
       continue;
     }
@@ -464,6 +468,7 @@ export interface ChatResponsesProjectionOptions {
    */
   acceptAnthropicReasoningSignatures?: boolean;
   allowInlineAudio?: boolean;
+  preserveDeferLoading?: boolean;
 }
 
 export function chatCompletionsToResponsesBody(raw: unknown, options: ChatResponsesProjectionOptions = {}): Rec {
@@ -630,7 +635,7 @@ export function chatCompletionsToResponsesBody(raw: unknown, options: ChatRespon
   if (systemParts.length > 0) body.instructions = systemParts.join("\n\n");
 
   const tools = [
-    ...(toolsToResponses(raw.tools) ?? []),
+    ...(toolsToResponses(raw.tools, { preserveDeferLoading: options.preserveDeferLoading }) ?? []),
     ...(legacyFunctionsToResponses(raw.functions) ?? []),
   ];
   if (tools.length > 0) body.tools = tools;

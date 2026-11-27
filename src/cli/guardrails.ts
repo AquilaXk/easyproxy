@@ -74,7 +74,24 @@ interface GuardrailsDryRunResponse {
       wireFormat?: string;
       explicitBreakpoints?: number;
       breakpointCount?: number;
+      cacheablePrefixTokens?: number;
+      uncachedActiveTokens?: number;
       warnings?: string[];
+      breakeven?: {
+        prefixTokens?: number;
+        writeTtl?: "5m" | "1h";
+        economicsAvailable?: boolean;
+        writePremiumUsd?: number;
+        perHitSavingsUsd?: number;
+        breakevenFollowUpHits?: number | null;
+        breakevenHitCount?: number | null;
+        warmRefreshCostUsd?: number;
+        missPenaltyUsd?: number;
+        activeExpectedSavingsUsd?: number;
+        idleExpectedSavingsUsd?: number;
+        worthwhileActive?: boolean;
+        worthwhileIdle?: boolean;
+      };
     };
     usedTokens?: number;
     totalTokens?: number;
@@ -310,9 +327,20 @@ function formatDryRunLines(data: GuardrailsDryRunResponse): string[] {
   }
   if (data.contextInspection) {
     const warnings = data.contextInspection.cache?.warnings;
+    const prefixInfo = data.contextInspection.cache?.cacheablePrefixTokens !== undefined
+      ? ` cacheablePrefixTokens=${data.contextInspection.cache.cacheablePrefixTokens}`
+      : "";
     lines.push(
-      `Context inspection: wireFormat=${data.contextInspection.cache?.wireFormat ?? "unknown"} usedTokens=${data.contextInspection.usedTokens ?? data.contextInspection.totalTokens ?? 0} breakpoints=${data.contextInspection.cache?.explicitBreakpoints ?? data.contextInspection.cache?.breakpointCount ?? 0} warnings=${Array.isArray(warnings) && warnings.length > 0 ? warnings.join(",") : "none"}`,
+      `Context inspection: wireFormat=${data.contextInspection.cache?.wireFormat ?? "unknown"} usedTokens=${data.contextInspection.usedTokens ?? data.contextInspection.totalTokens ?? 0} breakpoints=${data.contextInspection.cache?.explicitBreakpoints ?? data.contextInspection.cache?.breakpointCount ?? 0}${prefixInfo} warnings=${Array.isArray(warnings) && warnings.length > 0 ? warnings.join(",") : "none"}`,
     );
+    const be = data.contextInspection.cache?.breakeven;
+    if (be) {
+      const hitsLabel = typeof be.breakevenHitCount === "number" ? String(be.breakevenHitCount) : "n/a";
+      const fmtUsd = (val: unknown) => (typeof val === "number" && Number.isFinite(val) ? val.toFixed(4) : "0.0000");
+      lines.push(
+        `Cache breakeven: ttl=${be.writeTtl ?? "5m"} prefixTokens=${be.prefixTokens ?? 0} economicsAvailable=${Boolean(be.economicsAvailable)} breakevenHits=${hitsLabel} writePremiumUsd=${fmtUsd(be.writePremiumUsd)} perHitSavingsUsd=${fmtUsd(be.perHitSavingsUsd)} activeSavingsUsd=${fmtUsd(be.activeExpectedSavingsUsd)} idleSavingsUsd=${fmtUsd(be.idleExpectedSavingsUsd)} worthwhileActive=${Boolean(be.worthwhileActive)} worthwhileIdle=${Boolean(be.worthwhileIdle)}`,
+      );
+    }
   }
   if (typeof data.previewText === "string" && data.previewText.length > 0) {
     lines.push(`Preview (${data.previewText.length} chars):`, data.previewText);

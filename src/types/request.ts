@@ -248,6 +248,8 @@ export interface EpxParsedRequest {
     firstEvents: AsyncIterable<AdapterEvent>;
     continuation: (parsed: EpxParsedRequest) => AsyncIterable<AdapterEvent> | Promise<AsyncIterable<AdapterEvent>>;
   }) => AsyncGenerator<AdapterEvent>;
+  /** Projects active `gatewayToolSearch` tools and continuation hops onto Responses passthrough payloads. */
+  _gatewayToolSearchProjectBody?: (outBody: unknown, parsed: EpxParsedRequest) => unknown;
   /**
    * Core-owned registration slot for the optional advisor subsystem (src/advisor). Set per request
    * by the sidecar planner, never at module load: the core Responses path only sees this

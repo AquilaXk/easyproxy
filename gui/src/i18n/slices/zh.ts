@@ -559,4 +559,10 @@ export const uxOverhaulCopyZh = {
   "ux.inspector.sampleResponses": "加载 Responses 示例",
   "ux.inspector.previewTruncated": "预览最多显示前 8,192 个字符。",
   "ux.inspector.clearFilter": "全部分类",
+  "ux.inspector.breakevenTitle": "缓存盈亏平衡 ({ttl})",
+  "ux.inspector.breakevenHits": "盈亏平衡：需后续命中 {hits} 次",
+  "ux.inspector.breakevenNoBreakEven": "当前费率下无法回本",
+  "ux.inspector.breakevenEconomics": "写入 +${premium} · 命中 -${hitSavings} · 预期净省 (活跃/空闲): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "划算",
+  "ux.inspector.breakevenMarginal": "边际收益",
 } as const;

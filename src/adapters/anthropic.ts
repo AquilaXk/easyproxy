@@ -35,7 +35,6 @@ import { CLAUDE_CLI_SDK_PACKAGE_VERSION, CLAUDE_CLI_USER_AGENT } from "../provid
 import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { injectOtlpTraceparent } from "../lib/trace-context";
 import { parseEpxCacheControl, resolvePreservedAnthropicCacheControl, type EpxCacheControl } from "../protocols/cache-control";
-import { rectifyAnthropicThinkingBudgetPreRequest } from "./anthropic/thinking-rectifier";
 import { decodeServerSentEvents } from "../lib/sse-decoder";
 import { isLikelyRealAnthropicThinkingSignature } from "../responses/reasoning-envelope";
 import { isTranslatorBudgetExceededError, retainTranslatedEventBatch, type TranslatorBudget } from "../lib/translator-budget";
@@ -1361,18 +1360,6 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
       }
       // One discriminator governs the display beta and response classification, including reuse.
       progressUpdates = (body.thinking as { display?: string } | undefined)?.display === "updates";
-
-      if (provider.thinkingBudgetRectifier === true) {
-        const rectifiedBudget = rectifyAnthropicThinkingBudgetPreRequest(body, {
-          modelMaxOutputTokens: configuredMaxOut,
-        });
-        if (rectifiedBudget.applied) {
-          body.thinking = rectifiedBudget.body.thinking;
-          if (rectifiedBudget.body.max_tokens !== undefined) {
-            body.max_tokens = rectifiedBudget.body.max_tokens;
-          }
-        }
-      }
 
       if (rejectsSamplingParameters(parsed.modelId)) {
         // Opus 4.7+, Sonnet 5+, Haiku 5.5+ and Fable 400 on non-default sampling, with or without

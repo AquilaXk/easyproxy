@@ -1,7 +1,24 @@
 import { credentialDomainFor } from "../../protocols/opaque-state";
-import type { EpxProviderConfig } from "../../types";
+import { rejectsOneHourCacheTtl } from "../../lib/prompt-cache-injection";
+import type { EpxConfig, EpxProviderConfig } from "../../types";
 
 export type AnthropicCacheRetention = "none" | "short" | "long";
+
+/**
+ * Resolves effective Anthropic cache retention combining explicit `config.cacheRetention`
+ * with `promptCacheInjection` (`enabled` + `ttl`), guarding Vertex Claude 3.x IDs from `1h`.
+ */
+export function effectiveAnthropicCacheRetention(
+  config: Pick<EpxConfig, "cacheRetention" | "promptCacheInjection"> | undefined,
+  modelId?: unknown,
+): AnthropicCacheRetention | undefined {
+  if (config?.cacheRetention !== undefined) return config.cacheRetention;
+  if (config?.promptCacheInjection?.enabled !== true) return undefined;
+  const ttl = config.promptCacheInjection.ttl ?? "auto";
+  if (ttl === "1h") return rejectsOneHourCacheTtl(modelId) ? "short" : "long";
+  if (ttl === "5m") return "short";
+  return undefined;
+}
 
 /**
  * The retention an omitted `cacheRetention` resolves to for one destination.

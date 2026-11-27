@@ -22,7 +22,7 @@ export function createM365CopilotAdapter(provider: EpxProviderConfig, deps: { tu
   return {
     name: "m365-copilot", reportsPhysicalSends: true,
     buildRequest: (parsed, incoming) => formatter.buildRequest(parsed, incoming),
-    parseStream: (response, budget, tier) => formatter.parseStream(response, budget, tier),
+    parseStream: (response, budget, tier, streamContext) => formatter.parseStream(response, budget, tier, streamContext),
     parseResponse: (response, budget, tier) => formatter.parseResponse!(response, budget, tier),
     async runTurn(parsed: EpxParsedRequest, incoming: IncomingMeta, emit: (event: AdapterEvent) => void) {
       if (provider.baseUrl.replace(/\/$/, "") !== M365_COPILOT_BASE_URL) throw new Error("Microsoft 365 Copilot requires its fixed Microsoft endpoint");

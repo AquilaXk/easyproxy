@@ -576,7 +576,7 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
         images: { provider: "imgOk" },
         providers: {
           compat: {
-            adapter: "openai-compatible",
+            adapter: "openai-chat",
             baseUrl: "https://api.example.test/v1",
             authMode: "key",
             apiKey: "sk-up",

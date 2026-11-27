@@ -864,4 +864,843 @@ describe("gateway guardrails token-efficiency routes and prompt-cache optimizati
       upstream.stop(true);
     }
   });
+
+  test("Item 7: volatile timestamps stripped across /v1/responses input[] and messages[1..31] without touching user text", () => {
+    const responsesBody = {
+      model: "gpt-5.4",
+      input: [
+        { type: "message", role: "developer", content: "Current timestamp: 2026-11-27T12:00:00Z\nRespond concisely." },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Current timestamp: 2026-11-27T12:00:00Z" }] },
+      ],
+    };
+    const respResult = injectPromptCacheBreakpointsInPlace(responsesBody, {
+      enabled: true,
+      stripVolatileSystemTimestamps: true,
+    });
+    expect(respResult.normalizedTimestamps).toBe(1);
+    expect((respResult.body as typeof responsesBody).input[0]!.content).toBe("Current timestamp: 2026-11-27\nRespond concisely.");
+    expect(((respResult.body as typeof responsesBody).input[1]!.content as Array<{ text: string }>)[0]!.text).toBe("Current timestamp: 2026-11-27T12:00:00Z");
+
+    const messagesBody = {
+      model: "gpt-5.4",
+      messages: [
+        { role: "user", content: "Current timestamp: 2026-11-27T12:00:00Z" },
+        { role: "system", content: "Current timestamp: 2026-11-27T12:00:00Z\nHelper." },
+      ],
+    };
+    const msgResult = injectPromptCacheBreakpointsInPlace(messagesBody, {
+      enabled: true,
+      stripVolatileSystemTimestamps: true,
+    });
+    expect(msgResult.normalizedTimestamps).toBe(1);
+    expect((msgResult.body as typeof messagesBody).messages[0]!.content).toBe("Current timestamp: 2026-11-27T12:00:00Z");
+    expect((msgResult.body as typeof messagesBody).messages[1]!.content).toBe("Current timestamp: 2026-11-27\nHelper.");
+  });
+
+  test("Item 7: uses 4th Anthropic breakpoint slot on >20-block spans and earlier turn boundaries", () => {
+    const largeText = (label: string) => `${label}: ${"x".repeat(2100)}`;
+
+    // 4-turn multi-turn prefix with tools + system (slots 1 & 2) + tail (slot 3) + earlier turn boundary (slot 4)
+    const multiTurnLongBody = {
+      model: "claude-sonnet-4-6",
+      system: largeText("system-preamble"),
+      tools: [{ name: "tool_a", description: largeText("desc-a"), input_schema: { type: "object" } }],
+      messages: [
+        { role: "user", content: largeText("turn-0-user") },
+        { role: "assistant", content: largeText("turn-1-assistant") },
+        { role: "user", content: largeText("turn-2-user") },
+        { role: "assistant", content: largeText("turn-3-assistant") },
+      ],
+    };
+    const multiRes = injectPromptCacheBreakpointsInPlace(multiTurnLongBody, {
+      enabled: true,
+      ttl: "5m",
+    });
+    expect(multiRes.injectedBreakpoints).toBe(4);
+    const outMsgs = (multiRes.body as Record<string, unknown>).messages as Array<{ content: unknown }>;
+    // Tail (index 3) and an earlier boundary (index 2 or 1) must both carry breakpoints
+    expect(Array.isArray(outMsgs[3]!.content)).toBe(true);
+    expect(outMsgs.slice(0, 3).filter(m => Array.isArray(m.content)).length).toBe(1);
+
+    // >20-block span: 25 messages with rolling tail bridges the 20-block lookback window
+    const manyMessages = Array.from({ length: 25 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: largeText(`turn-${i}`),
+    }));
+    const lookbackBody = {
+      model: "claude-sonnet-4-6",
+      system: largeText("system-preamble"),
+      tools: [{ name: "tool_a", description: largeText("desc-a"), input_schema: { type: "object" } }],
+      messages: manyMessages,
+    };
+    const lookbackRes = injectPromptCacheBreakpointsInPlace(lookbackBody, {
+      enabled: true,
+      ttl: "5m",
+    });
+    expect(lookbackRes.injectedBreakpoints).toBe(4);
+    const lookbackOut = (lookbackRes.body as Record<string, unknown>).messages as Array<{ content: unknown }>;
+    // Last message is index 24; an intermediate breakpoint sits within lookback distance (indices 4..23)
+    expect(Array.isArray(lookbackOut[24]!.content)).toBe(true);
+    const earlierBpIndices = lookbackOut
+      .slice(0, 24)
+      .map((m, idx) => (Array.isArray(m.content) ? idx : -1))
+      .filter(idx => idx >= 0);
+    expect(earlierBpIndices.length).toBe(1);
+    expect(24 - earlierBpIndices[0]!).toBeLessThanOrEqual(20);
+  });
+
+  test("Items 7 & 9: single inbound hygiene, accurate telemetry, and native vs bridge cache placement", async () => {
+    const upstreamCalls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        const body = await req.json() as Record<string, unknown>;
+        upstreamCalls.push({ path: url.pathname, body });
+        if (url.pathname.startsWith("/fail500")) {
+          return Response.json({ error: { message: "transient upstream error", type: "server_error" } }, { status: 500 });
+        }
+        if (url.pathname.endsWith("/messages")) {
+          if (body.stream === true) {
+            const sse = [
+              `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "msg_nat", type: "message", role: "assistant", model: String(body.model ?? "claude-sonnet-4-6"), content: [], stop_reason: null, usage: { input_tokens: 16, output_tokens: 0 } } })}`,
+              `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}`,
+              `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "native ok" } })}`,
+              `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}`,
+              `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 4 } })}`,
+              `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`,
+            ].join("\n\n") + "\n\n";
+            return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+          }
+          return Response.json({
+            id: "msg_nat",
+            type: "message",
+            role: "assistant",
+            model: String(body.model ?? "claude-sonnet-4-6"),
+            content: [{ type: "text", text: "native ok" }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 16, output_tokens: 4 },
+          });
+        }
+        if (url.pathname.endsWith("/chat/completions")) {
+          if (body.stream === true) {
+            const sse = [
+              `data: ${JSON.stringify({ id: "chatcmpl_1", object: "chat.completion.chunk", model: String(body.model ?? "gpt-5.4"), choices: [{ index: 0, delta: { role: "assistant", content: "chat ok" }, finish_reason: null }] })}`,
+              `data: ${JSON.stringify({ id: "chatcmpl_1", object: "chat.completion.chunk", model: String(body.model ?? "gpt-5.4"), choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}`,
+              "data: [DONE]",
+            ].join("\n\n") + "\n\n";
+            return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+          }
+          return Response.json({
+            id: "chatcmpl_1",
+            object: "chat.completion",
+            model: String(body.model ?? "gpt-5.4"),
+            choices: [{ index: 0, message: { role: "assistant", content: "chat ok" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+          });
+        }
+        const syntheticLeak = ["sk", "proj", "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"].join("-");
+        const respPayload = {
+          id: "resp_prev_audit9",
+          object: "response",
+          status: "completed",
+          model: String(body.model ?? "gpt-5.4"),
+          output: [{
+            id: "msg_r1",
+            type: "message",
+            role: "assistant",
+            status: "completed",
+            content: [{ type: "output_text", text: `leaked ${syntheticLeak}` }],
+          }],
+          usage: { input_tokens: 10, output_tokens: 4, total_tokens: 14 },
+        };
+        if (body.stream === true) {
+          const sse = [
+            `event: response.created\ndata: ${JSON.stringify({ type: "response.created", response: { id: "resp_prev_audit9", object: "response", status: "in_progress", model: String(body.model ?? "gpt-5.4"), output: [] } })}`,
+            `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: `leaked ${syntheticLeak}` })}`,
+            `event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: respPayload })}`,
+          ].join("\n\n") + "\n\n";
+          return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+        }
+        return Response.json(respPayload);
+      },
+    });
+
+    try {
+      const cfg: EpxConfig = {
+        port: 10109,
+        hostname: "127.0.0.1",
+        defaultProvider: "anth-primary",
+        protocols: { rollout: { managedMessagesNative: true } },
+        providers: {
+          "anth-fail": {
+            adapter: "anthropic",
+            baseUrl: `http://127.0.0.1:${upstream.port}/fail500/v1`,
+            authMode: "key",
+            apiKey: "sk-ant-key-1",
+            allowPrivateNetwork: true,
+            models: ["claude-sonnet-4-6"],
+          },
+          "anth-primary": {
+            adapter: "anthropic",
+            baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+            authMode: "key",
+            apiKey: "sk-ant-key-2",
+            allowPrivateNetwork: true,
+            models: ["claude-sonnet-4-6"],
+          },
+          "resp-fail": {
+            adapter: "openai-responses",
+            baseUrl: `http://127.0.0.1:${upstream.port}/fail500/v1`,
+            authMode: "key",
+            apiKey: "sk-resp-fail-key",
+            allowPrivateNetwork: true,
+            models: ["gpt-5.4"],
+          },
+          "resp-prov": {
+            adapter: "openai-responses",
+            baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+            authMode: "key",
+            apiKey: "sk-resp-key",
+            allowPrivateNetwork: true,
+            models: ["gpt-5.4"],
+          },
+          "chat-prov": {
+            adapter: "openai-chat",
+            baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+            authMode: "key",
+            apiKey: "sk-chat-key",
+            allowPrivateNetwork: true,
+            models: ["gpt-5.4"],
+          },
+        },
+        combos: {
+          "anth-combo": {
+            targets: [
+              { provider: "anth-fail", model: "claude-sonnet-4-6" },
+              { provider: "anth-primary", model: "claude-sonnet-4-6" },
+            ],
+          },
+          "bridge-combo": {
+            targets: [
+              { provider: "resp-fail", model: "gpt-5.4" },
+              { provider: "chat-prov", model: "gpt-5.4" },
+            ],
+          },
+        },
+        outboundSecretGuard: { mode: "redact" },
+        toolOutputCompression: { enabled: true },
+        promptCacheInjection: { enabled: true, ttl: "1h" },
+      };
+      saveConfig(cfg);
+      const freshLog = (): RequestLogContext => ({ model: "", provider: "" } as RequestLogContext);
+
+      // 1. /v1/messages -> OpenAI Chat bridge: scanned once, NO cache_control pollution, NO bogus injectedCacheBreakpoints
+      resetOutboundHygieneStatsForTests();
+      const bridgeRes = await handleClaudeMessages(
+        new Request("http://127.0.0.1/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "chat-prov/gpt-5.4",
+            stream: false,
+            max_tokens: 128,
+            system: "S".repeat(2200),
+            messages: [{ role: "user", content: "U".repeat(2200) }],
+          }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(bridgeRes.status).toBe(200);
+      await bridgeRes.text();
+      expect(getOutboundHygieneStats()).toMatchObject({ scannedRequests: 1, injectedCacheBreakpoints: 0 });
+      expect(JSON.stringify(upstreamCalls.at(-1)?.body)).not.toContain("cache_control");
+
+      // 2. /v1/chat/completions -> OpenAI Responses bridge: scanned once, NO cache_control pollution
+      resetOutboundHygieneStatsForTests();
+      const chatBridgeRes = await handleChatCompletions(
+        new Request("http://127.0.0.1/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "resp-prov/gpt-5.4",
+            stream: false,
+            messages: [
+              { role: "system", content: "S".repeat(2200) },
+              { role: "user", content: "U".repeat(2200) },
+            ],
+          }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(chatBridgeRes.status).toBe(200);
+      await chatBridgeRes.text();
+      expect(getOutboundHygieneStats()).toMatchObject({ scannedRequests: 1, injectedCacheBreakpoints: 0 });
+      expect(JSON.stringify(upstreamCalls.at(-1)?.body)).not.toContain("cache_control");
+
+      // 3. /v1/messages combo failover across failing Responses -> Chat bridge: still scanned once, 0 breakpoints
+      resetOutboundHygieneStatsForTests();
+      const beforeBridgeComboCalls = upstreamCalls.length;
+      const comboBridgeRes = await handleClaudeMessages(
+        new Request("http://127.0.0.1/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "combo/bridge-combo",
+            stream: false,
+            max_tokens: 128,
+            system: "S".repeat(2200),
+            messages: [{ role: "user", content: "U".repeat(2200) }],
+          }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(comboBridgeRes.status).toBe(200);
+      await comboBridgeRes.text();
+      const bridgePaths = upstreamCalls.slice(beforeBridgeComboCalls).map(c => c.path);
+      expect(bridgePaths[0]).toBe("/fail500/v1/responses");
+      expect(bridgePaths.at(-1)).toBe("/v1/chat/completions");
+      expect(getOutboundHygieneStats()).toMatchObject({ scannedRequests: 1, injectedCacheBreakpoints: 0 });
+      expect(JSON.stringify(upstreamCalls.at(-1)?.body)).not.toContain("cache_control");
+
+      // 4. /v1/messages native Anthropic combo child injects 1h cache_control and still counts 1 inbound scan
+      resetOutboundHygieneStatsForTests();
+      const beforeNativeComboCalls = upstreamCalls.length;
+      const comboNativeRes = await handleClaudeMessages(
+        new Request("http://127.0.0.1/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "combo/anth-combo",
+            stream: false,
+            max_tokens: 128,
+            system: "S".repeat(2200),
+            messages: [{ role: "user", content: "U".repeat(2200) }],
+          }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(comboNativeRes.status).toBe(200);
+      await comboNativeRes.text();
+      const nativePaths = upstreamCalls.slice(beforeNativeComboCalls).map(c => c.path);
+      expect(nativePaths[0]).toBe("/fail500/v1/messages");
+      expect(nativePaths.at(-1)).toBe("/v1/messages");
+      expect(getOutboundHygieneStats().scannedRequests).toBe(1);
+      expect(getOutboundHygieneStats().injectedCacheBreakpoints).toBeGreaterThanOrEqual(2);
+      const nativeBody = upstreamCalls.at(-1)?.body;
+      expect(Array.isArray(nativeBody?.messages)).toBe(true);
+      expect(JSON.stringify(nativeBody)).toContain('"ttl":"1h"');
+
+      // 5. Translated Anthropic call (inbound /v1/responses -> anthropic adapter) honors promptCacheInjection.ttl=1h
+      resetOutboundHygieneStatsForTests();
+      const translatedAnthRes = await handleResponses(
+        new Request("http://127.0.0.1/v1/responses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "anth-primary/claude-sonnet-4-6",
+            stream: false,
+            instructions: "S".repeat(2200),
+            input: "U".repeat(2200),
+          }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(translatedAnthRes.status).toBe(200);
+      await translatedAnthRes.text();
+      expect(getOutboundHygieneStats().scannedRequests).toBe(1);
+      expect(JSON.stringify(upstreamCalls.at(-1)?.body)).toContain('"ttl":"1h"');
+
+      // 6. previous_response_id continuation scans restored prefix cleanly without counting twice
+      resetOutboundHygieneStatsForTests();
+      const turn1 = await handleResponses(
+        new Request("http://127.0.0.1/v1/responses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "resp-prov/gpt-5.4",
+            store: true,
+            stream: false,
+            input: "turn 1 clean",
+          }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(turn1.status).toBe(200);
+      await turn1.text();
+      expect(getOutboundHygieneStats().scannedRequests).toBe(1);
+
+      const turn2 = await handleResponses(
+        new Request("http://127.0.0.1/v1/responses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "resp-prov/gpt-5.4",
+            previous_response_id: "resp_prev_audit9",
+            stream: false,
+            input: "turn 2 follow-up",
+          }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(turn2.status).toBe(200);
+      await turn2.text();
+      expect(getOutboundHygieneStats().scannedRequests).toBe(2);
+      const turn2Json = JSON.stringify(upstreamCalls.at(-1)?.body);
+      expect(turn2Json).not.toContain("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456");
+      expect(turn2Json).toContain("[REDACTED:openai_key]");
+    } finally {
+      upstream.stop(true);
+    }
+  });
+
+  test("guardrails dry-run computes Anthropic TTL-parity cache breakeven across default 1h, custom gateway 5m, and explicit 5m override", async () => {
+    const sampleAnthropic = JSON.stringify({
+      model: "claude-sonnet-4-6",
+      stream: false,
+      max_tokens: 128,
+      system: "S".repeat(8_000),
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    const firstPartyCfg: EpxConfig = {
+      port: 10100,
+      hostname: "127.0.0.1",
+      providers: {},
+      modelAliases: {},
+      modelMappings: {},
+      quotaThresholds: { hourlyWarning: 80, weeklyWarning: 80 },
+      preferredProviders: [],
+      logRetention: "7d",
+    };
+
+    const callDryRun = async (cfg: EpxConfig, ttl: "auto" | "5m" | "1h" = "auto") => {
+      const { status, json } = await callMgmt("POST", "/api/gateway-guardrails/dry-run", cfg, {
+        text: sampleAnthropic,
+        promptCacheInjection: { enabled: true, ttl },
+      });
+      expect(status).toBe(200);
+      return json as {
+        injectedCacheBreakpoints: number;
+        contextInspection?: {
+          cache?: {
+            cacheablePrefixTokens?: number;
+            breakeven?: {
+              writeTtl?: string;
+              economicsAvailable?: boolean;
+              breakevenHitCount?: number | null;
+            };
+          };
+        };
+      };
+    };
+
+    // 1. Default first-party Anthropic resolves ttl="auto" -> "1h" parity ($6/MTok -> 2 hits breakeven)
+    const defaultAuto = await callDryRun(firstPartyCfg, "auto");
+    expect(defaultAuto.injectedCacheBreakpoints).toBeGreaterThanOrEqual(1);
+    expect(defaultAuto.contextInspection?.cache?.cacheablePrefixTokens).toBeGreaterThan(0);
+    expect(defaultAuto.contextInspection?.cache?.breakeven).toMatchObject({
+      writeTtl: "1h",
+      economicsAvailable: true,
+      breakevenHitCount: 2,
+    });
+
+    // 2. Explicit 5m overrides first-party 1h default -> 1 hit breakeven
+    const explicit5m = await callDryRun(firstPartyCfg, "5m");
+    expect(explicit5m.contextInspection?.cache?.breakeven).toMatchObject({
+      writeTtl: "5m",
+      economicsAvailable: true,
+      breakevenHitCount: 1,
+    });
+
+    // 3. Configured custom third-party Anthropic gateway stays on conservative "5m" under ttl="auto"
+    const customGatewayCfg: EpxConfig = {
+      ...firstPartyCfg,
+      providers: {
+        "anth-gw": {
+          adapter: "anthropic",
+          apiKey: "test-key",
+          baseUrl: "https://relay.example.invalid/v1",
+          authMode: "key",
+          models: ["claude-sonnet-4-6"],
+        },
+      },
+    };
+    const customAuto = await callDryRun(customGatewayCfg, "auto");
+    expect(customAuto.contextInspection?.cache?.breakeven).toMatchObject({
+      writeTtl: "5m",
+      economicsAvailable: true,
+      breakevenHitCount: 1,
+    });
+
+    // 4. config.cacheRetention === "long" upgrades "auto"/TTL-less payloads to "1h", while explicit "5m" still stays "5m"
+    const longConfig: EpxConfig = { ...customGatewayCfg, cacheRetention: "long" };
+    const longWithAuto = await callDryRun(longConfig, "auto");
+    expect(longWithAuto.contextInspection?.cache?.breakeven).toMatchObject({
+      writeTtl: "1h",
+      economicsAvailable: true,
+      breakevenHitCount: 2,
+    });
+
+    const longWithExplicit5m = await callDryRun(longConfig, "5m");
+    expect(longWithExplicit5m.contextInspection?.cache?.breakeven).toMatchObject({
+      writeTtl: "5m",
+      economicsAvailable: true,
+      breakevenHitCount: 1,
+    });
+
+    // 5. Disabled promptCacheInjection with stale ttl="5m" does not hide config.cacheRetention="long" 1h upgrade on TTL-less caller breakpoints
+    const disabledWithLongRes = await callMgmt("POST", "/api/gateway-guardrails/dry-run", longConfig, {
+      text: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        stream: false,
+        max_tokens: 128,
+        system: [{ type: "text", text: "S".repeat(8_000), cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: "hi" }],
+      }),
+      promptCacheInjection: { enabled: false, ttl: "5m" },
+    });
+    expect(disabledWithLongRes.status).toBe(200);
+    const disabledWithLongJson = disabledWithLongRes.json as {
+      contextInspection?: { cache?: { breakeven?: { writeTtl?: string } } };
+    };
+    expect(disabledWithLongJson.contextInspection?.cache?.breakeven?.writeTtl).toBe("1h");
+
+    // 6. Existing caller "5m" breakpoint caps injection at "5m" even when ttl="1h" is configured
+    const caller5mRes = await callMgmt("POST", "/api/gateway-guardrails/dry-run", firstPartyCfg, {
+      text: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        stream: false,
+        max_tokens: 128,
+        system: [{ type: "text", text: "S".repeat(8_000), cache_control: { type: "ephemeral", ttl: "5m" } }],
+        messages: [{ role: "user", content: "U".repeat(8_000) }],
+      }),
+      promptCacheInjection: { enabled: true, ttl: "1h" },
+    });
+    expect(caller5mRes.status).toBe(200);
+    const caller5mJson = caller5mRes.json as {
+      contextInspection?: { cache?: { breakeven?: { writeTtl?: string } } };
+    };
+    expect(caller5mJson.contextInspection?.cache?.breakeven?.writeTtl).toBe("5m");
+
+    // 7. Vertex @YYYYMMDD models resolve dry-run breakeven rates while preserving Vertex 3.x 5m vs 4.x 1h TTL rules
+    const vertex35Res = await callMgmt("POST", "/api/gateway-guardrails/dry-run", firstPartyCfg, {
+      text: JSON.stringify({
+        model: "claude-3-5-sonnet@20240620",
+        stream: false,
+        max_tokens: 128,
+        system: "S".repeat(8_000),
+        messages: [{ role: "user", content: "U".repeat(8_000) }],
+      }),
+      promptCacheInjection: { enabled: true, ttl: "1h" },
+    });
+    expect(vertex35Res.status).toBe(200);
+    const vertex35Json = vertex35Res.json as {
+      contextInspection?: { cache?: { breakeven?: { writeTtl?: string; economicsAvailable?: boolean; breakevenHitCount?: number } } };
+    };
+    expect(vertex35Json.contextInspection?.cache?.breakeven).toMatchObject({
+      writeTtl: "5m",
+      economicsAvailable: true,
+      breakevenHitCount: 1,
+    });
+
+    const vertex41Res = await callMgmt("POST", "/api/gateway-guardrails/dry-run", firstPartyCfg, {
+      text: JSON.stringify({
+        model: "claude-opus-4-1@20250805",
+        stream: false,
+        max_tokens: 128,
+        system: "S".repeat(8_000),
+        messages: [{ role: "user", content: "U".repeat(8_000) }],
+      }),
+      promptCacheInjection: { enabled: true, ttl: "1h" },
+    });
+    expect(vertex41Res.status).toBe(200);
+    const vertex41Json = vertex41Res.json as {
+      contextInspection?: { cache?: { breakeven?: { writeTtl?: string; economicsAvailable?: boolean; breakevenHitCount?: number } } };
+    };
+    expect(vertex41Json.contextInspection?.cache?.breakeven).toMatchObject({
+      writeTtl: "1h",
+      economicsAvailable: true,
+      breakevenHitCount: 2,
+    });
+  });
+
+  test("sanitizes expanded previous_response_id prefixes on combos and preserves Vertex 3.x 5m cache retention across aliases and combos", async () => {
+    const leakedKey = ["sk", "proj", "COMBO1234567890abcdefghijklmnop"].join("-");
+    const upstreamPayloads: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        const body = await req.json() as Record<string, unknown>;
+        upstreamPayloads.push({ path, body });
+        if (path.endsWith("/messages")) {
+          if (body.stream === true) {
+            const sse = [
+              `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "msg_vertex_1", type: "message", role: "assistant", model: String(body.model ?? "claude-3-5-sonnet@20240620"), content: [], stop_reason: null, usage: { input_tokens: 20, output_tokens: 0 } } })}`,
+              `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}`,
+              `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } })}`,
+              `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}`,
+              `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 5 } })}`,
+              `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`,
+            ].join("\n\n") + "\n\n";
+            return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+          }
+          return Response.json({
+            id: "msg_vertex_1",
+            type: "message",
+            role: "assistant",
+            model: String(body.model ?? "claude-3-5-sonnet@20240620"),
+            content: [{ type: "text", text: "ok" }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 20, output_tokens: 5 },
+          });
+        }
+        return Response.json({
+          id: "resp_combo_prev_1",
+          object: "response",
+          status: "completed",
+          model: String(body.model ?? "gpt-5.4"),
+          output: [{ id: "msg_1", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: `stored ${leakedKey}` }] }],
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        });
+      },
+    });
+
+    try {
+      const cfg: EpxConfig = {
+        port: 10112,
+        hostname: "127.0.0.1",
+        defaultProvider: "resp-prov",
+        outboundSecretGuard: { mode: "redact" },
+        promptCacheInjection: { enabled: true, ttl: "1h" },
+        protocols: { rollout: { managedMessagesNative: true } },
+        providers: {
+          "resp-prov": {
+            adapter: "openai-responses",
+            baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+            authMode: "key",
+            apiKey: "sk-resp",
+            allowPrivateNetwork: true,
+            models: ["gpt-5.4"],
+          },
+          "vertex-anth": {
+            adapter: "anthropic",
+            baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+            authMode: "key",
+            apiKey: "sk-vertex",
+            allowPrivateNetwork: true,
+            models: ["claude-3-5-sonnet@20240620"],
+            modelAliases: {
+              "claude-3-5-sonnet@20240620": "vertex-35-alias",
+            },
+          },
+        },
+        combos: {
+          "resp-prev-combo": {
+            strategy: "ordered",
+            targets: [{ provider: "resp-prov", model: "gpt-5.4" }],
+          },
+          "vertex-35-combo": {
+            strategy: "failover",
+            reasoningEffortMode: "strict",
+            targets: [{ provider: "vertex-anth", model: "claude-3-5-sonnet@20240620" }],
+          },
+        },
+      };
+      saveConfig(cfg);
+      const freshLog = (): RequestLogContext => ({ model: "", provider: "" } as RequestLogContext);
+
+      // 1. Combo previous_response_id expansion redacts stored prefix secret cleanly without double counting
+      resetOutboundHygieneStatsForTests();
+      const comboTurn1 = await handleResponses(
+        new Request("http://127.0.0.1/v1/responses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "combo/resp-prev-combo", store: true, stream: false, input: "first" }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(comboTurn1.status).toBe(200);
+      await comboTurn1.text();
+
+      resetOutboundHygieneStatsForTests();
+      const comboTurn2 = await handleResponses(
+        new Request("http://127.0.0.1/v1/responses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "combo/resp-prev-combo", previous_response_id: "resp_combo_prev_1", stream: false, input: "second" }),
+        }),
+        cfg,
+        freshLog(),
+      );
+      expect(comboTurn2.status).toBe(200);
+      await comboTurn2.text();
+      expect(getOutboundHygieneStats().scannedRequests).toBe(1);
+      const comboTurn2Json = JSON.stringify(upstreamPayloads.at(-1)?.body);
+      expect(comboTurn2Json).not.toContain("COMBO1234567890");
+      expect(comboTurn2Json).toContain("[REDACTED:openai_key]");
+
+      // Block mode rejects expanded historical secret on combo before any upstream dispatch
+      const beforeBlockLen = upstreamPayloads.length;
+      const blockCfg: EpxConfig = { ...cfg, outboundSecretGuard: { mode: "block" } };
+      const comboBlocked = await handleResponses(
+        new Request("http://127.0.0.1/v1/responses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "combo/resp-prev-combo", previous_response_id: "resp_combo_prev_1", stream: false, input: "blocked" }),
+        }),
+        blockCfg,
+        freshLog(),
+      );
+      expect(comboBlocked.status).toBe(400);
+      expect(upstreamPayloads.length).toBe(beforeBlockLen);
+
+      // 2. /v1/messages via alias & combo targeting Vertex Claude 3.5 downgrades 1h -> 5m on both native and bridged paths
+      const bridgedCfg: EpxConfig = { ...cfg, protocols: { rollout: { managedMessagesNative: false } } };
+      for (const [isNative, activeCfg] of [[true, cfg], [false, bridgedCfg]] as const) {
+        saveConfig(activeCfg);
+        for (const selector of ["vertex-35-alias", "combo/vertex-35-combo"]) {
+          const res = await handleClaudeMessages(
+            new Request("http://127.0.0.1/v1/messages", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                model: selector,
+                max_tokens: 128,
+                stream: false,
+                system: "S".repeat(2200),
+                messages: [{ role: "user", content: "U".repeat(2200) }],
+              }),
+            }),
+            activeCfg,
+            freshLog(),
+          );
+          expect(res.status).toBe(200);
+          await res.text();
+          const sent = JSON.stringify(upstreamPayloads.at(-1)?.body);
+          expect(sent).toContain(isNative ? '"ttl":"5m"' : '"cache_control":{"type":"ephemeral"}');
+          expect(sent).not.toContain('"ttl":"1h"');
+        }
+      }
+
+      // 3. /v1/messages combo & policy routes do not let a caller's 5m breakpoint override promptCacheInjection.ttl="1h"
+      const anthFourCfg: EpxConfig = {
+        ...cfg,
+        providers: {
+          ...cfg.providers,
+          "anth-four": {
+            adapter: "anthropic",
+            baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+            authMode: "key",
+            apiKey: "sk-anth4",
+            allowPrivateNetwork: true,
+            models: ["claude-sonnet-4-6"],
+          },
+        },
+        combos: {
+          ...cfg.combos,
+          "anth4-combo": {
+            strategy: "failover",
+            targets: [{ provider: "anth-four", model: "claude-sonnet-4-6" }],
+          },
+        },
+        routingProfiles: {
+          "anth4-policy": {
+            candidates: [{ provider: "anth-four", model: "claude-sonnet-4-6" }],
+          },
+        },
+      };
+      const anthFourBridgedCfg: EpxConfig = {
+        ...anthFourCfg,
+        protocols: { rollout: { managedMessagesNative: false } },
+      };
+
+      // Bridged concrete, combo & policy routes: caller 5m breakpoint on trailing user block must NOT override promptCacheInjection.ttl="1h"
+      saveConfig(anthFourBridgedCfg);
+      for (const selector of ["anth-four/claude-sonnet-4-6", "combo/anth4-combo", "policy/anth4-policy"]) {
+        const resMixed = await handleClaudeMessages(
+          new Request("http://127.0.0.1/v1/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: selector,
+              max_tokens: 128,
+              stream: false,
+              system: [{ type: "text", text: "S".repeat(2200), cache_control: { type: "ephemeral" } }],
+              messages: [{ role: "user", content: [{ type: "text", text: "U".repeat(2200), cache_control: { type: "ephemeral", ttl: "5m" } }] }],
+            }),
+          }),
+          anthFourBridgedCfg,
+          freshLog(),
+        );
+        expect(resMixed.status, `${selector}-mixed`).toBe(200);
+        await resMixed.text();
+        const sentMixed = JSON.stringify(upstreamPayloads.at(-1)?.body);
+        expect(sentMixed, `${selector}-mixed`).toContain('"ttl":"1h"');
+      }
+
+      // Native combo & policy routes: TTL-less breakpoint must upgrade to "1h" without being clamped to "short"
+      saveConfig(anthFourCfg);
+      for (const selector of ["combo/anth4-combo", "policy/anth4-policy"]) {
+        const res = await handleClaudeMessages(
+          new Request("http://127.0.0.1/v1/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: selector,
+              max_tokens: 128,
+              stream: false,
+              system: [{ type: "text", text: "S".repeat(2200), cache_control: { type: "ephemeral" } }],
+              messages: [{ role: "user", content: "U".repeat(2200) }],
+            }),
+          }),
+          anthFourCfg,
+          freshLog(),
+        );
+        expect(res.status, selector).toBe(200);
+        await res.text();
+        const sent = JSON.stringify(upstreamPayloads.at(-1)?.body);
+        expect(sent, selector).toContain('"ttl":"1h"');
+      }
+
+      // Under ttl="auto" (no explicit 1h/5m promptCacheInjection override), caller's 5m breakpoint still wins on bridged combo/policy
+      const autoComboCfg: EpxConfig = {
+        ...anthFourBridgedCfg,
+        promptCacheInjection: { enabled: true, ttl: "auto" },
+      };
+      saveConfig(autoComboCfg);
+      const autoRes = await handleClaudeMessages(
+        new Request("http://127.0.0.1/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "combo/anth4-combo",
+            max_tokens: 128,
+            stream: false,
+            system: [{ type: "text", text: "S".repeat(2200), cache_control: { type: "ephemeral" } }],
+            messages: [{ role: "user", content: [{ type: "text", text: "U".repeat(2200), cache_control: { type: "ephemeral", ttl: "5m" } }] }],
+          }),
+        }),
+        autoComboCfg,
+        freshLog(),
+      );
+      expect(autoRes.status).toBe(200);
+      await autoRes.text();
+      const autoSent = JSON.stringify(upstreamPayloads.at(-1)?.body);
+      expect(autoSent).not.toContain('"ttl":"1h"');
+    } finally {
+      upstream.stop(true);
+    }
+  });
 });

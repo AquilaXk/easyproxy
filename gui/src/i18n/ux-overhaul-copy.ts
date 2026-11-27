@@ -431,7 +431,13 @@ export type UxExtraKey =
   | "inspector.modeWindow"
   | "inspector.sampleResponses"
   | "inspector.previewTruncated"
-  | "inspector.clearFilter";
+  | "inspector.clearFilter"
+  | "inspector.breakevenTitle"
+  | "inspector.breakevenHits"
+  | "inspector.breakevenNoBreakEven"
+  | "inspector.breakevenEconomics"
+  | "inspector.breakevenWorthwhile"
+  | "inspector.breakevenMarginal";
 
 export function uxT(locale: Locale, key: UxCopyKey, vars?: Record<string, string | number>): string {
   const sliceKey = `ux.${key}` as TKey;

@@ -454,3 +454,48 @@ test("history maps installation-secret refusal before fetch", async () => {
   expect((await handleContextHistory(req, config, logContext(), "alpha/notes/v2/read_file", undefined, keyAdmission)).status).toBe(503);
   expect(sends).toBe(0);
 });
+
+test("Item 11: outbound secret guard protects /v1/alpha/notes/v2/* writes and appends in block and redact modes", async () => {
+  const secret = ["sk", "proj", `notesLeak${"0".repeat(22)}`].join("-");
+  let sends = 0;
+  let sentBody: Record<string, unknown> | undefined;
+  setFetch(async (_url, init) => {
+    sends += 1;
+    sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Response.json({ ok: true });
+  });
+
+  const blockCfg: EpxConfig = { ...config, outboundSecretGuard: { mode: "block" } };
+  const blockedRes = await handleContextHistory(
+    new Request("http://localhost/v1/alpha/notes/v2/write_file", {
+      method: "POST",
+      headers: { authorization: "Bearer incoming", "content-type": "application/json" },
+      body: JSON.stringify({ context: { session_id: "root-test" }, path: "notes.md", content: `key=${secret}` }),
+    }),
+    blockCfg,
+    logContext(),
+    "alpha/notes/v2/write_file",
+    undefined,
+    keyAdmission,
+  );
+  expect(blockedRes.status).toBe(400);
+  expect(sends).toBe(0);
+
+  const redactCfg: EpxConfig = { ...config, outboundSecretGuard: { mode: "redact" } };
+  const redactedRes = await handleContextHistory(
+    new Request("http://localhost/v1/alpha/notes/v2/append_to_file", {
+      method: "POST",
+      headers: { authorization: "Bearer incoming", "content-type": "application/json" },
+      body: JSON.stringify({ context: { session_id: "root-test" }, path: "notes.md", delta: `append ${secret}` }),
+    }),
+    redactCfg,
+    logContext(),
+    "alpha/notes/v2/append_to_file",
+    undefined,
+    keyAdmission,
+  );
+  expect(redactedRes.status).toBe(200);
+  expect(sends).toBe(1);
+  expect(sentBody?.delta).toBe("append [REDACTED:openai_key]");
+  expect(JSON.stringify(sentBody)).not.toContain(secret);
+});

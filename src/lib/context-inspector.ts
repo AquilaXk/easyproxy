@@ -8,6 +8,8 @@
  * tail cells), ranked heavy entries, and actionable prefix-stability diagnostics.
  */
 
+import { findVendorCostByModelId, getModelMetadata } from "../generated/model-metadata";
+
 export const CONTEXT_CATEGORIES = [
   "system",
   "tools",
@@ -155,7 +157,7 @@ export function inferContextWindowTokens(model: string | null | undefined, expli
   }
   const lower = (model ?? "").trim().toLowerCase();
   if (!lower) return 200_000;
-  if (lower.includes("1m") || lower.includes("gemini-2.5") || lower.includes("gemini-2.0") || lower.includes("gemini-1.5")) {
+  if (lower.includes("1m") || lower.includes("gemini-3") || lower.includes("gemini-2.5") || lower.includes("gemini-2.0") || lower.includes("gemini-1.5")) {
     return 1_000_000;
   }
   if (lower.includes("gpt-5") || lower.includes("gpt-4.1")) return 400_000;
@@ -343,7 +345,86 @@ function buildProportionalCells(
 export interface ContextInspectionOptions {
   contextWindowTokens?: number;
   rates?: PromptCacheBreakevenRates;
+  autoResolveRates?: boolean;
   writeTtl?: "5m" | "1h";
+}
+
+function toBreakevenRates(cost: { input: number; output: number; cacheRead: number; cacheWrite: number }): PromptCacheBreakevenRates {
+  return {
+    inputPerMTok: cost.input,
+    outputPerMTok: cost.output,
+    cacheReadPerMTok: cost.cacheRead,
+    cacheWritePerMTok: cost.cacheWrite,
+  };
+}
+
+/** Ordered candidate IDs for pricing lookups, falling back from Vertex `@YYYYMMDD` suffixes. */
+export function promptCacheRateLookupCandidates(modelId: string): string[] {
+  const candidates = [modelId];
+  if (modelId.includes("@")) {
+    for (const alt of [modelId.replace("@", "-"), modelId.replace(/-v\d+@/, "-"), modelId.split("@")[0]!]) {
+      if (alt && !candidates.includes(alt)) candidates.push(alt);
+    }
+  }
+  return candidates;
+}
+
+/** Browser-safe static rate lookup for client Context Inspector and fallback diagnostics. */
+export function resolveDefaultPromptCacheRates(model: string | null | undefined): PromptCacheBreakevenRates | undefined {
+  if (!model || !model.trim()) return undefined;
+  const trimmed = model.trim();
+  const slash = trimmed.indexOf("/");
+  if (slash > 0) {
+    const provider = trimmed.slice(0, slash);
+    const modelId = trimmed.slice(slash + 1);
+    for (const candidateId of promptCacheRateLookupCandidates(modelId)) {
+      const meta = getModelMetadata(provider, candidateId);
+      if (meta?.cost) return toBreakevenRates(meta.cost);
+    }
+    for (const candidateId of promptCacheRateLookupCandidates(modelId)) {
+      const vendor = findVendorCostByModelId(candidateId);
+      if (vendor) return toBreakevenRates(vendor.cost);
+    }
+    return undefined;
+  }
+  for (const candidateId of promptCacheRateLookupCandidates(trimmed)) {
+    const vendor = findVendorCostByModelId(candidateId);
+    if (vendor) return toBreakevenRates(vendor.cost);
+  }
+  return undefined;
+}
+
+function extractFullSystemContentText(content: unknown, maxChars = MAX_CONTEXT_INSPECT_CHARS): string {
+  if (typeof content === "string") return content.slice(0, maxChars);
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    let totalLen = 0;
+    const limit = Math.min(content.length, 256);
+    for (let i = 0; i < limit && totalLen < maxChars; i++) {
+      const part = content[i];
+      let chunk = "";
+      if (typeof part === "string") {
+        chunk = part;
+      } else if (isRec(part)) {
+        if (typeof part.text === "string") chunk = part.text;
+        else if (typeof part.input_text === "string") chunk = part.input_text;
+        else if (typeof part.content === "string") chunk = part.content;
+        else {
+          try { chunk = JSON.stringify(part) ?? ""; } catch { chunk = ""; }
+        }
+      }
+      if (chunk) {
+        parts.push(chunk);
+        totalLen += chunk.length + 1;
+      }
+    }
+    return parts.join("\n").slice(0, maxChars);
+  }
+  try {
+    return (JSON.stringify(content ?? "") ?? "").slice(0, maxChars);
+  } catch {
+    return "";
+  }
 }
 
 function cleanNonNegativeRate(raw: number): number {
@@ -617,9 +698,45 @@ export function inspectPromptContextPayload(
       } else {
         const role = typeof item.role === "string" ? item.role : "user";
         if (role === "system" || role === "developer") {
-          const textSample = typeof item.content === "string" ? item.content : JSON.stringify(item.content ?? "").slice(0, 256);
-          if (VOLATILE_TIMESTAMP_RE.test(textSample)) warnings.add("volatile_iso_timestamp_in_system");
-          pushSegment("system", truncateLabel(textSample, `${role}[${i}]`), estimateNodeTokens(item.content).tokens, undefined, item.content ?? item);
+          if (typeof item.content === "string") {
+            if (VOLATILE_TIMESTAMP_RE.test(item.content)) warnings.add("volatile_iso_timestamp_in_system");
+            pushSegment("system", truncateLabel(item.content, `${role}[${i}]`), estimateNodeTokens(item.content).tokens, undefined, item.content);
+          } else if (Array.isArray(item.content)) {
+            const fullText = extractFullSystemContentText(item.content);
+            if (fullText && VOLATILE_TIMESTAMP_RE.test(fullText)) warnings.add("volatile_iso_timestamp_in_system");
+            const bLimit = Math.min(item.content.length, 64);
+            let pushedBlock = false;
+            for (let b = 0; b < bLimit; b++) {
+              const block = item.content[b];
+              if (typeof block === "string") {
+                if (block.length > 0) {
+                  pushedBlock = true;
+                  pushSegment("system", truncateLabel(block, `${role}[${i}]`), tokensFromChars(block.length), undefined, block);
+                }
+                continue;
+              }
+              if (!isRec(block)) continue;
+              const blockText = typeof block.text === "string"
+                ? block.text
+                : typeof block.input_text === "string"
+                  ? block.input_text
+                  : typeof block.content === "string"
+                    ? block.content
+                    : "";
+              const { tokens } = estimateNodeTokens(block);
+              if (tokens > 0) {
+                pushedBlock = true;
+                pushSegment("system", truncateLabel(blockText, `${role}[${i}]`), tokens, block.cache_control, blockText || block);
+              }
+            }
+            if (!pushedBlock) {
+              pushSegment("system", truncateLabel(fullText, `${role}[${i}]`), estimateNodeTokens(item.content).tokens, undefined, item.content);
+            }
+          } else {
+            const fullText = extractFullSystemContentText(item.content ?? "");
+            if (fullText && VOLATILE_TIMESTAMP_RE.test(fullText)) warnings.add("volatile_iso_timestamp_in_system");
+            pushSegment("system", truncateLabel(fullText, `${role}[${i}]`), estimateNodeTokens(item.content).tokens, undefined, item.content ?? item);
+          }
         } else {
           const est = estimateNodeTokens(item.content ?? item);
           const cat: ContextCategoryId = est.isMedia ? "attachments" : role === "assistant" ? "assistant" : "user";
@@ -639,9 +756,50 @@ export function inspectPromptContextPayload(
       const role = typeof msg.role === "string" ? msg.role : "user";
 
       if (role === "system" || role === "developer") {
-        const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content ?? "").slice(0, 256);
-        if (VOLATILE_TIMESTAMP_RE.test(text)) warnings.add("volatile_iso_timestamp_in_system");
-        pushSegment("system", truncateLabel(text, `${role}[${i}]`), estimateNodeTokens(msg.content).tokens, msg.cache_control, msg.content);
+        if (typeof msg.content === "string") {
+          if (VOLATILE_TIMESTAMP_RE.test(msg.content)) warnings.add("volatile_iso_timestamp_in_system");
+          pushSegment("system", truncateLabel(msg.content, `${role}[${i}]`), estimateNodeTokens(msg.content).tokens, msg.cache_control, msg.content);
+        } else if (Array.isArray(msg.content)) {
+          const fullText = extractFullSystemContentText(msg.content);
+          if (fullText && VOLATILE_TIMESTAMP_RE.test(fullText)) warnings.add("volatile_iso_timestamp_in_system");
+          const bLimit = Math.min(msg.content.length, 64);
+          let pushedBlock = false;
+          let attachedWrapperBp = false;
+          for (let b = 0; b < bLimit; b++) {
+            const block = msg.content[b];
+            const fallbackBp = !attachedWrapperBp && b === bLimit - 1 ? msg.cache_control : undefined;
+            if (typeof block === "string") {
+              if (block.length > 0) {
+                pushedBlock = true;
+                if (fallbackBp) attachedWrapperBp = true;
+                pushSegment("system", truncateLabel(block, `${role}[${i}]`), tokensFromChars(block.length), fallbackBp, block);
+              }
+              continue;
+            }
+            if (!isRec(block)) continue;
+            const blockText = typeof block.text === "string"
+              ? block.text
+              : typeof block.input_text === "string"
+                ? block.input_text
+                : typeof block.content === "string"
+                  ? block.content
+                  : "";
+            const { tokens } = estimateNodeTokens(block);
+            if (tokens > 0) {
+              pushedBlock = true;
+              const bp = isRec(block.cache_control) ? block.cache_control : fallbackBp;
+              if (bp === fallbackBp && fallbackBp) attachedWrapperBp = true;
+              pushSegment("system", truncateLabel(blockText, `${role}[${i}]`), tokens, bp, blockText || block);
+            }
+          }
+          if (!pushedBlock) {
+            pushSegment("system", truncateLabel(fullText, `${role}[${i}]`), estimateNodeTokens(msg.content).tokens, msg.cache_control, msg.content);
+          }
+        } else {
+          const fullText = extractFullSystemContentText(msg.content ?? "");
+          if (fullText && VOLATILE_TIMESTAMP_RE.test(fullText)) warnings.add("volatile_iso_timestamp_in_system");
+          pushSegment("system", truncateLabel(fullText, `${role}[${i}]`), estimateNodeTokens(msg.content).tokens, msg.cache_control, msg.content);
+        }
         continue;
       }
       if (role === "tool" || role === "function") {
@@ -788,10 +946,11 @@ export function inspectPromptContextPayload(
   const inferredTtl: "5m" | "1h" = options?.writeTtl
     ?? ((segments.some(seg => seg.cached && seg.breakpointTtlRank === 2)
       || (isRec(payload.cache_control) && payload.cache_control.ttl === "1h")) ? "1h" : "5m");
-  const breakeven = options?.rates && cacheablePrefixTokens > 0
+  const effectiveRates = options?.rates ?? (options?.autoResolveRates ? resolveDefaultPromptCacheRates(model) : undefined);
+  const breakeven = effectiveRates && cacheablePrefixTokens > 0
     ? evaluatePromptCacheBreakeven({
         prefixTokens: cacheablePrefixTokens,
-        rates: options.rates,
+        rates: effectiveRates,
         writeTtl: inferredTtl,
       })
     : undefined;

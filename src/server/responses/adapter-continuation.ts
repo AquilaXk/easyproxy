@@ -808,7 +808,7 @@ export function createAdapterContinuations(
         const observeSpend = adapterResponseSpendObserver(current);
         const events = nextParsed.stream
           ? readResponseStreamWithInactivity(current, upstream.signal, bodyInactivityMs,
-            guarded => transportState.activeAdapter.parseStream(guarded, translatorBudget, logCtx.activeTierMetadata))
+            guarded => transportState.activeAdapter.parseStream(guarded, translatorBudget, logCtx.activeTierMetadata, { routedCompaction: Boolean(routedCompaction) }))
           : await readResponseBodyWithInactivity(current, upstream.signal, bodyInactivityMs,
             guarded => transportState.activeAdapter.parseResponse!(guarded, translatorBudget, logCtx.activeTierMetadata));
         for await (const event of events) {

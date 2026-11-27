@@ -279,6 +279,32 @@ describe("Gateway token efficiency & v2 UX surfaces", () => {
           savedChars: 1500,
           estimatedSavedTokens: 375,
           previewText: "[easyproxy deduplicated tool output: identical to call_id=call_dryrun_1]",
+          contextInspection: {
+            model: "claude-sonnet-4-6",
+            usedTokens: 12_000,
+            contextWindowTokens: 200_000,
+            cache: {
+              wireFormat: "anthropic-messages",
+              explicitBreakpoints: 1,
+              cacheablePrefixTokens: 10_000,
+              cacheablePrefixShare: 10_000 / 12_000,
+              breakeven: {
+                prefixTokens: 10_000,
+                writeTtl: "1h",
+                economicsAvailable: true,
+                writePremiumUsd: 0.03,
+                perHitSavingsUsd: 0.027,
+                breakevenFollowUpHits: 3 / 2.7,
+                breakevenHitCount: 2,
+                warmRefreshCostUsd: 0.003,
+                missPenaltyUsd: 0.0030015,
+                activeExpectedSavingsUsd: 0.051,
+                idleExpectedSavingsUsd: -0.003,
+                worthwhileActive: true,
+                worthwhileIdle: false,
+              },
+            },
+          },
         });
       }
       if (url.endsWith("/api/gateway-guardrails") && init?.method === "PUT") {
@@ -380,6 +406,13 @@ describe("Gateway token efficiency & v2 UX surfaces", () => {
         dedupMinChars: 512,
       });
       expect(host.textContent).toContain("Saved 1,500 chars (~375 tokens, 63%)");
+      const dryRunBreakeven = host.querySelector('[data-dryrun-breakeven="true"]');
+      expect(dryRunBreakeven).not.toBeNull();
+      expect(dryRunBreakeven!.textContent).toContain("anthropic-messages");
+      expect(dryRunBreakeven!.textContent).toContain("Cache breakeven (1h)");
+      expect(dryRunBreakeven!.textContent).toContain("Break-even: 2 follow-up hits");
+      expect(dryRunBreakeven!.textContent).toContain("Worthwhile");
+      expect(dryRunBreakeven!.textContent).toContain("Write +$0.0300 · Hit -$0.0270 · Expected (active/idle): $0.0510 / -$0.0030");
     } finally {
       await act(async () => root.unmount());
     }
@@ -685,6 +718,10 @@ describe("Gateway token efficiency & v2 UX surfaces", () => {
 
       // ContextInspectorPanel renders 128 occupied Fit cells by default, switches to Window mode,
       // filters contributors by clicked category, opens bounded entry previews, and loads Responses samples.
+      const inspectorBreakeven = host.querySelector('[data-inspector-breakeven="true"]');
+      expect(inspectorBreakeven).not.toBeNull();
+      expect(inspectorBreakeven!.textContent).toContain("Cache breakeven (1h)");
+      expect(inspectorBreakeven!.textContent).toContain("Break-even: 2 follow-up hits");
       expect(host.querySelectorAll(".ctx-inspector-cell")).toHaveLength(128);
       expect(host.querySelectorAll(".ctx-inspector-cell.ctx-swatch--free")).toHaveLength(0);
 
@@ -811,6 +848,52 @@ describe("Gateway token efficiency & v2 UX surfaces", () => {
         await new Promise(resolve => setTimeout(resolve, 250));
       });
       expect(scrollCalls).toEqual([{ block: "start" }]);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  test("GatewayGuardrailsPanel forwards selected cacheTtl to ContextInspectorPanel writeTtl", async () => {
+    globalThis.fetch = (async () => Response.json({
+      outboundSecretGuard: { mode: "redact" },
+      toolOutputCompression: { enabled: true, minChars: 12000, headChars: 4000, tailChars: 4000, stripAnsi: true },
+      promptCacheInjection: { enabled: true, ttl: "1h", stripVolatileSystemTimestamps: true },
+      supportsPromptCacheInjection: true,
+      stats: { scannedRequests: 0, secretDetections: 0, secretBlocks: 0, compressedToolOutputs: 0, compactedJsonOutputs: 0, deduplicatedToolOutputs: 0, savedChars: 0, estimatedSavedTokens: 0 },
+    })) as unknown as typeof fetch;
+
+    const { createRoot } = await import("react-dom/client");
+    const host = document.createElement("div");
+    document.body.append(host);
+    let root!: Root;
+    try {
+      await act(async () => {
+        root = createRoot(host);
+        root.render(
+          <LanguageProvider>
+            <GatewayGuardrailsPanel apiBase="http://127.0.0.1:43123" />
+          </LanguageProvider>,
+        );
+        await new Promise(r => setTimeout(r, 30));
+      });
+      const details = host.querySelector<HTMLDetailsElement>("#gateway-context-inspector");
+      expect(details).not.toBeNull();
+      expect(details!.textContent).toContain("(1h)");
+
+      const trigger = host.querySelector<HTMLButtonElement>("#guardrails-cache-ttl");
+      expect(trigger).not.toBeNull();
+      await act(async () => {
+        trigger!.click();
+        await new Promise(r => setTimeout(r, 10));
+      });
+      const opt5m = Array.from(testWindow.document.querySelectorAll<HTMLButtonElement>('[role="option"]'))
+        .find(opt => opt.textContent?.trim() === "5m");
+      expect(opt5m).toBeDefined();
+      await act(async () => {
+        opt5m!.click();
+        await new Promise(r => setTimeout(r, 20));
+      });
+      expect(details!.textContent).toContain("(5m)");
     } finally {
       await act(async () => root.unmount());
     }

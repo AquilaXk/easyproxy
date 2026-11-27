@@ -3,6 +3,7 @@ import {
   CACHE_BREAKEVEN_MIN_EXPECTED_SAVINGS_USD,
   CACHE_WRITE_1H_MULTIPLIER,
   evaluatePromptCacheBreakeven,
+  inferContextWindowTokens,
   inspectPromptContextJson,
 } from "../../src/lib/context-inspector";
 import {
@@ -38,12 +39,22 @@ describe("P1-C macOS DarkWake readiness guard", () => {
     expect(probeCalls).toBe(0);
   });
 
-  test("requires both Graphics and Network tokens on Current System Capabilities line", () => {
+  test("distinguishes Display Sleep/headless hosts from true DarkWake and falls back ready on probe failures", () => {
     expect(parseMacOSSystemCapabilitiesReady(
       "Current System Capabilities are: CPU Graphics Audio Network \nCurrent Power State: 4\n",
     )).toEqual({ ready: true, reason: "interactive_ready" });
 
-    // Power Nap / DarkWake: Network or CPU present without Graphics.
+    // Display Sleep or headless Mac: Power State 4 with Network (without Graphics) is active and ready.
+    expect(parseMacOSSystemCapabilitiesReady(
+      "Current System Capabilities are: CPU Network \nCurrent Power State: 4\n",
+    )).toEqual({ ready: true, reason: "interactive_ready" });
+
+    // Display Sleep / active host with Audio + Network (without Power State line) is active and ready.
+    expect(parseMacOSSystemCapabilitiesReady(
+      "Current System Capabilities are: CPU Audio Network \n",
+    )).toEqual({ ready: true, reason: "interactive_ready" });
+
+    // Power Nap / DarkWake: Network or CPU present at lower power state without Graphics/Audio.
     expect(parseMacOSSystemCapabilitiesReady(
       "Current System Capabilities are: CPU Network \nCurrent Power State: 2\n",
     )).toEqual({ ready: false, reason: "dark_wake_missing_capabilities" });
@@ -53,25 +64,36 @@ describe("P1-C macOS DarkWake readiness guard", () => {
       "Current System Capabilities are: CPU Graphics \nCurrent Power State: 4\n",
     )).toEqual({ ready: false, reason: "dark_wake_missing_capabilities" });
 
-    // Malformed / empty output fails closed.
+    // Malformed / missing capabilities output fails open so background OAuth workers never starve.
     expect(parseMacOSSystemCapabilitiesReady("Current Power State: 4\n")).toEqual({
-      ready: false,
+      ready: true,
       reason: "capabilities_line_missing",
     });
     expect(parseMacOSSystemCapabilitiesReady("")).toEqual({
-      ready: false,
+      ready: true,
       reason: "capabilities_line_missing",
     });
+
+    // Empty "Current Power State:" must not coerce Number("") === 0 and override Audio+Network active wake.
+    expect(parseMacOSSystemCapabilitiesReady(
+      "Current System Capabilities are: CPU Audio Network \nCurrent Power State:\n",
+    )).toEqual({ ready: true, reason: "interactive_ready" });
+    expect(parseMacOSSystemCapabilitiesReady(
+      "Current System Capabilities are: CPU Audio Network \nCurrent Power State:   \n",
+    )).toEqual({ ready: true, reason: "interactive_ready" });
+    expect(parseMacOSSystemCapabilitiesReady(
+      "Current System Capabilities are: CPU Network \nCurrent Power State:\n",
+    )).toEqual({ ready: false, reason: "dark_wake_missing_capabilities" });
   });
 
-  test("fails closed when pmset reader throws or returns non-capabilities output, and caches within TTL", async () => {
+  test("falls back to ready: true when pmset reader throws or returns non-capabilities output, and caches within TTL", async () => {
     const failed = await checkMacOSRefreshReadiness({
       platform: "darwin",
       readState: async () => {
         throw new Error("pmset timed out");
       },
     });
-    expect(failed).toEqual({ ready: false, reason: "probe_failed" });
+    expect(failed).toEqual({ ready: true, reason: "probe_failed" });
 
     let reads = 0;
     let clock = 1_000;
@@ -270,5 +292,43 @@ describe("P2(c) manual prompt-cache breakeven diagnostic calculation", () => {
     expect(topLevel1h.ok).toBe(true);
     expect(topLevel1h.cache.breakeven?.writeTtl).toBe("1h");
     expect(topLevel1h.cache.breakeven?.breakevenHitCount).toBe(2);
+  });
+
+  test("maps gemini-3* to 1M context window, detects timestamps past 256 chars in array system/developer blocks, and supports autoResolveRates", () => {
+    expect(inferContextWindowTokens("gemini-3-pro")).toBe(1_000_000);
+    expect(inferContextWindowTokens("gemini-3.0-flash")).toBe(1_000_000);
+
+    const lateTimestamp = `${"Static architectural rules. ".repeat(20)}\nGenerated: 2026-11-27T12:00:00Z`;
+    const chatDevArray = inspectPromptContextJson(JSON.stringify({
+      model: "gpt-5.4",
+      messages: [
+        { role: "developer", content: [{ type: "input_text", text: lateTimestamp }] },
+        { role: "user", content: "hi" },
+      ],
+    }));
+    expect(chatDevArray.ok).toBe(true);
+    expect(chatDevArray.cache.warnings).toContain("volatile_iso_timestamp_in_system");
+
+    const responsesSysArray = inspectPromptContextJson(JSON.stringify({
+      model: "gpt-5.4",
+      input: [
+        { role: "system", content: [{ type: "input_text", text: lateTimestamp }] },
+        { role: "user", content: "hi" },
+      ],
+    }));
+    expect(responsesSysArray.ok).toBe(true);
+    expect(responsesSysArray.cache.warnings).toContain("volatile_iso_timestamp_in_system");
+
+    const autoRated = inspectPromptContextJson(JSON.stringify({
+      model: "claude-sonnet-4-6",
+      system: [{ type: "text", text: "A".repeat(8_000), cache_control: { type: "ephemeral", ttl: "1h" } }],
+      messages: [{ role: "user", content: "hi" }],
+    }), { autoResolveRates: true });
+    expect(autoRated.ok).toBe(true);
+    expect(autoRated.cache.breakeven).toMatchObject({
+      writeTtl: "1h",
+      economicsAvailable: true,
+      breakevenHitCount: 2,
+    });
   });
 });

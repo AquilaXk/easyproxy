@@ -34,14 +34,12 @@ import {
   deriveRequestExecutionBudget,
   isRequestExecutionBudget,
 } from "../../lib/request-execution-budget";
-import type {
-  RequestExecutionBudgetPolicy,
-  RequestExecutionBudget,
-} from "../../lib/request-execution-budget";
+import type { RequestExecutionBudgetPolicy, RequestExecutionBudget } from "../../lib/request-execution-budget";
 import type { EpxComboDefaultEffort, EpxConfig, EpxUsage } from "../../types";
 import type { RequestLogContext } from "../request-log";
 import type { HandleResponsesOptions, ResponsesDispatchers, ConsumedComboFailure } from "./core-options";
 import type { TranslatorBudget } from "../../lib/translator-budget";
+import { OUTBOUND_SECRET_BLOCKED_MESSAGE, sanitizeExpandedPreviousResponsePrefix } from "../outbound-payload-hygiene";
 import {
   getCombo,
   comboRequestHasImageInput,
@@ -485,7 +483,7 @@ export async function executeComboResponses(
   const inboundOwnThreadId = req.headers.get("thread-id")?.trim() || undefined;
   const strictReplay = options.plaintextV2Decision ?? isPlaintextV2AgentMessagesEnabled(config);
   const { replayOwnerKey, replayConnectionScope } = selectResponseReplayOwner(strictReplay, replayPrincipal.clientPrincipalId, inboundOwnThreadId, options);
-  const body = expandPreviousResponseInput(rawBody, strictReplay ? inboundOwnThreadId : inboundClientThreadId, replayOwnerKey);
+  let body = expandPreviousResponseInput(rawBody, strictReplay ? inboundOwnThreadId : inboundClientThreadId, replayOwnerKey);
   const replayFailure = previousResponseReplayFailure(body);
   if (replayFailure?.reason === "scope_mismatch") {
     console.warn("[easyproxy] refusing continuation because the client task scope does not match replay state");
@@ -493,12 +491,11 @@ export async function executeComboResponses(
   // Local replay failures require full client replay.
   if (replayFailure) {
     failLinkTurnExpansion(options.linkTurn, req, logCtx, body, replayFailure.reason);
-    return formatErrorResponse(
-      400,
-      "previous_response_not_found",
-      "Continuation state is unavailable or corrupt; resend the full conversation without previous_response_id.",
-    );
+    return formatErrorResponse(400, "previous_response_not_found", "Continuation state is unavailable or corrupt; resend the full conversation without previous_response_id.");
   }
+  const expandedHygiene = sanitizeExpandedPreviousResponsePrefix(body, rawBody, previousResponseRestoredPrefixLength(body), config, logCtx, options.outboundPayloadHygieneApplied === true);
+  if (expandedHygiene.blocked) return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+  body = expandedHygiene.body;
   // Missing state returns the original body without a failure marker. Reject
   // that unresolved continuation for image-disabled combos so a target cannot
   // resolve prior images out of band. A successful expansion yields a new

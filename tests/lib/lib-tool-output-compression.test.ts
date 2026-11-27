@@ -475,4 +475,87 @@ describe("tool-output-compression", () => {
     expect(ninjaFold.text).toContain("undefined reference to `epx_missing_symbol'");
     expect(ninjaFold.text).toContain("collect2: ld returned 1 exit status");
   });
+
+  test("compactJsonToolText preserves >53-bit ints, duplicate keys, trailing decimals, and ignores invalid JSON syntax", () => {
+    const losslessPretty = [
+      "{",
+      '  "snowflakeId": 9007199254740993,',
+      '  "amount": 12.50,',
+      '  "tag": "first",',
+      '  "tag": "second",',
+      '  "nested": {',
+      '    "exact": -0.000,',
+      '    "exp": 1.2500e+02,',
+      '    "unicode": "\\u0066oo"',
+      "  }",
+      "}",
+    ].join("\n");
+    const compacted = compactJsonToolText(losslessPretty);
+    expect(compacted.compacted).toBe(true);
+    expect(compacted.text).toBe(
+      '{"snowflakeId":9007199254740993,"amount":12.50,"tag":"first","tag":"second","nested":{"exact":-0.000,"exp":1.2500e+02,"unicode":"\\u0066oo"}}',
+    );
+
+    // Invalid RFC 8259 syntax variations (trailing comma, leading zero, JS escape, trailing prose, NBSP) stay untouched.
+    const invalidCases = [
+      '{\n  "id": 9007199254740993,\n  "trailing": true,\n}\n// trailing comment',
+      '{\n  "leadingZero": 01,\n  "long": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n}',
+      '{\n  "ok": 12.50,\n  "tail": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n}\nERROR next log line',
+      '{\n  "badEscape": "\\x41",\n  "long": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n}',
+      '{\u00a0\n  "nbsp": true,\n  "long": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n}',
+    ];
+    for (const raw of invalidCases) {
+      expect(compactJsonToolText(raw)).toEqual({ text: raw, compacted: false });
+    }
+  });
+
+  test("keeps prefix tool-output deduplication deterministic beyond MAX_SCAN_ITEMS and compresses Gemini functionResponse payloads", () => {
+    const repeatedListing = Array.from(
+      { length: 25 },
+      (_, i) => `item-${i + 1}: deterministic output block payload`,
+    ).join("\n");
+
+    const basePrefix = [
+      { type: "function_call_output", call_id: "call_prefix_1", output: repeatedListing },
+      { type: "function_call_output", call_id: "call_prefix_2", output: repeatedListing },
+    ];
+    const FillerCount = 4_200;
+    const filler = Array.from({ length: FillerCount }, (_, i) => ({
+      role: "assistant",
+      content: `step-${i}`,
+    }));
+    const oversizedBody = { input: [...basePrefix, ...filler] };
+    const dedupRes = compressResponsesToolOutputsInPlace(oversizedBody, {
+      enabled: true,
+      minChars: 50_000,
+      deduplicateIdentical: true,
+      dedupMinChars: 256,
+    });
+    expect(dedupRes.deduplicatedItems).toBe(1);
+    expect(oversizedBody.input[0]!.output).toBe(repeatedListing);
+    expect(oversizedBody.input[1]!.output).toContain("identical to call_id=call_prefix_1");
+
+    // Gemini contents[].parts[].functionResponse compression & dedup (while excluding errors)
+    const geminiErr = `Error: EACCES permission denied\n${"trace detail\n".repeat(40)}`;
+    const geminiBody = {
+      contents: [
+        { role: "model", parts: [{ functionCall: { id: "gcall_1", name: "list_files", args: {} } }] },
+        { role: "user", parts: [{ functionResponse: { id: "gcall_1", name: "list_files", response: { result: repeatedListing } } }] },
+        { role: "model", parts: [{ functionCall: { id: "gcall_2", name: "list_files", args: {} } }] },
+        { role: "user", parts: [{ functionResponse: { id: "gcall_2", name: "list_files", response: { result: repeatedListing } } }] },
+        { role: "user", parts: [{ functionResponse: { id: "gcall_err_1", name: "read_file", response: { result: geminiErr, error: "EACCES" } } }] },
+        { role: "user", parts: [{ functionResponse: { id: "gcall_err_2", name: "read_file", response: { result: geminiErr, error: "EACCES" } } }] },
+      ],
+    };
+    const geminiRes = compressResponsesToolOutputsInPlace(geminiBody, {
+      enabled: true,
+      minChars: 50_000,
+      deduplicateIdentical: true,
+      dedupMinChars: 256,
+    });
+    expect(geminiRes.deduplicatedItems).toBe(1);
+    expect((geminiBody.contents[1]!.parts[0] as { functionResponse: { response: { result: string } } }).functionResponse.response.result).toBe(repeatedListing);
+    expect((geminiBody.contents[3]!.parts[0] as { functionResponse: { response: { result: string } } }).functionResponse.response.result).toContain("identical to call_id=gcall_1");
+    expect((geminiBody.contents[5]!.parts[0] as { functionResponse: { response: { result: string } } }).functionResponse.response.result).toBe(geminiErr);
+  });
 });

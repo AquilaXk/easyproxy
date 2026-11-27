@@ -559,4 +559,10 @@ export const uxOverhaulCopyTr = {
   "ux.inspector.sampleResponses": "Responses örneği yükle",
   "ux.inspector.previewTruncated": "Önizleme 8.192 karakterle sınırlıdır.",
   "ux.inspector.clearFilter": "Tüm kategoriler",
+  "ux.inspector.breakevenTitle": "Önbellek başabaş noktası ({ttl})",
+  "ux.inspector.breakevenHits": "Başabaş: {hits} takip isabeti",
+  "ux.inspector.breakevenNoBreakEven": "Mevcut tarifelerde başabaş yok",
+  "ux.inspector.breakevenEconomics": "Yazma +${premium} · İsabet -${hitSavings} · Beklenen (aktif/boşta): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "Kârlı",
+  "ux.inspector.breakevenMarginal": "Düşük ROI",
 } as const;

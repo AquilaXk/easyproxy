@@ -116,7 +116,7 @@ export async function deliverAdapterResponse(
         const bodyInactivityMs = resolveStallTimeoutMs(stallTimeoutSec(), { localUpstream: adapterExchange.localUpstream });
         const retryEvents = upstreamRequestsStream
           ? readResponseStreamWithInactivity(response, upstream.signal, bodyInactivityMs,
-            guarded => transportState.activeAdapter.parseStream(guarded, translatorBudget, logCtx.activeTierMetadata))
+            guarded => transportState.activeAdapter.parseStream(guarded, translatorBudget, logCtx.activeTierMetadata, { routedCompaction: Boolean(routedCompaction) }))
           : (async function* () {
               yield* await readResponseBodyWithInactivity(response, upstream.signal, bodyInactivityMs,
                 guarded => transportState.activeAdapter.parseResponse!(guarded, translatorBudget, logCtx.activeTierMetadata));
@@ -169,7 +169,7 @@ export async function deliverAdapterResponse(
           upstreamResponse,
           upstream.signal,
           bodyInactivityMs,
-          response => transportState.activeAdapter.parseStream(response, translatorBudget, logCtx.activeTierMetadata, { completedToolBlocks: outputItemIds !== undefined }),
+          response => transportState.activeAdapter.parseStream(response, translatorBudget, logCtx.activeTierMetadata, { completedToolBlocks: outputItemIds !== undefined, routedCompaction: Boolean(routedCompaction) }),
         )) {
           observeInitialSpend?.(event);
           options.onCompactionRecoveryAdapterEvent?.(event);
@@ -337,7 +337,7 @@ export async function deliverAdapterResponse(
           upstreamResponse,
           upstream.signal,
           bodyInactivityMs,
-          response => transportState.activeAdapter.parseStream(response, translatorBudget, logCtx.activeTierMetadata),
+          response => transportState.activeAdapter.parseStream(response, translatorBudget, logCtx.activeTierMetadata, { routedCompaction: Boolean(routedCompaction) }),
         )) initialEvents.push(event);
       } else {
         initialEvents.push(...await readResponseBodyWithInactivity(

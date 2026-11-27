@@ -100,38 +100,50 @@ export function normalizeVolatileSystemTimestampsInPlace(body: Rec, mutator?: Co
   }
 
   const latestBody = (mutator ? mutator.root : body) as Rec;
-  if (Array.isArray(latestBody.messages) && latestBody.messages.length > 0) {
-    const messagesArr = latestBody.messages;
-    const first = messagesArr[0];
-    if (isRec(first) && (first.role === "system" || first.role === "developer")) {
-      if (typeof first.content === "string") {
-        const res = normalizeSystemClockText(first.content);
+  const normalizeMessageList = (
+    containerKey: "messages" | "input",
+    list: unknown,
+  ): void => {
+    if (!Array.isArray(list) || list.length === 0) return;
+    const msgLimit = Math.min(list.length, 32);
+    for (let mIdx = 0; mIdx < msgLimit; mIdx++) {
+      const latestRoot = (mutator ? mutator.root : body) as Rec;
+      const arr = latestRoot[containerKey];
+      if (!Array.isArray(arr)) break;
+      const entry = arr[mIdx];
+      if (!isRec(entry) || (entry.role !== "system" && entry.role !== "developer")) continue;
+      if (typeof entry.content === "string") {
+        const res = normalizeSystemClockText(entry.content);
         if (res.count > 0) {
           if (mutator) {
             mutator.write(
-              [{ container: latestBody, key: "messages" }, { container: messagesArr, key: 0 }, { container: first, key: "content" }],
+              [{ container: latestRoot, key: containerKey }, { container: arr, key: mIdx }, { container: entry, key: "content" }],
               res.text,
             );
           } else {
-            first.content = res.text;
+            entry.content = res.text;
           }
           normalized += res.count;
         }
-      } else if (Array.isArray(first.content)) {
-        const contentArr = first.content;
-        const limit = Math.min(contentArr.length, 16);
-        for (let i = 0; i < limit; i++) {
-          const part = contentArr[i];
+      } else if (Array.isArray(entry.content)) {
+        const contentLimit = Math.min(entry.content.length, 16);
+        for (let pIdx = 0; pIdx < contentLimit; pIdx++) {
+          const curRoot = (mutator ? mutator.root : body) as Rec;
+          const curArr = curRoot[containerKey];
+          if (!Array.isArray(curArr)) break;
+          const curEntry = curArr[mIdx];
+          if (!isRec(curEntry) || !Array.isArray(curEntry.content)) break;
+          const part = curEntry.content[pIdx];
           if (isRec(part) && typeof part.text === "string") {
             const res = normalizeSystemClockText(part.text);
             if (res.count > 0) {
               if (mutator) {
                 mutator.write(
                   [
-                    { container: latestBody, key: "messages" },
-                    { container: messagesArr, key: 0 },
-                    { container: first, key: "content" },
-                    { container: contentArr, key: i },
+                    { container: curRoot, key: containerKey },
+                    { container: curArr, key: mIdx },
+                    { container: curEntry, key: "content" },
+                    { container: curEntry.content, key: pIdx },
                     { container: part, key: "text" },
                   ],
                   res.text,
@@ -145,7 +157,10 @@ export function normalizeVolatileSystemTimestampsInPlace(body: Rec, mutator?: Co
         }
       }
     }
-  }
+  };
+
+  normalizeMessageList("messages", latestBody.messages);
+  normalizeMessageList("input", latestBody.input);
 
   return normalized;
 }
@@ -467,7 +482,9 @@ export function injectPromptCacheBreakpointsInPlace(
     }
   }
 
-  // 3. Conversation messages tail (latest eligible non-thinking block, even if an earlier turn had a breakpoint)
+  // 3. Conversation messages: inject rolling tail breakpoint AND, when the 4th breakpoint slot
+  //    is still free, a previous turn boundary breakpoint so multi-turn or >20-block histories
+  //    stay within Anthropic's 20-block cache lookback window.
   const minSeenBeforeTail: NormalizedTtlRank = messagesScan.ranks.length > 0
     ? (Math.min(minSeenUpToSystem, ...messagesScan.ranks) as NormalizedTtlRank)
     : minSeenUpToSystem;
@@ -479,48 +496,136 @@ export function injectPromptCacheBreakpointsInPlace(
       ? estimateBoundedChars(workingBody.messages, MIN_CACHEABLE_SECTION_CHARS) >= MIN_CACHEABLE_SECTION_CHARS
       : uncachedMessagesTailChars(workingBody.messages) >= MIN_CACHEABLE_SECTION_CHARS)
   ) {
-    const cc = makeCacheControl(preferredTtl, 1, minSeenBeforeTail);
-    if (cc) {
-      const messagesArr = workingBody.messages;
-      outer: for (let mIdx = messagesArr.length - 1; mIdx >= 0; mIdx--) {
-        const msg = messagesArr[mIdx];
-        if (!isRec(msg)) continue;
-        if (isRec(msg.cache_control)) break outer;
-        if (typeof msg.content === "string") {
-          if (msg.content.trim().length > 0 && !isTurnScopedReminderText(msg.content)) {
-            mutator.write(
-              [{ container: workingBody, key: "messages" }, { container: messagesArr, key: mIdx }, { container: msg, key: "content" }],
-              [{ type: "text", text: msg.content, cache_control: cc }],
-            );
-            workingBody = mutator.root as Rec;
-            injected += 1;
-            remaining -= 1;
+    interface EligibleMsgTarget {
+      mIdx: number;
+      bIdx: number | null;
+      blockOrdinal: number;
+      cumulativeChars: number;
+      isTurnBoundary: boolean;
+    }
+
+    const messagesArr = workingBody.messages;
+    // Locate the last existing breakpoint in messages so new breakpoints follow it strictly in order.
+    let startMsgIdx = 0;
+    let startBlockOffset = 0;
+    for (let mIdx = messagesArr.length - 1; mIdx >= 0; mIdx--) {
+      const msg = messagesArr[mIdx];
+      if (!isRec(msg)) continue;
+      if (isRec(msg.cache_control)) {
+        startMsgIdx = mIdx + 1;
+        startBlockOffset = 0;
+        break;
+      }
+      if (Array.isArray(msg.content)) {
+        let foundBlock = -1;
+        for (let bIdx = msg.content.length - 1; bIdx >= 0; bIdx--) {
+          const block = msg.content[bIdx];
+          if (isRec(block) && isRec(block.cache_control)) {
+            foundBlock = bIdx;
             break;
           }
-        } else if (Array.isArray(msg.content)) {
-          const contentArr = msg.content;
-          for (let bIdx = contentArr.length - 1; bIdx >= 0; bIdx--) {
-            const block = contentArr[bIdx];
-            if (!isRec(block)) continue;
-            if (isRec(block.cache_control)) break outer;
-            if (isEligibleMessageBlock(block)) {
-              mutator.write(
-                [
-                  { container: workingBody, key: "messages" },
-                  { container: messagesArr, key: mIdx },
-                  { container: msg, key: "content" },
-                  { container: contentArr, key: bIdx },
-                  { container: block, key: "cache_control" },
-                ],
-                cc,
-              );
-              workingBody = mutator.root as Rec;
-              injected += 1;
-              remaining -= 1;
-              break outer;
-            }
+        }
+        if (foundBlock >= 0) {
+          startMsgIdx = mIdx;
+          startBlockOffset = foundBlock + 1;
+          break;
+        }
+      }
+    }
+
+    const candidates: EligibleMsgTarget[] = [];
+    let blockOrdinal = 0;
+    let cumulativeChars = 0;
+    for (let mIdx = startMsgIdx; mIdx < messagesArr.length; mIdx++) {
+      const msg = messagesArr[mIdx];
+      if (!isRec(msg)) continue;
+      if (typeof msg.content === "string") {
+        blockOrdinal += 1;
+        cumulativeChars += msg.content.length;
+        if (msg.content.trim().length > 0 && !isTurnScopedReminderText(msg.content)) {
+          candidates.push({ mIdx, bIdx: null, blockOrdinal, cumulativeChars, isTurnBoundary: true });
+        }
+      } else if (Array.isArray(msg.content)) {
+        const beginIdx = mIdx === startMsgIdx ? startBlockOffset : 0;
+        let lastEligibleForMsgIdx = -1;
+        for (let bIdx = beginIdx; bIdx < msg.content.length; bIdx++) {
+          const block = msg.content[bIdx];
+          blockOrdinal += 1;
+          cumulativeChars += estimateBoundedChars(block, MIN_CACHEABLE_SECTION_CHARS);
+          if (isRec(block) && isEligibleMessageBlock(block)) {
+            candidates.push({ mIdx, bIdx, blockOrdinal, cumulativeChars, isTurnBoundary: false });
+            lastEligibleForMsgIdx = candidates.length - 1;
           }
         }
+        if (lastEligibleForMsgIdx >= 0) {
+          candidates[lastEligibleForMsgIdx]!.isTurnBoundary = true;
+        }
+      }
+    }
+
+    const tailTarget = candidates.length > 0 ? candidates[candidates.length - 1] : undefined;
+    const tailCc = tailTarget ? makeCacheControl(preferredTtl, 1, minSeenBeforeTail) : null;
+
+    if (tailTarget && tailCc) {
+      let prevTarget: EligibleMsgTarget | undefined;
+      if (remaining >= 2) {
+        const earlier = candidates.filter(c => c.mIdx < tailTarget.mIdx);
+        if (tailTarget.blockOrdinal > 20 && earlier.length > 0) {
+          // Anthropic looks back up to 20 blocks from each breakpoint: pick a previous turn
+          // boundary within 20 blocks of the tail and ideally within 20 blocks of the prior bp.
+          const withinTail = earlier.filter(c => tailTarget.blockOrdinal - c.blockOrdinal <= 19);
+          const pool = withinTail.length > 0 ? withinTail : earlier;
+          const withinStart = pool.filter(c => c.blockOrdinal <= 20);
+          const bestPool = withinStart.length > 0 ? withinStart : pool;
+          const boundaryPool = bestPool.filter(c => c.isTurnBoundary);
+          const finalPool = boundaryPool.length > 0 ? boundaryPool : bestPool;
+          prevTarget = finalPool[finalPool.length - 1];
+        } else if (messagesScan.count === 0) {
+          const turnBoundaries = earlier.filter(c => c.isTurnBoundary && c.cumulativeChars >= MIN_CACHEABLE_SECTION_CHARS);
+          if (turnBoundaries.length > 0) {
+            prevTarget = turnBoundaries[turnBoundaries.length - 1];
+          }
+        }
+      }
+
+      const writeMessageBreakpoint = (target: EligibleMsgTarget, cc: Rec): void => {
+        const root = mutator.root as Rec;
+        const curMessages = root.messages as unknown[];
+        const curMsg = curMessages[target.mIdx] as Rec;
+        if (target.bIdx === null) {
+          mutator.write(
+            [{ container: root, key: "messages" }, { container: curMessages, key: target.mIdx }, { container: curMsg, key: "content" }],
+            [{ type: "text", text: curMsg.content, cache_control: cc }],
+          );
+        } else {
+          const curContent = curMsg.content as unknown[];
+          const curBlock = curContent[target.bIdx] as Rec;
+          mutator.write(
+            [
+              { container: root, key: "messages" },
+              { container: curMessages, key: target.mIdx },
+              { container: curMsg, key: "content" },
+              { container: curContent, key: target.bIdx },
+              { container: curBlock, key: "cache_control" },
+            ],
+            cc,
+          );
+        }
+        workingBody = mutator.root as Rec;
+      };
+
+      const prevCc = prevTarget
+        ? makeCacheControl(preferredTtl, ttlRank(tailCc.ttl) === 2 ? 2 : 1, minSeenBeforeTail)
+        : null;
+      if (prevTarget && prevCc) {
+        writeMessageBreakpoint(prevTarget, prevCc);
+        injected += 1;
+        remaining -= 1;
+      }
+      if (remaining > 0) {
+        writeMessageBreakpoint(tailTarget, tailCc);
+        injected += 1;
+        remaining -= 1;
       }
     }
   }

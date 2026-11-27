@@ -119,10 +119,12 @@ import { markProtocolBlocked, markProtocolEntry } from "../protocols/trace";
 import { recordProtocolShadowPlan } from "../protocols/shadow-plan";
 import { captureAnthropicClientIdentity } from "../adapters/anthropic/client-identity";
 import { nativeMessagesDeclineReason, type NativeMessagesSelector } from "./messages-native-eligibility";
-import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
+import { applyOutboundPayloadHygiene, applyPromptCacheBreakpointsOnly, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 import { applyAnthropicEffortInPlace, applyAnthropicScenarioEffort } from "../routing/scenario";
-import { applyAnthropicNativeCacheTtlDefault, resolveAnthropicCacheRetention } from "../adapters/anthropic/cache-retention";
+import { applyAnthropicNativeCacheTtlDefault, effectiveAnthropicCacheRetention, resolveAnthropicCacheRetention } from "../adapters/anthropic/cache-retention";
 import { rejectsOneHourCacheTtl } from "../lib/prompt-cache-injection";
+import { hasAnyNonAnthropicGatewayToolSearchProvider, hasClientToolSearchDeclaration } from "../responses/gateway-tool-search";
+import { toolLoadingModelMatches } from "../claude/inbound-tool-loading";
 import {
   isApiAuthRequired,
   isDataPlaneAdmissionSecret,
@@ -716,6 +718,7 @@ async function handleClaudeMessagesWithBudget(
   let directSettingsBodyBytes = 0;
   // Built only under the reject policy; the legacy default leaves this request untouched.
   let envelope: ProtocolEnvelope | undefined;
+  let preserveDeferLoadingForGateway = false;
   let messagesFeatures: () => Iterable<ProtocolFeature> = () => [];
   // The Advisor caller policy is the admitted snapshot: capture it before the first await (#7859).
   const advisorAdmissionPolicy = logIds?.advisorAdmissionPolicy ?? captureAdmissionPolicy(config, logIds?.admission);
@@ -810,7 +813,7 @@ async function handleClaudeMessagesWithBudget(
         isRec(anthropicBody.metadata) ? anthropicBody.metadata : undefined,
       );
       if (claudeConversationId) logCtx.conversationId = claudeConversationId;
-      const hygiene = applyOutboundPayloadHygiene(anthropicBody, config, logCtx);
+      const hygiene = applyOutboundPayloadHygiene(anthropicBody, config, logCtx, { skipCacheBreakpoints: true });
       if (hygiene.blocked) {
         if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 400, { closeReason: "non_stream" });
         return anthropicErrorResponse(400, OUTBOUND_SECRET_BLOCKED_MESSAGE, "invalid_request_error", "outbound_secret_guard");
@@ -853,6 +856,9 @@ async function handleClaudeMessagesWithBudget(
         if (projectedBody === anthropicBody) projectedBody = { ...anthropicBody };
         const applied = applyAnthropicScenarioEffort(projectedBody, config.scenarioRouting, req.headers, requestedModel);
         if (applied) logCtx.requestedEffort = applied.effort;
+      }
+      if (config.promptCacheInjection?.enabled === true) {
+        projectedBody = applyPromptCacheBreakpointsOnly(projectedBody, config).body as Rec;
       }
       return await anthropicNativePassthrough(req, config, logCtx, logIds, projectedBody, "/v1/messages");
     }
@@ -910,6 +916,9 @@ async function handleClaudeMessagesWithBudget(
       delete anthropicBody.thinking;
     }
     anthropicHostedAdvisorSelection = hostedAdvisorSelection(anthropicBody);
+    preserveDeferLoadingForGateway = isRec(anthropicBody)
+      && !hasClientToolSearchDeclaration(anthropicBody.tools)
+      && hasAnyNonAnthropicGatewayToolSearchProvider(config.providers);
     // On the direct lane the core receives only the request settings; the conversation is
     // already decoded into the IR. Without a plan the translation below runs as before.
     directPlan = planMessagesAntigravityDirect(anthropicBody, cc, config, translatorBudget);
@@ -919,7 +928,12 @@ async function handleClaudeMessagesWithBudget(
       nativeReasoningReplay: directPlan.conversation.nativeReasoningReplay,
     };
     try {
-      translation ??= messagesToResponsesTranslation(anthropicBody, cc, translatorBudget);
+      translation ??= messagesToResponsesTranslation(
+        anthropicBody,
+        cc,
+        translatorBudget,
+        preserveDeferLoadingForGateway ? { preserveDeferLoading: true } : undefined,
+      );
     } catch (err) {
       // A native Messages route can discard an undecodable proxy envelope. Keep the
       // original error for any route that ultimately translates to Responses.
@@ -927,7 +941,12 @@ async function handleClaudeMessagesWithBudget(
         || !isRec(anthropicBody)) throw err;
       const projected = nativeAnthropicProjection(anthropicBody, translatorBudget);
       if (projected === anthropicBody) throw err;
-      translation = messagesToResponsesTranslation(projected, cc, translatorBudget);
+      translation = messagesToResponsesTranslation(
+        projected,
+        cc,
+        translatorBudget,
+        preserveDeferLoadingForGateway ? { preserveDeferLoading: true } : undefined,
+      );
       nativeProjectionOnlyError = err;
     }
     internalBody = translation.body;
@@ -1008,7 +1027,12 @@ async function handleClaudeMessagesWithBudget(
     translatorBudget.releaseRetained(directSettingsBodyBytes, { kind: "request_copies" });
     directSettingsBodyBytes = 0;
     try {
-      const translation = messagesToResponsesTranslation(anthropicBody, cc, translatorBudget);
+      const translation = messagesToResponsesTranslation(
+        anthropicBody,
+        cc,
+        translatorBudget,
+        preserveDeferLoadingForGateway ? { preserveDeferLoading: true } : undefined,
+      );
       internalBody = translation.body;
       if (fastRow) internalBody.service_tier = "priority";
       internalBody.stream = true;
@@ -1065,6 +1089,24 @@ async function handleClaudeMessagesWithBudget(
       delete internalBody.top_p;
       delete internalBody.stop;
       delete internalBody.user;
+    }
+    if (preserveDeferLoadingForGateway && !route.combo && route.routeKind !== "policy" && Array.isArray(internalBody.tools)) {
+      const wireModel = `${route.providerName}/${route.modelId}`;
+      const clientToolLoadingActive =
+        (route.provider.adapter === "openai-responses"
+          && toolLoadingModelMatches(cc?.appendOnlyToolLoadingModels, wireModel))
+        || (route.provider.adapter === "openai-chat"
+          && toolLoadingModelMatches(cc?.chatToolDispatchModels, wireModel));
+      if (route.provider.gatewayToolSearch !== true || route.provider.adapter === "anthropic" || clientToolLoadingActive) {
+        let strippedDefer = false;
+        internalBody.tools = (internalBody.tools as unknown[]).map(tool => {
+          if (!isRec(tool) || !Object.hasOwn(tool, "defer_loading")) return tool;
+          strippedDefer = true;
+          const { defer_loading: _drop, ...rest } = tool;
+          return rest;
+        });
+        if (strippedDefer) knownInternalBodyBytes = undefined;
+      }
     }
     // Estimated-usage adapters (cursor/kiro) report no per-turn input tokens; stash a
     // request-side estimate so the log's in:0 rows get a floor. NEVER set this for
@@ -1301,6 +1343,9 @@ async function handleClaudeMessagesWithBudget(
       );
       if (applied) logCtx.requestedEffort = applied;
     }
+    if (config.promptCacheInjection?.enabled === true) {
+      nativeBody = applyPromptCacheBreakpointsOnly(nativeBody, config, nativeMessagesRoute.modelId).body as Rec;
+    }
     const { handleNativeMessages } = await import("./messages-native");
     return await handleNativeMessages({
       req, config, logCtx, ...(logIds ? { logIds } : {}), admission: logIds?.admission,
@@ -1378,13 +1423,20 @@ async function handleClaudeMessagesWithBudget(
   // BEFORE translation (the translated Anthropic stream has no response.completed
   // frame, so tapping it records a bogus 502 with no usage/cache detail).
   const finalizeNativeLog = createFinalRequestLog(logIds, logCtx).finish;
+  const hasExplicitPromptCacheTtl = config.promptCacheInjection?.enabled === true
+    && (config.promptCacheInjection.ttl === "1h" || config.promptCacheInjection.ttl === "5m");
+  const resolvedCacheRetention = settledRoute && !settledRoute.combo && settledRoute.routeKind !== "policy"
+    ? effectiveAnthropicCacheRetention(config, settledRoute.modelId)
+    : config.cacheRetention;
   // The replay view is a new object; link it so the Advisor factory registered on `config` applies.
   const upstream = await handleResponses(internalReq, linkAdvisorPlanConfig(config, {
     ...buildClaudeReplayConfig(config),
-    // Operator config wins; otherwise the caller's explicit TTLs (all 1h, or a pinned 5m) carry
-    // over, and TTL-less breakpoints take the destination default.
-    cacheRetention: config.cacheRetention ?? callerCacheRetention(anthropicBody),
+    // Operator config wins; otherwise concrete routes check resolved model compatibility while
+    // combo/policy routes defer effectiveAnthropicCacheRetention to each target attempt.
+    cacheRetention: resolvedCacheRetention
+      ?? (hasExplicitPromptCacheTtl ? undefined : callerCacheRetention(anthropicBody)),
   }), logCtx, {
+    outboundPayloadHygieneApplied: true,
     ...(nativeComboSource && envelope && settledRoute?.combo ? {
       protocolSource: (await import("./messages-native")).createNativeMessagesComboSource({
         req, config, logCtx, envelope, requestedModel, translatorBudget, selector: nativeSelector, admission: logIds?.admission,
@@ -1810,7 +1862,7 @@ async function handleClaudeCountTokensInner(
       raw.model = model;
     }
     captureClaudeInbound("count_tokens", raw, resolveInboundModel(model, cc), req.headers.get("anthropic-beta") ?? undefined);
-    const countHygiene = applyOutboundPayloadHygiene(raw, config);
+    const countHygiene = applyOutboundPayloadHygiene(raw, config, undefined, { skipCacheBreakpoints: true });
     if (countHygiene.blocked) {
       return ownedAnthropicErrorResponse({
         status: 400,

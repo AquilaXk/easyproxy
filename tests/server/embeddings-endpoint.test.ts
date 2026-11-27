@@ -65,7 +65,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
       ],
       providers: {
         "openai-custom": {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "https://api.example.com/v1",
           authMode: "key",
           apiKey: "sk-up-1",
@@ -135,7 +135,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
           fetch: spyFetch,
         } as EpxConfig["providers"][string],
         "meta-ssrf": {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "http://169.254.169.254/latest",
           authMode: "key",
           apiKey: "sk-up-2",
@@ -143,7 +143,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
           fetch: spyFetch,
         } as EpxConfig["providers"][string],
         "priv-ssrf": {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "http://10.0.0.8/v1",
           authMode: "key",
           apiKey: "sk-up-3",
@@ -237,7 +237,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
       ],
       providers: {
         p1: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: `http://127.0.0.1:${failUpstream.port}/v1`,
           allowPrivateNetwork: true,
           authMode: "key",
@@ -245,7 +245,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
           models: ["text-embedding-3-small"],
         },
         p2: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: `http://127.0.0.1:${okUpstream.port}/v1`,
           allowPrivateNetwork: true,
           authMode: "key",
@@ -377,7 +377,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
       ],
       providers: {
         pa: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: `http://127.0.0.1:${srvA.port}/v1`,
           allowPrivateNetwork: true,
           authMode: "key",
@@ -385,7 +385,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
           models: ["m-a"],
         },
         pb: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: `http://127.0.0.1:${srvB.port}/v1`,
           allowPrivateNetwork: true,
           authMode: "key",
@@ -393,7 +393,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
           models: ["m-b"],
         },
         pausedProv: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: `http://127.0.0.1:${srvA.port}/v1`,
           allowPrivateNetwork: true,
           authMode: "key",
@@ -402,7 +402,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
           models: ["m-paused"],
         },
         disabledProv: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: `http://127.0.0.1:${srvA.port}/v1`,
           allowPrivateNetwork: true,
           authMode: "key",
@@ -516,7 +516,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
       defaultProvider: "fast",
       providers: {
         slow: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: `http://127.0.0.1:${slowSrv.port}/v1`,
           allowPrivateNetwork: true,
           authMode: "key",
@@ -524,7 +524,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
           models: ["emb-slow"],
         },
         fast: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: `http://127.0.0.1:${fastSrv.port}/v1`,
           allowPrivateNetwork: true,
           authMode: "key",
@@ -575,7 +575,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
     const oneMbChunk = new Uint8Array(1024 * 1024);
 
     const badProvider: EpxProviderTransport = {
-      adapter: "openai-compatible",
+      adapter: "openai-chat",
       baseUrl: "https://bad.example.com/v1",
       authMode: "key",
       apiKey: "sk-bad",
@@ -603,7 +603,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
 
     const goodHits: number[] = [];
     const goodProvider: EpxProviderTransport = {
-      adapter: "openai-compatible",
+      adapter: "openai-chat",
       baseUrl: "https://good.example.com/v1",
       authMode: "key",
       apiKey: "sk-good",
@@ -689,7 +689,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
     const hits: string[] = [];
     let failStatus = 429;
     const badAliasProvider: EpxProviderTransport = {
-      adapter: "openai-compatible",
+      adapter: "openai-chat",
       alias: "emb-alias",
       baseUrl: "https://bad-alias.example.com/v1",
       authMode: "key",
@@ -712,7 +712,7 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
       },
     };
     const goodProvider: EpxProviderTransport = {
-      adapter: "openai-compatible",
+      adapter: "openai-chat",
       baseUrl: "https://good-emb.example.com/v1",
       authMode: "key",
       apiKey: "sk-good",
@@ -792,5 +792,188 @@ describe("POST /v1/embeddings data-plane endpoint", () => {
     );
     expect(res401.status).toBe(401);
     expect(snapshotComboEwmaStats("emb-401-only")["bad-real/m-bad"]?.consecutiveFailures).toBe(1);
+  });
+
+  test("Item 11: decouples connectTimeoutMs from body deadline, forwards caller bearer, and redacts fetch exception secrets", async () => {
+    const home = mkdtempSync(join(tmpdir(), "epx-emb-item11-"));
+    homes.push(home);
+
+    let mode: "slow-headers" | "slow-body" | "echo-auth" = "slow-headers";
+    const observedAuths: Array<string | null> = [];
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        observedAuths.push(req.headers.get("authorization"));
+        if (mode === "slow-headers") {
+          await new Promise(resolve => setTimeout(resolve, 140));
+          return Response.json({ object: "list", data: [], model: "text-embedding-3-small", usage: { prompt_tokens: 1, total_tokens: 1 } });
+        }
+        if (mode === "slow-body") {
+          const stream = new ReadableStream<Uint8Array>({
+            async start(controller) {
+              const payload = JSON.stringify({
+                object: "list",
+                data: [{ object: "embedding", index: 0, embedding: [0.1, 0.2] }],
+                model: "text-embedding-3-small",
+                usage: { prompt_tokens: 2, total_tokens: 2 },
+              });
+              const mid = Math.floor(payload.length / 2);
+              controller.enqueue(new TextEncoder().encode(payload.slice(0, mid)));
+              await new Promise(resolve => setTimeout(resolve, 110));
+              controller.enqueue(new TextEncoder().encode(payload.slice(mid)));
+              controller.close();
+            },
+          });
+          return new Response(stream, { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return Response.json({
+          object: "list",
+          data: [{ object: "embedding", index: 0, embedding: [0.5] }],
+          model: "text-embedding-3-small",
+          usage: { prompt_tokens: 2, total_tokens: 2 },
+        });
+      },
+    });
+    servers.push(upstream);
+
+    const secretLeak = ["sk", "proj", `embLeak${"0".repeat(22)}`].join("-");
+    const leakyFetch = (async () => {
+      throw new Error(`connect failure Authorization: Bearer ${secretLeak}`);
+    }) as typeof fetch;
+
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      providers: {
+        tight: {
+          adapter: "openai-chat",
+          baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+          authMode: "key",
+          apiKey: "sk-emb-key",
+          allowPrivateNetwork: true,
+          connectTimeoutMs: 40,
+          models: ["text-embedding-3-small"],
+        },
+        fwd: {
+          adapter: "openai-chat",
+          baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+          authMode: "forward",
+          allowPrivateNetwork: true,
+          models: ["text-embedding-3-small"],
+        },
+        leaky: {
+          adapter: "openai-chat",
+          baseUrl: "https://api.example.test/v1",
+          authMode: "key",
+          apiKey: "sk-emb-leaky",
+          models: ["text-embedding-3-small"],
+          fetch: leakyFetch,
+        } as EpxProviderTransport as EpxConfig["providers"][string],
+      },
+    };
+
+    const makeCtx = (): RequestLogContext => ({ model: "unknown", provider: "unknown" });
+
+    // 1. Slow header exceeds connectTimeoutMs (40ms) -> 502
+    mode = "slow-headers";
+    const hdrTimeout = await handleEmbeddings(
+      new Request("http://127.0.0.1/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "tight/text-embedding-3-small", input: "hello" }),
+      }),
+      cfg,
+      makeCtx(),
+      { requestId: "emb-hdr-timeout", start: Date.now() },
+    );
+    expect(hdrTimeout.status).toBe(502);
+
+    // 2. Fast header + slow body (>110ms > 40ms connectTimeoutMs) -> 200 OK
+    mode = "slow-body";
+    const slowBody = await handleEmbeddings(
+      new Request("http://127.0.0.1/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "tight/text-embedding-3-small", input: "hello" }),
+      }),
+      cfg,
+      makeCtx(),
+      { requestId: "emb-slow-body", start: Date.now() },
+    );
+    expect(slowBody.status).toBe(200);
+
+    // 3. authMode=forward sends caller bearer and refuses proxy admission secret
+    mode = "echo-auth";
+    observedAuths.length = 0;
+    const fwdOk = await handleEmbeddings(
+      new Request("http://127.0.0.1/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer sk-caller-emb-1" },
+        body: JSON.stringify({ model: "fwd/text-embedding-3-small", input: "hello" }),
+      }),
+      cfg,
+      makeCtx(),
+      { requestId: "emb-fwd-ok", start: Date.now() },
+    );
+    expect(fwdOk.status).toBe(200);
+    expect(observedAuths).toEqual(["Bearer sk-caller-emb-1"]);
+
+    const fwdProxyBlocked = await handleEmbeddings(
+      new Request("http://127.0.0.1/v1/embeddings", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${["epx_data", "proxy_secret_refuse"].join("_")}`,
+        },
+        body: JSON.stringify({ model: "fwd/text-embedding-3-small", input: "hello" }),
+      }),
+      cfg,
+      makeCtx(),
+      { requestId: "emb-fwd-proxy", start: Date.now() },
+    );
+    expect(fwdProxyBlocked.status).toBe(401);
+    expect(observedAuths).toHaveLength(1);
+
+    // 4. Upstream fetch exception redacts secret
+    const errRes = await handleEmbeddings(
+      new Request("http://127.0.0.1/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "leaky/text-embedding-3-small", input: "hello" }),
+      }),
+      cfg,
+      makeCtx(),
+      { requestId: "emb-leak-redact", start: Date.now() },
+    );
+    expect(errRes.status).toBe(502);
+    const errText = await errRes.text();
+    expect(errText).toContain("[REDACTED]");
+    expect(errText).not.toContain(secretLeak);
+  });
+
+  test("rejects removed openai-compatible adapter on auxiliary endpoints", async () => {
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      providers: {
+        deadcompat: {
+          adapter: "openai-compatible" as unknown as EpxConfig["providers"][string]["adapter"],
+          baseUrl: "https://api.example.test/v1",
+          authMode: "key",
+          apiKey: "sk-dead",
+          models: ["text-embedding-3-small"],
+        },
+      },
+    };
+    const res = await handleEmbeddings(
+      new Request("http://127.0.0.1/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "deadcompat/text-embedding-3-small", input: "hello" }),
+      }),
+      cfg,
+      { model: "unknown", provider: "unknown" },
+      { requestId: "emb-dead-compat", start: Date.now() },
+    );
+    expect(res.status).toBe(400);
   });
 });

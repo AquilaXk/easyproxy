@@ -559,4 +559,10 @@ export const uxOverhaulCopyEn = {
   "ux.inspector.sampleResponses": "Load Responses payload",
   "ux.inspector.previewTruncated": "Preview capped at 8,192 chars.",
   "ux.inspector.clearFilter": "All categories",
+  "ux.inspector.breakevenTitle": "Cache breakeven ({ttl})",
+  "ux.inspector.breakevenHits": "Break-even: {hits} follow-up hits",
+  "ux.inspector.breakevenNoBreakEven": "No break-even at current rates",
+  "ux.inspector.breakevenEconomics": "Write +${premium} · Hit -${hitSavings} · Expected (active/idle): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "Worthwhile",
+  "ux.inspector.breakevenMarginal": "Marginal ROI",
 } as const;

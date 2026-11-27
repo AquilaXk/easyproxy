@@ -92,7 +92,11 @@ import { anthropicSessionKeyFromParts } from "../../oauth/anthropic-routing";
 import { configuredAnthropicInstance } from "../../providers/anthropic-instance";
 import { isTranslatorBudgetExceededError } from "../../lib/translator-budget";
 import { cloneMutableJsonGraph } from "../../lib/mutable-json-copy";
-import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "../outbound-payload-hygiene";
+import {
+  applyOutboundPayloadHygiene,
+  OUTBOUND_SECRET_BLOCKED_MESSAGE,
+  sanitizeExpandedPreviousResponsePrefix,
+} from "../outbound-payload-hygiene";
 import { bindTurnTerminationScope, rememberDeliveredFinalAnswer } from "../../responses/turn-termination";
 import { beginRequestAttempt, cacheDiagnosticsObserving, finishRequestAttempt, markLocalRequestLogRefusal, noteAttemptSend, noteCodexSelectionAffinity, observeCacheDiagnosticContextTokens, observeCacheDiagnosticInbound, rebindCacheDiagnosticBody, requestLogSpeedLabel, readConfiguredCodexServiceTier, usageFromResponsesPayload } from "../request-log";
 import type { PersistedUsageAttempt } from "../../usage/log";
@@ -290,11 +294,15 @@ export async function prepareResponsesRequest(
       : body && typeof body === "object" ? (body as { model?: unknown }).model : undefined);
   options.clientModelLabel ??= clientFacingModelLabel(originalSelector);
   body = redactHostedImageDisplayPaths(body);
-  const hygiene = applyOutboundPayloadHygiene(body, config, logCtx);
-  if (hygiene.blocked) {
-    return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+  let inboundHygieneDone = options.outboundPayloadHygieneApplied === true || concreteSelection;
+  if (!inboundHygieneDone) {
+    const hygiene = applyOutboundPayloadHygiene(body, config, logCtx, { skipCacheBreakpoints: true });
+    if (hygiene.blocked) {
+      return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+    }
+    body = hygiene.body;
+    inboundHygieneDone = true;
   }
-  body = hygiene.body;
   observeCacheDiagnosticInbound(
     logCtx,
     body,
@@ -448,6 +456,7 @@ export async function prepareResponsesRequest(
     restoreDirectRequestConversation(options, body, logCtx);
     return requestDispatchers.handleComboResponses(req, body, comboId, config, logCtx, {
       ...options,
+      outboundPayloadHygieneApplied: inboundHygieneDone,
       // Concrete combo child selectors no longer match the shadow source model. Carry the
       // interception decision explicitly so provider-specific helper isolation still applies.
       shadowCallIntercepted,
@@ -516,13 +525,18 @@ export async function prepareResponsesRequest(
         "Continuation state is unavailable or corrupt; resend the full conversation without previous_response_id.",
       ));
     }
-    if (body !== originalBody) {
-      const expandedHygiene = applyOutboundPayloadHygiene(body, config, logCtx);
-      if (expandedHygiene.blocked) {
-        return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
-      }
-      body = expandedHygiene.body;
+    const expandedHygiene = sanitizeExpandedPreviousResponsePrefix(
+      body,
+      originalBody,
+      previousResponseRestoredPrefixLength(body),
+      config,
+      logCtx,
+      inboundHygieneDone,
+    );
+    if (expandedHygiene.blocked) {
+      return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
     }
+    body = expandedHygiene.body;
   }
   const previousResponseInputExpanded = options.comboReplaySnapshot?.previousResponseInputExpanded
     ?? (body !== originalBody

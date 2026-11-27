@@ -156,7 +156,7 @@ describe("split config-export public facade", () => {
       inputModalities: ["text", "image"], reasoningEfforts: ["none", "high"],
     }] });
     const cases = [
-      ["omp", ["providers", "easyproxy"], '{"providers":{"easyproxy":{"baseUrl":"http://127.0.0.1:10100/v1","api":"openai-completions","apiKey":"easyproxy-loopback","models":[{"id":"test/known","name":"known (test)","input":["text","image"],"contextWindow":8192,"maxTokens":8192,"reasoning":true,"thinking":{"mode":"effort","efforts":["high"]}}]}}}'],
+      ["omp", ["providers", "easyproxy"], '{"providers":{"easyproxy":{"baseUrl":"http://127.0.0.1:10100/v1","api":"openai-completions","apiKey":"easyproxy-loopback","compat":{"supportsDeveloperRole":false},"models":[{"id":"test/known","name":"known (test)","input":["text","image"],"contextWindow":8192,"maxTokens":8192,"reasoning":true,"thinking":{"mode":"effort","efforts":["high"]}}]}}}'],
       ["dsh", ["llm-pi-ai", "providers", "easyproxy"], '{"llm-pi-ai":{"providers":{"easyproxy":{"displayName":"EasyProxy","api":"openai-responses","baseURL":"http://127.0.0.1:10100/v1","headers":{"Authorization":"Bearer epx_data_dsh"},"models":[{"id":"test/known","name":"known (test)","input":["text","image"],"contextWindow":8192,"reasoningEfforts":{"high":"high"}}]}}}}'],
       ["mcode", ["custom_provider", "easyproxy"], '{"custom_provider":{"easyproxy":{"name":"EasyProxy","kind":"custom","enabled":true,"api":"anthropic-messages","options":{"apiKey":"easyproxy-loopback","baseURL":"http://127.0.0.1:10100","authMode":"api-key"},"models":{"test/known":{"limit":{"context":8192},"thinking":{"effortOptions":["high"]}}}}}}'],
       ["zcode", ["provider", "easyproxy"], '{"provider":{"easyproxy":{"name":"EasyProxy","kind":"openai","enabled":true,"source":"custom","options":{"apiKey":"easyproxy-loopback","baseURL":"http://127.0.0.1:10100/v1","apiKeyRequired":true},"models":{"test/known":{"name":"known (test)","modalities":{"input":["text","image"],"output":["text"]},"limit":{"context":8192},"reasoning":{"enabled":true,"variants":["high"]}}}}}}'],
@@ -541,6 +541,9 @@ describe("OMP serializer", () => {
     expect(built.text).toContain("providers:");
     expect(built.text).toContain("anthropic/claude-opus-5");
     expect(built.text).toContain("apiKey: easyproxy-loopback");
+    expect((document as unknown as omp.OmpGeneratedConfig).providers.easyproxy!.compat).toEqual({
+      supportsDeveloperRole: false,
+    });
   });
 
   test("keeps the provider on completions while opting native OpenAI models into Responses", () => {

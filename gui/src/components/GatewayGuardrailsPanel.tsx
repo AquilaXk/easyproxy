@@ -9,6 +9,7 @@ import {
   SAMPLE_PRETTY_JSON,
   SAMPLE_REPETITIVE_BUILD_LOG,
 } from "../dry-run-fixtures";
+import type { PromptCacheBreakevenDiagnostics } from "../../../src/lib/context-inspector";
 import { ContextInspectorPanel } from "./ContextInspectorPanel";
 
 export type SecretGuardMode = "off" | "redact" | "block";
@@ -47,6 +48,17 @@ export interface GuardrailsPayload {
   };
 }
 
+export interface DryRunContextInspectionSummary {
+  model: string | null;
+  usedTokens: number;
+  contextWindowTokens: number;
+  wireFormat: string;
+  explicitBreakpoints: number;
+  cacheablePrefixTokens: number;
+  cacheablePrefixShare: number;
+  breakeven?: PromptCacheBreakevenDiagnostics;
+}
+
 export interface GuardrailsDryRunResult {
   blocked: boolean;
   limitExceeded: boolean;
@@ -59,11 +71,85 @@ export interface GuardrailsDryRunResult {
   deduplicatedItems: number;
   injectedCacheBreakpoints: number;
   normalizedTimestamps: number;
+  contextInspection?: DryRunContextInspectionSummary;
   originalChars: number;
   outputChars: number;
   savedChars: number;
   estimatedSavedTokens: number;
   previewText: string;
+}
+
+function fmtUsd(value: number): string {
+  const abs = Math.abs(value);
+  return abs > 0 && abs < 0.0001 ? abs.toFixed(5) : abs.toFixed(4);
+}
+
+function fmtSignedUsd(value: number): string {
+  return value < 0 ? `-$${fmtUsd(value)}` : `$${fmtUsd(value)}`;
+}
+
+function parseBreakevenDiagnostics(raw: unknown): PromptCacheBreakevenDiagnostics | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const b = raw as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const prefixTokens = num(b.prefixTokens);
+  const writePremiumUsd = num(b.writePremiumUsd);
+  const perHitSavingsUsd = num(b.perHitSavingsUsd);
+  const warmRefreshCostUsd = num(b.warmRefreshCostUsd);
+  const missPenaltyUsd = num(b.missPenaltyUsd);
+  const activeExpectedSavingsUsd = num(b.activeExpectedSavingsUsd);
+  const idleExpectedSavingsUsd = num(b.idleExpectedSavingsUsd);
+  if (
+    prefixTokens === undefined
+    || (b.writeTtl !== "5m" && b.writeTtl !== "1h")
+    || typeof b.economicsAvailable !== "boolean"
+    || writePremiumUsd === undefined
+    || perHitSavingsUsd === undefined
+    || warmRefreshCostUsd === undefined
+    || missPenaltyUsd === undefined
+    || activeExpectedSavingsUsd === undefined
+    || idleExpectedSavingsUsd === undefined
+    || typeof b.worthwhileActive !== "boolean"
+    || typeof b.worthwhileIdle !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    prefixTokens,
+    writeTtl: b.writeTtl,
+    economicsAvailable: b.economicsAvailable,
+    writePremiumUsd,
+    perHitSavingsUsd,
+    breakevenFollowUpHits: b.breakevenFollowUpHits === null ? null : (num(b.breakevenFollowUpHits) ?? null),
+    breakevenHitCount: b.breakevenHitCount === null ? null : (num(b.breakevenHitCount) ?? null),
+    warmRefreshCostUsd,
+    missPenaltyUsd,
+    activeExpectedSavingsUsd,
+    idleExpectedSavingsUsd,
+    worthwhileActive: b.worthwhileActive,
+    worthwhileIdle: b.worthwhileIdle,
+  };
+}
+
+function parseContextInspectionSummary(raw: unknown): DryRunContextInspectionSummary | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const ci = raw as Record<string, unknown>;
+  const cache = ci.cache && typeof ci.cache === "object" && !Array.isArray(ci.cache)
+    ? (ci.cache as Record<string, unknown>)
+    : undefined;
+  if (!cache || typeof cache.wireFormat !== "string") return undefined;
+  const numOrZero = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const breakeven = parseBreakevenDiagnostics(cache.breakeven);
+  return {
+    model: typeof ci.model === "string" ? ci.model : null,
+    usedTokens: numOrZero(ci.usedTokens),
+    contextWindowTokens: numOrZero(ci.contextWindowTokens),
+    wireFormat: cache.wireFormat,
+    explicitBreakpoints: numOrZero(cache.explicitBreakpoints),
+    cacheablePrefixTokens: numOrZero(cache.cacheablePrefixTokens),
+    cacheablePrefixShare: numOrZero(cache.cacheablePrefixShare),
+    ...(breakeven ? { breakeven } : {}),
+  };
 }
 
 const MAX_DRY_RUN_INPUT_CHARS = 65_536;
@@ -102,6 +188,7 @@ function parseDryRunResult(raw: unknown): GuardrailsDryRunResult | null {
   const estimatedSavedTokens = typeof r.estimatedSavedTokens === "number" && Number.isFinite(r.estimatedSavedTokens)
     ? r.estimatedSavedTokens
     : Math.floor(r.savedChars / 4);
+  const contextInspection = parseContextInspectionSummary(r.contextInspection);
   return {
     blocked: r.blocked,
     limitExceeded: r.limitExceeded,
@@ -114,6 +201,7 @@ function parseDryRunResult(raw: unknown): GuardrailsDryRunResult | null {
     deduplicatedItems: numOrZero(r.deduplicatedItems),
     injectedCacheBreakpoints: numOrZero(r.injectedCacheBreakpoints),
     normalizedTimestamps: numOrZero(r.normalizedTimestamps),
+    ...(contextInspection ? { contextInspection } : {}),
     originalChars: r.originalChars,
     outputChars: r.outputChars,
     savedChars: r.savedChars,
@@ -717,6 +805,65 @@ export default function GatewayGuardrailsPanel({
                   {uxT(locale, "guardrails.dryRunFindings", { list: dryRunResult.findings.join(", ") })}
                 </div>
               )}
+              {dryRunResult.contextInspection && (
+                <div
+                  data-dryrun-breakeven="true"
+                  className="flex flex-col gap-1.5 rounded-control border border-solid border-line bg-surface p-2.5 text-xs"
+                >
+                  <div className="flex flex-wrap items-center gap-2 tabular-nums">
+                    <span className="badge badge-muted font-mono">{dryRunResult.contextInspection.wireFormat}</span>
+                    <span className="badge badge-muted">
+                      {uxT(locale, "inspector.cachedPrefix", {
+                        pct: Math.round(dryRunResult.contextInspection.cacheablePrefixShare * 100),
+                        tokens: dryRunResult.contextInspection.cacheablePrefixTokens.toLocaleString(locale),
+                      })}
+                    </span>
+                    {dryRunResult.contextInspection.breakeven?.economicsAvailable && (
+                      <>
+                        <span className="font-medium text-fg">
+                          {uxT(locale, "inspector.breakevenTitle", {
+                            ttl: dryRunResult.contextInspection.breakeven.writeTtl,
+                          })}
+                        </span>
+                        <span className="badge badge-muted font-mono">
+                          {dryRunResult.contextInspection.breakeven.breakevenHitCount !== null
+                            ? uxT(locale, "inspector.breakevenHits", {
+                                hits: dryRunResult.contextInspection.breakeven.breakevenHitCount,
+                              })
+                            : uxT(locale, "inspector.breakevenNoBreakEven")}
+                        </span>
+                        <span
+                          className={
+                            dryRunResult.contextInspection.breakeven.worthwhileIdle
+                              ? "badge badge-green"
+                              : dryRunResult.contextInspection.breakeven.worthwhileActive
+                                ? "badge badge-amber"
+                                : "badge badge-muted"
+                          }
+                        >
+                          {uxT(
+                            locale,
+                            dryRunResult.contextInspection.breakeven.worthwhileIdle
+                              || dryRunResult.contextInspection.breakeven.worthwhileActive
+                              ? "inspector.breakevenWorthwhile"
+                              : "inspector.breakevenMarginal",
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {dryRunResult.contextInspection.breakeven?.economicsAvailable && (
+                    <div className="font-mono text-[11px] text-fg-muted tabular-nums">
+                      {uxT(locale, "inspector.breakevenEconomics", {
+                        premium: fmtUsd(dryRunResult.contextInspection.breakeven.writePremiumUsd),
+                        hitSavings: fmtUsd(dryRunResult.contextInspection.breakeven.perHitSavingsUsd),
+                        active: fmtSignedUsd(dryRunResult.contextInspection.breakeven.activeExpectedSavingsUsd),
+                        idle: fmtSignedUsd(dryRunResult.contextInspection.breakeven.idleExpectedSavingsUsd),
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               {dryRunResult.previewText.length > 0 && (
                 <div className="flex flex-col gap-1">
                   <span className="text-[11px] font-medium text-fg-subtle">{uxT(locale, "guardrails.dryRunPreviewLabel")}</span>
@@ -764,7 +911,9 @@ export default function GatewayGuardrailsPanel({
           {uxT(locale, "inspector.title")}
         </summary>
         <section className="border-0 border-t border-solid border-line p-3.5" aria-label={uxT(locale, "inspector.title")}>
-          <ContextInspectorPanel />
+          <ContextInspectorPanel
+            writeTtl={cacheInjectEnabled && (cacheTtl === "1h" || cacheTtl === "5m") ? cacheTtl : undefined}
+          />
         </section>
       </details>
     </div>

@@ -559,4 +559,10 @@ export const uxOverhaulCopyJa = {
   "ux.inspector.sampleResponses": "Responses サンプル",
   "ux.inspector.previewTruncated": "プレビューは先頭 8,192 文字まで表示します。",
   "ux.inspector.clearFilter": "すべての分類",
+  "ux.inspector.breakevenTitle": "キャッシュ損益分岐 ({ttl})",
+  "ux.inspector.breakevenHits": "損益分岐: 後続 {hits} 回ヒット",
+  "ux.inspector.breakevenNoBreakEven": "現在の単価では損益分岐に到達しません",
+  "ux.inspector.breakevenEconomics": "書込 +${premium} · ヒット -${hitSavings} · 期待値 (稼働/待機): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "有効",
+  "ux.inspector.breakevenMarginal": "限定的 ROI",
 } as const;

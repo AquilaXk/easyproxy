@@ -16,7 +16,7 @@ import { prepareResponsesSidecarAuth } from "./request-sidecar-auth";
 import { createResponsesEffects } from "./response-effects";
 import { createResponsesSendBudget } from "./request-send-budget";
 import { executePassthroughResponse } from "./passthrough-execution";
-import { executeResponsesSidecars } from "./sidecar-execution";
+import { executeResponsesSidecars, shouldBypassPassthroughForGatewayToolSearch } from "./sidecar-execution";
 import { createResponsesCompletionPolicy } from "./completion-policy";
 import { executeResponsesRunTurn } from "./run-turn-execution";
 import { prepareAdapterExchange } from "./adapter-dispatch";
@@ -101,7 +101,8 @@ export async function handleResponsesInner(
       );
       const sendBudgetState = createResponsesSendBudget(requestContext);
       if (sendBudgetState instanceof Response) return markProxyError(sendBudgetState);
-      if ("passthrough" in transportState.adapter && transportState.adapter.passthrough && !sidecarState.routedCompaction) {
+      const gatewayToolSearchBypass = shouldBypassPassthroughForGatewayToolSearch(options, config, requestState);
+      if ("passthrough" in transportState.adapter && transportState.adapter.passthrough && !sidecarState.routedCompaction && !gatewayToolSearchBypass) {
         const passthroughResult = await executePassthroughResponse(
           requestContext,
           admissionState,

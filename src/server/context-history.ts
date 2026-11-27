@@ -19,6 +19,7 @@ import type { AdmissionLease } from "../lib/admission";
 import type { EpxConfig } from "../types";
 import { isBearerDataPlaneAdmission, resolveContextPrincipal, ForwardAdmissionCredentialError, validateForwardAdmissionCredential, type DataPlaneAdmission } from "./auth-cors";
 import { readBoundedJsonRequestBody } from "./request-decompress";
+import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 import { codexLogAccountId, decodeRequestErrorResponse } from "./responses";
 import { codexAccountSelectionForTurn } from "./lifecycle";
 import type { RequestLogContext } from "./request-log";
@@ -99,6 +100,23 @@ async function relayContextHistory(
   const sessionId = (body as {context?: {session_id?: unknown}} | null)?.context?.session_id;
   if (typeof sessionId !== "string" || !/^[A-Za-z0-9._:-]{1,512}$/.test(sessionId)) {
     return formatErrorResponse(400, "invalid_request_error", "context.session_id must be a bounded nonempty string");
+  }
+  if (endpoint.startsWith("alpha/notes/v2/")) {
+    const hygiene = applyOutboundPayloadHygiene(
+      body,
+      {
+        outboundSecretGuard: config.outboundSecretGuard,
+        toolOutputCompression: { enabled: false },
+        promptCacheInjection: { enabled: false },
+      },
+      logCtx,
+      { skipCacheBreakpoints: true },
+    );
+    if (hygiene.blocked) {
+      logCtx.errorCode = "outbound_secret_guard";
+      return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+    }
+    body = hygiene.body;
   }
   const candidate = listOpenAiForwardSidecarCandidates(config)[0];
   if (!candidate) return formatErrorResponse(400, "invalid_request_error", "History and notes require the native ChatGPT forward provider");

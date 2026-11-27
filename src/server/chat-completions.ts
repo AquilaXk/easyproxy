@@ -108,6 +108,7 @@ import { featuresFromChatBody } from "../protocols/features";
 import { credentialDomainFor } from "../protocols/opaque-state";
 import { checkRepresentable, unrepresentableMessage } from "../protocols/guard";
 import { requestPathForLane } from "../protocols/path";
+import { hasAnyNonAnthropicGatewayToolSearchProvider, hasClientToolSearchDeclaration } from "../responses/gateway-tool-search";
 import { resolveProtocolSettings } from "../protocols/settings";
 import { markProtocolBlocked, markProtocolEntry, suppressProtocolTrace } from "../protocols/trace";
 import { recordProtocolShadowPlan } from "../protocols/shadow-plan";
@@ -237,7 +238,7 @@ async function handleChatCompletionsWithBudget(
     );
   }
   logIds?.onRequestBodyRead?.();
-  const hygiene = applyOutboundPayloadHygiene(chatBody, config, logCtx);
+  const hygiene = applyOutboundPayloadHygiene(chatBody, config, logCtx, { skipCacheBreakpoints: true });
   if (hygiene.blocked) {
     if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 400, { closeReason: "non_stream" });
     return chatCompletionsErrorResponse(400, OUTBOUND_SECRET_BLOCKED_MESSAGE, "invalid_request_error", "outbound_secret_guard");
@@ -465,6 +466,11 @@ async function handleChatCompletionsWithBudget(
         acceptAnthropicReasoningSignatures: settledRoute !== null && !routeMayChangeCredentialDomain
           && settledRoute.provider.adapter === "anthropic"
           && credentialDomainFor(settledRoute.provider)?.firstPartyAnthropic === true,
+        preserveDeferLoading: !hasClientToolSearchDeclaration(chatBody.tools) && (
+          settledRoute && !settledRoute.combo && settledRoute.routeKind !== "policy"
+            ? settledRoute.provider.gatewayToolSearch === true && settledRoute.provider.adapter !== "anthropic"
+            : hasAnyNonAnthropicGatewayToolSearchProvider(config.providers)
+        ),
       });
     }
     if (effortRow) {
@@ -605,6 +611,7 @@ async function handleChatCompletionsWithBudget(
 
   const finalizeNativeLog = createFinalRequestLog(logIds, logCtx).finish;
   const upstream = await handleResponses(internalReq, config, logCtx, {
+    outboundPayloadHygieneApplied: true,
     clientModelLabel: clientFacingModelLabel(requestedModel),
     ...(settledRoute?.scenarioMatch ? { scenarioMatchOverride: settledRoute.scenarioMatch } : {}),
     agyAcpUnattendedHttpTurn,

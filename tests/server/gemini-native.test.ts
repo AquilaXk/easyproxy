@@ -609,3 +609,47 @@ test("buffered native errors redact upstream diagnostics and log failure", async
     expect(JSON.stringify(row)).not.toContain("private buffered diagnostic");
   } finally { lease.release(); }
 });
+
+test("handleGeminiNative applies outbound payload hygiene (tool output compression and secret blocking)", async () => {
+  const repeated = Array.from({ length: 24 }, (_, idx) => `gemini-row-${idx + 1}: workspace status nominal`).join("\n");
+  const cfg: EpxConfig = {
+    ...config,
+    outboundSecretGuard: { mode: "block" },
+    toolOutputCompression: { enabled: true, minChars: 50_000, deduplicateIdentical: true, dedupMinChars: 256 },
+  };
+  let upstreamBody = "";
+  const okPayload = JSON.stringify({
+    contents: [
+      { role: "model", parts: [{ functionCall: { id: "gc_1", name: "status", args: {} } }] },
+      { role: "user", parts: [{ functionResponse: { id: "gc_1", name: "status", response: { result: repeated } } }] },
+      { role: "model", parts: [{ functionCall: { id: "gc_2", name: "status", args: {} } }] },
+      { role: "user", parts: [{ functionResponse: { id: "gc_2", name: "status", response: { result: repeated } } }] },
+    ],
+  });
+  const okRes = await run(request(okPayload), {
+    access: async () => old,
+    refresh: async () => fresh,
+    fetch: transport((_url, init) => {
+      upstreamBody = String(init.body ?? "");
+      return new Response('{"response":{"candidates":[]}}');
+    }),
+  }, false, cfg);
+  expect(okRes.status).toBe(200);
+  const forwardedReq = JSON.parse(upstreamBody).request;
+  expect(forwardedReq.contents[3].parts[0].functionResponse.response.result).toContain("identical to call_id=gc_1");
+
+  const secretPayload = JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: `secret ${["sk", "ant", "oat01", "abcdefghijklmnopqrstuvwxyz012345"].join("-")}` }] }],
+  });
+  let blockedFetchCalled = false;
+  const blockedRes = await run(request(secretPayload), {
+    access: async () => old,
+    refresh: async () => fresh,
+    fetch: transport(() => {
+      blockedFetchCalled = true;
+      return new Response('{"response":{}}');
+    }),
+  }, false, cfg);
+  expect(blockedRes.status).toBe(400);
+  expect(blockedFetchCalled).toBe(false);
+});

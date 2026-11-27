@@ -453,14 +453,19 @@ export function anthropicToResponsesBody(
  * OUT-OF-BODY tuple (audit 133 R3#1 — an in-body marker would leak upstream through
  * the native Responses forward and 400).
  */
+export interface AnthropicToResponsesOptions {
+  preserveDeferLoading?: boolean;
+}
+
 export function anthropicToResponsesTranslation(
   raw: unknown,
   cc?: EpxClaudeCodeConfig,
   budget?: TranslatorBudget,
+  options?: AnthropicToResponsesOptions,
 ): ClaudeInboundTranslation {
   const activeBudget = budget ?? createTranslatorBudget();
   try {
-    return translateAnthropicRequest(raw, cc, activeBudget);
+    return translateAnthropicRequest(raw, cc, activeBudget, options);
   } finally {
     if (!budget) activeBudget.dispose();
   }
@@ -470,6 +475,7 @@ function translateAnthropicRequest(
   raw: unknown,
   cc: EpxClaudeCodeConfig | undefined,
   budget: TranslatorBudget,
+  options?: AnthropicToResponsesOptions,
 ): ClaudeInboundTranslation {
   assertAnthropicRequestShape(raw);
 
@@ -521,7 +527,7 @@ function translateAnthropicRequest(
     });
   }
 
-  const tools = toolsToResponses(raw.tools);
+  const tools = toolsToResponses(raw.tools, { preserveDeferLoading: options?.preserveDeferLoading });
   if (tools) body.tools = tools;
   const cacheKeySource = applyAnthropicSettings(raw, body, system.cacheSystem, tools);
   return { body, cacheKeySource, nativeReasoningReplay };
@@ -599,6 +605,7 @@ export function anthropicSystemLayout(system: unknown, cc: EpxClaudeCodeConfig |
 export function anthropicSettingsTranslation(
   raw: unknown,
   cc?: EpxClaudeCodeConfig,
+  options?: AnthropicToResponsesOptions,
 ): { body: Rec; cacheKeySource: ClaudeCacheKeySource } {
   assertAnthropicRequestShape(raw);
   const body: Rec = {
@@ -608,7 +615,12 @@ export function anthropicSettingsTranslation(
     stream: raw.stream === true,
   };
   const system = anthropicSystemLayout(raw.system, cc);
-  const cacheKeySource = applyAnthropicSettings(raw, body, system.cacheSystem, toolsToResponses(raw.tools));
+  const cacheKeySource = applyAnthropicSettings(
+    raw,
+    body,
+    system.cacheSystem,
+    toolsToResponses(raw.tools, { preserveDeferLoading: options?.preserveDeferLoading }),
+  );
   return { body, cacheKeySource };
 }
 

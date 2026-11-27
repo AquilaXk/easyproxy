@@ -56,8 +56,8 @@ async function* progressEvents(source: AsyncIterable<AdapterEvent>, budget: Tran
 export function withAnthropicProgressUpdates(adapter: ProviderAdapter, enabled: () => boolean): ProviderAdapter {
   return {
     ...adapter,
-    async *parseStream(response, budget, tier) {
-      const source = adapter.parseStream(response, budget, tier);
+    async *parseStream(response, budget, tier, streamContext) {
+      const source = adapter.parseStream(response, budget, tier, streamContext);
       if (enabled()) yield* progressEvents(source, budget);
       else yield* source;
     },

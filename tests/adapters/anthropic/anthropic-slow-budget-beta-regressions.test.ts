@@ -18,6 +18,7 @@ import {
   MIN_ANTHROPIC_THINKING_BUDGET,
   rectifyAnthropicThinkingBudgetOnError,
   rectifyAnthropicThinkingBudgetPreRequest,
+  resolveAnthropicThinkingModelMaxOutputTokens,
   shouldRectifyAnthropicThinkingBudgetError,
 } from "../../../src/adapters/anthropic/thinking-rectifier";
 import {
@@ -514,6 +515,43 @@ describe("Defect 5 & P0-A: allowed_warning, Slow Mode, Grace & Overage", () => {
     );
     expect(routing.getSlowFallbackEligibleAccounts(slowEnabledConfig, Date.now(), "claude-sonnet-4-5")).toEqual([]);
   });
+
+  test("treatment offer with off or omitted status preserves existing blockedUntil cooldown", () => {
+    const tracker = anthropicSlowFallbackFor("anthropic");
+    const acc = "acc-treatment-block-hold";
+    tracker.clearAccount(acc);
+    try {
+      const now = 1_700_000_000_000;
+      const weeklyResetSec = Math.floor((now + 3_600_000) / 1000);
+      tracker.recordSlowHeaders(acc, new Headers({
+        "anthropic-ratelimit-unified-slow-offer": "treatment",
+        "anthropic-ratelimit-unified-slow-status": "weekly_limit",
+        "anthropic-ratelimit-unified-7d-reset": String(weeklyResetSec),
+      }), now);
+      expect(tracker.isSlowEligible(acc, now + 1_000)).toBe(false);
+
+      // Sending offer=treatment with status=off or omitted status must NOT wipe blockedUntil.
+      tracker.recordSlowHeaders(acc, new Headers({
+        "anthropic-ratelimit-unified-slow-offer": "treatment",
+        "anthropic-ratelimit-unified-slow-status": "off",
+      }), now + 2_000);
+      expect(tracker.isSlowEligible(acc, now + 3_000)).toBe(false);
+
+      tracker.recordSlowHeaders(acc, new Headers({
+        "anthropic-ratelimit-unified-slow-offer": "treatment",
+      }), now + 4_000);
+      expect(tracker.isSlowEligible(acc, now + 5_000)).toBe(false);
+
+      // Explicit active or not_needed status clears blockedUntil.
+      tracker.recordSlowHeaders(acc, new Headers({
+        "anthropic-ratelimit-unified-slow-offer": "treatment",
+        "anthropic-ratelimit-unified-slow-status": "active",
+      }), now + 6_000);
+      expect(tracker.isSlowEligible(acc, now + 7_000)).toBe(true);
+    } finally {
+      tracker.clearAccount(acc);
+    }
+  });
 });
 
 describe("Defect 6 & P0-B: credits_required and multi-provider billing vs capacity discrimination", () => {
@@ -770,6 +808,123 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
       budget_tokens: MAX_ANTHROPIC_THINKING_BUDGET,
     });
     expect(sentBodies[1]!.max_tokens).toBe(DEFAULT_ANTHROPIC_RECTIFIED_MAX_TOKENS);
+  });
+
+  test("Item 10: applies model-specific output ceilings and skips adaptive/disabled/between_tools models", async () => {
+    expect(resolveAnthropicThinkingModelMaxOutputTokens("claude-opus-4-20250514")).toBe(32_000);
+    expect(resolveAnthropicThinkingModelMaxOutputTokens("claude-opus-4-1-20250805", {
+      baseUrl: "https://api.anthropic.com",
+      authMode: "key",
+      defaultMaxOutputTokens: 64_000,
+    })).toBe(32_000);
+    expect(resolveAnthropicThinkingModelMaxOutputTokens("claude-3-5-sonnet-20241022")).toBe(8_192);
+    expect(resolveAnthropicThinkingModelMaxOutputTokens("claude-opus-4-6")).toBe(128_000);
+
+    for (const adaptiveModel of ["claude-opus-4-7", "claude-sonnet-5", "claude-haiku-5-5", "claude-fable-5-1"]) {
+      const prePayload = { model: adaptiveModel, max_tokens: 512, thinking: { type: "enabled", budget_tokens: 0 } };
+      expect(rectifyAnthropicThinkingBudgetPreRequest(prePayload)).toEqual({ body: prePayload, applied: false });
+      const errPayload = { model: adaptiveModel, max_tokens: 512 };
+      expect(rectifyAnthropicThinkingBudgetOnError(errPayload)).toEqual({ body: errPayload, applied: false });
+    }
+
+    for (const offType of ["disabled", "between_tools"] as const) {
+      const preOff = { model: "claude-sonnet-4-5", max_tokens: 512, thinking: { type: offType } };
+      expect(rectifyAnthropicThinkingBudgetPreRequest(preOff)).toEqual({ body: preOff, applied: false });
+      expect(rectifyAnthropicThinkingBudgetOnError(preOff)).toEqual({ body: preOff, applied: false });
+    }
+
+    const opus41Err = rectifyAnthropicThinkingBudgetOnError({
+      model: "claude-opus-4-1-20250805",
+      max_tokens: 512,
+      thinking: { type: "enabled", budget_tokens: 128 },
+    });
+    expect(opus41Err.applied).toBe(true);
+    expect(opus41Err.body.max_tokens).toBe(32_000);
+    expect(opus41Err.body.thinking).toEqual({ type: "enabled", budget_tokens: 31_999 });
+
+    const sonnet35Err = rectifyAnthropicThinkingBudgetOnError({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 512,
+      thinking: { type: "enabled", budget_tokens: 128 },
+    });
+    expect(sonnet35Err.applied).toBe(true);
+    expect(sonnet35Err.body.max_tokens).toBe(8_192);
+    expect(sonnet35Err.body.thinking).toEqual({ type: "enabled", budget_tokens: 8_191 });
+
+    const passthroughOpus41 = buildAnthropicMessagesPassthroughRequest(
+      { baseUrl: "https://api.anthropic.com", authMode: "key", apiKey: "sk-ant-test", thinkingBudgetRectifier: true },
+      "claude-opus-4-1-20250805",
+      { model: "claude-opus-4-1-20250805", max_tokens: 512, thinking: { type: "enabled", budget_tokens: 0 }, messages: [{ role: "user", content: "hi" }] },
+    ).wireBody;
+    expect(passthroughOpus41.thinking).toEqual({ type: "enabled", budget_tokens: MIN_ANTHROPIC_THINKING_BUDGET });
+    expect(Number(passthroughOpus41.max_tokens)).toBeLessThanOrEqual(32_000);
+
+    const passthroughAdaptive = buildAnthropicMessagesPassthroughRequest(
+      { baseUrl: "https://api.anthropic.com", authMode: "key", apiKey: "sk-ant-test", thinkingBudgetRectifier: true },
+      "claude-opus-4-7",
+      { model: "claude-opus-4-7", max_tokens: 512, thinking: { type: "enabled", budget_tokens: 0 }, messages: [{ role: "user", content: "hi" }] },
+    ).wireBody;
+    expect(passthroughAdaptive.thinking).toEqual({ type: "enabled", budget_tokens: 0 });
+    expect(passthroughAdaptive.max_tokens).toBe(512);
+
+    const sentOpus41: Array<Record<string, unknown>> = [];
+    const cfgOpus41: EpxConfig = {
+      port: 0,
+      defaultProvider: "anth41",
+      protocols: { rollout: { managedMessagesNative: true } },
+      providers: {
+        anth41: {
+          adapter: "anthropic",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "key",
+          apiKey: "sk-ant-synthetic",
+          models: ["claude-opus-4-1-20250805", "claude-opus-4-7"],
+          fetch: (async (_input, init) => {
+            const parsed = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            sentOpus41.push(parsed);
+            if (parsed.model === "claude-opus-4-1-20250805" && sentOpus41.length === 1) {
+              return Response.json(
+                { type: "error", error: { type: "invalid_request_error", message: "max_tokens must be greater than thinking.budget_tokens" } },
+                { status: 400 },
+              );
+            }
+            if (parsed.model === "claude-opus-4-7") {
+              return Response.json(
+                { type: "error", error: { type: "invalid_request_error", message: "thinking.budget_tokens >= 1024" } },
+                { status: 400 },
+              );
+            }
+            return Response.json(makeAnthropicMsg("opus41-ok"));
+          }) as typeof fetch,
+        } as EpxProviderConfig & { fetch: typeof fetch },
+      },
+    };
+    const ok41 = await handleClaudeMessages(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: "anth41/claude-opus-4-1-20250805", max_tokens: 1024, thinking: { type: "enabled", budget_tokens: 2048 }, messages: [{ role: "user", content: "solve" }] }),
+      }),
+      cfgOpus41,
+      {},
+    );
+    expect(ok41.status).toBe(200);
+    expect(sentOpus41).toHaveLength(2);
+    expect(sentOpus41[1]!.max_tokens).toBe(32_000);
+    expect(sentOpus41[1]!.thinking).toEqual({ type: "enabled", budget_tokens: 31_999 });
+
+    const beforeAdaptiveLen = sentOpus41.length;
+    const noRetryAdaptive = await handleClaudeMessages(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: "anth41/claude-opus-4-7", max_tokens: 1024, messages: [{ role: "user", content: "solve" }] }),
+      }),
+      cfgOpus41,
+      {},
+    );
+    expect(noRetryAdaptive.status).toBe(400);
+    expect(sentOpus41.length - beforeAdaptiveLen).toBe(1);
   });
 
   test("generic OAuth billing cooldown excludes multi-family account across all model families", async () => {

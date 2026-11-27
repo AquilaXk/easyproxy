@@ -12,7 +12,27 @@ import { formatErrorResponse } from "../../bridge";
 import { planWebSearch, buildWebSearchTool, runWithWebSearch } from "../../web-search";
 import { createRegisteredAdvisorPlan } from "./advisor-plan-slot";
 import { ADVISOR_TOOL_NAME, advisorToolAllowed, createAdvisorSidecarStep } from "./advisor-slot";
-import { installGatewayToolSearchEmulation } from "../../responses/gateway-tool-search";
+import { installGatewayToolSearchEmulation, isGatewayToolSearchCandidate } from "../../responses/gateway-tool-search";
+import { toolLoadingModelMatches } from "../../claude/inbound-tool-loading";
+
+export function shouldBypassPassthroughForGatewayToolSearch(
+  options: ResponsesRequestContext["options"],
+  config: ResponsesRequestContext["config"],
+  requestState: Pick<PreparedResponsesRequest, "parsed" | "route" | "inboundWire">,
+): boolean {
+  const { parsed, route, inboundWire } = requestState;
+  const directToolLoadingRoute = inboundWire === "anthropic"
+    && !options.comboAttempt && !route.combo && route.routeKind !== "combo" && route.routeKind !== "policy"
+    && !options.policyFallbackCandidate && !options.policyRequestScope?.eligibility;
+  const wireModel = `${route.providerName}/${parsed._wireModelOverride ?? route.modelId}`;
+  const clientToolLoadingPathActive = directToolLoadingRoute && (
+    (route.provider.adapter === "openai-responses"
+      && toolLoadingModelMatches(config.claudeCode?.appendOnlyToolLoadingModels, wireModel))
+    || (route.provider.adapter === "openai-chat"
+      && toolLoadingModelMatches(config.claudeCode?.chatToolDispatchModels, wireModel))
+  );
+  return !clientToolLoadingPathActive && isGatewayToolSearchCandidate(parsed, route.provider);
+}
 import { advisorServerToolDestination, hasAdvisorServerTools, withholdAdvisorServerTools } from "../../adapters/anthropic/advisor-tool";
 import { addProtocolEntryReason } from "../../protocols/trace";
 import { responsesHostedAdvisorSpendTarget } from "./request-spend-target";
@@ -994,7 +1014,17 @@ export async function executeResponsesSidecars(
 
   // Gateway defer_loading (tool_search) emulation for opted-in non-Anthropic targets (#maximhq/bifrost).
   // Runs AFTER building `toolBridgeMaps` so dynamically loaded deferred tools remain authorized on return.
-  if (!routedCompaction && !transportState.adapter.runTurn && !wsPlan && !imgPlan && !vidPlan) {
+  const directToolLoadingRoute = requestState.inboundWire === "anthropic"
+    && !options.comboAttempt && !route.combo && route.routeKind !== "combo" && route.routeKind !== "policy"
+    && !options.policyFallbackCandidate && !options.policyRequestScope?.eligibility;
+  const gatewayToolSearchWireModel = `${route.providerName}/${parsed._wireModelOverride ?? route.modelId}`;
+  const clientToolLoadingPathActive = directToolLoadingRoute && (
+    (route.provider.adapter === "openai-responses"
+      && toolLoadingModelMatches(config.claudeCode?.appendOnlyToolLoadingModels, gatewayToolSearchWireModel))
+    || (route.provider.adapter === "openai-chat"
+      && toolLoadingModelMatches(config.claudeCode?.chatToolDispatchModels, gatewayToolSearchWireModel))
+  );
+  if (!routedCompaction && !transportState.adapter.runTurn && !wsPlan && !imgPlan && !vidPlan && !clientToolLoadingPathActive) {
     installGatewayToolSearchEmulation(parsed, route.provider);
   }
 

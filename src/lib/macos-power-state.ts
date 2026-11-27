@@ -10,6 +10,7 @@ const PMSET_TIMEOUT_MS = 2_000;
 const PMSET_MAX_BUFFER_BYTES = 16 * 1024;
 const DEFAULT_CACHE_TTL_MS = 2_000;
 const CAPABILITIES_PREFIX = "Current System Capabilities are:";
+const POWER_STATE_PREFIX = "Current Power State:";
 
 export type MacOSPowerReadinessReason =
   | "non_darwin"
@@ -33,22 +34,39 @@ export interface MacOSPowerStateOptions {
 }
 
 export function parseMacOSSystemCapabilitiesReady(output: string): MacOSPowerReadiness {
+  let capTokens: string[] | null = null;
+  let powerState: number | undefined;
   for (const rawLine of output.split(/\r?\n/)) {
     const trimmed = rawLine.trim();
-    if (!trimmed.startsWith(CAPABILITIES_PREFIX)) continue;
-    const remainder = trimmed.slice(CAPABILITIES_PREFIX.length);
-    const tokens = remainder.split(/\s+/).filter(Boolean);
-    let hasGraphics = false;
-    let hasNetwork = false;
-    for (const token of tokens) {
-      if (token === "Graphics") hasGraphics = true;
-      else if (token === "Network") hasNetwork = true;
+    if (trimmed.startsWith(CAPABILITIES_PREFIX)) {
+      const remainder = trimmed.slice(CAPABILITIES_PREFIX.length);
+      capTokens = remainder.split(/\s+/).filter(Boolean);
+    } else if (trimmed.startsWith(POWER_STATE_PREFIX)) {
+      const rawStr = trimmed.slice(POWER_STATE_PREFIX.length).trim();
+      if (rawStr.length > 0) {
+        const rawVal = Number(rawStr);
+        if (Number.isInteger(rawVal)) powerState = rawVal;
+      }
     }
-    return hasGraphics && hasNetwork
-      ? { ready: true, reason: "interactive_ready" }
-      : { ready: false, reason: "dark_wake_missing_capabilities" };
   }
-  return { ready: false, reason: "capabilities_line_missing" };
+  if (!capTokens) {
+    return { ready: true, reason: "capabilities_line_missing" };
+  }
+  let hasGraphics = false;
+  let hasNetwork = false;
+  let hasAudio = false;
+  for (const token of capTokens) {
+    if (token === "Graphics") hasGraphics = true;
+    else if (token === "Network") hasNetwork = true;
+    else if (token === "Audio") hasAudio = true;
+  }
+  if (!hasNetwork) {
+    return { ready: false, reason: "dark_wake_missing_capabilities" };
+  }
+  if (hasGraphics || powerState === 4 || (hasAudio && (powerState === undefined || powerState >= 3))) {
+    return { ready: true, reason: "interactive_ready" };
+  }
+  return { ready: false, reason: "dark_wake_missing_capabilities" };
 }
 
 function defaultReadMacOSSystemState(): Promise<string> {
@@ -109,9 +127,9 @@ export function createMacOSPowerReadyChecker(
           const output = await reader();
           result = typeof output === "string"
             ? parseMacOSSystemCapabilitiesReady(output)
-            : { ready: false, reason: "probe_failed" };
+            : { ready: true, reason: "probe_failed" };
         } catch {
-          result = { ready: false, reason: "probe_failed" };
+          result = { ready: true, reason: "probe_failed" };
         }
         if (useCache) {
           cached = { checkedAt: options?.now ?? Date.now(), platform, result };

@@ -559,4 +559,10 @@ export const uxOverhaulCopyKo = {
   "ux.inspector.sampleResponses": "Responses 요청 샘플",
   "ux.inspector.previewTruncated": "미리 보기는 앞 8,192자까지 표시합니다.",
   "ux.inspector.clearFilter": "전체 분류 보기",
+  "ux.inspector.breakevenTitle": "캐시 손익분기 ({ttl})",
+  "ux.inspector.breakevenHits": "손익분기: 후속 {hits}회 적중",
+  "ux.inspector.breakevenNoBreakEven": "현재 요율에서 손익분기 미달",
+  "ux.inspector.breakevenEconomics": "쓰기 +${premium} · 적중 -${hitSavings} · 예상 절감 (활성/유휴): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "효율적",
+  "ux.inspector.breakevenMarginal": "한계 수익",
 } as const;

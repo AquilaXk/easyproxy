@@ -108,7 +108,7 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
       ],
       providers: {
         custom: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "https://api.example.test/v1",
           authMode: "key",
           apiKey: "sk-up-1",
@@ -255,7 +255,7 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
           fetch: spyFetch,
         } as EpxProviderTransport as EpxConfig["providers"][string],
         "meta-ssrf": {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "http://169.254.169.254/latest",
           authMode: "key",
           apiKey: "sk-1",
@@ -263,7 +263,7 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
           fetch: spyFetch,
         } as EpxProviderTransport as EpxConfig["providers"][string],
         "priv-ssrf": {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "http://10.0.0.5/v1",
           authMode: "key",
           apiKey: "sk-2",
@@ -271,7 +271,7 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
           fetch: spyFetch,
         } as EpxProviderTransport as EpxConfig["providers"][string],
         good: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "https://api.example.test/v1",
           authMode: "key",
           apiKey: "sk-3",
@@ -351,7 +351,7 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
       providers: {
         ...cfg.providers,
         speechGood: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "https://api.example.test/v1",
           authMode: "key",
           apiKey: "sk-4",
@@ -402,7 +402,7 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
 
     const hits: string[] = [];
     const badProvider: EpxProviderTransport = {
-      adapter: "openai-compatible",
+      adapter: "openai-chat",
       baseUrl: "https://bad.example.test/v1",
       authMode: "key",
       apiKey: "sk-bad",
@@ -419,7 +419,7 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
     };
     const audioBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00]);
     const okProvider: EpxProviderTransport = {
-      adapter: "openai-compatible",
+      adapter: "openai-chat",
       baseUrl: "https://good.example.test/v1",
       authMode: "key",
       apiKey: "sk-good",
@@ -539,7 +539,7 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
       ...getDefaultConfig(),
       providers: {
         leaky: {
-          adapter: "openai-compatible",
+          adapter: "openai-chat",
           baseUrl: "https://api.example.test/v1",
           authMode: "key",
           apiKey: "sk-leaky",
@@ -580,5 +580,185 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
     expect(spBody).toContain("[REDACTED]");
     expect(spBody).not.toContain(SYNTHETIC_SECRET);
     expect(spBody).not.toContain(epxLeak);
+  });
+
+  test("Item 11: decouples connectTimeoutMs from response body read and forwards caller bearer in authMode=forward", async () => {
+    const home = createTempHome("epx-rerank-speech-timeout-fwd-");
+    process.env.EASYPROXY_HOME = home;
+    activeSpendLeases.push(acquireOwnedSpendHome());
+
+    let mode: "slow-headers" | "slow-body" | "echo-auth" = "slow-headers";
+    const observedAuths: Array<string | null> = [];
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        observedAuths.push(req.headers.get("authorization"));
+        if (mode === "slow-headers") {
+          await new Promise(resolve => setTimeout(resolve, 140));
+          return Response.json({ ok: true });
+        }
+        if (mode === "slow-body") {
+          const stream = new ReadableStream<Uint8Array>({
+            async start(controller) {
+              if (url.pathname.endsWith("/audio/speech")) {
+                controller.enqueue(new Uint8Array([0x49, 0x44]));
+                await new Promise(resolve => setTimeout(resolve, 110));
+                controller.enqueue(new Uint8Array([0x33, 0x04]));
+              } else {
+                const payload = JSON.stringify({
+                  results: [{ index: 0, relevance_score: 0.99 }],
+                  usage: { total_tokens: 11 },
+                });
+                const mid = Math.floor(payload.length / 2);
+                controller.enqueue(new TextEncoder().encode(payload.slice(0, mid)));
+                await new Promise(resolve => setTimeout(resolve, 110));
+                controller.enqueue(new TextEncoder().encode(payload.slice(mid)));
+              }
+              controller.close();
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: {
+              "content-type": url.pathname.endsWith("/audio/speech") ? "audio/mpeg" : "application/json",
+            },
+          });
+        }
+        if (url.pathname.endsWith("/audio/speech")) {
+          return new Response(new Uint8Array([0x49, 0x44, 0x33, 0x04]), {
+            status: 200,
+            headers: { "content-type": "audio/mpeg" },
+          });
+        }
+        return Response.json({
+          results: [{ index: 0, relevance_score: 0.9 }],
+          usage: { total_tokens: 9 },
+        });
+      },
+    });
+    servers.push(upstream);
+
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      providers: {
+        tight: {
+          adapter: "openai-chat",
+          baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+          authMode: "key",
+          apiKey: "sk-tight-key",
+          allowPrivateNetwork: true,
+          connectTimeoutMs: 40,
+          models: ["rerank-english-v3", "tts-1"],
+        },
+        fwd: {
+          adapter: "openai-chat",
+          baseUrl: `http://127.0.0.1:${upstream.port}/v1`,
+          authMode: "forward",
+          allowPrivateNetwork: true,
+          models: ["rerank-english-v3", "tts-1"],
+        },
+      },
+    };
+
+    // 1. Header arrival timeout > 40ms aborts Phase 1 connect on both /v1/rerank and /v1/audio/speech
+    mode = "slow-headers";
+    const rrHeaderTimeout = await handleRerank(
+      new Request("http://127.0.0.1/v1/rerank", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "tight/rerank-english-v3", query: "q", documents: ["doc"] }),
+      }),
+      cfg,
+      {},
+      { requestId: "rr-hdr-timeout", start: Date.now() },
+    );
+    expect(rrHeaderTimeout.status).toBe(502);
+
+    const spHeaderTimeout = await handleAudioSpeech(
+      new Request("http://127.0.0.1/v1/audio/speech", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "tight/tts-1", input: "hello", voice: "alloy" }),
+      }),
+      cfg,
+      {},
+      { requestId: "sp-hdr-timeout", start: Date.now() },
+    );
+    expect(spHeaderTimeout.status).toBe(502);
+
+    // 2. Fast headers (<40ms) + slow body (>110ms > connectTimeoutMs) succeed cleanly
+    mode = "slow-body";
+    const rrSlowBody = await handleRerank(
+      new Request("http://127.0.0.1/v1/rerank", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "tight/rerank-english-v3", query: "q", documents: ["doc"] }),
+      }),
+      cfg,
+      {},
+      { requestId: "rr-slow-body", start: Date.now() },
+    );
+    expect(rrSlowBody.status).toBe(200);
+
+    const spSlowBody = await handleAudioSpeech(
+      new Request("http://127.0.0.1/v1/audio/speech", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "tight/tts-1", input: "hello", voice: "alloy" }),
+      }),
+      cfg,
+      {},
+      { requestId: "sp-slow-body", start: Date.now() },
+    );
+    expect(spSlowBody.status).toBe(200);
+
+    // 3. authMode: "forward" forwards caller bearer and refuses proxy admission secret
+    mode = "echo-auth";
+    observedAuths.length = 0;
+    const rrForwardOk = await handleRerank(
+      new Request("http://127.0.0.1/v1/rerank", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer sk-caller-forward-rr" },
+        body: JSON.stringify({ model: "fwd/rerank-english-v3", query: "q", documents: ["doc"] }),
+      }),
+      cfg,
+      {},
+      { requestId: "rr-fwd-ok", start: Date.now() },
+    );
+    expect(rrForwardOk.status).toBe(200);
+
+    const spForwardOk = await handleAudioSpeech(
+      new Request("http://127.0.0.1/v1/audio/speech", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer sk-caller-forward-sp" },
+        body: JSON.stringify({ model: "fwd/tts-1", input: "hello", voice: "alloy" }),
+      }),
+      cfg,
+      {},
+      { requestId: "sp-fwd-ok", start: Date.now() },
+    );
+    expect(spForwardOk.status).toBe(200);
+    expect(observedAuths).toEqual([
+      "Bearer sk-caller-forward-rr",
+      "Bearer sk-caller-forward-sp",
+    ]);
+
+    const rrProxyLeakRefused = await handleRerank(
+      new Request("http://127.0.0.1/v1/rerank", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${["epx_data", "proxy_secret_refuse"].join("_")}`,
+        },
+        body: JSON.stringify({ model: "fwd/rerank-english-v3", query: "q", documents: ["doc"] }),
+      }),
+      cfg,
+      {},
+      { requestId: "rr-fwd-proxy-secret", start: Date.now() },
+    );
+    expect(rrProxyLeakRefused.status).toBe(401);
+    expect(observedAuths).toHaveLength(2);
   });
 });

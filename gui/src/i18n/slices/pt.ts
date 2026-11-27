@@ -559,4 +559,10 @@ export const uxOverhaulCopyPt = {
   "ux.inspector.sampleResponses": "Carregar exemplo Responses",
   "ux.inspector.previewTruncated": "Prévia limitada a 8.192 caracteres.",
   "ux.inspector.clearFilter": "Todas as categorias",
+  "ux.inspector.breakevenTitle": "Ponto de equilíbrio do cache ({ttl})",
+  "ux.inspector.breakevenHits": "Equilíbrio: {hits} acertos seguintes",
+  "ux.inspector.breakevenNoBreakEven": "Sem equilíbrio nas tarifas atuais",
+  "ux.inspector.breakevenEconomics": "Escrita +${premium} · Acerto -${hitSavings} · Esperado (ativo/ocioso): {active} / {idle}",
+  "ux.inspector.breakevenWorthwhile": "Compensador",
+  "ux.inspector.breakevenMarginal": "ROI marginal",
 } as const;

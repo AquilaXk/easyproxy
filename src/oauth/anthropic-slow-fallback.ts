@@ -61,7 +61,7 @@ function createAnthropicSlowFallbackState() {
         ? resetSec * 1000
         : now + DEFAULT_SLOW_BLOCK_MS;
       next.blockedUntil = Math.max(next.blockedUntil ?? 0, resetAt);
-    } else if (signal.status === "active" || signal.status === "not_needed" || signal.offer === "treatment") {
+    } else if (signal.status === "active" || signal.status === "not_needed") {
       delete next.blockedUntil;
     }
 
