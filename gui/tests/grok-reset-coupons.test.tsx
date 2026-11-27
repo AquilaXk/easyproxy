@@ -6,7 +6,7 @@
  * still be executing upstream, and a per-row retry used to cancel every sibling
  * read.
  */
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act, useLayoutEffect } from "react";
 import type { Root } from "react-dom/client";
@@ -802,11 +802,171 @@ test("confirming Grok coupon cancels back to list if a refresh removes or supers
   await act(async () => { await liveController.refresh("acct-a", { keepSnapshot: true }); await flush(); });
 
   expect(dialogText(host)).not.toContain("Use reset coupon?");
-  expect(dialogText(host)).toContain("No reset coupons are available to redeem");
+  expect(dialogText(host)).toContain("Available coupons changed. Review the updated order before redeeming.");
   expect(harness.consumes).toHaveLength(0);
 
   await act(async () => { buttonWithText(host as unknown as HTMLElement, "Use 1 coupon").click(); await flush(); });
   await act(async () => { buttonWithText(host as unknown as HTMLElement, "Use coupon").click(); await flush(); });
   expect(harness.consumes).toHaveLength(1);
   expect(harness.consumes[0]!.tokenId).toBe("restok_even_sooner");
+
+  // Confirming when refresh removes every coupon returns to empty list with noneAvailable.
+  await act(async () => { buttonWithText(host as unknown as HTMLElement, "Use 1 coupon").click(); await flush(); });
+  expect(dialogText(host)).toContain("Use reset coupon?");
+  harness.coupons.set("acct-a", []);
+  await act(async () => { await liveController.refresh("acct-a", { keepSnapshot: true }); await flush(); });
+  expect(dialogText(host)).not.toContain("Use reset coupon?");
+  expect(dialogText(host)).toContain("No reset coupons are available to redeem.");
+});
+
+test("coupon_unavailable refusal closes confirm view, refreshes list, and renders specific warning", async () => {
+  harness.coupons.set("acct-a", [COUPON("restok_gone", 5)]);
+  harness.consumeReply = async () => json({ error: { code: "coupon_unavailable" } }, 409);
+  const host = await mountPanel([ACCOUNT("acct-a")]);
+  await openDialog(host);
+  await act(async () => { buttonWithText(host, "Use 1 coupon").click(); await flush(); });
+  expect(dialogText(host)).toContain("Use reset coupon?");
+
+  harness.coupons.set("acct-a", []);
+  await act(async () => { buttonWithText(host, "Use coupon").click(); await flush(); });
+  expect(dialogText(host)).not.toContain("Use reset coupon?");
+  expect(dialogText(host)).toContain("no longer available");
+  expect(dialogText(host)).toContain("This account has no reset coupons.");
+});
+
+test("operation_id_owned_by_another_account allows direct retry from confirm view with a new UUIDv4", async () => {
+  harness.coupons.set("acct-a", [COUPON("restok_a1", 10)]);
+  harness.consumeReply = async () => json({ error: { code: "operation_id_owned_by_another_account" } }, 409);
+  const host = await mountPanel([ACCOUNT("acct-a")]);
+  await openDialog(host);
+  await act(async () => { buttonWithText(host, "Use 1 coupon").click(); await flush(); });
+  await act(async () => { buttonWithText(host, "Use coupon").click(); await flush(); });
+  expect(dialogText(host)).toContain("belongs to another account");
+
+  harness.consumeReply = async () => json({ success: true, code: "redeemed", replayed: false });
+  await act(async () => { buttonWithText(host, "Use coupon").click(); await flush(); });
+  expect(harness.consumes).toHaveLength(2);
+  expect(harness.consumes[1]!.operationId).toMatch(UUID_V4);
+  expect(harness.consumes[1]!.operationId).not.toBe(harness.consumes[0]!.operationId);
+  expect(dialogText(host)).toContain("Coupon redeemed");
+  expect(dialogText(host)).not.toContain("cannot generate a redemption ID");
+});
+
+test("switching apiBase isolates Grok coupon entries and retires queued reads from the prior server", async () => {
+  const { createRoot } = await import("react-dom/client");
+  const baseFetch = globalThis.fetch;
+  const readUrls: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.includes("/api/grok/reset-coupons") && !url.includes("/consume")) {
+      readUrls.push(url);
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+
+  try {
+    harness.coupons.set("acct-1", [COUPON("restok_s1", 4)]);
+    harness.coupons.set("acct-2", [COUPON("restok_s2", 5)]);
+    harness.coupons.set("acct-3", [COUPON("restok_s3", 6)]);
+    harness.coupons.set("acct-4", [COUPON("restok_s4", 7)]);
+
+    let latest!: GrokResetCouponController;
+    function Harness({ apiBase }: { apiBase: string }) {
+      const controller = useGrokResetCoupons({
+        apiBase,
+        accountIds: ["acct-1", "acct-2", "acct-3", "acct-4"],
+        enabled: true,
+      });
+      useLayoutEffect(() => { latest = controller; }, [controller]);
+      return null;
+    }
+
+    const host = testWindow.document.createElement("div");
+    const root = createRoot(host as unknown as HTMLElement);
+    mountedRoots.push(root);
+
+    await act(async () => {
+      root.render(<Harness apiBase="http://server-a.local" />);
+      await flush();
+    });
+    expect(latest.entries["acct-1"]?.status).toBe("ready");
+
+    // Hold server-a reads with >3 accounts so acct-4 waits in gate.waiting, then switch apiBase.
+    harness.holdReads = true;
+    await act(async () => {
+      void latest.refresh("acct-1");
+      void latest.refresh("acct-2");
+      void latest.refresh("acct-3");
+      void latest.refresh("acct-4");
+      await flush();
+    });
+    const readsBeforeSwitch = readUrls.filter(u => u.startsWith("http://server-a.local")).length;
+    expect(readsBeforeSwitch).toBe(7); // 4 initial + 3 active queued; acct-4 is waiting
+
+    const serverBCoupon = COUPON("restok_b1", 12);
+    harness.coupons.set("acct-1", [serverBCoupon]);
+    await act(async () => {
+      root.render(<Harness apiBase="http://server-b.local" />);
+    });
+    // Immediately after switch (before server-b reads finish), server-a's ready snapshot is gone.
+    expect(latest.entries).toEqual({});
+
+    await act(async () => {
+      harness.holdReads = false;
+      while (harness.releaseRead.length > 0) harness.releaseRead.shift()!();
+      await flush();
+    });
+
+    // Server-a's queued acct-4 never sent a late fetch, and server-b shows only server-b coupons.
+    expect(readUrls.filter(u => u.startsWith("http://server-a.local"))).toHaveLength(readsBeforeSwitch);
+    expect(latest.entries["acct-1"]).toEqual({
+      status: "ready",
+      coupons: [serverBCoupon],
+    });
+  } finally {
+    globalThis.fetch = baseFetch;
+  }
+});
+
+test("duplicate Grok coupon entries render without duplicate React key warnings", async () => {
+  const dup = COUPON("restok_dup", 6);
+  harness.coupons.set("acct-a", [dup, { ...dup }]);
+  const errors: string[] = [];
+  const errSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  });
+  try {
+    const host = await mountPanel([ACCOUNT("acct-a")]);
+    await openDialog(host);
+    expect(host.querySelectorAll(".credit-list .credit-item")).toHaveLength(2);
+  } finally {
+    errSpy.mockRestore();
+  }
+  expect(errors.join("\n")).not.toContain("same key");
+});
+
+test("startConfirm refuses locally expired coupon and triggers refresh instead of opening confirm view", async () => {
+  const t0 = Date.parse("2026-11-28T00:00:00Z");
+  let fakeNow = t0;
+  const nowSpy = spyOn(Date, "now").mockImplementation(() => fakeNow);
+  try {
+    harness.coupons.set("acct-a", [{
+      tokenId: "restok_expiring",
+      validityStart: "2026-01-01T00:00:00Z",
+      validityEnd: new Date(t0 + 60_000).toISOString(),
+    }]);
+    const host = await mountPanel([ACCOUNT("acct-a")]);
+    await openDialog(host);
+
+    // Advance wall clock past validityEnd while dialog stays open.
+    fakeNow = t0 + 61_000;
+    harness.coupons.set("acct-a", []);
+    await act(async () => { buttonWithText(host, "Use 1 coupon").click(); await flush(); });
+
+    expect(dialogText(host)).not.toContain("Use reset coupon?");
+    expect(dialogText(host)).toContain("no longer available");
+    expect(harness.consumes).toHaveLength(0);
+  } finally {
+    nowSpy.mockRestore();
+  }
 });

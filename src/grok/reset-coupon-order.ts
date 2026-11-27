@@ -1,3 +1,5 @@
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
+
 export interface GrokResetCouponLike {
   tokenId: string;
   validityStart: string;
@@ -7,12 +9,11 @@ export interface GrokResetCouponLike {
 /**
  * Parses an optional coupon boundary timestamp.
  * Empty strings represent an omitted upstream bound (`null`);
- * non-empty strings that fail to parse return `NaN` so callers fail closed.
+ * non-empty strings that fail strict ISO/HTTP-date parsing return `NaN` so callers fail closed.
  */
 function parseOptionalBound(raw: string): number | null {
   if (raw === "") return null;
-  const parsed = Date.parse(raw);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
+  return parseStrictTimestampMs(raw);
 }
 
 function compareRanks(a: number, b: number): number {

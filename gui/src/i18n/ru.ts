@@ -3064,6 +3064,8 @@ export const ru: Record<TKey, string> = {
   "grokCoupon.checking": "Перечитывание…",
   "grokCoupon.consumedElsewhere": "Купон больше не отображается в списке. Исходный обмен остается неподтвержденным; новый запрос обмена отправлен не будет.",
   "grokCoupon.unresolved": "Купон еще отображается в списке. Исходный обмен еще может завершиться; новый запрос обмена отправлен не будет.",
+  "grokCoupon.couponChanged": "Доступные купоны изменились. Проверьте обновлённый порядок перед использованием.",
+  "grokCoupon.couponUnavailable": "Этот купон сброса больше недоступен. Проверьте обновлённый список перед использованием.",
   "anthropicGrant.badgeAria": "Сбросы лимитов Claude: {count}",
   "anthropicGrant.badgeErrorAria": "Не удалось прочитать сбросы лимитов Claude",
   "anthropicGrant.title": "Сбросы лимитов Claude",

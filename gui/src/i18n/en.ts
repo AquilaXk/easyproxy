@@ -3157,6 +3157,8 @@ export const en = {
   "grokCoupon.checking": "Re-reading…",
   "grokCoupon.consumedElsewhere": "The coupon is no longer listed. The original redemption remains unconfirmed; no further redemption will be sent.",
   "grokCoupon.unresolved": "The coupon is still listed. The original redemption may still complete; no further redemption will be sent.",
+  "grokCoupon.couponChanged": "Available coupons changed. Review the updated order before redeeming.",
+  "grokCoupon.couponUnavailable": "That reset coupon is no longer available. Review the refreshed list before redeeming.",
   "anthropicGrant.badgeAria": "{count} Claude usage reset(s)",
   "anthropicGrant.badgeErrorAria": "Claude usage resets could not be read",
   "anthropicGrant.title": "Claude usage resets",

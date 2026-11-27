@@ -3086,6 +3086,8 @@ export const vi: Record<TKey, string> = {
   "grokCoupon.checking": "Đang đọc lại…",
   "grokCoupon.consumedElsewhere": "Phiếu không còn trong danh sách. Lần đổi ban đầu vẫn chưa được xác nhận; sẽ không gửi thêm yêu cầu đổi.",
   "grokCoupon.unresolved": "Phiếu vẫn còn trong danh sách. Lần đổi ban đầu có thể hoàn tất sau; sẽ không gửi thêm yêu cầu đổi.",
+  "grokCoupon.couponChanged": "Các phiếu khả dụng đã thay đổi. Hãy kiểm tra thứ tự mới trước khi đổi.",
+  "grokCoupon.couponUnavailable": "Phiếu đặt lại này không còn khả dụng. Hãy kiểm tra danh sách mới trước khi đổi.",
   "anthropicGrant.badgeAria": "{count} lần đặt lại mức sử dụng Claude",
   "anthropicGrant.badgeErrorAria": "Không thể đọc các lần đặt lại mức sử dụng Claude",
   "anthropicGrant.title": "Đặt lại mức sử dụng Claude",

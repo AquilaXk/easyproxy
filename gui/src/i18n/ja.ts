@@ -2972,6 +2972,8 @@ export const ja: Record<TKey, string> = {
   "grokCoupon.checking": "再読み込み中…",
   "grokCoupon.consumedElsewhere": "クーポンは一覧にありません。元の使用結果は未確認のままで、追加の使用要求は送信しません。",
   "grokCoupon.unresolved": "クーポンはまだ一覧にあります。元の使用要求が後から完了する可能性があるため、追加の使用要求は送信しません。",
+  "grokCoupon.couponChanged": "利用可能なクーポンが変更されました。更新された順序を確認してから引き換えてください。",
+  "grokCoupon.couponUnavailable": "選択したリセットクーポンは利用できなくなりました。更新された一覧を確認してからやり直してください。",
 
   "anthropicGrant.badgeAria": "Claude の使用量リセット {count} 回分",
   "anthropicGrant.badgeErrorAria": "Claude の使用量リセットを読み取れませんでした",

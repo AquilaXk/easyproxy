@@ -7,6 +7,8 @@
  * that attempt in the account controller across modal close/reopen.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isGrokResetCouponActiveAt } from "../../../../src/grok/reset-coupon-order";
+import { parseStrictTimestampMs } from "../../../../src/lib/strict-timestamp";
 import { useI18n, type Locale, type TFn, type TKey } from "../../i18n/shared";
 import { IconAlert, IconTicket } from "../../icons";
 import { daysUntil, formatCreditDate, formatCreditDateTime } from "../codex-account-pool-utils";
@@ -35,6 +37,7 @@ const FAILURE_KEYS: Record<string, TKey> = {
   auth_failed: "grokCoupon.authFailed",
   no_account: "grokCoupon.noAccount",
   no_coupons_available: "grokCoupon.noneAvailable",
+  coupon_unavailable: "grokCoupon.couponUnavailable",
   operation_id_owned_by_another_account: "grokCoupon.identityMismatch",
   capacity: "grokCoupon.capacity",
   unavailable: "grokCoupon.capacity",
@@ -77,7 +80,21 @@ export function GrokCouponBadge({ entry, onClick, t }: {
 }
 
 function validTime(iso: string): string | null {
-  return iso !== "" && !Number.isNaN(Date.parse(iso)) ? iso : null;
+  return iso !== "" && Number.isFinite(parseStrictTimestampMs(iso)) ? iso : null;
+}
+
+function isCouponActiveNow(coupon: GrokResetCoupon): boolean {
+  return isGrokResetCouponActiveAt(coupon, Date.now());
+}
+
+function keyedCoupons(coupons: readonly GrokResetCoupon[]): Array<{ coupon: GrokResetCoupon; position: number; key: string }> {
+  const seen = new Map<string, number>();
+  return coupons.map((coupon, position) => {
+    const base = JSON.stringify([coupon.tokenId, coupon.validityStart, coupon.validityEnd]);
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    return { coupon, position, key: count === 1 ? base : `${base}#${count}` };
+  });
 }
 
 function GrokCouponItem({ coupon, index, isNext, locale, t }: {
@@ -168,11 +185,18 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
   // A background refresh may drop, expire, or reorder the coupon being confirmed.
   // Return to the list instead of confirming one coupon while spending another.
   const confirmStale = confirmTarget !== null && !redeeming && !unknown
-    && (entry?.status === "error" || (entry?.status === "ready" && next?.tokenId !== confirmTarget.tokenId));
+    && (entry?.status === "error"
+      || (entry?.status === "ready"
+        && (next?.tokenId !== confirmTarget.tokenId || next?.validityEnd !== confirmTarget.validityEnd)));
   if (confirmStale) {
     setConfirmTarget(null);
     if (entry?.status === "ready") {
-      setOutcome({ tone: "warn", key: "grokCoupon.noneAvailable" });
+      setOutcome({
+        tone: "warn",
+        key: coupons.length > 0 ? "grokCoupon.couponChanged" : "grokCoupon.noneAvailable",
+      });
+    } else {
+      setOutcome(null);
     }
   }
 
@@ -180,6 +204,11 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
     if (opening || unknown) return;
     if (!next?.tokenId) {
       setOutcome({ tone: "warn", key: "grokCoupon.noneAvailable" });
+      return;
+    }
+    if (!isCouponActiveNow(next)) {
+      setOutcome({ tone: "warn", key: "grokCoupon.couponUnavailable" });
+      void controller.refresh(accountId, { keepSnapshot: true });
       return;
     }
     const id = newOperationId();
@@ -217,9 +246,19 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
       void controller.refresh(accountId);
       return;
     }
-    if (result.code === "operation_id_owned_by_another_account") {
-      setConfirmTarget(current => current ? { ...current, operationId: undefined } : null);
+    if (result.code === "coupon_unavailable" || result.code === "no_coupons_available") {
+      setConfirmTarget(null);
+      setOutcome({
+        tone: "warn",
+        key: FAILURE_KEYS[result.code] ?? "grokCoupon.couponUnavailable",
+      });
+      void controller.refresh(accountId, { keepSnapshot: true });
+      return;
     }
+    // Any definitive refusal or settled failure already retired the previous operationId
+    // (and cleared its hold in the controller), so rotate to a fresh UUID for retry.
+    const nextOperationId = newOperationId();
+    setConfirmTarget(current => current ? { ...current, operationId: nextOperationId } : null);
     setOutcome({ tone: "warn", key: FAILURE_KEYS[result.code] ?? "grokCoupon.redeemFailed" });
   };
 
@@ -295,8 +334,8 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
                 <>
                   <p style={{ marginBottom: 12 }}>{t("grokCoupon.available", { count: remaining })}</p>
                   <div className="credit-list">
-                    {coupons.map((coupon, index) => (
-                      <GrokCouponItem key={`${coupon.tokenId}:${index}`} coupon={coupon} index={index} isNext={index === 0} locale={locale} t={t} />
+                    {keyedCoupons(coupons).map(({ coupon, position, key }) => (
+                      <GrokCouponItem key={key} coupon={coupon} index={position} isNext={position === 0} locale={locale} t={t} />
                     ))}
                   </div>
                   <button type="button" className="btn btn-primary" style={{ marginTop: 12, width: "100%" }}

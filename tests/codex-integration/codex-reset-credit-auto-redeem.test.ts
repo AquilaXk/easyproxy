@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   createResetCreditAutoRedeemer,
+  olderCreditPrecedes,
   planAutoRedeem,
   resolveResetCreditAutoRedeemSettings,
   type ResetCredit,
@@ -704,5 +705,48 @@ describe("reset-credit auto-redeemer runtime (#822)", () => {
       ...sorted,
     ], T0);
     expect(active).toEqual(sorted);
+  });
+
+  test("rejects JSC Date.parse heuristics (bad-1, 2026-02-30) across planner, precedence, expiry, and display sort", () => {
+    const earlyNow = Date.parse("2000-01-01T00:00:00Z");
+    const feb2026 = Date.parse("2026-02-01T00:00:00Z");
+    const enabled = { enabled: true, leadTimeMinutes: 10 };
+
+    // "bad-1" parses as 2001-01-01 in raw JSC Date.parse; it must fail closed instead.
+    expect(planAutoRedeem(earlyNow, [{ granted_at: "2000-01-01T00:00:00Z", expires_at: "bad-1" }], enabled)).toBeNull();
+    expect(planAutoRedeem(earlyNow, [{ granted_at: "bad-1", expires_at: "2005-01-01T00:00:00Z" }], enabled)).toBeNull();
+    // "2026-02-30T00:00:00Z" overflows to March 2 in raw JSC Date.parse; it must fail closed instead.
+    expect(planAutoRedeem(feb2026, [{ granted_at: "2026-01-01T00:00:00Z", expires_at: "2026-02-30T00:00:00Z" }], enabled)).toBeNull();
+    expect(planAutoRedeem(feb2026, [{ granted_at: "2026-02-30T00:00:00Z", expires_at: "2026-04-01T00:00:00Z" }], enabled)).toBeNull();
+
+    // Unparseable older-looking heuristics must still fail closed in olderCreditPrecedes (not be misclassified as expired).
+    expect(isCodexResetCreditExpiredAt({ expires_at: "bad-1" }, T0)).toBe(false);
+    expect(isCodexResetCreditExpiredAt({ expires_at: "2026-02-30T00:00:00Z" }, T0)).toBe(false);
+    expect(olderCreditPrecedes(
+      [{ granted_at: "2026-08-01T00:00:00Z", expires_at: "bad-1" }, { granted_at: "2026-09-01T00:00:00Z", expires_at: "2026-10-01T00:00:00Z" }],
+      { grantedAt: "2026-09-01T00:00:00Z", expiresAt: "2026-10-01T00:00:00Z" },
+      T0,
+    )).toBe(true);
+    expect(olderCreditPrecedes(
+      [{ granted_at: "bad-1", expires_at: null }, { granted_at: "2002-01-01T00:00:00Z", expires_at: "2026-10-01T00:00:00Z" }],
+      { grantedAt: "2002-01-01T00:00:00Z", expiresAt: "2026-10-01T00:00:00Z" },
+      T0,
+    )).toBe(true);
+
+    // Valid granted_at must sort ahead of "bad-1" and "2026-02-30T00:00:00Z" even if granted after 2001/March 2.
+    const ordered = sortCodexResetCreditsForDisplay([
+      { granted_at: "bad-1", expires_at: null },
+      { granted_at: "2026-02-30T00:00:00Z", expires_at: null },
+      { granted_at: "2026-08-01T00:00:00Z", expires_at: "bad-1" },
+      { granted_at: "2026-08-01T00:00:00Z", expires_at: "2026-02-30T00:00:00Z" },
+      { granted_at: "2026-08-01T00:00:00Z", expires_at: "2026-12-01T00:00:00Z" },
+    ]);
+    expect(ordered).toEqual([
+      { granted_at: "2026-08-01T00:00:00Z", expires_at: "2026-12-01T00:00:00Z" },
+      { granted_at: "2026-08-01T00:00:00Z", expires_at: "bad-1" },
+      { granted_at: "2026-08-01T00:00:00Z", expires_at: "2026-02-30T00:00:00Z" },
+      { granted_at: "bad-1", expires_at: null },
+      { granted_at: "2026-02-30T00:00:00Z", expires_at: null },
+    ]);
   });
 });

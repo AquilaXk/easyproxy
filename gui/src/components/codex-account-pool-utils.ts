@@ -1,3 +1,4 @@
+import { parseStrictTimestampMs } from "../../../src/lib/strict-timestamp";
 import {
   formatCreditDate as formatCreditDateIntl,
   formatCreditDateTime as formatCreditDateTimeIntl,
@@ -12,7 +13,7 @@ export function formatCreditDateTime(iso: string, locale?: string): string {
 }
 
 export function daysUntil(iso: string): number {
-  const ms = Date.parse(iso);
+  const ms = parseStrictTimestampMs(iso);
   if (Number.isNaN(ms)) return 0;
   return Math.max(0, Math.ceil((ms - Date.now()) / 86_400_000));
 }

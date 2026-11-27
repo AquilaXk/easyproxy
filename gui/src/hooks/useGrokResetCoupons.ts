@@ -17,8 +17,10 @@
  *   client that reads only `replayed` tells the user a failed redemption
  *   succeeded.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { selectActiveGrokResetCouponsFefo } from "../../../src/grok/reset-coupon-order";
+
+const EMPTY_ENTRIES: Record<string, GrokCouponEntry> = {};
 import { createBoundedFetch } from "../bounded-fetch";
 
 export interface GrokResetCoupon {
@@ -175,13 +177,18 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
   accountIds: string[];
   enabled: boolean;
 }): GrokResetCouponController {
-  const [entries, setEntries] = useState<Record<string, GrokCouponEntry>>({});
+  const namespace = apiBase;
+  const [store, setStore] = useState<{ namespace: string; entries: Record<string, GrokCouponEntry> }>(() => ({
+    namespace,
+    entries: EMPTY_ENTRIES,
+  }));
+  const entries = store.namespace === namespace ? store.entries : EMPTY_ENTRIES;
   const holds = useSyncExternalStore(subscribeHolds, holdSnapshot, holdSnapshot);
   const uncertain = useMemo(() => {
-    const prefix = `${apiBase}\u0000`;
+    const prefix = `${namespace}\u0000`;
     return Object.fromEntries([...holds].filter(([key]) => key.startsWith(prefix))
       .map(([key, value]) => [key.slice(prefix.length), value]));
-  }, [apiBase, holds]);
+  }, [namespace, holds]);
   /** Roster epoch: bumped only by the effect and its cleanup. */
   const epoch = useRef(0);
   /** Per-account request token, so one row's retry cannot cancel another row's read. */
@@ -189,43 +196,68 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
   const gate = useRef<{ active: number; waiting: Array<() => void> }>({ active: 0, waiting: [] });
   const identity = accountIds.join("\u0000");
 
+  useLayoutEffect(() => {
+    epoch.current += 1;
+    tokens.current.clear();
+    const staleGate = gate.current;
+    gate.current = { active: 0, waiting: [] };
+    while (staleGate.waiting.length > 0) {
+      staleGate.waiting.shift()?.();
+    }
+  }, [namespace]);
+
   // No synchronous setState here: the effect below calls this directly, and a
   // state write before the first await is what react-compiler's EffectSetState
   // rule forbids. `refresh` owns the visible loading state instead.
   const read = useCallback(async (accountId: string, rosterEpoch: number) => {
+    if (epoch.current !== rosterEpoch) return;
     const token = (tokens.current.get(accountId) ?? 0) + 1;
     tokens.current.set(accountId, token);
 
+    const current = () => epoch.current === rosterEpoch && tokens.current.get(accountId) === token;
     const queue = gate.current;
     if (queue.active >= MAX_READS_IN_FLIGHT) {
       await new Promise<void>(resolve => queue.waiting.push(resolve));
+      if (!current()) {
+        queue.waiting.shift()?.();
+        return;
+      }
     }
     queue.active += 1;
 
-    const current = () => epoch.current === rosterEpoch && tokens.current.get(accountId) === token;
     const bounded = createBoundedFetch(READ_TIMEOUT_MS);
     try {
       const response = await fetch(
-        `${apiBase}/api/grok/reset-coupons?accountId=${encodeURIComponent(accountId)}`,
+        `${namespace}/api/grok/reset-coupons?accountId=${encodeURIComponent(accountId)}`,
         { signal: bounded.signal },
       );
       const coupons = response.ok ? parseCoupons(await response.json().catch(() => null)) : null;
       if (!current()) return;
-      setEntries(existing => ({
-        ...existing,
-        [accountId]: coupons
-          ? { status: "ready", coupons: selectActiveGrokResetCouponsFefo(coupons, Date.now()) }
-          : { status: "error", reason: response.status === 401 ? "auth" : "upstream" },
+      const nextEntry: GrokCouponEntry = coupons
+        ? { status: "ready", coupons: selectActiveGrokResetCouponsFefo(coupons, Date.now()) }
+        : { status: "error", reason: response.status === 401 ? "auth" : "upstream" };
+      setStore(existing => ({
+        namespace,
+        entries: {
+          ...(existing.namespace === namespace ? existing.entries : EMPTY_ENTRIES),
+          [accountId]: nextEntry,
+        },
       }));
     } catch {
       if (!current()) return;
-      setEntries(existing => ({ ...existing, [accountId]: { status: "error", reason: "upstream" } }));
+      setStore(existing => ({
+        namespace,
+        entries: {
+          ...(existing.namespace === namespace ? existing.entries : EMPTY_ENTRIES),
+          [accountId]: { status: "error", reason: "upstream" },
+        },
+      }));
     } finally {
       bounded.clear();
       queue.active -= 1;
       queue.waiting.shift()?.();
     }
-  }, [apiBase]);
+  }, [namespace]);
 
   useEffect(() => {
     if (!enabled || identity === "") return;
@@ -243,10 +275,16 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
 
   const refresh = useCallback(async (accountId: string, options: { keepSnapshot?: boolean } = {}) => {
     if (!options.keepSnapshot) {
-      setEntries(current => ({ ...current, [accountId]: { status: "loading" } }));
+      setStore(current => ({
+        namespace,
+        entries: {
+          ...(current.namespace === namespace ? current.entries : EMPTY_ENTRIES),
+          [accountId]: { status: "loading" },
+        },
+      }));
     }
     await read(accountId, epoch.current);
-  }, [read]);
+  }, [namespace, read]);
 
   const redeem = useCallback(async (
     accountId: string,

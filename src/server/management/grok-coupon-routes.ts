@@ -11,6 +11,7 @@
 
 import { jsonResponse } from "../auth-cors";
 import { CredentialVaultError } from "../../lib/credential-vault";
+import { parseStrictTimestampMs } from "../../lib/strict-timestamp";
 import { managementBodyTooLargeResponse, readManagementJsonBody } from "./body";
 import type { ManagementContext } from "./context";
 import { ConfigMutationLockError } from "../../config/mutation-lock";
@@ -22,10 +23,7 @@ import {
   redeemGrokResetCoupon,
   type GrokResetCoupon,
 } from "../../grok/reset-coupons";
-import {
-  isGrokResetCouponActiveAt,
-  selectActiveGrokResetCouponsFefo,
-} from "../../grok/reset-coupon-order";
+import { selectActiveGrokResetCouponsFefo } from "../../grok/reset-coupon-order";
 import {
   getGrokResetCouponOperationAccountId,
   isTerminalGrokCouponReplay,
@@ -431,8 +429,8 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
         );
       }
       const now = Date.now();
+      const activeTokens = selectActiveGrokResetCouponsFefo(tokens, now);
       if (!resolvedTokenId) {
-        const activeTokens = selectActiveGrokResetCouponsFefo(tokens, now);
         if (activeTokens.length === 0) {
           const changed = settlePreflightRefusal("no_coupons_available");
           if (changed) return changed;
@@ -445,17 +443,18 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
         }
         resolvedTokenId = activeTokens[0]!.tokenId;
       }
-      const match = tokens.find((t) => t.tokenId === resolvedTokenId);
-      if (!match || !isGrokResetCouponActiveAt(match, now)) {
+      const match = activeTokens.find((t) => t.tokenId === resolvedTokenId);
+      if (!match) {
         // The requested coupon is already consumed, expired, or not yet valid upstream —
         // redeeming it would only surface an upstream error or consume an invalid grant.
         const changed = settlePreflightRefusal("coupon_unavailable", resolvedTokenId);
         if (changed) return changed;
+        const listedInactive = tokens.some((t) => t.tokenId === resolvedTokenId);
         return jsonResponse(
           {
             error: {
               code: "coupon_unavailable",
-              message: match
+              message: listedInactive
                 ? "The requested reset coupon is expired or not yet active"
                 : "The requested reset coupon is no longer available upstream",
             },
@@ -465,8 +464,8 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
           config,
         );
       }
-      const parsedEnd = Date.parse(match.validityEnd);
-      if (!Number.isNaN(parsedEnd)) resolvedTokenValidityEnd = parsedEnd;
+      const parsedEnd = parseStrictTimestampMs(match.validityEnd);
+      if (Number.isFinite(parsedEnd)) resolvedTokenValidityEnd = parsedEnd;
     }
 
     if (resolvedTokenId === undefined) {

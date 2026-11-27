@@ -3073,6 +3073,8 @@ export const fr: Record<TKey, string> = {
   "grokCoupon.checking": "Relecture…",
   "grokCoupon.consumedElsewhere": "Le coupon ne figure plus dans la liste. L’échange initial reste non confirmé ; aucun nouvel échange ne sera envoyé.",
   "grokCoupon.unresolved": "Le coupon figure encore dans la liste. L’échange initial peut encore aboutir ; aucun nouvel échange ne sera envoyé.",
+  "grokCoupon.couponChanged": "Les coupons disponibles ont changé. Vérifiez l’ordre mis à jour avant d’échanger.",
+  "grokCoupon.couponUnavailable": "Ce coupon de réinitialisation n’est plus disponible. Consultez la liste actualisée avant d’échanger.",
 
   "anthropicGrant.badgeAria": "{count} réinitialisation(s) de l’utilisation de Claude",
   "anthropicGrant.badgeErrorAria": "Impossible de lire les réinitialisations de l’utilisation de Claude",

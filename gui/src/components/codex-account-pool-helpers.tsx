@@ -1,3 +1,4 @@
+import { isValidStrictTimestamp } from "../../../src/lib/strict-timestamp";
 import type { Locale, TFn } from "../i18n/shared";
 import { IconTicket } from "../icons";
 import type { CodexAccountEntry } from "./codex-account-pool-types";
@@ -6,9 +7,7 @@ import { daysUntil, formatCreditDate, formatCreditDateTime } from "./codex-accou
 export function CodexCreditItem({ index, grantedAt, expiresAt, isNext, locale, t }: {
   index: number; grantedAt: string; expiresAt: string | null; isNext: boolean; locale: Locale; t: TFn;
 }) {
-  const validExpiresAt = expiresAt !== null && expiresAt !== "" && !Number.isNaN(Date.parse(expiresAt))
-    ? expiresAt
-    : null;
+  const validExpiresAt = isValidStrictTimestamp(expiresAt) ? expiresAt : null;
   const days = validExpiresAt === null ? null : daysUntil(validExpiresAt);
   const urgent = days !== null && days <= 7;
   return (
@@ -22,7 +21,13 @@ export function CodexCreditItem({ index, grantedAt, expiresAt, isNext, locale, t
       </div>
       <div className="credit-item-dates">
         <span>{t("codexAuth.creditGranted", { date: formatCreditDate(grantedAt, locale) })}</span>
-        <span className={urgent ? "credit-urgent" : ""}>{validExpiresAt === null ? t("codexAuth.creditNoExpiry") : t("codexAuth.creditExpires", { date: formatCreditDateTime(validExpiresAt, locale), days: String(days) })}</span>
+        {expiresAt === null
+          ? <span>{t("codexAuth.creditNoExpiry")}</span>
+          : validExpiresAt !== null && (
+            <span className={urgent ? "credit-urgent" : ""}>
+              {t("codexAuth.creditExpires", { date: formatCreditDateTime(validExpiresAt, locale), days: String(days) })}
+            </span>
+          )}
       </div>
     </div>
   );

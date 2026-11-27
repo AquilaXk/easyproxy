@@ -2490,6 +2490,8 @@ export const de: Record<TKey, string> = {
   "grokCoupon.checking": "Wird erneut gelesen…",
   "grokCoupon.consumedElsewhere": "Der Gutschein wird nicht mehr aufgeführt. Die ursprüngliche Einlösung bleibt unbestätigt; es wird keine weitere Einlösung gesendet.",
   "grokCoupon.unresolved": "Der Gutschein wird noch aufgeführt. Die ursprüngliche Einlösung kann noch abgeschlossen werden; es wird keine weitere Einlösung gesendet.",
+  "grokCoupon.couponChanged": "Die verfügbaren Coupons haben sich geändert. Prüfe die aktualisierte Reihenfolge vor dem Einlösen.",
+  "grokCoupon.couponUnavailable": "Dieser Reset-Coupon ist nicht mehr verfügbar. Prüfe die aktualisierte Liste vor dem Einlösen.",
   "anthropicGrant.badgeAria": "{count} Claude-Nutzungslimit-Rücksetzungen",
   "anthropicGrant.badgeErrorAria": "Claude-Nutzungslimit-Rücksetzungen konnten nicht gelesen werden",
   "anthropicGrant.title": "Claude-Nutzungslimit-Rücksetzungen",

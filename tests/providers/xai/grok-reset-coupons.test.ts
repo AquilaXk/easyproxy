@@ -537,11 +537,19 @@ describe("grok reset coupons", () => {
     expect(isGrokResetCouponActiveAt({ validityStart: "   ", validityEnd: iso(10) }, t0)).toBe(false);
     expect(isGrokResetCouponActiveAt({ validityStart: "", validityEnd: "   " }, t0)).toBe(false);
     expect(isGrokResetCouponActiveAt({ validityStart: "", validityEnd: "" }, t0)).toBe(true);
+    expect(isGrokResetCouponActiveAt({ validityStart: "bad-1", validityEnd: iso(10) }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: "", validityEnd: "bad-1" }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: "2026-02-30T00:00:00Z", validityEnd: iso(10) }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: "", validityEnd: "2026-02-30T00:00:00Z" }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: "2026-02-29T00:00:00Z", validityEnd: iso(10) }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: "2024-02-29T00:00:00Z", validityEnd: iso(10) }, t0)).toBe(true);
 
     // Mix many unbounded/malformed coupons with bounded ones to verify strict weak ordering (no Infinity - Infinity = NaN).
     const sorted = sortGrokResetCouponsFefo([
       { tokenId: "u1", validityStart: "", validityEnd: "" },
       { tokenId: "bad-end", validityStart: "", validityEnd: "not-a-date" },
+      { tokenId: "jsc-bad-1", validityStart: "bad-1", validityEnd: iso(10_000) },
+      { tokenId: "feb-30", validityStart: iso(-1000), validityEnd: "2026-02-30T00:00:00Z" },
       { tokenId: "far", validityStart: iso(-1000), validityEnd: iso(10_000) },
       { tokenId: "u2", validityStart: iso(-5000), validityEnd: "" },
       { tokenId: "tie-later-start", validityStart: iso(0), validityEnd: iso(5_000) },
@@ -553,7 +561,9 @@ describe("grok reset coupons", () => {
       "tie-earlier-start",
       "tie-later-start",
       "far",
+      "jsc-bad-1",
       "u2",
+      "feb-30",
       "u1",
       "bad-end",
       "u3",

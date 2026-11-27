@@ -2535,6 +2535,8 @@ export const ko: Record<TKey, string> = {
   "grokCoupon.checking": "다시 읽는 중…",
   "grokCoupon.consumedElsewhere": "쿠폰이 목록에서 사라졌습니다. 원래 사용 요청의 결과는 여전히 확인되지 않았으며 추가 사용 요청은 보내지 않습니다.",
   "grokCoupon.unresolved": "쿠폰이 아직 목록에 있습니다. 원래 사용 요청이 나중에 완료될 수 있으므로 추가 사용 요청은 보내지 않습니다.",
+  "grokCoupon.couponChanged": "사용 가능한 쿠폰이 바뀌었습니다. 바뀐 순서를 확인한 뒤 다시 사용하세요.",
+  "grokCoupon.couponUnavailable": "선택한 리셋 쿠폰을 이제 사용할 수 없습니다. 새로 고친 목록을 확인한 뒤 다시 시도하세요.",
   "anthropicGrant.badgeAria": "Claude 사용량 리셋 {count}개",
   "anthropicGrant.badgeErrorAria": "Claude 사용량 리셋을 읽지 못했습니다",
   "anthropicGrant.title": "Claude 사용량 리셋",

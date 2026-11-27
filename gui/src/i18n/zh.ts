@@ -2508,6 +2508,8 @@ export const zh: Record<TKey, string> = {
   "grokCoupon.checking": "正在重新读取…",
   "grokCoupon.consumedElsewhere": "优惠券已不在列表中。原始兑换结果仍未确认，不会再发送兑换请求。",
   "grokCoupon.unresolved": "优惠券仍在列表中。原始兑换可能稍后完成，不会再发送兑换请求。",
+  "grokCoupon.couponChanged": "可用重置券已变化。兑换前请先确认更新后的顺序。",
+  "grokCoupon.couponUnavailable": "该重置券已不可用。兑换前请先确认更新后的列表。",
   "anthropicGrant.badgeAria": "{count} 次 Claude 用量重置",
   "anthropicGrant.badgeErrorAria": "无法读取 Claude 用量重置次数",
   "anthropicGrant.title": "Claude 用量重置",

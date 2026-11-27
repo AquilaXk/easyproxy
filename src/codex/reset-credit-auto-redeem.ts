@@ -5,6 +5,7 @@ import { ConfigMutationLockError, withConfigMutationLockSync } from "../config";
 import { atomicWriteFile } from "../config/atomic-write";
 import { getConfigDir } from "../config/paths";
 import { registerOptionalShutdownHook } from "../lib/optional-shutdown-hooks";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import type { EpxConfig } from "../types";
 import { isCodexResetCreditExpiredAt } from "./reset-credit-order";
 
@@ -62,9 +63,9 @@ export function planAutoRedeem(now: number, credits: readonly ResetCredit[], set
     if (credit.expires_at === null) continue;
     // A credit without a usable grant time has no identity to protect: never plan it. It still
     // blocks other plans through olderCreditPrecedes.
-    const granted = Date.parse(credit.granted_at);
+    const granted = parseStrictTimestampMs(credit.granted_at);
     if (!Number.isFinite(granted)) continue;
-    const expires = Date.parse(credit.expires_at);
+    const expires = parseStrictTimestampMs(credit.expires_at);
     if (!Number.isFinite(expires) || expires <= now) continue;
     if (!best || expires < bestExpires || (expires === bestExpires && granted < bestGranted)) {
       best = {
@@ -94,7 +95,7 @@ export function olderCreditPrecedes(
   plan: Pick<AutoRedeemPlan, "grantedAt" | "expiresAt">,
   now = Date.now(),
 ): boolean {
-  const planned = Date.parse(plan.grantedAt);
+  const planned = parseStrictTimestampMs(plan.grantedAt);
   if (!Number.isFinite(planned)) return true;
   // Fail closed: an equal grant time has no known tie-breaker, and a grant time that does not
   // parse cannot be ordered at all, so either blocks dispatch just like an older credit.
@@ -106,7 +107,7 @@ export function olderCreditPrecedes(
       return false;
     }
     if (isCodexResetCreditExpiredAt(c, now)) return false;
-    return !(Date.parse(c.granted_at) > planned);
+    return !(parseStrictTimestampMs(c.granted_at) > planned);
   });
 }
 

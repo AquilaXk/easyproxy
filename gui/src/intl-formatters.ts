@@ -1,4 +1,5 @@
 /** Cached Intl formatters — avoids reconstructing on every render/call. */
+import { parseStrictTimestampMs } from "../../src/lib/strict-timestamp";
 
 const numberFormatters = new Map<string, Intl.NumberFormat>();
 
@@ -46,15 +47,15 @@ function cachedDateFormatter(locale: string | undefined, options: Intl.DateTimeF
 }
 
 export function formatCreditDate(iso: string, locale?: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "\u2014";
-  return cachedDateFormatter(locale, CREDIT_DATE_OPTIONS).format(date);
+  const ms = parseStrictTimestampMs(iso);
+  if (!Number.isFinite(ms)) return "\u2014";
+  return cachedDateFormatter(locale, CREDIT_DATE_OPTIONS).format(new Date(ms));
 }
 
 export function formatCreditDateTime(iso: string, locale?: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "\u2014";
-  return cachedDateFormatter(locale, CREDIT_DATE_TIME_OPTIONS).format(date);
+  const ms = parseStrictTimestampMs(iso);
+  if (!Number.isFinite(ms)) return "\u2014";
+  return cachedDateFormatter(locale, CREDIT_DATE_TIME_OPTIONS).format(new Date(ms));
 }
 
 const USD_ESTIMATE_FORMAT = new Intl.NumberFormat("en-US", {

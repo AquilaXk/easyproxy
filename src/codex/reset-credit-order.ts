@@ -1,3 +1,5 @@
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
+
 export interface CodexResetCreditLike {
   granted_at: string;
   expires_at: string | null;
@@ -5,7 +7,7 @@ export interface CodexResetCreditLike {
 
 function parseFiniteTimestamp(value: string | null | undefined): number | null {
   if (!value) return null;
-  const parsed = Date.parse(value);
+  const parsed = parseStrictTimestampMs(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -23,7 +25,7 @@ export function isCodexResetCreditExpiredAt(
   now: number,
 ): boolean {
   if (credit.expires_at === null || credit.expires_at === "") return false;
-  const expires = Date.parse(credit.expires_at);
+  const expires = parseStrictTimestampMs(credit.expires_at);
   return Number.isFinite(expires) && expires <= now;
 }
 

@@ -2366,6 +2366,8 @@ export const zhTW: Record<TKey, string> = {
   "grokCoupon.checking": "正在重新讀取…",
   "grokCoupon.consumedElsewhere": "優惠券已不在清單中。原始兌換結果仍未確認，不會再送出兌換請求。",
   "grokCoupon.unresolved": "優惠券仍在清單中。原始兌換可能稍後完成，不會再送出兌換請求。",
+  "grokCoupon.couponChanged": "可用的重設券已變更。兌換前請先確認更新後的順序。",
+  "grokCoupon.couponUnavailable": "該重設券已無法使用。兌換前請先確認更新後的清單。",
   "anthropicGrant.badgeAria": "{count} 次 Claude 用量重設",
   "anthropicGrant.badgeErrorAria": "無法讀取 Claude 用量重設次數",
   "anthropicGrant.title": "Claude 用量重設",

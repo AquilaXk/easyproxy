@@ -1117,3 +1117,21 @@ test("CLI grok-reset-coupons --consume --yes without --token-id redeems the acti
   expect(redeem.mock.calls[0]![0].tokenId).toBe("soon");
   expect(JSON.parse(lines.join("\n"))).toMatchObject({ code: "redeemed", tokenId: "soon" });
 });
+
+test("POST consume with explicit tokenId selects the active entry when duplicate tokenIds include an expired entry", async () => {
+  const auth = spyOn(oauth, "getValidAccessSnapshotForAccount").mockResolvedValue({ accessToken: "fixture-access-token" } as never);
+  const remaining = spyOn(coupons, "getGrokRemainingResets").mockResolvedValue({
+    tokens: [
+      { tokenId: TOKEN.tokenId, validityStart: "2026-01-01T00:00:00Z", validityEnd: "2026-02-01T00:00:00Z" },
+      { tokenId: TOKEN.tokenId, validityStart: "2026-01-01T00:00:00Z", validityEnd: "2999-01-01T00:00:00Z" },
+    ],
+  });
+  const redeem = spyOn(coupons, "redeemGrokResetCoupon").mockResolvedValue({ success: true, status: 0 });
+  spies.push(auth, remaining, redeem);
+
+  const response = (await handleGrokCouponRoutes(request(false)))!;
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ code: "redeemed", tokenId: TOKEN.tokenId });
+  expect(redeem).toHaveBeenCalledTimes(1);
+  expect(redeem.mock.calls[0]![0].tokenId).toBe(TOKEN.tokenId);
+});

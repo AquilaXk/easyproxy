@@ -3116,6 +3116,8 @@ export const pt: Record<TKey, string> = {
   "grokCoupon.checking": "Relendo…",
   "grokCoupon.consumedElsewhere": "O cupom não está mais na lista. O resgate original continua sem confirmação; nenhum novo resgate será enviado.",
   "grokCoupon.unresolved": "O cupom ainda está na lista. O resgate original ainda pode ser concluído; nenhum novo resgate será enviado.",
+  "grokCoupon.couponChanged": "Os cupons disponíveis mudaram. Confira a ordem atualizada antes de resgatar.",
+  "grokCoupon.couponUnavailable": "Esse cupom de reset não está mais disponível. Confira a lista atualizada antes de resgatar.",
   "anthropicGrant.badgeAria": "{count} reset(s) de uso do Claude",
   "anthropicGrant.badgeErrorAria": "Não foi possível ler os resets de uso do Claude",
   "anthropicGrant.title": "Resets de uso do Claude",

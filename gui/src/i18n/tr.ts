@@ -3092,6 +3092,8 @@ export const tr: Record<TKey, string> = {
   "grokCoupon.checking": "Yeniden okunuyor…",
   "grokCoupon.consumedElsewhere": "Kupon artık listede yok. İlk kullanım hâlâ doğrulanmadı; başka kullanım isteği gönderilmeyecek.",
   "grokCoupon.unresolved": "Kupon hâlâ listede. İlk kullanım daha sonra tamamlanabilir; başka kullanım isteği gönderilmeyecek.",
+  "grokCoupon.couponChanged": "Kullanılabilir kuponlar değişti. Kullanmadan önce güncellenen sırayı kontrol edin.",
+  "grokCoupon.couponUnavailable": "Bu sıfırlama kuponu artık kullanılamıyor. Kullanmadan önce yenilenen listeyi kontrol edin.",
   "anthropicGrant.badgeAria": "{count} Claude kullanım sıfırlaması",
   "anthropicGrant.badgeErrorAria": "Claude kullanım sıfırlamaları okunamadı",
   "anthropicGrant.title": "Claude Kullanım Sıfırlamaları",

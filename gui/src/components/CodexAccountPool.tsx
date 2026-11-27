@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../i18n/shared";
 import { IconPlus } from "../icons";
 import type { NoticeTone } from "../ui";
@@ -169,6 +169,7 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
     setResetPopup(null);
     setResetConfirm(false);
     setCreditDetails(null);
+    setCreditDetailsLoading(false);
     setActionFeedback(null);
     setActionFeedbackTone(null);
     // The activation settings and their retry belong to the target that read them.
@@ -177,6 +178,9 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
     setQuotaBusyScope(null);
     setQuotaFeedback(null);
   }
+  useLayoutEffect(() => () => {
+    resetPopupSeqRef.current += 1;
+  }, [targetIdentity]);
 
   const showActionFeedback = useCallback((text: string, tone: NoticeTone = "ok") => {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);

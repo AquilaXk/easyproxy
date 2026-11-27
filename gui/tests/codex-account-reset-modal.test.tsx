@@ -167,6 +167,7 @@ test("orders same-granted credits by expires_at FEFO, skips expired credits, def
     { granted_at: sameGrant, expires_at: futureDays(3) },
     { granted_at: twinGrant, expires_at: twinExpiry },
     { granted_at: twinGrant, expires_at: twinExpiry },
+    { granted_at: "bad-1", expires_at: "2026-02-30T00:00:00Z" },
     { granted_at: "still-bad", expires_at: null },
   ];
 
@@ -182,7 +183,7 @@ test("orders same-granted credits by expires_at FEFO, skips expired credits, def
 
   expect(errors.join("\n")).not.toContain("same key");
   const items = [...host.querySelectorAll<HTMLElement>(".credit-list .credit-item")];
-  expect(items).toHaveLength(7);
+  expect(items).toHaveLength(8);
 
   // First item must be the oldest active grant with the soonest expiry (3d left, not 14d or No expiry).
   expect(items[0]!.textContent).toContain("Next to use");
@@ -192,6 +193,13 @@ test("orders same-granted credits by expires_at FEFO, skips expired credits, def
   // Twin credits both appear after sameGrant.
   expect(items[3]!.textContent).toContain("25d left");
   expect(items[4]!.textContent).toContain("25d left");
+  // Malformed non-null expires_at must omit expiry instead of claiming "No expiry", and reject JSC Date.parse quirks.
+  expect(items[5]!.textContent).not.toContain("No expiry");
+  expect(items[6]!.textContent).not.toContain("No expiry");
+  expect(items[6]!.textContent).not.toContain("2001");
+  expect(items[6]!.textContent).not.toContain("Mar 2, 2026");
+  // Genuine expires_at: null keeps "No expiry".
+  expect(items[7]!.textContent).toContain("No expiry");
   // Unparseable dates sort last and never display "NaN" or "Invalid Date".
   expect(host.querySelector(".modal-card")?.textContent).not.toContain("NaN");
   expect(host.querySelector(".modal-card")?.textContent).not.toContain("Invalid Date");
@@ -273,4 +281,74 @@ test("stale reset-credit lookup from a closed account does not overwrite a newly
   });
   expect(host.querySelector(".modal-card")?.textContent).toContain("(12d left)");
   expect(host.querySelector(".modal-card")?.textContent).not.toContain("(2d left)");
+});
+
+test("switching targetKey clears creditDetailsLoading and discards in-flight reset-credit responses", async () => {
+  const futureDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+  const controller = makeController();
+  let releaseTargetA!: (resp: Response) => void;
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/codex-auth/reset-credits") {
+        if (url.origin === "http://target-a.local") {
+          return new Promise<Response>(resolve => { releaseTargetA = resolve; });
+        }
+        return Response.json({
+          credits: [{ granted_at: "2026-11-22T00:00:00Z", expires_at: futureDays(9) }],
+        });
+      }
+      if (url.pathname === "/api/codex-auth/active") {
+        return Response.json({ activeCodexAccountId: null, pinnedAccountId: null });
+      }
+      if (url.pathname === "/api/settings") {
+        return Response.json({ codexQuotaAutoRefresh: {} });
+      }
+      return Response.json({});
+    },
+  });
+
+  const { createRoot } = await import("react-dom/client");
+  await act(async () => {
+    root = createRoot(host);
+    root.render(
+      <LanguageProvider>
+        <CodexAccountPool apiBase="http://target-a.local" targetKey="target-a" controller={controller} />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+  const btnA = host.querySelector('button[aria-label="4 reset credit(s)"]') as HTMLButtonElement;
+  await act(async () => { btnA.dispatchEvent(new win.MouseEvent("click", { bubbles: true })); });
+  expect(host.querySelector(".modal-card")).not.toBeNull();
+  expect(host.querySelector(".modal-card")?.textContent).toContain("Loading");
+
+  // Switch targetKey while target-a's fetch is still pending.
+  await act(async () => {
+    root.render(
+      <LanguageProvider>
+        <CodexAccountPool apiBase="http://target-b.local" targetKey="target-b" controller={controller} />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+  expect(host.querySelector(".modal-card")).toBeNull();
+
+  // Resolve target-a's stale fetch after target switch.
+  await act(async () => {
+    releaseTargetA(Response.json({
+      credits: [{ granted_at: "2026-11-01T00:00:00Z", expires_at: futureDays(2) }],
+    }));
+    await new Promise(r => setTimeout(r, 20));
+  });
+
+  // Open target-b modal: it must load target-b cleanly and not show stuck Loading or target-a's 2d credit.
+  const btnB = host.querySelector('button[aria-label="4 reset credit(s)"]') as HTMLButtonElement;
+  await act(async () => { btnB.dispatchEvent(new win.MouseEvent("click", { bubbles: true })); });
+  await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+  expect(host.querySelector(".modal-card")?.textContent).toContain("(9d left)");
+  expect(host.querySelector(".modal-card")?.textContent).not.toContain("(2d left)");
+  expect(host.querySelector(".modal-card")?.textContent).not.toContain("Loading");
 });
