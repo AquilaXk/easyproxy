@@ -12,5 +12,7 @@ export function formatCreditDateTime(iso: string, locale?: string): string {
 }
 
 export function daysUntil(iso: string): number {
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000));
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return 0;
+  return Math.max(0, Math.ceil((ms - Date.now()) / 86_400_000));
 }

@@ -34,6 +34,7 @@ import CodexQuotaAutoRefreshSetting from "./CodexQuotaAutoRefreshSetting";
 import { CodexCreditSpendSwitch } from "./CodexCreditSpend";
 import { creditSpendSummary } from "../codex-credit-spend";
 import { quotaActivationWindows, readQuotaActivationSettings, type QuotaAutoRefreshSettings } from "../codex-quota-activation";
+import { selectActiveCodexResetCreditsForDisplay } from "../../../src/codex/reset-credit-order";
 
 // Single definition lives with the controller that owns this data (WP3).
 export type { CodexAccountEntry } from "../hooks/useCodexAccountPool";
@@ -151,6 +152,7 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
   const [redeeming, setRedeeming] = useState(false);
   const [creditDetails, setCreditDetails] = useState<{ granted_at: string; expires_at: string | null }[] | null>(null);
   const [creditDetailsLoading, setCreditDetailsLoading] = useState(false);
+  const resetPopupSeqRef = useRef(0);
   const doctorCopy = useCopyFeedback<string>();
   // A modal, a reauth, a confirmation or a catalog notice belongs to the target that
   // opened it. A relay keeps the same apiBase across a re-pair, so the logical target is
@@ -492,6 +494,7 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
   };
 
   const openResetPopup = async (account: CodexAccountEntry) => {
+    const seq = ++resetPopupSeqRef.current;
     setResetPopup(account);
     setResetConfirm(false);
     setCreditDetails(null);
@@ -499,14 +502,14 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
     try {
       const resp = await fetch(`${apiBase}/api/codex-auth/reset-credits?accountId=${encodeURIComponent(account.id)}`);
       const data = await readJsonIfOk<{ credits?: { granted_at: string; expires_at: string | null }[] }>(resp);
+      if (resetPopupSeqRef.current !== seq) return;
       if (data) {
-        const sorted = (data.credits ?? []).sort((a, b) =>
-          new Date(a.granted_at).getTime() - new Date(b.granted_at).getTime()
-        );
-        setCreditDetails(sorted);
+        setCreditDetails(selectActiveCodexResetCreditsForDisplay(data.credits ?? [], Date.now()));
       }
     } catch { /* detail fetch is non-blocking */ }
-    finally { setCreditDetailsLoading(false); }
+    finally {
+      if (resetPopupSeqRef.current === seq) setCreditDetailsLoading(false);
+    }
   };
 
   const handleRedeem = async (accountId: string) => {
@@ -768,7 +771,7 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
           creditDetails={creditDetails}
           creditDetailsLoading={creditDetailsLoading}
           redeeming={redeeming}
-          onClose={() => { setResetPopup(null); setResetConfirm(false); setCreditDetails(null); }}
+          onClose={() => { resetPopupSeqRef.current += 1; setResetPopup(null); setResetConfirm(false); setCreditDetails(null); setCreditDetailsLoading(false); }}
           onShowConfirm={() => setResetConfirm(true)}
           onCancelConfirm={() => setResetConfirm(false)}
           onRedeem={() => { void handleRedeem(resetPopup.id); }}

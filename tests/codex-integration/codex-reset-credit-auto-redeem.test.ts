@@ -10,6 +10,11 @@ import {
   resolveResetCreditAutoRedeemSettings,
   type ResetCredit,
 } from "../../src/codex/reset-credit-auto-redeem";
+import {
+  isCodexResetCreditExpiredAt,
+  selectActiveCodexResetCreditsForDisplay,
+  sortCodexResetCreditsForDisplay,
+} from "../../src/codex/reset-credit-order";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { repoPath } from "../helpers/repo-root";
 import { readConfigGeneration } from "../../src/config";
@@ -631,5 +636,73 @@ describe("reset-credit auto-redeemer runtime (#822)", () => {
     expect(h.pendingAt()).not.toBeNull();
     h.redeemer.stop();
     expect(h.pendingAt()).toBeNull();
+  });
+
+  test("an already-expired older credit does not block auto-redeem of a newer valid credit", async () => {
+    const expiredOlder: ResetCredit = {
+      granted_at: "2026-08-01T00:00:00Z",
+      expires_at: new Date(T0 - 60_000).toISOString(),
+    };
+    const expiredUndated: ResetCredit = {
+      granted_at: "",
+      expires_at: new Date(T0 + 10 * MIN).toISOString(),
+    };
+    const active: ResetCredit = credit(30, "2026-09-01T00:00:00Z");
+    const h = harness({ credits: () => [expiredOlder, expiredUndated, active], journalFile: join(dir, "expired-older.json") });
+    h.setNow(T0 + 20 * MIN);
+    const outcome = await h.redeemer.tick();
+    expect(outcome.kind).toBe("dispatched");
+    expect(h.consumed).toHaveLength(1);
+  });
+
+  test("an older credit with an unparseable non-null expiry still fails closed and blocks dispatch", async () => {
+    const malformedExpiry: ResetCredit = {
+      granted_at: "2026-08-01T00:00:00Z",
+      expires_at: "not-a-date",
+    };
+    const h = harness({ credits: () => [malformedExpiry, credit(30)], journalFile: join(dir, "malformed-expiry.json") });
+    h.setNow(T0 + 20 * MIN);
+    expect(await h.redeemer.tick()).toEqual({ kind: "skipped", reason: "order-not-guaranteed" });
+    expect(h.consumed).toHaveLength(0);
+  });
+
+  test("planAutoRedeem breaks equal-expiry ties by earliest granted_at so dispatch succeeds", async () => {
+    const newer = credit(30, "2026-09-02T00:00:00Z");
+    const older = credit(30, "2026-09-01T00:00:00Z");
+    const h = harness({ credits: () => [newer, older], journalFile: join(dir, "equal-expiry.json") });
+    h.setNow(T0 + 20 * MIN);
+    expect((await h.redeemer.tick()).kind).toBe("dispatched");
+    expect(h.consumed).toHaveLength(1);
+  });
+
+  test("reset-credit-order handles exact expiry boundary, secondary FEFO sort, and NaN defense", () => {
+    expect(isCodexResetCreditExpiredAt({ expires_at: new Date(T0).toISOString() }, T0)).toBe(true);
+    expect(isCodexResetCreditExpiredAt({ expires_at: new Date(T0 + 1).toISOString() }, T0)).toBe(false);
+    expect(isCodexResetCreditExpiredAt({ expires_at: null }, T0)).toBe(false);
+    expect(isCodexResetCreditExpiredAt({ expires_at: "bad" }, T0)).toBe(false);
+
+    const sameGrant = "2026-09-01T00:00:00Z";
+    const sorted = sortCodexResetCreditsForDisplay([
+      { granted_at: "not-a-date", expires_at: null },
+      { granted_at: sameGrant, expires_at: null },
+      { granted_at: sameGrant, expires_at: new Date(T0 + 60 * MIN).toISOString() },
+      { granted_at: "invalid-grant", expires_at: new Date(T0 + 10 * MIN).toISOString() },
+      { granted_at: sameGrant, expires_at: new Date(T0 + 20 * MIN).toISOString() },
+      { granted_at: "2026-08-15T00:00:00Z", expires_at: new Date(T0 + 90 * MIN).toISOString() },
+    ]);
+    expect(sorted.map(c => `${c.granted_at}|${c.expires_at}`)).toEqual([
+      `2026-08-15T00:00:00Z|${new Date(T0 + 90 * MIN).toISOString()}`,
+      `${sameGrant}|${new Date(T0 + 20 * MIN).toISOString()}`,
+      `${sameGrant}|${new Date(T0 + 60 * MIN).toISOString()}`,
+      `${sameGrant}|null`,
+      `invalid-grant|${new Date(T0 + 10 * MIN).toISOString()}`,
+      "not-a-date|null",
+    ]);
+
+    const active = selectActiveCodexResetCreditsForDisplay([
+      { granted_at: "2026-08-01T00:00:00Z", expires_at: new Date(T0).toISOString() },
+      ...sorted,
+    ], T0);
+    expect(active).toEqual(sorted);
   });
 });

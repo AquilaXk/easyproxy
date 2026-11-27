@@ -76,6 +76,10 @@ export function GrokCouponBadge({ entry, onClick, t }: {
   );
 }
 
+function validTime(iso: string): string | null {
+  return iso !== "" && !Number.isNaN(Date.parse(iso)) ? iso : null;
+}
+
 function GrokCouponItem({ coupon, index, isNext, locale, t }: {
   coupon: GrokResetCoupon;
   index: number;
@@ -83,7 +87,9 @@ function GrokCouponItem({ coupon, index, isNext, locale, t }: {
   locale: Locale;
   t: TFn;
 }) {
-  const days = coupon.validityEnd ? daysUntil(coupon.validityEnd) : null;
+  const validityStart = validTime(coupon.validityStart);
+  const validityEnd = validTime(coupon.validityEnd);
+  const days = validityEnd ? daysUntil(validityEnd) : null;
   return (
     <div className={`credit-item${isNext ? " credit-next" : ""}`}>
       <div className="credit-item-head">
@@ -98,10 +104,10 @@ function GrokCouponItem({ coupon, index, isNext, locale, t }: {
         )}
       </div>
       <div className="credit-item-dates">
-        {coupon.validityStart && <span>{t("grokCoupon.validFrom", { date: formatCreditDate(coupon.validityStart, locale) })}</span>}
-        {days !== null && (
+        {validityStart && <span>{t("grokCoupon.validFrom", { date: formatCreditDate(validityStart, locale) })}</span>}
+        {validityEnd && days !== null && (
           <span className={days <= 7 ? "credit-urgent" : ""}>
-            {t("grokCoupon.expires", { date: formatCreditDateTime(coupon.validityEnd, locale), days: String(days) })}
+            {t("grokCoupon.expires", { date: formatCreditDateTime(validityEnd, locale), days: String(days) })}
           </span>
         )}
       </div>
@@ -110,6 +116,7 @@ function GrokCouponItem({ coupon, index, isNext, locale, t }: {
 }
 
 type Outcome = { tone: "ok" | "warn"; key: TKey };
+type ConfirmTarget = { tokenId: string; validityEnd: string; operationId?: string };
 
 export function GrokResetCouponModal({ accountId, accountLabel, entry, controller, onClose }: {
   accountId: string;
@@ -121,22 +128,34 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
   const { locale, t } = useI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const redeemRef = useRef<HTMLButtonElement>(null);
-  const [confirming, setConfirming] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
   const [redeeming, setRedeeming] = useState(false);
   const [checking, setChecking] = useState(false);
   /** The controller clears this hold when the original request definitively completes. */
   const unknown = controller.uncertain[accountId];
   const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const operationIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
   }, []);
 
+  // Re-read on open so coupons that expired, activated, or were redeemed elsewhere
+  // cannot be spent from a stale row snapshot. Keep the current view mounted while
+  // blocking redemption until the fresh read resolves.
+  const { refresh } = controller;
+  const [opening, setOpening] = useState(true);
   useEffect(() => {
-    if (confirming) redeemRef.current?.focus();
-  }, [confirming]);
+    let live = true;
+    void refresh(accountId, { keepSnapshot: true })
+      .catch(() => undefined)
+      .finally(() => { if (live) setOpening(false); });
+    return () => { live = false; };
+  }, [accountId, refresh]);
+
+  useEffect(() => {
+    if (confirmTarget) redeemRef.current?.focus();
+  }, [confirmTarget]);
 
   const handleCancel = useCallback((event: React.SyntheticEvent) => {
     event.preventDefault();
@@ -146,22 +165,36 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
   const coupons = couponsOf(entry);
   const next = coupons[0];
 
+  // A background refresh may drop, expire, or reorder the coupon being confirmed.
+  // Return to the list instead of confirming one coupon while spending another.
+  const confirmStale = confirmTarget !== null && !redeeming && !unknown
+    && (entry?.status === "error" || (entry?.status === "ready" && next?.tokenId !== confirmTarget.tokenId));
+  if (confirmStale) {
+    setConfirmTarget(null);
+    if (entry?.status === "ready") {
+      setOutcome({ tone: "warn", key: "grokCoupon.noneAvailable" });
+    }
+  }
+
   const startConfirm = () => {
-    if (unknown) return;
+    if (opening || unknown) return;
+    if (!next?.tokenId) {
+      setOutcome({ tone: "warn", key: "grokCoupon.noneAvailable" });
+      return;
+    }
     const id = newOperationId();
     if (!id) {
       setOutcome({ tone: "warn", key: "grokCoupon.noOperationId" });
       return;
     }
-    operationIdRef.current = id;
     setOutcome(null);
-    setConfirming(true);
+    setConfirmTarget({ tokenId: next.tokenId, validityEnd: next.validityEnd, operationId: id });
   };
 
   const redeem = async () => {
-    if (redeeming || unknown) return;
-    const operationId = operationIdRef.current;
-    if (!next?.tokenId) {
+    if (redeeming || unknown || !confirmTarget) return;
+    const { tokenId, operationId } = confirmTarget;
+    if (!tokenId) {
       setOutcome({ tone: "warn", key: "grokCoupon.noneAvailable" });
       return;
     }
@@ -170,23 +203,23 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
       return;
     }
     setRedeeming(true);
-    const result = await controller.redeem(accountId, { tokenId: next.tokenId, operationId });
+    const result = await controller.redeem(accountId, { tokenId, operationId });
     setRedeeming(false);
     if (result.ok) {
-      operationIdRef.current = undefined;
-      setConfirming(false);
+      setConfirmTarget(null);
       setOutcome({ tone: "ok", key: result.replayed ? "grokCoupon.redeemReplayed" : "grokCoupon.redeemSuccess" });
       return;
     }
     if (result.uncertain || result.code === "aborted") {
-      if (result.operationId) operationIdRef.current = result.operationId;
-      // Outcome unknown: hold the id, stop posting, and let the user re-read.
-      setConfirming(false);
+      // Outcome unknown: drop confirmation view and let the user re-read.
+      setConfirmTarget(null);
       setOutcome(null);
       void controller.refresh(accountId);
       return;
     }
-    if (result.code === "operation_id_owned_by_another_account") operationIdRef.current = undefined;
+    if (result.code === "operation_id_owned_by_another_account") {
+      setConfirmTarget(current => current ? { ...current, operationId: undefined } : null);
+    }
     setOutcome({ tone: "warn", key: FAILURE_KEYS[result.code] ?? "grokCoupon.redeemFailed" });
   };
 
@@ -201,6 +234,7 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
     ? couponsOf(entry).some(coupon => coupon.tokenId === unknown.tokenId)
     : false;
   const remaining = String(coupons.length);
+  const confirmValidityEnd = confirmTarget ? validTime(confirmTarget.validityEnd) : null;
 
   const message = (result: Outcome) => (
     <p
@@ -240,7 +274,7 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
               </button>
             </div>
           </>
-        ) : !confirming ? (
+        ) : !confirmTarget ? (
           <>
             <h3 id="grok-coupon-title"><IconTicket width={16} /> {t("grokCoupon.title")}</h3>
             <div className="card-sub">{accountLabel}</div>
@@ -262,11 +296,11 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
                   <p style={{ marginBottom: 12 }}>{t("grokCoupon.available", { count: remaining })}</p>
                   <div className="credit-list">
                     {coupons.map((coupon, index) => (
-                      <GrokCouponItem key={coupon.tokenId} coupon={coupon} index={index} isNext={index === 0} locale={locale} t={t} />
+                      <GrokCouponItem key={`${coupon.tokenId}:${index}`} coupon={coupon} index={index} isNext={index === 0} locale={locale} t={t} />
                     ))}
                   </div>
                   <button type="button" className="btn btn-primary" style={{ marginTop: 12, width: "100%" }}
-                    onClick={startConfirm} disabled={redeeming}>
+                    onClick={startConfirm} disabled={redeeming || opening}>
                     {t("grokCoupon.useOne")}
                   </button>
                   <p className="card-sub text-caption" style={{ marginTop: 8, textAlign: "center" }}>{t("grokCoupon.fifoNote")}</p>
@@ -286,16 +320,16 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
               <div className="confirm-icon"><IconAlert width={22} /></div>
               <h3 id="grok-coupon-title">{t("grokCoupon.confirmTitle")}</h3>
               <p className="modal-desc">{t("grokCoupon.confirmDesc", { count: remaining })}</p>
-              {next?.validityEnd && (
+              {confirmValidityEnd && (
                 <p className="faint text-label">
-                  {t("grokCoupon.confirmWhich", { date: formatCreditDate(next.validityEnd, locale) })}
+                  {t("grokCoupon.confirmWhich", { date: formatCreditDate(confirmValidityEnd, locale) })}
                 </p>
               )}
               <p className="faint text-label">{t("grokCoupon.irreversible")}</p>
               {outcome && message(outcome)}
             </div>
             <div className="modal-actions">
-              <button type="button" className="btn btn-ghost" onClick={() => setConfirming(false)} disabled={redeeming}>
+              <button type="button" className="btn btn-ghost" onClick={() => setConfirmTarget(null)} disabled={redeeming}>
                 {t("common.cancel")}
               </button>
               <button ref={redeemRef} type="button" className="btn btn-primary" onClick={() => { void redeem(); }} disabled={redeeming}>

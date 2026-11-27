@@ -271,7 +271,12 @@ export default function ProviderAuthPanel({
     [grokCouponsEnabled, accounts],
   );
   const grokCoupons = useGrokResetCoupons({ apiBase, accountIds: grokAccountIds, enabled: grokCouponsEnabled });
-  const [couponAccount, setCouponAccount] = useState<OAuthAccountRow | null>(null);
+  const grantScope = `${apiBase}\0${item.name}`;
+  const [couponSelection, setCouponSelection] = useState<{ scope: string; account: OAuthAccountRow } | null>(null);
+  const couponAccount = couponSelection?.scope === grantScope ? couponSelection.account : null;
+  const setCouponAccount = (account: OAuthAccountRow | null) => {
+    setCouponSelection(account ? { scope: grantScope, account } : null);
+  };
   // Claude usage resets ride a separate usage read, like the Grok coupons above.
   const isAnthropicPool = isAnthropicInstanceId(item.name) && anthropicInstanceRowShapeMatches(item.name, item);
   const claudeGrantsEnabled = isOauth && isAnthropicPool && accounts.length > 0;
@@ -282,7 +287,6 @@ export default function ProviderAuthPanel({
   const claudeGrants = useAnthropicResetGrants({ apiBase, provider: isAnthropicInstanceId(item.name) ? item.name : "anthropic", accountIds: claudeAccountIds, enabled: claudeGrantsEnabled });
   // The open reset dialog belongs to the pool it was opened in. Switching server or pool
   // hides it during render rather than resetting it from an effect.
-  const grantScope = `${apiBase}\0${item.name}`;
   const [grantSelection, setGrantSelection] = useState<{ scope: string; account: OAuthAccountRow } | null>(null);
   const grantAccount = grantSelection?.scope === grantScope ? grantSelection.account : null;
   const setGrantAccount = (account: OAuthAccountRow | null) => {
@@ -796,6 +800,7 @@ export default function ProviderAuthPanel({
             })()}
             {couponAccount && (
               <GrokResetCouponModal
+                key={`${apiBase}:${item.name}:${couponAccount.id}`}
                 accountId={couponAccount.id}
                 accountLabel={oauthAccountDisplayLabel(accounts, couponAccount, t)}
                 entry={grokCoupons.entries[couponAccount.id]}

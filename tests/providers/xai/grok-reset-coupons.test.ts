@@ -24,6 +24,11 @@ import {
   openGrokResetCouponOperation,
   recordGrokResetCouponSettlement,
 } from "../../../src/grok/reset-coupon-ledger";
+import {
+  isGrokResetCouponActiveAt,
+  selectActiveGrokResetCouponsFefo,
+  sortGrokResetCouponsFefo,
+} from "../../../src/grok/reset-coupon-order";
 
 function trailerFrame(text: string): Uint8Array<ArrayBuffer> {
   const frame = encodeGrpcWebEnvelope(new TextEncoder().encode(text)) as Uint8Array<ArrayBuffer>;
@@ -521,5 +526,48 @@ describe("grok reset coupons", () => {
     expect(res).toEqual({ tokens: [] });
     expect(callCount).toBe(2);
     expect(tokenUsed).toBe("Bearer refreshed-fresh-token");
+  });
+
+  it("enforces inclusive validityStart, exclusive validityEnd, fail-closed whitespace, and NaN-free FEFO tie sorting", () => {
+    const t0 = Date.parse("2026-11-28T00:00:00Z");
+    const iso = (offsetMs: number) => new Date(t0 + offsetMs).toISOString();
+    expect(isGrokResetCouponActiveAt({ validityStart: iso(0), validityEnd: iso(1) }, t0)).toBe(true);
+    expect(isGrokResetCouponActiveAt({ validityStart: iso(1), validityEnd: iso(2) }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: iso(-1), validityEnd: iso(0) }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: "   ", validityEnd: iso(10) }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: "", validityEnd: "   " }, t0)).toBe(false);
+    expect(isGrokResetCouponActiveAt({ validityStart: "", validityEnd: "" }, t0)).toBe(true);
+
+    // Mix many unbounded/malformed coupons with bounded ones to verify strict weak ordering (no Infinity - Infinity = NaN).
+    const sorted = sortGrokResetCouponsFefo([
+      { tokenId: "u1", validityStart: "", validityEnd: "" },
+      { tokenId: "bad-end", validityStart: "", validityEnd: "not-a-date" },
+      { tokenId: "far", validityStart: iso(-1000), validityEnd: iso(10_000) },
+      { tokenId: "u2", validityStart: iso(-5000), validityEnd: "" },
+      { tokenId: "tie-later-start", validityStart: iso(0), validityEnd: iso(5_000) },
+      { tokenId: "tie-earlier-start", validityStart: iso(-2000), validityEnd: iso(5_000) },
+      { tokenId: "u3", validityStart: "", validityEnd: "" },
+      { tokenId: "bad-both", validityStart: "invalid-start", validityEnd: "also-bad" },
+    ]);
+    expect(sorted.map(c => c.tokenId)).toEqual([
+      "tie-earlier-start",
+      "tie-later-start",
+      "far",
+      "u2",
+      "u1",
+      "bad-end",
+      "u3",
+      "bad-both",
+    ]);
+
+    const active = selectActiveGrokResetCouponsFefo(sorted, t0);
+    expect(active.map(c => c.tokenId)).toEqual([
+      "tie-earlier-start",
+      "tie-later-start",
+      "far",
+      "u2",
+      "u1",
+      "u3",
+    ]);
   });
 });

@@ -18,6 +18,7 @@
  *   succeeded.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { selectActiveGrokResetCouponsFefo } from "../../../src/grok/reset-coupon-order";
 import { createBoundedFetch } from "../bounded-fetch";
 
 export interface GrokResetCoupon {
@@ -48,7 +49,7 @@ export interface GrokResetCouponController {
   entries: Record<string, GrokCouponEntry>;
   /** Shared for the browser session so remounting cannot mint a new spend. */
   uncertain: Record<string, GrokCouponAttempt>;
-  refresh: (accountId: string) => Promise<void>;
+  refresh: (accountId: string, options?: { keepSnapshot?: boolean }) => Promise<void>;
   redeem: (accountId: string, request: { tokenId: string; operationId: string }) => Promise<GrokRedeemOutcome>;
 }
 
@@ -169,18 +170,6 @@ function settledCode(value: unknown): string | null {
   return null;
 }
 
-function expiryRank(coupon: GrokResetCoupon): number {
-  if (!coupon.validityEnd) return Number.POSITIVE_INFINITY;
-  const parsed = Date.parse(coupon.validityEnd);
-  // An unparsable bound sorts last rather than collapsing the comparator, so a
-  // malformed timestamp cannot present itself as the nearest expiry.
-  return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
-}
-
-function byExpiry(coupons: GrokResetCoupon[]): GrokResetCoupon[] {
-  return coupons.toSorted((a, b) => expiryRank(a) - expiryRank(b));
-}
-
 export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
   apiBase: string;
   accountIds: string[];
@@ -225,7 +214,7 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
       setEntries(existing => ({
         ...existing,
         [accountId]: coupons
-          ? { status: "ready", coupons: byExpiry(coupons) }
+          ? { status: "ready", coupons: selectActiveGrokResetCouponsFefo(coupons, Date.now()) }
           : { status: "error", reason: response.status === 401 ? "auth" : "upstream" },
       }));
     } catch {
@@ -252,8 +241,10 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
     return () => { epoch.current += 1; };
   }, [enabled, identity, read]);
 
-  const refresh = useCallback(async (accountId: string) => {
-    setEntries(current => ({ ...current, [accountId]: { status: "loading" } }));
+  const refresh = useCallback(async (accountId: string, options: { keepSnapshot?: boolean } = {}) => {
+    if (!options.keepSnapshot) {
+      setEntries(current => ({ ...current, [accountId]: { status: "loading" } }));
+    }
     await read(accountId, epoch.current);
   }, [read]);
 

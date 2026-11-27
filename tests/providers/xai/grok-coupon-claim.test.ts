@@ -981,3 +981,139 @@ test("an unreadable ledger during omitted-account lookup keeps the caller on its
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ operationId: OP, error: { code: "attempt_in_progress" } });
 });
+
+test("GET /api/grok/reset-coupons filters validity bounds and sorts FEFO without NaN drift", async () => {
+  const now = Date.now();
+  const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
+  const auth = spyOn(oauth, "getValidAccessSnapshotForAccount").mockResolvedValue({ accessToken: "fixture-access-token" } as never);
+  const remaining = spyOn(coupons, "getGrokRemainingResets").mockResolvedValue({
+    tokens: [
+      { tokenId: "expired", validityStart: iso(-10 * 86_400_000), validityEnd: iso(-60_000) },
+      { tokenId: "future", validityStart: iso(60_000), validityEnd: iso(5 * 86_400_000) },
+      { tokenId: "bad-start", validityStart: "not-a-date", validityEnd: iso(86_400_000) },
+      { tokenId: "bad-end", validityStart: iso(-86_400_000), validityEnd: "not-a-date" },
+      { tokenId: "unbounded-1", validityStart: iso(-86_400_000), validityEnd: "" },
+      { tokenId: "far", validityStart: iso(-86_400_000), validityEnd: iso(20 * 86_400_000) },
+      { tokenId: "unbounded-2", validityStart: "", validityEnd: "" },
+      { tokenId: "same-end-newer-start", validityStart: iso(-3_600_000), validityEnd: iso(3 * 86_400_000) },
+      { tokenId: "same-end-older-start", validityStart: iso(-2 * 86_400_000), validityEnd: iso(3 * 86_400_000) },
+      { tokenId: "soonest", validityStart: "", validityEnd: iso(86_400_000) },
+    ],
+  });
+  spies.push(auth, remaining);
+  const url = new URL("http://localhost/api/grok/reset-coupons?accountId=fixture-account");
+  const response = (await handleGrokCouponRoutes({
+    req: new Request(url), url, config: {}, deps: {}, version: "test",
+  } as ManagementContext))!;
+  expect(response.status).toBe(200);
+  const body = await response.json() as { remaining: number; tokens: Array<{ tokenId: string }> };
+  expect(body.remaining).toBe(6);
+  expect(body.tokens.map(t => t.tokenId)).toEqual([
+    "soonest",
+    "same-end-older-start",
+    "same-end-newer-start",
+    "far",
+    "unbounded-1",
+    "unbounded-2",
+  ]);
+});
+
+test("POST consume with omitted tokenId selects the FEFO-first active coupon, skipping expired and future coupons", async () => {
+  const now = Date.now();
+  const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
+  const auth = spyOn(oauth, "getValidAccessSnapshotForAccount").mockResolvedValue({ accessToken: "fixture-access-token" } as never);
+  const remaining = spyOn(coupons, "getGrokRemainingResets").mockResolvedValue({
+    tokens: [
+      { tokenId: "expired-first", validityStart: iso(-10 * 86_400_000), validityEnd: iso(-60_000) },
+      { tokenId: "future-first", validityStart: iso(3_600_000), validityEnd: iso(2 * 86_400_000) },
+      { tokenId: "far-active", validityStart: iso(-86_400_000), validityEnd: iso(30 * 86_400_000) },
+      { tokenId: "soon-active", validityStart: iso(-86_400_000), validityEnd: iso(5 * 86_400_000) },
+    ],
+  });
+  const redeem = spyOn(coupons, "redeemGrokResetCoupon").mockResolvedValue({ success: true, status: 0 });
+  spies.push(auth, remaining, redeem);
+
+  const response = (await handleGrokCouponRoutes(request(true)))!;
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ code: "redeemed", tokenId: "soon-active" });
+  expect(redeem).toHaveBeenCalledTimes(1);
+  expect(redeem.mock.calls[0]![0].tokenId).toBe("soon-active");
+});
+
+test("POST consume with omitted tokenId returns no_coupons_available when all upstream coupons are expired or future", async () => {
+  const now = Date.now();
+  const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
+  const auth = spyOn(oauth, "getValidAccessSnapshotForAccount").mockResolvedValue({ accessToken: "fixture-access-token" } as never);
+  const remaining = spyOn(coupons, "getGrokRemainingResets").mockResolvedValue({
+    tokens: [
+      { tokenId: "expired", validityStart: iso(-10 * 86_400_000), validityEnd: iso(-1_000) },
+      { tokenId: "future", validityStart: iso(86_400_000), validityEnd: iso(10 * 86_400_000) },
+    ],
+  });
+  const redeem = spyOn(coupons, "redeemGrokResetCoupon").mockResolvedValue({ success: true, status: 0 });
+  spies.push(auth, remaining, redeem);
+
+  const response = (await handleGrokCouponRoutes(request(true)))!;
+  expect(response.status).toBe(400);
+  expect((await response.json()).error.code).toBe("no_coupons_available");
+  expect(redeem).not.toHaveBeenCalled();
+});
+
+for (const [label, bounds] of [
+  ["expired", { validityStart: "2026-01-01T00:00:00Z", validityEnd: "2026-02-01T00:00:00Z" }],
+  ["not-yet-active", { validityStart: "2998-01-01T00:00:00Z", validityEnd: "2999-01-01T00:00:00Z" }],
+  ["malformed-end", { validityStart: "2026-01-01T00:00:00Z", validityEnd: "not-a-date" }],
+] as const) {
+  test(`POST consume with explicit tokenId refuses ${label} coupon with coupon_unavailable`, async () => {
+    const auth = spyOn(oauth, "getValidAccessSnapshotForAccount").mockResolvedValue({ accessToken: "fixture-access-token" } as never);
+    const remaining = spyOn(coupons, "getGrokRemainingResets").mockResolvedValue({
+      tokens: [{ tokenId: TOKEN.tokenId, ...bounds }],
+    });
+    const redeem = spyOn(coupons, "redeemGrokResetCoupon").mockResolvedValue({ success: true, status: 0 });
+    spies.push(auth, remaining, redeem);
+
+    const response = (await handleGrokCouponRoutes(request(false)))!;
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe("coupon_unavailable");
+    expect(redeem).not.toHaveBeenCalled();
+  });
+}
+
+test("CLI grok-reset-coupons --consume --yes without --token-id redeems the active FEFO coupon", async () => {
+  const now = Date.now();
+  const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
+  const selection = spyOn(oauthStore, "captureOAuthAccountSelection").mockReturnValue({ accountId: "fixture-account" } as never);
+  const auth = spyOn(oauth, "getValidAccessSnapshotForAccount").mockResolvedValue({ accessToken: "fixture-access-token" } as never);
+  const remaining = spyOn(coupons, "getGrokRemainingResets").mockResolvedValue({
+    tokens: [
+      { tokenId: "expired", validityStart: iso(-10 * 86_400_000), validityEnd: iso(-1000) },
+      { tokenId: "future", validityStart: iso(3600_000), validityEnd: iso(86_400_000) },
+      { tokenId: "far", validityStart: iso(-86_400_000), validityEnd: iso(20 * 86_400_000) },
+      { tokenId: "soon", validityStart: iso(-86_400_000), validityEnd: iso(2 * 86_400_000) },
+    ],
+  });
+  const redeem = spyOn(coupons, "redeemGrokResetCoupon").mockResolvedValue({ success: true, status: 0 });
+  spies.push(selection, auth, remaining, redeem);
+
+  const lines: string[] = [];
+  const origLog = console.log;
+  console.log = (...args: unknown[]) => { lines.push(args.map(String).join(" ")); };
+  const deps = {
+    baseUrl: "http://localhost",
+    fetchImpl: (async (_url: unknown, init?: RequestInit) => {
+      const url = new URL("http://localhost/api/grok/reset-coupons/consume");
+      return (await handleGrokCouponRoutes({
+        req: new Request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: init?.body }),
+        url, config: {}, deps: {}, version: "test",
+      } as ManagementContext))!;
+    }) as typeof fetch,
+  };
+  try {
+    expect(await handleAccountAuthCommand("grok-reset-coupons", ["--consume", "--yes", "--json"], deps)).toBe(0);
+  } finally {
+    console.log = origLog;
+  }
+  expect(redeem).toHaveBeenCalledTimes(1);
+  expect(redeem.mock.calls[0]![0].tokenId).toBe("soon");
+  expect(JSON.parse(lines.join("\n"))).toMatchObject({ code: "redeemed", tokenId: "soon" });
+});

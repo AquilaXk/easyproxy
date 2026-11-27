@@ -61,7 +61,7 @@ export function CodexAccountResetModal({
                   {creditDetails && creditDetails.length > 0 && (
                     <div className="credit-list">
                       {creditDetails.map((c, i) => (
-                        <CodexCreditItem key={`${c.granted_at}:${c.expires_at ?? "none"}`} index={i} grantedAt={c.granted_at} expiresAt={c.expires_at} isNext={i === 0} locale={locale} t={t} />
+                        <CodexCreditItem key={`${c.granted_at}:${c.expires_at ?? "none"}:${i}`} index={i} grantedAt={c.granted_at} expiresAt={c.expires_at} isNext={i === 0} locale={locale} t={t} />
                       ))}
                     </div>
                   )}
@@ -85,7 +85,7 @@ export function CodexAccountResetModal({
               <div className="confirm-icon"><IconAlert width={22} /></div>
               <h3 id="codex-reset-title">{t("codexAuth.confirmResetTitle")}</h3>
               <p className="modal-desc">{t("codexAuth.confirmResetDesc", { count: String(resetPopup.quota?.resetCredits ?? 0) })}</p>
-              {creditDetails && creditDetails[0] && (
+              {creditDetails && creditDetails[0] && creditDetails[0].granted_at !== "" && !Number.isNaN(Date.parse(creditDetails[0].granted_at)) && (
                 <p className="faint text-label">
                   {t("codexAuth.confirmWhichCredit", { date: formatCreditDate(creditDetails[0].granted_at, locale) })}
                 </p>

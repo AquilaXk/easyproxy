@@ -23,6 +23,10 @@ import {
   type GrokResetCoupon,
 } from "../../grok/reset-coupons";
 import {
+  isGrokResetCouponActiveAt,
+  selectActiveGrokResetCouponsFefo,
+} from "../../grok/reset-coupon-order";
+import {
   getGrokResetCouponOperationAccountId,
   isTerminalGrokCouponReplay,
   markGrokResetCouponAttempt,
@@ -110,15 +114,16 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
       const remainingResult = await getGrokRemainingResets({
         accessToken: tokenSnapshot.accessToken,
       });
+      const activeTokens = selectActiveGrokResetCouponsFefo(remainingResult.tokens ?? [], Date.now());
 
       const payload: GrokResetCouponsResponse = {
         accountId,
-        tokens: remainingResult.tokens.map((t) => ({
+        tokens: activeTokens.map((t) => ({
           tokenId: t.tokenId,
           validityStart: t.validityStart,
           validityEnd: t.validityEnd,
         })),
-        remaining: remainingResult.tokens.length,
+        remaining: activeTokens.length,
       };
 
       return jsonResponse(payload, 200, req, config);
@@ -425,8 +430,10 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
           config,
         );
       }
+      const now = Date.now();
       if (!resolvedTokenId) {
-        if (tokens.length === 0) {
+        const activeTokens = selectActiveGrokResetCouponsFefo(tokens, now);
+        if (activeTokens.length === 0) {
           const changed = settlePreflightRefusal("no_coupons_available");
           if (changed) return changed;
           return jsonResponse(
@@ -436,19 +443,21 @@ export async function handleGrokCouponRoutes(ctx: ManagementContext): Promise<Re
             config,
           );
         }
-        resolvedTokenId = tokens[0].tokenId;
+        resolvedTokenId = activeTokens[0]!.tokenId;
       }
       const match = tokens.find((t) => t.tokenId === resolvedTokenId);
-      if (!match) {
-        // The requested coupon is already consumed or expired upstream —
-        // redeeming it would only surface an upstream error.
+      if (!match || !isGrokResetCouponActiveAt(match, now)) {
+        // The requested coupon is already consumed, expired, or not yet valid upstream —
+        // redeeming it would only surface an upstream error or consume an invalid grant.
         const changed = settlePreflightRefusal("coupon_unavailable", resolvedTokenId);
         if (changed) return changed;
         return jsonResponse(
           {
             error: {
               code: "coupon_unavailable",
-              message: "The requested reset coupon is no longer available upstream",
+              message: match
+                ? "The requested reset coupon is expired or not yet active"
+                : "The requested reset coupon is no longer available upstream",
             },
           },
           409,

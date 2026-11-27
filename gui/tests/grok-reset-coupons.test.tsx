@@ -216,8 +216,9 @@ test("a failed read badges the row as an error and the dialog separates auth fro
 
   await openDialog(host, 0);
   expect(dialogText(host)).toContain("Could not read reset coupons");
-  await act(async () => { buttonWithText(host, "Try again").click(); await flush(); });
   expect(harness.reads.filter(id => id === "acct-a").length).toBe(2);
+  await act(async () => { buttonWithText(host, "Try again").click(); await flush(); });
+  expect(harness.reads.filter(id => id === "acct-a").length).toBe(3);
 });
 
 test("redeeming spends the nearest-expiry coupon with a client-minted UUIDv4", async () => {
@@ -290,7 +291,7 @@ test("a transport-rejected redemption stops posting, re-reads the account, and o
   await act(async () => { buttonWithText(host, "Use coupon").click(); await flush(); });
 
   expect(dialogText(host)).toContain("outcome is unknown");
-  expect(harness.reads.filter(id => id === "acct-a").length).toBe(2);
+  expect(harness.reads.filter(id => id === "acct-a").length).toBe(3);
   expect([...host.querySelectorAll(".modal-card button")].some(b => (b.textContent ?? "").includes("Use coupon"))).toBe(false);
 
   harness.coupons.set("acct-a", []);
@@ -391,6 +392,9 @@ for (const code of ["redeemed", "coupon_unavailable"] as const) {
       await act(async () => { finish(json({ code, replayed: code !== "redeemed" })); await flush(); });
       expect(harness.releaseRead).toHaveLength(1);
       await openDialog(host);
+      // Opening the dialog dispatches a fresh read while the earlier post-redeem read stays held.
+      expect(harness.releaseRead).toHaveLength(2);
+      await act(async () => { harness.releaseRead.pop()!(); await flush(); });
       await act(async () => { buttonWithText(host, "Use 1 coupon").click(); await flush(); });
       await act(async () => { buttonWithText(host, "Use coupon").click(); await flush(); });
       expect(dialogText(host)).toContain("outcome is unknown");
@@ -706,4 +710,103 @@ test("a valid persisted UUIDv4 hold refuses a new POST", async () => {
   expect(controller.current.uncertain["acct-a"]).toEqual(request);
   expect((await redeemController(controller)).operationId).toBe(request.operationId);
   expect(harness.consumes).toHaveLength(0);
+});
+
+test("GUI filters out expired, future, and malformed coupons and keeps FEFO stable with multiple unbounded coupons", async () => {
+  const now = Date.now();
+  const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
+  harness.coupons.set("acct-a", [
+    { tokenId: "unbounded-1", validityStart: iso(-86_400_000), validityEnd: "" },
+    { tokenId: "expired", validityStart: iso(-10 * 86_400_000), validityEnd: iso(-60_000) },
+    { tokenId: "future", validityStart: iso(3_600_000), validityEnd: iso(2 * 86_400_000) },
+    { tokenId: "bad-start", validityStart: "invalid", validityEnd: iso(86_400_000) },
+    { tokenId: "bad-end", validityStart: iso(-86_400_000), validityEnd: "invalid" },
+    { tokenId: "unbounded-2", validityStart: "", validityEnd: "" },
+    { tokenId: "active-far", validityStart: iso(-86_400_000), validityEnd: iso(15 * 86_400_000) },
+    { tokenId: "active-near", validityStart: iso(-86_400_000), validityEnd: iso(3 * 86_400_000) },
+  ]);
+  const host = await mountPanel([ACCOUNT("acct-a")]);
+  expect(badges(host)[0]!.dataset.grokCouponBadge).toBe("4");
+
+  await openDialog(host);
+  await act(async () => { buttonWithText(host, "Use 1 coupon").click(); await flush(); });
+  await act(async () => { buttonWithText(host, "Use coupon").click(); await flush(); });
+  expect(harness.consumes).toHaveLength(1);
+  expect(harness.consumes[0]!.tokenId).toBe("active-near");
+});
+
+test("opening the Grok coupon modal re-reads the account and holds spending until the fresh list lands", async () => {
+  harness.coupons.set("acct-a", [COUPON("restok_stale", 10), COUPON("restok_next", 20)]);
+  const host = await mountPanel([ACCOUNT("acct-a")]);
+  expect(badges(host)[0]!.dataset.grokCouponBadge).toBe("2");
+
+  // Simulate coupon change between initial render and clicking the badge.
+  harness.coupons.set("acct-a", [COUPON("restok_next", 20), COUPON("restok_urgent", 1)]);
+  harness.holdReads = true;
+  await openDialog(host);
+  expect(harness.releaseRead).toHaveLength(1);
+  expect(buttonWithText(host, "Use 1 coupon").disabled).toBe(true);
+
+  await act(async () => {
+    harness.holdReads = false;
+    harness.releaseRead.shift()!();
+    await flush();
+  });
+  expect(buttonWithText(host, "Use 1 coupon").disabled).toBe(false);
+
+  await act(async () => { buttonWithText(host, "Use 1 coupon").click(); await flush(); });
+  await act(async () => { buttonWithText(host, "Use coupon").click(); await flush(); });
+  expect(harness.consumes).toHaveLength(1);
+  expect(harness.consumes[0]!.tokenId).toBe("restok_urgent");
+});
+
+test("confirming Grok coupon cancels back to list if a refresh removes or supersedes the target coupon", async () => {
+  const { GrokCouponBadge, GrokResetCouponModal } = await import("../src/components/provider-workspace/GrokResetCoupons");
+  const { useT } = await import("../src/i18n/shared");
+  const { createRoot } = await import("react-dom/client");
+  harness.coupons.set("acct-a", [COUPON("restok_first", 10), COUPON("restok_later", 20)]);
+
+  let liveController!: GrokResetCouponController;
+  function StaleConfirmHarness() {
+    const t = useT();
+    const controller = useGrokResetCoupons({ apiBase: testApiBase, accountIds: ["acct-a"], enabled: true });
+    useLayoutEffect(() => { liveController = controller; }, [controller]);
+    return (
+      <>
+        <GrokCouponBadge entry={controller.entries["acct-a"]} t={t} onClick={() => {}} />
+        <GrokResetCouponModal
+          accountId="acct-a"
+          accountLabel="acct-a@example.com"
+          entry={controller.entries["acct-a"]}
+          controller={controller}
+          onClose={() => {}}
+        />
+      </>
+    );
+  }
+
+  const host = testWindow.document.createElement("div");
+  testWindow.document.body.appendChild(host as never);
+  const root = createRoot(host as unknown as HTMLElement);
+  mountedRoots.push(root);
+  await act(async () => {
+    root.render(<LanguageProvider><StaleConfirmHarness /></LanguageProvider>);
+    await flush();
+  });
+
+  await act(async () => { buttonWithText(host as unknown as HTMLElement, "Use 1 coupon").click(); await flush(); });
+  expect(dialogText(host)).toContain("Use reset coupon?");
+
+  // Background refresh lands with a nearer-expiry coupon, invalidating the pending confirmation.
+  harness.coupons.set("acct-a", [COUPON("restok_even_sooner", 2), COUPON("restok_first", 10)]);
+  await act(async () => { await liveController.refresh("acct-a", { keepSnapshot: true }); await flush(); });
+
+  expect(dialogText(host)).not.toContain("Use reset coupon?");
+  expect(dialogText(host)).toContain("No reset coupons are available to redeem");
+  expect(harness.consumes).toHaveLength(0);
+
+  await act(async () => { buttonWithText(host as unknown as HTMLElement, "Use 1 coupon").click(); await flush(); });
+  await act(async () => { buttonWithText(host as unknown as HTMLElement, "Use coupon").click(); await flush(); });
+  expect(harness.consumes).toHaveLength(1);
+  expect(harness.consumes[0]!.tokenId).toBe("restok_even_sooner");
 });

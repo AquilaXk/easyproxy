@@ -6,6 +6,7 @@ import { atomicWriteFile } from "../config/atomic-write";
 import { getConfigDir } from "../config/paths";
 import { registerOptionalShutdownHook } from "../lib/optional-shutdown-hooks";
 import type { EpxConfig } from "../types";
+import { isCodexResetCreditExpiredAt } from "./reset-credit-order";
 
 /**
  * Opt-in auto-redemption of a Codex reset credit shortly before it expires (#822).
@@ -55,16 +56,25 @@ export interface AutoRedeemPlan {
 export function planAutoRedeem(now: number, credits: readonly ResetCredit[], settings: ResetCreditAutoRedeemSettings): AutoRedeemPlan | null {
   if (!settings.enabled) return null;
   let best: AutoRedeemPlan | null = null;
+  let bestExpires = Number.POSITIVE_INFINITY;
+  let bestGranted = Number.POSITIVE_INFINITY;
   for (const credit of credits) {
     if (credit.expires_at === null) continue;
     // A credit without a usable grant time has no identity to protect: never plan it. It still
     // blocks other plans through olderCreditPrecedes.
-    if (!Number.isFinite(Date.parse(credit.granted_at))) continue;
+    const granted = Date.parse(credit.granted_at);
+    if (!Number.isFinite(granted)) continue;
     const expires = Date.parse(credit.expires_at);
     if (!Number.isFinite(expires) || expires <= now) continue;
-    const dueAt = expires - settings.leadTimeMinutes * 60_000;
-    const expiresAt = credit.expires_at;
-    if (!best || expires < Date.parse(best.expiresAt)) best = { grantedAt: credit.granted_at, expiresAt, dueAt };
+    if (!best || expires < bestExpires || (expires === bestExpires && granted < bestGranted)) {
+      best = {
+        grantedAt: credit.granted_at,
+        expiresAt: credit.expires_at,
+        dueAt: expires - settings.leadTimeMinutes * 60_000,
+      };
+      bestExpires = expires;
+      bestGranted = granted;
+    }
   }
   return best;
 }
@@ -77,8 +87,13 @@ export function creditStillPresent(credits: readonly ResetCredit[], plan: Pick<A
  * Consume names no credit, and the dashboard tells operators the oldest is used first. A credit
  * granted before the planned one (a non-expiring one, or any with a later expiry) could be spent
  * in its place while the planned credit still expires, so the redeemer stands down instead.
+ * Credits that are already expired at `now` cannot be consumed and do not block newer credits.
  */
-export function olderCreditPrecedes(credits: readonly ResetCredit[], plan: Pick<AutoRedeemPlan, "grantedAt" | "expiresAt">): boolean {
+export function olderCreditPrecedes(
+  credits: readonly ResetCredit[],
+  plan: Pick<AutoRedeemPlan, "grantedAt" | "expiresAt">,
+  now = Date.now(),
+): boolean {
   const planned = Date.parse(plan.grantedAt);
   if (!Number.isFinite(planned)) return true;
   // Fail closed: an equal grant time has no known tie-breaker, and a grant time that does not
@@ -90,6 +105,7 @@ export function olderCreditPrecedes(credits: readonly ResetCredit[], plan: Pick<
       plannedSeen = true;
       return false;
     }
+    if (isCodexResetCreditExpiredAt(c, now)) return false;
     return !(Date.parse(c.granted_at) > planned);
   });
 }
@@ -262,9 +278,10 @@ export function createResetCreditAutoRedeemer(deps: AutoRedeemDeps): ResetCredit
         schedule(idleRecheckMs);
         return { kind: "error", message: error instanceof Error ? error.message : "inspect failed" } as AutoRedeemOutcome;
       }
-      const plan = planAutoRedeem(now(), credits, settings);
+      const currentNow = now();
+      const plan = planAutoRedeem(currentNow, credits, settings);
       if (!plan) { schedule(idleRecheckMs); return { kind: "nothing-to-protect" } as AutoRedeemOutcome; }
-      if (plan.dueAt > now()) { schedule(plan.dueAt - now()); return { kind: "scheduled", dueAt: plan.dueAt } as AutoRedeemOutcome; }
+      if (plan.dueAt > currentNow) { schedule(plan.dueAt - currentNow); return { kind: "scheduled", dueAt: plan.dueAt } as AutoRedeemOutcome; }
       // Due: re-read right before spending. The plan above came from this same inspect, but
       // the settings may have flipped and a manual consume may have raced; check both again.
       if (!deps.settings().enabled) return { kind: "skipped", reason: "disabled-before-dispatch" } as AutoRedeemOutcome;
@@ -273,8 +290,12 @@ export function createResetCreditAutoRedeemer(deps: AutoRedeemDeps): ResetCredit
         schedule(60_000);
         return { kind: "error", message: error instanceof Error ? error.message : "inspect failed" } as AutoRedeemOutcome;
       }
-      if (!creditStillPresent(fresh, plan)) { schedule(idleRecheckMs); return { kind: "skipped", reason: "credit-gone" } as AutoRedeemOutcome; }
-      if (olderCreditPrecedes(fresh, plan)) {
+      const dispatchNow = now();
+      if (!creditStillPresent(fresh, plan) || isCodexResetCreditExpiredAt({ expires_at: plan.expiresAt }, dispatchNow)) {
+        schedule(idleRecheckMs);
+        return { kind: "skipped", reason: "credit-gone" } as AutoRedeemOutcome;
+      }
+      if (olderCreditPrecedes(fresh, plan, dispatchNow)) {
         log(`[easyproxy] reset-credit auto-redeem: an older credit would be consumed first for account ${hashAccountKey(deps.accountId)}; not redeeming automatically`);
         schedule(idleRecheckMs);
         return { kind: "skipped", reason: "order-not-guaranteed" } as AutoRedeemOutcome;

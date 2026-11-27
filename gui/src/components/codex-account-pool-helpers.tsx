@@ -6,7 +6,10 @@ import { daysUntil, formatCreditDate, formatCreditDateTime } from "./codex-accou
 export function CodexCreditItem({ index, grantedAt, expiresAt, isNext, locale, t }: {
   index: number; grantedAt: string; expiresAt: string | null; isNext: boolean; locale: Locale; t: TFn;
 }) {
-  const days = expiresAt === null ? null : daysUntil(expiresAt);
+  const validExpiresAt = expiresAt !== null && expiresAt !== "" && !Number.isNaN(Date.parse(expiresAt))
+    ? expiresAt
+    : null;
+  const days = validExpiresAt === null ? null : daysUntil(validExpiresAt);
   const urgent = days !== null && days <= 7;
   return (
     <div className={`credit-item${isNext ? " credit-next" : ""}`}>
@@ -19,7 +22,7 @@ export function CodexCreditItem({ index, grantedAt, expiresAt, isNext, locale, t
       </div>
       <div className="credit-item-dates">
         <span>{t("codexAuth.creditGranted", { date: formatCreditDate(grantedAt, locale) })}</span>
-        <span className={urgent ? "credit-urgent" : ""}>{expiresAt === null ? t("codexAuth.creditNoExpiry") : t("codexAuth.creditExpires", { date: formatCreditDateTime(expiresAt, locale), days: String(days) })}</span>
+        <span className={urgent ? "credit-urgent" : ""}>{validExpiresAt === null ? t("codexAuth.creditNoExpiry") : t("codexAuth.creditExpires", { date: formatCreditDateTime(validExpiresAt, locale), days: String(days) })}</span>
       </div>
     </div>
   );
