@@ -10,6 +10,7 @@
  * after a page reload.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { parseStrictTimestampMs } from "../../../../src/lib/strict-timestamp";
 import { useI18n, type TFn, type TKey } from "../../i18n/shared";
 import { IconAlert, IconTicket } from "../../icons";
 import { daysUntil, formatCreditDate, formatCreditDateTime } from "../codex-account-pool-utils";
@@ -114,9 +115,9 @@ const BLOCKER_KEYS = {
   not_limited: "anthropicGrant.requiresLimit",
 } as const satisfies Record<AnthropicGrantBlocker, TKey>;
 
-/** An ISO time only when it parses; anything else is shown as absent rather than "Invalid Date". */
+/** An ISO-8601 or HTTP-date time only when it parses strictly; anything else is shown as absent rather than "Invalid Date". */
 function validTime(iso: string | null): string | null {
-  return iso !== null && !Number.isNaN(Date.parse(iso)) ? iso : null;
+  return iso !== null && Number.isFinite(parseStrictTimestampMs(iso)) ? iso : null;
 }
 
 function grantName(grant: AnthropicResetGrant): string {

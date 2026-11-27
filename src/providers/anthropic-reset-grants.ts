@@ -15,6 +15,7 @@
  * and no upstream body, token, or organization id leaves through an error message.
  */
 import { CLAUDE_CLI_USER_AGENT } from "./claude-cli-identity";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 
 export const ANTHROPIC_API_ORIGIN = "https://api.anthropic.com";
 export const ANTHROPIC_RESET_GRANT_PROGRAM = "cedar_ember";
@@ -93,10 +94,10 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-/** Optional ISO timestamp: absent/null → null, anything unparsable rejects the block. */
+/** Optional ISO-8601 or RFC 9110 HTTP-date timestamp: absent/null → null, anything unparsable rejects the block. */
 function optionalTimestamp(value: unknown): string | null | undefined {
   if (value === undefined || value === null) return null;
-  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) return undefined;
+  if (typeof value !== "string" || !Number.isFinite(parseStrictTimestampMs(value))) return undefined;
   return value;
 }
 

@@ -14,6 +14,7 @@ import type { AnthropicInstanceId } from "../../../src/providers/anthropic-insta
  * `unknown` so the dialog keeps the operation id and can only retry that same id.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { parseStrictTimestampMs } from "../../../src/lib/strict-timestamp";
 import { createBoundedFetch } from "../bounded-fetch";
 
 export type AnthropicResetWindow = "five_hour" | "seven_day" | "seven_day_overage_included";
@@ -150,9 +151,9 @@ export function grantSelectable(snapshot: AnthropicResetGrantSnapshot, grant: An
 
 function expiryRank(grant: AnthropicResetGrant): number {
   if (!grant.endsAt) return Number.POSITIVE_INFINITY;
-  const parsed = Date.parse(grant.endsAt);
+  const parsed = parseStrictTimestampMs(grant.endsAt);
   // An unparsable end date sorts last so it can never pose as the nearest expiry.
-  return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
 }
 
 /**

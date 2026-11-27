@@ -150,6 +150,40 @@ describe("GET /api/anthropic/reset-grants", () => {
     expect((await call("GET", "/api/anthropic/reset-grants", deps(up))).status).toBe(502);
   });
 
+  test("rejects JSC Date.parse heuristics and calendar overflows fail-closed on read and preserves compatible formats", async () => {
+    const up = upstream();
+    for (const bad of ["bad-1", "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z", ""]) {
+      up.status = () => Response.json({ cedar_ember: grantBlock({ grants: [{ ...grantBlock().grants[0], ends_at: bad }] }) });
+      expect(await call("GET", "/api/anthropic/reset-grants", deps(up))).toMatchObject({
+        status: 502,
+        json: { error: { code: "upstream_unavailable" } },
+      });
+      up.status = () => Response.json({ cedar_ember: grantBlock({ weekly_resets_at: bad }) });
+      expect(await call("GET", "/api/anthropic/reset-grants", deps(up))).toMatchObject({
+        status: 502,
+        json: { error: { code: "upstream_unavailable" } },
+      });
+    }
+
+    up.status = () => Response.json({
+      cedar_ember: grantBlock({
+        weekly_resets_at: "Wed, 21 Oct 2026 07:28:00 GMT",
+        cooldown_until: "2024-02-29T12:00:00.250+09:00",
+        grants: [{
+          ...grantBlock().grants[0],
+          starts_at: "2026-09-22T16:00:00.500-05:00",
+          ends_at: "Thu, 22 Oct 2026 16:00:00 GMT",
+        }],
+      }),
+    });
+    const ok = await call("GET", "/api/anthropic/reset-grants", deps(up));
+    expect(ok.status).toBe(200);
+    expect(ok.json.grants[0]).toMatchObject({
+      startsAt: "2026-09-22T16:00:00.500-05:00",
+      endsAt: "Thu, 22 Oct 2026 16:00:00 GMT",
+    });
+  });
+
   test("other methods are refused", async () => {
     expect((await call("DELETE", "/api/anthropic/reset-grants", deps(upstream()))).status).toBe(405);
     expect((await call("GET", "/api/anthropic/reset-grants/consume", deps(upstream()))).status).toBe(405);
@@ -182,6 +216,27 @@ describe("POST /api/anthropic/reset-grants/consume", () => {
     expect(await consume(deps(up))).toMatchObject({ status: 409, json: { error: { code: "grant_not_usable", reason: "not_limited" } } });
     up.status = () => Response.json({ cedar_ember: grantBlock({ eligible: false }) });
     expect((await consume(deps(up))).json.error.reason).toBe("ineligible");
+    expect(up.claims).toEqual([]);
+  });
+
+  test("consume fails closed without claiming when the pre-claim status read returns bad-1 or calendar overflow timestamps", async () => {
+    const up = upstream();
+    for (const bad of ["bad-1", "2026-02-30T00:00:00Z"]) {
+      up.status = () => Response.json({
+        cedar_ember: grantBlock({ grants: [{ ...grantBlock().grants[0], ends_at: bad }] }),
+      });
+      expect(await consume(deps(up))).toMatchObject({
+        status: 502,
+        json: { error: { code: "upstream_unavailable" } },
+      });
+      up.status = () => Response.json({
+        cedar_ember: grantBlock({ cooldown_until: bad }),
+      });
+      expect(await consume(deps(up))).toMatchObject({
+        status: 502,
+        json: { error: { code: "upstream_unavailable" } },
+      });
+    }
     expect(up.claims).toEqual([]);
   });
 

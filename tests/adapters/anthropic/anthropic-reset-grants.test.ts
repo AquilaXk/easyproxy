@@ -104,6 +104,31 @@ describe("reset-grant status parsing", () => {
     expect(parseAnthropicResetGrantStatus(block({ grants: [grant(), grant()] }))).toBeNull();
   });
 
+  test("rejects JSC Date.parse heuristics and calendar overflows fail-closed while preserving ISO offset/fractional and HTTP-date compatibility", () => {
+    for (const bad of ["bad-1", "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z", "", "   ", "2026-09-22T25:00:00Z"]) {
+      expect(parseAnthropicResetGrantStatus(block({ grants: [grant({ starts_at: bad })] }))).toBeNull();
+      expect(parseAnthropicResetGrantStatus(block({ grants: [grant({ ends_at: bad })] }))).toBeNull();
+      expect(parseAnthropicResetGrantStatus(block({ weekly_resets_at: bad }))).toBeNull();
+      expect(parseAnthropicResetGrantStatus(block({ cooldown_until: bad }))).toBeNull();
+    }
+
+    const compatible = parseAnthropicResetGrantStatus(block({
+      weekly_resets_at: "Wed, 21 Oct 2026 07:28:00 GMT",
+      cooldown_until: "2024-02-29T23:59:59.999+00:00",
+      grants: [grant({
+        starts_at: "2026-09-22T16:00:00.123456+09:00",
+        ends_at: "Thu, 22 Oct 2026 16:00:00 GMT",
+      })],
+    }));
+    expect(compatible).not.toBeNull();
+    expect(compatible?.weeklyResetsAt).toBe("Wed, 21 Oct 2026 07:28:00 GMT");
+    expect(compatible?.cooldownUntil).toBe("2024-02-29T23:59:59.999+00:00");
+    expect(compatible?.grants[0]).toMatchObject({
+      startsAt: "2026-09-22T16:00:00.123456+09:00",
+      endsAt: "Thu, 22 Oct 2026 16:00:00 GMT",
+    });
+  });
+
   test("labels lose control characters and unknown reasons collapse to unknown", () => {
     const status = parseAnthropicResetGrantStatus(block({
       ineligible_reason: "brand_new_reason",

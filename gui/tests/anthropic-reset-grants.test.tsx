@@ -326,9 +326,37 @@ function pickerFetch(posts: Array<Record<string, unknown>>, options: {
 test("the default grant is the usable one that expires first, not upstream order", () => {
   const snapshot = { ...PICKER, pendingOperation: null } as unknown as AnthropicResetGrantSnapshot;
   expect(spendableGrant(snapshot)?.id).toBe("soon");
-  // A malformed or missing end date never sorts ahead of a real one.
-  const odd = { ...snapshot, grants: [grant("bad", { endsAt: "not-a-date" }), grant("none", { endsAt: null }), grant("real")] } as unknown as AnthropicResetGrantSnapshot;
+  // A malformed or missing end date (including JSC Date.parse quirks) never sorts ahead of a real one.
+  const odd = {
+    ...snapshot,
+    grants: [
+      grant("bad", { endsAt: "not-a-date" }),
+      grant("jsc-bad-1", { endsAt: "bad-1" }),
+      grant("feb-30", { endsAt: "2026-02-30T00:00:00Z" }),
+      grant("feb-29", { endsAt: "2026-02-29T00:00:00Z" }),
+      grant("none", { endsAt: null }),
+      grant("real"),
+    ],
+  } as unknown as AnthropicResetGrantSnapshot;
   expect(spendableGrant(odd)?.id).toBe("real");
+  // Offset + fractional ISO and RFC 9110 HTTP-date remain compatible and participate in FEFO ordering.
+  const mixedFormats = {
+    ...snapshot,
+    grants: [
+      grant("http-late", { endsAt: "Tue, 01 Dec 2099 00:00:00 GMT" }),
+      grant("offset-earliest", { endsAt: "2099-11-01T00:30:00.500+02:00" }), // 2099-10-31T22:30:00.500Z
+      grant("http-mid", { endsAt: "Sun, 01 Nov 2099 00:00:00 GMT" }),
+    ],
+  } as unknown as AnthropicResetGrantSnapshot;
+  expect(spendableGrant(mixedFormats)?.id).toBe("offset-earliest");
+  const httpFirst = {
+    ...snapshot,
+    grants: [
+      grant("iso-later", { endsAt: "2099-12-01T00:00:00+00:00" }),
+      grant("http-sooner", { endsAt: "Sun, 01 Nov 2099 00:00:00 GMT" }),
+    ],
+  } as unknown as AnthropicResetGrantSnapshot;
+  expect(spendableGrant(httpFirst)?.id).toBe("http-sooner");
   expect(spendableGrant({ ...snapshot, journalAvailable: false })).toBeUndefined();
 });
 
@@ -515,6 +543,54 @@ test("a grant with an unparseable end date and no reported windows confirms with
   expect(container.textContent).toContain("The limits this reset clears were not reported.");
   await click(container, "[data-anthropic-grant-confirm]");
   expect(posts[0]).toMatchObject({ grantId: "odd" });
+  await act(async () => { root.unmount(); });
+});
+
+test("rejects bad-1 and calendar overflow timestamps in modal display and FEFO default selection while accepting offset ISO and HTTP-date", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  globalThis.fetch = pickerFetch(posts, {
+    read: () => ({
+      ...PICKER,
+      grants: [
+        grant("quirk-bad-1", { startsAt: "bad-1", endsAt: "2026-02-30T00:00:00Z", clears: [] }),
+        grant("quirk-feb-30", { startsAt: "2026-02-30T00:00:00Z", endsAt: "bad-1", clears: [] }),
+        grant("valid-later", { startsAt: "2026-09-22T16:00:00.250+00:00", endsAt: "Sun, 01 Nov 2099 00:00:00 GMT", clears: ["five_hour"] }),
+      ],
+    }),
+  });
+  const { container, root } = await mount();
+  await click(container, "[data-anthropic-grant-badge]");
+
+  // valid-later must be chosen over bad-1 / 2026-02-30T00:00:00Z.
+  expect(checkedId(container)).toBe("valid-later");
+  const listText = container.textContent ?? "";
+  expect(listText).not.toContain("2001");
+  expect(listText).not.toContain("Mar 2, 2026");
+  expect(listText).not.toContain("Invalid Date");
+  expect(listText).not.toContain("NaN");
+  // valid-later's offset ISO startsAt and HTTP-date endsAt both render cleanly.
+  expect(listText).toContain("Valid from");
+  expect(listText).toContain("Expires");
+  expect(listText).toContain("2099");
+
+  // Even when a user manually picks a grant with quirk dates, confirm view must omit unparseable expiry rather than showing 2001/Mar 2, 2026.
+  await act(async () => { radio(container, "quirk-bad-1").click(); });
+  await click(container, "[data-anthropic-grant-use]");
+  const confirmQuirk = container.textContent ?? "";
+  expect(confirmQuirk).not.toContain("Expires");
+  expect(confirmQuirk).not.toContain("2001");
+  expect(confirmQuirk).not.toContain("Mar 2, 2026");
+  expect(confirmQuirk).not.toContain("Invalid Date");
+  await click(container, "button.btn-ghost");
+
+  // Re-select default valid grant and confirm spend.
+  await act(async () => { radio(container, "valid-later").click(); });
+  await click(container, "[data-anthropic-grant-use]");
+  expect(container.textContent).toContain("Expires");
+  expect(container.textContent).toContain("2099");
+  await click(container, "[data-anthropic-grant-confirm]");
+  expect(posts).toHaveLength(1);
+  expect(posts[0]).toMatchObject({ grantId: "valid-later" });
   await act(async () => { root.unmount(); });
 });
 
