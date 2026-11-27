@@ -1,7 +1,15 @@
 // Oh My Pi config export.
 import type { PiModelEntry, ExportModel, ExportContext, ManagedContribution } from "./contracts";
-import { PI_API_DIALECT, OPENCODE_PROVIDER_ID, LOOPBACK_API_KEY_PLACEHOLDER } from "./constants";
-import { normalizeExportModels, inputModalitiesForClient, exportModelLabel, authoritativeContextWindow, outputBudgetFor, singleFragment } from "./model-metadata";
+import { PI_API_DIALECT, OPENCODE_PROVIDER_ID, LOOPBACK_API_KEY_PLACEHOLDER, OMP_API_KEY_ENV } from "./constants";
+import {
+  normalizeExportModels,
+  inputModalitiesForClient,
+  exportModelLabel,
+  authoritativeContextWindow,
+  outputBudgetFor,
+  proxyAdmissionHeaders,
+  singleFragment,
+} from "./model-metadata";
 
 
 /**
@@ -11,6 +19,10 @@ import { normalizeExportModels, inputModalitiesForClient, exportModelLabel, auth
  */
 export interface OmpModelEntry extends PiModelEntry {
   api?: "openai-responses";
+  compat?: {
+    supportsDeveloperRole?: boolean;
+    supportsConfigurationUpdate?: boolean;
+  };
   /** omp requires this flag before it honors a thinking block. */
   reasoning?: true;
   thinking?: {
@@ -20,10 +32,16 @@ export interface OmpModelEntry extends PiModelEntry {
   };
 }
 
+export interface OmpProviderCompat {
+  supportsDeveloperRole: false;
+}
+
 export interface OmpProviderBlock {
   baseUrl: string;
   api: typeof PI_API_DIALECT;
   apiKey: string;
+  headers?: Record<string, string>;
+  compat?: OmpProviderCompat;
   models: OmpModelEntry[];
 }
 
@@ -58,11 +76,17 @@ export function buildOmpClientConfig(ctx: ExportContext): OmpGeneratedConfig {
   for (const model of normalizeExportModels(ctx.models)) {
     const input = inputModalitiesForClient("pi", model.inputModalities);
     if (input === null) continue;
+    const nativeResponses = model.native && model.provider === "openai";
     const entry: OmpModelEntry = {
       id: model.namespaced,
       name: exportModelLabel(model),
       input,
-      ...(model.native && model.provider === "openai" ? { api: "openai-responses" } : {}),
+      ...(nativeResponses
+        ? {
+          api: "openai-responses",
+          compat: { supportsDeveloperRole: true, supportsConfigurationUpdate: true },
+        }
+        : {}),
     };
     const context = authoritativeContextWindow(model.contextWindow);
     if (context !== undefined) {
@@ -81,12 +105,14 @@ export function buildOmpClientConfig(ctx: ExportContext): OmpGeneratedConfig {
     }
     models.push(entry);
   }
+  const headers = proxyAdmissionHeaders(ctx.config, OMP_API_KEY_ENV);
   return {
     providers: {
       [OPENCODE_PROVIDER_ID]: {
         baseUrl: ctx.baseUrl,
         api: PI_API_DIALECT,
         apiKey: LOOPBACK_API_KEY_PLACEHOLDER,
+        ...(headers ? { headers, compat: { supportsDeveloperRole: false } } : {}),
         models,
       },
     },

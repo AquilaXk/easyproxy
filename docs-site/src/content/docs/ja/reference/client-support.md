@@ -27,8 +27,8 @@ easyproxy は、AI コーディングツールとモデルをつなぐ 1 つの�
 | WorkBuddy | — | JSON | はい | Chat Completions | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/clients/agent-clients.test.ts)) | — | ローカルリスナーのみ。適用前にクライアント固有のチェックを実行し、拒否することがあります。 |
 | WorkBuddy AI | — | JSON | はい | Chat Completions | implemented | — | ローカルリスナーのみ。適用前にクライアント固有のチェックを実行し、拒否することがあります。 |
 | OpenCode | — | JSON | はい | Responses; Chat Completions | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | リモートリスナーにも対応します（API キーヘッダーを追加）。 [ガイド](/ja/guides/opencode/) |
-| Pi | — | JSON | はい | Chat Completions | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | ローカルリスナーのみ。 [ガイド](/ja/guides/pi/) |
-| Oh My Pi (omp) | — | YAML | はい | Chat Completions; Responses (ネイティブ OpenAI モデルのみ) | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | ローカルリスナーのみ。自分の YAML ブロックだけを編集します。 |
+| Pi | — | JSON | はい | Chat Completions | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | リモートリスナーにも対応します（API キーヘッダーを追加）。 [ガイド](/ja/guides/pi/) |
+| Oh My Pi (omp) | — | YAML | はい | Chat Completions; Responses (ネイティブ OpenAI モデルのみ) | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | リモートリスナーにも対応します（API キーヘッダーを追加）。自分の YAML ブロックだけを編集します。 |
 | Hermes | — | YAML | はい | Chat Completions | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/clients/hermes-catalog-refresh.test.ts)) | — | リモートリスナーにも対応します（API キーヘッダーを追加）。自分の YAML ブロックだけを編集します。 |
 | OpenClaw | — | JSON5 | はい | Chat Completions | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/gui/integrations-invariants.test.ts)) | — | リモートリスナーにも対応します（API キーヘッダーを追加）。 |
 | Kimi CLI | — | TOML | はい | OpenAI 互換（エンドポイントはクライアントが選択） | test-covered ([テスト](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export-new-clients.test.ts)) | — | ローカルリスナーのみ。 |

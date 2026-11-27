@@ -35,6 +35,7 @@ import { CLAUDE_CLI_SDK_PACKAGE_VERSION, CLAUDE_CLI_USER_AGENT } from "../provid
 import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { injectOtlpTraceparent } from "../lib/trace-context";
 import { parseEpxCacheControl, resolvePreservedAnthropicCacheControl, type EpxCacheControl } from "../protocols/cache-control";
+import { rectifyAnthropicThinkingBudgetPreRequest } from "./anthropic/thinking-rectifier";
 import { decodeServerSentEvents } from "../lib/sse-decoder";
 import { isLikelyRealAnthropicThinkingSignature } from "../responses/reasoning-envelope";
 import { isTranslatorBudgetExceededError, retainTranslatedEventBatch, type TranslatorBudget } from "../lib/translator-budget";
@@ -47,6 +48,8 @@ import { applyAgentRouterLanguageFraming, isAgentRouterEndpoint } from "./agentr
 import { anthropicCacheWrite1hTokens, resolveAnthropicCacheRetention, type AnthropicCacheRetention } from "./anthropic/cache-retention";
 import { advisorServerExchange, advisorServerToolDestination, hostedAdvisorCredentials, planAnthropicServerTools } from "./anthropic/advisor-tool";
 import { applyAnthropicPerMessageEffort } from "./anthropic/per-message-effort";
+import { ANTHROPIC_SLOW_USAGE_LIMIT, ANTHROPIC_USAGE_LIMIT_HEADER, normalizeInboundAnthropicUsageLimit } from "./anthropic/slow-mode";
+import { credentialDomainFor } from "../protocols/opaque-state";
 import { claudeFamilyVersion, rejectsCombinedSampling, rejectsForcedToolChoice, rejectsSamplingParameters, supportsExplicitThinkingDisable, usesAdaptiveThinking, usesBetweenToolsFloor } from "./anthropic-model-contract";
 
 /** Map a user content part to an Anthropic content block (text or image source). */
@@ -1359,6 +1362,18 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
       // One discriminator governs the display beta and response classification, including reuse.
       progressUpdates = (body.thinking as { display?: string } | undefined)?.display === "updates";
 
+      if (provider.thinkingBudgetRectifier === true) {
+        const rectifiedBudget = rectifyAnthropicThinkingBudgetPreRequest(body, {
+          modelMaxOutputTokens: configuredMaxOut,
+        });
+        if (rectifiedBudget.applied) {
+          body.thinking = rectifiedBudget.body.thinking;
+          if (rectifiedBudget.body.max_tokens !== undefined) {
+            body.max_tokens = rectifiedBudget.body.max_tokens;
+          }
+        }
+      }
+
       if (rejectsSamplingParameters(parsed.modelId)) {
         // Opus 4.7+, Sonnet 5+, Haiku 5.5+ and Fable 400 on non-default sampling, with or without
         // thinking (anthropic-model-contract.ts).
@@ -1440,6 +1455,11 @@ export function createAnthropicAdapter(provider: EpxProviderConfig, cacheRetenti
           : { header: "x-api-key" as const, value: headers["x-api-key"]! }
         : undefined;
       if (provider.headers) Object.assign(headers, provider.headers);
+      if (isOAuth && credentialDomainFor(provider)?.firstPartyAnthropic === true) {
+        const slowRequested = provider._anthropicSlowMode === true
+          || normalizeInboundAnthropicUsageLimit(incoming?.headers?.get(ANTHROPIC_USAGE_LIMIT_HEADER)) === ANTHROPIC_SLOW_USAGE_LIMIT;
+        if (slowRequested) headers[ANTHROPIC_USAGE_LIMIT_HEADER] = ANTHROPIC_SLOW_USAGE_LIMIT;
+      }
       injectOtlpTraceparent(headers, incoming?.otlpTraceparent);
       mergeAnthropicBetaHeader(headers, [...(fastSpeed?.betas ?? []), ...(progressUpdates ? ["thinking-display-updates-2026-08-18"] : []), ...serverToolPlan.betas]);
 

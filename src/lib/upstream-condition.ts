@@ -9,6 +9,7 @@
  */
 
 import { isDefiniteContextOverflow } from "./context-overflow-verdict";
+import { isCreditOrBudgetExhaustedRefusal, isSpendingCapacityThrottleText, MULTI_PROVIDER_BILLING_CODES } from "./credit-budget-refusal";
 
 export const UPSTREAM_CONDITIONS = [
   "auth_failed",
@@ -67,7 +68,7 @@ const STRUCTURED: ReadonlyArray<readonly [UpstreamCondition, ReadonlySet<string>
   ["context_overflow", new Set(["context_length_exceeded", "string_above_max_length", "context_window_exceeded", "prompt_too_long"])],
   ["location_unsupported", new Set(["location_not_supported", "unsupported_country_region_territory", "unsupported_country", "user_location_is_not_supported"])],
   ["account_verification_required", new Set(["validation_required", "verification_required", "organization_verification_required"])],
-  ["billing_exhausted", new Set(["insufficient_quota", "billing_hard_limit_reached", "usage_limit_reached", "usage_limit_exceeded", "1308", "monthly_request_count", "overage_request_limit_exceeded", "payment_required", "insufficient_balance", "credit_balance_too_low"])],
+  ["billing_exhausted", new Set(["insufficient_quota", "billing_hard_limit_reached", "usage_limit_reached", "usage_limit_exceeded", "1308", "monthly_request_count", "overage_request_limit_exceeded", "payment_required", "insufficient_balance", "credit_balance_too_low", ...MULTI_PROVIDER_BILLING_CODES])],
   ["model_unavailable", new Set(["model_not_found", "unsupported_model", "model_not_available", "model_not_supported", "deployment_not_found"])],
   ["rate_limited", new Set(["rate_limit_exceeded", "rate_limit_error", "too_many_requests", "throttling", "throttled", "rate_limited"])],
   ["upstream_unavailable", new Set(["server_is_overloaded", "overloaded_error", "service_unavailable", "unavailable", ...FLEX_UNAVAILABLE_CODES])],
@@ -79,7 +80,7 @@ const STRUCTURED: ReadonlyArray<readonly [UpstreamCondition, ReadonlySet<string>
 const KEYWORDS: Readonly<Record<"location_unsupported" | "account_verification_required" | "billing_exhausted" | "model_unavailable" | "rate_limited", readonly string[]>> = {
   location_unsupported: ["location is not supported", "unsupported location", "not supported in your region", "region is not supported", "country, region, or territory", "not available in your country", "not available in your region"],
   account_verification_required: ["verify your organization", "organization must be verified", "verification required", "verify your account", "account verification"],
-  billing_exhausted: ["insufficient quota", "quota exceeded", "quota exhausted", "exceeded your current quota", "run out of credits", "out of credits", "insufficient credits", "credit balance", "insufficient balance", "billing", "payment required"],
+  billing_exhausted: ["insufficient quota", "quota exceeded", "quota exhausted", "exceeded your current quota", "run out of credits", "out of credits", "insufficient credits", "credit balance", "insufficient balance", "billing", "payment required", "spending cap", "spend cap", "budget exceeded", "budget has been exceeded", "prepaid balance", "usage credits"],
   model_unavailable: ["model not found", "model does not exist", "unsupported model", "not allowed to use this model", "does not have access to model", "model is not available", "no such model"],
   rate_limited: ["rate limit", "too many requests", "throttl"],
 };
@@ -223,6 +224,10 @@ export function classifyUpstreamCondition(evidence: UpstreamConditionEvidence): 
     if (isDefiniteContextOverflow(status, evidence.message!.slice(0, MAX_MESSAGE_SCAN))) return "context_overflow";
     if (mentions(message, "location_unsupported")) return "location_unsupported";
     if (isClaudeVerificationNotice(evidence) || mentions(message, "account_verification_required")) return "account_verification_required";
+    if (isSpendingCapacityThrottleText(evidence.message)) return "rate_limited";
+    if (isCreditOrBudgetExhaustedRefusal({
+      status, code: evidence.code, rootCode: evidence.rootCode, type: evidence.type, message: evidence.message,
+    })) return "billing_exhausted";
     // A 429 that names a rate limit is a rate limit even when it also mentions quota.
     if (status === 429 && mentions(message, "rate_limited")) return "rate_limited";
     if (mentions(message, "billing_exhausted")) return "billing_exhausted";

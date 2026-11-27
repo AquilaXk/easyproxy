@@ -27,8 +27,8 @@ easyproxy 是一个本地网关，连接你的 AI 编程工具与模型。部分
 | WorkBuddy | — | JSON | 是 | Chat Completions | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/clients/agent-clients.test.ts)) | — | 仅限本地监听。应用前先运行针对该客户端的检查，可能拒绝。 |
 | WorkBuddy AI | — | JSON | 是 | Chat Completions | implemented | — | 仅限本地监听。应用前先运行针对该客户端的检查，可能拒绝。 |
 | OpenCode | — | JSON | 是 | Responses; Chat Completions | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | 导出的配置也支持远程监听（会添加 API 密钥请求头）。 [指南](/zh-cn/guides/opencode/) |
-| Pi | — | JSON | 是 | Chat Completions | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | 仅限本地监听。 [指南](/zh-cn/guides/pi/) |
-| Oh My Pi (omp) | — | YAML | 是 | Chat Completions; Responses (仅原生 OpenAI 模型) | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | 仅限本地监听。只修改自己的 YAML 区块。 |
+| Pi | — | JSON | 是 | Chat Completions | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | 导出的配置也支持远程监听（会添加 API 密钥请求头）。 [指南](/zh-cn/guides/pi/) |
+| Oh My Pi (omp) | — | YAML | 是 | Chat Completions; Responses (仅原生 OpenAI 模型) | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export.test.ts)) | — | 导出的配置也支持远程监听（会添加 API 密钥请求头）。只修改自己的 YAML 区块。 |
 | Hermes | — | YAML | 是 | Chat Completions | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/clients/hermes-catalog-refresh.test.ts)) | — | 导出的配置也支持远程监听（会添加 API 密钥请求头）。只修改自己的 YAML 区块。 |
 | OpenClaw | — | JSON5 | 是 | Chat Completions | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/gui/integrations-invariants.test.ts)) | — | 导出的配置也支持远程监听（会添加 API 密钥请求头）。 |
 | Kimi CLI | — | TOML | 是 | OpenAI 兼容（端点由客户端选择） | test-covered ([测试](https://github.com/AquilaXk/easyproxy/blob/main/tests/config/client-config-export-new-clients.test.ts)) | — | 仅限本地监听。 |

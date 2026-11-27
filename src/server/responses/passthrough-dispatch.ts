@@ -4,7 +4,12 @@ import { providerAffinityGenerationIsCurrent } from "../../providers/api-key-sel
 import { markProxyError } from "../../lib/client-error-body";
 import { CodexInstallationIdUnavailableError } from "../../codex/installation-id";
 import { passthroughBuildErrorResponse } from "./passthrough-build-error";
-import { recoverAutoPausedAccount, rotatePassthroughKeyOn429 } from "./passthrough-key-rotation";
+import {
+  recoverAutoPausedAccount,
+  rotatePassthroughKeyOn429,
+  shouldAttemptPassthroughGenericFailover,
+  pickPassthroughGenericFailoverAccount,
+} from "./passthrough-key-rotation";
 import { createAutoPauseRefreshErrorMapper } from "./account-auto-pause-recovery";
 import { physicalSendAccounting } from "./deferred-send-reporter";
 import { adoptCodexWsStage, capturePassthroughAffinity } from "./passthrough-observations";
@@ -1462,37 +1467,38 @@ export async function preparePassthroughExchange(
 
     // Native Responses returns before the generic adapter's OAuth rotation loop. Keep
     // the same quorum, cooldown and request budget here, before any client bytes flow.
-   if (
-     upstreamResponse.status === 429
-      // Not a provider rate limit when this proxy synthesized it for a refused reset
-      // replay; rotating accounts on it would re-send an inference that may already
-      // have run and would cool down an account that refused nothing.
+    if (
+      await shouldAttemptPassthroughGenericFailover(upstreamResponse, options.abortSignal)
       && !isNonReplayableResponse(upstreamResponse)
-     && transportState.genericFailoverAccountId
+      && transportState.genericFailoverAccountId
       && transportState.genericFailovers < transportState.genericFailoverLimit
       && isGenericOAuthFailoverEnabled(config, route.providerName)
     ) {
-      // The roster cap above is one half of the bound; the request's shared budget is the
-      // other. A refused hop leaves the real 429 -- body, Retry-After and any quota evidence
-      // -- exactly as upstream sent it.
-      const hop = reserveCredentialHop(
-        "auth-recovery",
-        `${route.providerName}|${route.modelId}|oauth-account-429`,
-        true,
-      );
+      const recoveryKind = upstreamResponse.status === 429 ? "oauth-account-429" : "oauth-account-403";
+      const hop = reserveCredentialHop("auth-recovery", `${route.providerName}|${route.modelId}|${recoveryKind}`, true);
       if (hop.allowed) {
         let transferred = false;
         try {
-          const nextAccountId = rotateGenericOAuthAccountOn429(
-            config, route.providerName, transportState.genericFailoverAccountId,
-            upstreamResponse.headers.get("retry-after"),
-            Date.now(),
-            route.modelId,
-          );
+          const nextAccountId = upstreamResponse.status === 429
+            ? rotateGenericOAuthAccountOn429(
+              config,
+              route.providerName,
+              transportState.genericFailoverAccountId,
+              upstreamResponse.headers.get("retry-after"),
+              Date.now(),
+              route.modelId,
+            )
+            : pickPassthroughGenericFailoverAccount(
+              config,
+              route.providerName,
+              transportState.genericFailoverAccountId,
+              upstreamResponse,
+              route.modelId,
+            );
           let snapshot: OAuthAccessSnapshot | undefined;
           let commit: CredentialReplay | undefined;
           if (nextAccountId) {
-            commit = transportState.createCredentialReplayAttempt(upstreamResponse.status, "oauth-account-429");
+            commit = transportState.createCredentialReplayAttempt(upstreamResponse.status, recoveryKind);
             try { snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId); }
             catch { /* Keep the original 429 body readable when the next credential is unavailable. */ }
           }
@@ -1512,7 +1518,7 @@ export async function preparePassthroughExchange(
               transferred = true;
               return handoffToChat(rotatedAdapter, commit);
             }
-            const result = await rebuildAndRefetch("oauth-account-429", undefined, commit);
+            const result = await rebuildAndRefetch(recoveryKind, undefined, commit);
             sendBudgetState.pendingHopPermit = undefined;
             if ("failed" in result) return result.failed;
             upstreamResponse = result;

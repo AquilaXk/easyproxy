@@ -8,7 +8,7 @@ const CREDIT_BALANCE_REFUSAL = /^Your credit balance is too low to access the An
 // only, as above: a validation error that quotes it back must not grant a combo hop.
 const EXTRA_USAGE_REFUSAL = /^(?:You['\u2019]re out of extra usage|Third-party apps now draw from your extra usage, not your plan limits)\.(?: Add more at claude\.ai\/settings\/usage and keep going\.)?$/i;
 const BILLING_ERROR_TYPES = new Set(["invalid_request_error", "billing_error", "permission_error"]);
-const ACCOUNT_REFUSAL_CODES = new Set(["subscription_required", "insufficient_quota", "permission_denied"]);
+const ACCOUNT_REFUSAL_CODES = new Set(["subscription_required", "insufficient_quota", "permission_denied", "credits_required"]);
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -22,6 +22,7 @@ export function isAnthropicBillingRefusal(status: number, payload: unknown): boo
   if (typeof error.type !== "string" || !BILLING_ERROR_TYPES.has(error.type)
     || typeof error.message !== "string" || Buffer.byteLength(error.message, "utf8") > MAX_BILLING_REFUSAL_BYTES) return false;
   if (error.code != null && (typeof error.code !== "string" || !ACCOUNT_REFUSAL_CODES.has(error.code))) return false;
+  if (error.code === "credits_required") return true;
   return CREDIT_BALANCE_REFUSAL.test(error.message.trim());
 }
 

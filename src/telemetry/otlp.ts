@@ -312,7 +312,7 @@ export function startOtlpRequestSpan(
   context: {
     method: string;
     pathname: string;
-    protocol: "responses" | "chat" | "messages" | "embeddings";
+    protocol: "responses" | "chat" | "messages" | "embeddings" | "rerank" | "audio";
   },
 ): OtlpRequestSpanHandle | undefined {
   if (!isOtlpTracingEnabled(config)) return undefined;

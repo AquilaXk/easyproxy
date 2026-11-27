@@ -495,6 +495,8 @@ export const providerConfigSchema = z.object({
   rawReasoningAsSummary: z.boolean().optional(),
   forwardAdvisorTool: z.boolean().optional(),
   perMessageEffort: z.boolean().optional(),
+  gatewayToolSearch: z.boolean().optional(),
+  thinkingBudgetRectifier: z.boolean().optional(),
   promptCacheKeyLaneSharding: z.boolean().optional(),
   // Invalid blocks degrade to "absent" rather than failing the whole config load: an unusable
   // bridge block must never send an operator through invalid-config recovery for an opt-in

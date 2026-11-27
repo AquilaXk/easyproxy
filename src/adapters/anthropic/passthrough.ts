@@ -33,7 +33,10 @@ import { shouldPreserveNativeClientPreamble } from "./native-client-preamble";
 import { allowlistAnthropicBetas } from "./beta-allowlist";
 import { pairAnthropicBetaBody } from "./beta-body-pairs";
 import { applyAnthropicNativeCacheTtlDefault, resolveAnthropicCacheRetention } from "./cache-retention";
+import { rejectsOneHourCacheTtl } from "../../lib/prompt-cache-injection";
 import { injectOtlpTraceparent } from "../../lib/trace-context";
+import { ANTHROPIC_SLOW_USAGE_LIMIT, ANTHROPIC_USAGE_LIMIT_HEADER, normalizeInboundAnthropicUsageLimit } from "./slow-mode";
+import { rectifyAnthropicThinkingBudgetPreRequest } from "./thinking-rectifier";
 export { contextManagementForWire } from "./beta-body-pairs";
 
 /**
@@ -96,6 +99,12 @@ export interface AnthropicMessagesPassthroughOptions {
   sessionKey?: string | null;
   /** Optional W3C traceparent header propagated when OTLP tracing is active. */
   otlpTraceparent?: string;
+  /** Optional caller `anthropic-usage-limit` header (forwarded as `slow` on first-party OAuth only). */
+  callerAnthropicUsageLimit?: string | null;
+  /** Pool slow-fallback selected this dispatch after 5h exhaustion. */
+  slowMode?: boolean;
+  /** Override pre-request thinking budget rectification (`false` disables, `true` also lifts `max_tokens <= budget_tokens`). */
+  rectifyThinkingBudget?: boolean;
 }
 
 /** The allowlisted copy of `body` with `model` set to the wire model. Shallow: nothing is cloned. */
@@ -265,13 +274,18 @@ export function anthropicOAuthWireBody(body: Rec, clientIdentity?: AnthropicClie
  * provider. `count_tokens` counts this; the builder below sends it.
  */
 export function anthropicMessagesNativeWireBody(
-  provider: Pick<EpxProviderConfig, "baseUrl" | "authMode">,
+  provider: Pick<EpxProviderConfig, "baseUrl" | "authMode" | "thinkingBudgetRectifier">,
   modelId: string,
   body: Readonly<Record<string, unknown>>,
-  options: Pick<AnthropicMessagesPassthroughOptions, "clientIdentity"> = {},
+  options: Pick<AnthropicMessagesPassthroughOptions, "clientIdentity" | "rectifyThinkingBudget"> = {},
 ): { wireBody: Rec; strippedOpaqueState: boolean; oauthToolNames?: Map<string, string> } {
   const allowlisted = anthropicMessagesPassthroughBody(body, modelId);
-  const opaque = opaqueStateForDestination(allowlisted, credentialDomainFor(provider));
+  const shouldPreRectify = options.rectifyThinkingBudget === true
+    || (options.rectifyThinkingBudget !== false && provider.thinkingBudgetRectifier === true);
+  const rectified = shouldPreRectify
+    ? rectifyAnthropicThinkingBudgetPreRequest(allowlisted)
+    : { body: allowlisted, applied: false };
+  const opaque = opaqueStateForDestination(rectified.body, credentialDomainFor(provider));
   if (provider.authMode !== "oauth") return { wireBody: opaque.body, strippedOpaqueState: opaque.stripped };
   const oauth = anthropicOAuthWireBody(opaque.body, credentialDomainFor(provider)?.firstPartyAnthropic ? options.clientIdentity : undefined);
   return { wireBody: oauth.body, strippedOpaqueState: opaque.stripped, oauthToolNames: oauth.toolNames };
@@ -306,8 +320,14 @@ export function buildAnthropicMessagesPassthroughRequest(
   const url = resolveAnthropicMessagesUrl(provider);
   const native = anthropicMessagesNativeWireBody(provider, modelId, body, options);
   const { strippedOpaqueState, oauthToolNames } = native;
-  const ttlBody = applyAnthropicNativeCacheTtlDefault(
-    native.wireBody, resolveAnthropicCacheRetention(config?.cacheRetention, provider));
+  const cacheInjectionTtl = config?.promptCacheInjection?.ttl ?? "auto";
+  const resolvedRetention = config?.promptCacheInjection?.enabled === true
+    && cacheInjectionTtl === "1h"
+    && config.cacheRetention === undefined
+    && !rejectsOneHourCacheTtl(modelId)
+    ? "long"
+    : resolveAnthropicCacheRetention(config?.cacheRetention, provider);
+  const ttlBody = applyAnthropicNativeCacheTtlDefault(native.wireBody, resolvedRetention);
   const wireBody = oauth ? bindAnthropicAccountMetadata(ttlBody, options.providerAccountUuid) : ttlBody;
   const headers = anthropicBaseRequestHeaders(wireBody.stream === true);
   const resolvedSessionKey = options.sessionKey?.trim() || extractAnthropicCallerSessionId(body);
@@ -326,6 +346,11 @@ export function buildAnthropicMessagesPassthroughRequest(
     }
   }
   if (domain?.firstPartyAnthropic) applyAnthropicClientIdentity(headers, options.clientIdentity, provider.headers);
+  if (oauth && domain?.firstPartyAnthropic) {
+    const requestedSlow = options.slowMode === true
+      || normalizeInboundAnthropicUsageLimit(options.callerAnthropicUsageLimit) === ANTHROPIC_SLOW_USAGE_LIMIT;
+    if (requestedSlow) headers[ANTHROPIC_USAGE_LIMIT_HEADER] = ANTHROPIC_SLOW_USAGE_LIMIT;
+  }
   injectOtlpTraceparent(headers, options.otlpTraceparent);
   const betas = allowlistAnthropicBetas(options.callerAnthropicBeta, domain?.firstPartyAnthropic ? "first-party" : "compatible",
     { inlineTools: hasInlineToolChanges(wireBody), observedNativeClient: hasObservedAnthropicClientIdentity(options.clientIdentity) });

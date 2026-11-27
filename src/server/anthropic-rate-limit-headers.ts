@@ -1,6 +1,30 @@
 type Normalize = (value: string) => string | undefined;
 const MAX_EPOCH = 253402300799;
-const STATUS: ReadonlyMap<string, string> = new Map([["allowed", "allowed"], ["rejected", "rejected"]]);
+const STATUS: ReadonlyMap<string, string> = new Map([
+  ["allowed", "allowed"],
+  ["allowed_warning", "allowed_warning"],
+  ["rejected", "rejected"],
+]);
+const SLOW_OFFER: ReadonlyMap<string, string> = new Map([["treatment", "treatment"], ["control", "control"]]);
+const SLOW_STATUS: ReadonlyMap<string, string> = new Map([
+  ["active", "active"],
+  ["not_needed", "not_needed"],
+  ["slot_busy", "slot_busy"],
+  ["weekly_limit", "weekly_limit"],
+  ["budget_exhausted", "budget_exhausted"],
+  ["ineligible", "ineligible"],
+  ["off", "off"],
+]);
+const BOOLEAN_FLAG: ReadonlyMap<string, string> = new Map([["true", "true"], ["false", "false"]]);
+const REPRESENTATIVE_CLAIM: ReadonlyMap<string, string> = new Map([
+  ["five_hour", "five_hour"],
+  ["seven_day", "seven_day"],
+  ["seven_day_oauth_apps", "seven_day_oauth_apps"],
+  ["seven_day_opus", "seven_day_opus"],
+  ["seven_day_sonnet", "seven_day_sonnet"],
+  ["overage", "overage"],
+  ["slow", "slow"],
+]);
 const count: Normalize = value => {
   if (!/^[0-9]{1,16}$/.test(value)) return undefined;
   const n = Number(value);
@@ -20,6 +44,7 @@ function decimal(value: string, grammar: RegExp, max: bigint, digits: number): s
   return `${bounded / outputScale}${tail ? `.${tail}` : ""}`;
 }
 const epoch: Normalize = value => decimal(value, /^[0-9]{1,12}(\.[0-9]{1,6})?$/, BigInt(MAX_EPOCH), 3);
+const durationSeconds: Normalize = value => decimal(value, /^[0-9]{1,7}(\.[0-9]{1,6})?$/, 86_400n, 3);
 const utilization: Normalize = value => decimal(value, /^[0-9]{1,6}(\.[0-9]{1,12})?$/, 100n, 4);
 const date: Normalize = value => {
   const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.([0-9]{1,9}))?([Zz]|[+-]\d{2}:\d{2})$/.exec(value);
@@ -66,6 +91,17 @@ const EXACT: ReadonlyMap<string, Normalize> = new Map([
     [`anthropic-ratelimit-unified${window}-reset`, epoch],
     ...(window ? [[`anthropic-ratelimit-unified${window}-utilization`, utilization] as [string, Normalize]] : []),
   ] as [string, Normalize][]),
+  ["anthropic-ratelimit-unified-grace-5h-utilization", utilization],
+  ["anthropic-ratelimit-unified-grace-7d-utilization", utilization],
+  ["anthropic-ratelimit-unified-overage-status", value => STATUS.get(value)],
+  ["anthropic-ratelimit-unified-overage-in-use", value => BOOLEAN_FLAG.get(value)],
+  ["anthropic-ratelimit-unified-representative-claim", value => REPRESENTATIVE_CLAIM.get(value)],
+  ["anthropic-ratelimit-unified-slow-offer", value => SLOW_OFFER.get(value)],
+  ["anthropic-ratelimit-unified-slow-status", value => SLOW_STATUS.get(value)],
+  ["anthropic-ratelimit-unified-slow-retry-after", durationSeconds],
+  ["anthropic-ratelimit-unified-slow-max-wait", durationSeconds],
+  ["anthropic-ratelimit-unified-slow-budget-utilization", utilization],
+  ["anthropic-ratelimit-unified-slow-budget-reset", epoch],
 ]);
 export function anthropicRateLimitHeaders(upstream: Headers): Record<string, string> {
   const headers: Record<string, string> = {};

@@ -45,6 +45,12 @@ import {
   type AccountHealth,
   type AnthropicQuotaWindow,
 } from "./anthropic-cooldown-state";
+import {
+  anthropicSlowFallbackFor,
+  clearAllAnthropicSlowFallbackState,
+  isFiveHourOnlyQuotaHold,
+  recordAnthropicSlowSignalForInstance,
+} from "./anthropic-slow-fallback";
 import { subscribeAccountSelections, subscribeOAuthAccountPauseChanges, subscribeOAuthAccountRoutingPolicyChanges } from "../lib/account-selection-events";
 import { effectiveAnthropicAccountThresholdForInstance } from "./anthropic-account-threshold";
 
@@ -275,6 +281,7 @@ export type AnthropicAccountSelectionReason =
   | "round-robin"
   | "manual"
   | "fill-first"
+  | "slow-fallback"
   | "none"
   | "paused"
   | "all-cooled";
@@ -283,6 +290,7 @@ export interface AnthropicAccountSelection {
   accountId: string | null;
   reason: AnthropicAccountSelectionReason;
   routePosition?: number;
+  slowMode?: boolean;
 }
 
 export interface AnthropicSelectionRoutingOptions {
@@ -309,6 +317,9 @@ type RoutingFacadeSymbol =
   | "clearAnthropicAccountPoolState"
   | "anthropicSessionAffinitySizeForTests"
   | "getEligibleAnthropicAccounts"
+  | "getSlowFallbackEligibleAccounts"
+  | "pickSlowFallbackAccount"
+  | "isAnthropicAccountSelectionAdmissible"
   | "hasAnthropicFailoverQuorum"
   | "forgetAnthropicFailoverQuorum"
   | "getAnthropicPoolRetryAfterSeconds"
@@ -450,6 +461,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
 
   function clearAnthropicAccountCooldown(accountId: string): boolean {
     const cleared = upstreamHealth.delete(accountId);
+    anthropicSlowFallbackFor(instance).clearAccount(accountId);
     if (cleared) noteAnthropicCooldownMutation(accountId);
     return cleared;
   }
@@ -500,6 +512,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     clearAnthropicRatePauses();
     clearAnthropicFamilyQuota();
     clearAnthropicCooldownGenerations();
+    anthropicSlowFallbackFor(instance).clearAll();
     sessionAffinity.resetMemory();
     manualPreference = undefined;
     manualSelectionGeneration++;
@@ -600,6 +613,74 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
         && !isCooled(account.id, now) && !anthropicRatePauseUntil(account.id, now) && !anthropicFamilyRejected(account.id, model, now)
         && isPoolCredentialUsable(account.id, now))
       .map(account => account.id);
+  }
+
+  function getSlowFallbackEligibleAccounts(config: EpxConfig, now = Date.now(), model?: string): string[] {
+    if (!isAnthropicAccountPoolEnabled(config) || anthropicAccountPoolConfig(config).slowFallback !== true) {
+      return [];
+    }
+    const set = getAccountSet(PROVIDER);
+    if (!set) return [];
+    const slowState = anthropicSlowFallbackFor(instance);
+    return set.accounts
+      .filter(account => {
+        if (account.paused === true || account.needsReauth === true) return false;
+        if (!isPoolCredentialUsable(account.id, now)) return false;
+        if (anthropicRatePauseUntil(account.id, now) || anthropicFamilyRejected(account.id, model, now)) return false;
+        if (!slowState.isSlowEligible(account.id, now)) return false;
+        if ((weeklyKnown(account.id) && weeklyScore(account.id) >= 100) || (model && anthropicModelExhausted(account.id, model))) return false;
+        if (isCooled(account.id, now)) {
+          return isFiveHourOnlyQuotaHold(upstreamHealth.get(account.id), now);
+        }
+        return true;
+      })
+      .map(account => account.id);
+  }
+
+  function pickSlowFallbackAccount(
+    config: EpxConfig,
+    now: number,
+    decision: AnthropicRouteDecision | null,
+    model?: string,
+    excludeId?: string,
+    excludedAccountIds?: ReadonlySet<string>,
+  ): string | null {
+    const candidates = routeCandidates(getSlowFallbackEligibleAccounts(config, now, model), decision)
+      .filter(id => id !== excludeId && !excludedAccountIds?.has(id));
+    if (candidates.length === 0) return null;
+    const slowState = anthropicSlowFallbackFor(instance);
+    const activeId = getAccountSet(PROVIDER)?.activeAccountId;
+    return [...candidates].sort((a, b) => {
+      const offerA = slowState.getSlowOffer(a) === "treatment" ? 0 : 1;
+      const offerB = slowState.getSlowOffer(b) === "treatment" ? 0 : 1;
+      if (offerA !== offerB) return offerA - offerB;
+      const scoreDiff = weeklyScore(a) - weeklyScore(b);
+      if (scoreDiff !== 0) return scoreDiff;
+      if (a === activeId) return -1;
+      if (b === activeId) return 1;
+      return a.localeCompare(b);
+    })[0] ?? null;
+  }
+
+  function isRoutedAnthropicAccountAdmissible(
+    accountId: string,
+    config: EpxConfig,
+    now = Date.now(),
+    decision: AnthropicRouteDecision | null = null,
+    model?: string,
+  ): boolean {
+    if (routeCandidates(getEligibleAnthropicAccounts(now, model), decision).includes(accountId)) return true;
+    return routeCandidates(getSlowFallbackEligibleAccounts(config, now, model), decision).includes(accountId);
+  }
+
+  function isAnthropicAccountSelectionAdmissible(
+    accountId: string,
+    config: EpxConfig,
+    now = Date.now(),
+    model?: string,
+    decision: AnthropicRouteDecision | null = null,
+  ): boolean {
+    return isRoutedAnthropicAccountAdmissible(accountId, config, now, decision, model);
   }
 
   /**
@@ -965,6 +1046,10 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
 
     const eligible = routeCandidates(getEligibleAnthropicAccounts(now, model), decision);
     if (eligible.length === 0) {
+      const slowPick = pickSlowFallbackAccount(config, now, decision, model);
+      if (slowPick) {
+        return { accountId: slowPick, reason: "slow-fallback", slowMode: true, routePosition: decision?.position };
+      }
       // Pause, removal and reauthentication are not cooldown evidence. Classify only
       // usable members of this strict route (or the ordinary pool after fallback widens).
       const recoverable = set.accounts.filter(account =>
@@ -972,6 +1057,11 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
         && account.paused !== true && account.needsReauth !== true && isPoolCredentialUsable(account.id, now));
       const cooled = recoverable.length > 0 && recoverable.every(account => isCooled(account.id, now) || anthropicRatePauseUntil(account.id, now) || anthropicFamilyRejected(account.id, model, now));
       if (cooled || decision) return { accountId: null, reason: cooled ? "all-cooled" : "none", routePosition: decision?.position };
+    } else if (isAnthropicAccountPoolEnabled(config) && eligible.every(id => exhausted5h(id))) {
+      const slowPick = pickSlowFallbackAccount(config, now, decision, model);
+      if (slowPick) {
+        return { accountId: slowPick, reason: "slow-fallback", slowMode: true, routePosition: decision?.position };
+      }
     }
 
     if (!isAnthropicAccountPoolEnabled(config)) {
@@ -1070,6 +1160,10 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     }
 
     if (!accountId) {
+      const slowPick = pickSlowFallbackAccount(config, now, decision, model);
+      if (slowPick) {
+        return { accountId: slowPick, reason: "slow-fallback", slowMode: true, routePosition: decision?.position };
+      }
       const anyCooled = set.accounts.some(a => !a.paused && (!decision || decision.accounts.includes(a.id)) && isCooled(a.id, now));
       return { accountId: null, reason: anyCooled ? "all-cooled" : "none", routePosition: decision?.position };
     }
@@ -1089,7 +1183,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     if (selection.reason === "all-cooled") {
       throw anthropicPoolCooldownError(now, decision, model);
     }
-    if (selection.reason === "paused" || !selection.accountId || !getEligibleAnthropicAccounts(now, model).includes(selection.accountId)) {
+    if (selection.reason === "paused" || !selection.accountId || !isAnthropicAccountSelectionAdmissible(selection.accountId, config, now, model)) {
       const { OAuthAccountPausedError, OAuthLoginRequiredError } = await import("./index");
       const active = getAccountSet(PROVIDER)?.activeAccountId;
       // Pool-off fresh admission resolves the active credential first. Preserve that
@@ -1133,15 +1227,16 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     rateLimitHeaders?: AnthropicRateLimitHeaders | null,
     decision: AnthropicRouteDecision | null = null,
     model?: string,
+    sentSlow = false,
   ): string | null {
-    return rotateAnthropicAccountOnRefusal(config, failedAccountId, 429, retryAfterHeader, sessionKey, now, rateLimitHeaders, decision, model);
+    return rotateAnthropicAccountOnRefusal(config, failedAccountId, 429, retryAfterHeader, sessionKey, now, rateLimitHeaders, decision, model, undefined, sentSlow);
   }
 
-  /** The caller proves that a 403 is an account refusal before entering this pool policy. */
+  /** The caller proves that a 400/402/403 is an account refusal before entering this pool policy. */
   function rotateAnthropicAccountOnRefusal(
     config: EpxConfig,
     failedAccountId: string,
-    status: 429 | 403,
+    status: 429 | 403 | 402 | 400,
     retryAfterHeader: string | null | undefined,
     sessionKey?: string | null,
     now = Date.now(),
@@ -1149,23 +1244,25 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     decision: AnthropicRouteDecision | null = null,
     model?: string,
     excludedAccountIds?: ReadonlySet<string>,
+    sentSlow = false,
   ): string | null {
-    if (!recordAnthropicAccountRefusal(config, failedAccountId, status, retryAfterHeader, now, rateLimitHeaders)) return null;
+    if (!recordAnthropicAccountRefusal(config, failedAccountId, status, retryAfterHeader, now, rateLimitHeaders, sentSlow)) return null;
 
     // The pool's strategy is a PROACTIVE policy. When the pool is disabled, reactive
     // presence-only recovery must not silently reactivate round-robin/fill-first merely
     // because those dormant values remain in config. The quota picker is the neutral
     // recovery policy already used by the default strategy.
-    const next = isAnthropicAccountPoolEnabled(config)
+    const next = (isAnthropicAccountPoolEnabled(config)
       ? pickAlternateAnthropicAccount(config, failedAccountId, now, decision, model, excludedAccountIds)
-      : pickLowestUsage(config, failedAccountId, now, null, model, excludedAccountIds);
+      : pickLowestUsage(config, failedAccountId, now, null, model, excludedAccountIds))
+      ?? pickSlowFallbackAccount(config, now, decision, model, failedAccountId, excludedAccountIds);
     if (!next) {
       console.warn(`[${instance}-pool] ${decision ? `route:#${decision.position} ` : ""}no eligible replacement; returning ${status}`);
       return null;
     }
 
-    console.warn(status === 403
-      ? `[${instance}-pool] ${decision ? `route:#${decision.position} ` : ""}account unavailable (403); failing over`
+    console.warn(status !== 429
+      ? `[${instance}-pool] ${decision ? `route:#${decision.position} ` : ""}account unavailable (${status}); failing over`
       : `[${instance}-pool] ${decision ? `route:#${decision.position} ` : ""}429 on ${formatAnthropicAccountOrdinal(failedAccountId)}; failing over to ${formatAnthropicAccountOrdinal(next)}`);
 
     return next;
@@ -1178,20 +1275,25 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     retryAfterHeader: string | null | undefined,
     now = Date.now(),
     rateLimitHeaders?: AnthropicRateLimitHeaders | null,
+    sentSlow = false,
   ): boolean {
-    return recordAnthropicAccountRefusal(config, failedAccountId, 429, retryAfterHeader, now, rateLimitHeaders);
+    return recordAnthropicAccountRefusal(config, failedAccountId, 429, retryAfterHeader, now, rateLimitHeaders, sentSlow);
   }
 
   /** Account entitlement refusals use a finite backoff; renewing a plan does not require login. */
   function recordAnthropicAccountRefusal(
     config: EpxConfig,
     failedAccountId: string,
-    status: 429 | 403,
+    status: 429 | 403 | 402 | 400,
     retryAfterHeader: string | null | undefined,
     now = Date.now(),
     rateLimitHeaders?: AnthropicRateLimitHeaders | null,
+    sentSlow = false,
   ): boolean {
     if (!admitted(config)) return false;
+    if (rateLimitHeaders) {
+      recordAnthropicSlowSignalForInstance(instance, failedAccountId, rateLimitHeaders, now);
+    }
     // Reactive 429 failover is NOT gated on the pool flag. That flag buys PROACTIVE routing --
     // session affinity, quota-ranked new-session selection, autoSwitchThreshold, strategy -- all
     // of which move a HEALTHY request and stay opt-in. Rotating away from an account upstream has
@@ -1205,7 +1307,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
 
     if (status === 429) {
       const headers = rateLimitHeaders ?? new Headers();
-      const kind = classifyAnthropic429({ get: name => name === "retry-after" ? retryAfterHeader ?? null : headers.get(name) }, now);
+      const kind = classifyAnthropic429({ get: name => name === "retry-after" ? retryAfterHeader ?? null : headers.get(name) }, now, { sentSlow });
       if (kind !== "shared-quota") {
         if (kind === "transient-rate") pauseAnthropicRateAdmission(failedAccountId, now + (anthropicRetryAfterMs(retryAfterHeader, now) ?? 100));
         return false;
@@ -1219,7 +1321,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     const parsedRetry = parseRetryAfterMs(retryAfterHeader, now);
     const resetDerived = status === 429 && parsedRetry === undefined ? parseRateLimitReset(rateLimitHeaders, now) : undefined;
     const quotaResetAt = status === 429 ? rejectedWindowsResetAt(rateLimitHeaders, now) : undefined;
-    const cooldownMs = parsedRetry ?? resetDerived?.delayMs ?? (status === 403 ? ACCOUNT_REFUSAL_COOLDOWN_MS : DEFAULT_COOLDOWN_MS);
+    const cooldownMs = parsedRetry ?? resetDerived?.delayMs ?? (status !== 429 ? ACCOUNT_REFUSAL_COOLDOWN_MS : DEFAULT_COOLDOWN_MS);
     const cooldownGeneration = noteAnthropicCooldownMutation(failedAccountId);
     upstreamHealth.set(failedAccountId, {
       cooldownUntil: now + cooldownMs,
@@ -1249,7 +1351,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     options: AnthropicSelectionRoutingOptions,
   ): Promise<OAuthAccountSelection | null> {
     if (!admitted(options.config)) return null;
-    if (!expectedSelection || !routeCandidates(getEligibleAnthropicAccounts(Date.now(), options.model), options.routeDecision ?? null).includes(accountId)) return null;
+    if (!expectedSelection || !isRoutedAnthropicAccountAdmissible(accountId, options.config, Date.now(), options.routeDecision ?? null, options.model)) return null;
     const committed = await commitOAuthAccountSelection(PROVIDER, accountId, {
       expectedSelection,
       expectedCredentialGeneration: options.expectedCredentialGeneration,
@@ -1268,7 +1370,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
   ): boolean {
     if (!admitted(options.config)) return false;
     if (getAccountCredentialWithStatus(PROVIDER, accountId)?.paused || committed.accountId !== accountId || (options.routeDecision
-      && !routeCandidates(getEligibleAnthropicAccounts(Date.now(), options.model), options.routeDecision).includes(accountId))) return false;
+      && !isRoutedAnthropicAccountAdmissible(accountId, options.config, Date.now(), options.routeDecision, options.model))) return false;
     const current = captureOAuthAccountSelection(PROVIDER);
     if (current?.accountId !== committed.accountId || current.revision !== committed.revision) return false;
     if (isAnthropicAccountPoolEnabled(options.config)) {
@@ -1301,7 +1403,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
         && (anthropicRatePauseUntil(bound.accountId) !== undefined || anthropicRatePausedRecently(bound.accountId)
           || anthropicFamilyRejected(bound.accountId, options.model));
       if (key && bound && (preserveExcludedAffinity || preservePausedAffinity)) sessionAffinity.set(key, { ...bound, lastUsedAt: Date.now() });
-      else bindAnthropicSessionAffinity(options.sessionKey, accountId);
+      else if (options.reason !== "slow-fallback") bindAnthropicSessionAffinity(options.sessionKey, accountId);
     }
     if (manualPreference === undefined || (manualPreference?.accountId === expectedSelection.accountId
       && manualPreference.revision === expectedSelection.revision)) manualPreference = null;
@@ -1439,6 +1541,7 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
       if (valid(id)) continue;
       noteAnthropicCooldownMutation(id);
       upstreamHealth.delete(id);
+      anthropicSlowFallbackFor(instance).clearAccount(id);
       removed++;
     }
     removed += sessionAffinity.invalidate(getAccountSet(PROVIDER), valid);
@@ -1453,7 +1556,8 @@ function createAnthropicRouting(instance: AnthropicInstanceId): AnthropicRouting
     isAnthropicAccountPoolEnabled, anthropicAutoSwitchThreshold, anthropicAccountAutoSwitchThreshold,
     captureAnthropicCooldownRecovery, settleAnthropicCooldownRecovery, getAnthropicAccountHealthSnapshot,
     clearAnthropicAccountCooldown, clearAnthropicAccountCooldownForReset, sweepExpiredAnthropicRoutingHealth, clearAnthropicAccountPoolState,
-    anthropicSessionAffinitySizeForTests, getEligibleAnthropicAccounts, hasAnthropicFailoverQuorum,
+    anthropicSessionAffinitySizeForTests, getEligibleAnthropicAccounts, getSlowFallbackEligibleAccounts,
+    pickSlowFallbackAccount, isAnthropicAccountSelectionAdmissible, hasAnthropicFailoverQuorum,
     forgetAnthropicFailoverQuorum, getAnthropicPoolRetryAfterSeconds, anthropicPoolCooldownError,
     anthropicPoolUsageLimitAfterRefusal, pickAlternateAnthropicAccount,
     resolveAnthropicAccountForSession, resolveAnthropicDispatchAccountId, bindAnthropicSessionAffinity,
@@ -1483,6 +1587,7 @@ export function clearAllAnthropicAccountPoolState(): void {
   clearAllAnthropicFamilyQuota();
   clearAllAnthropicRatePauses();
   clearAllAnthropicCooldownGenerations();
+  clearAllAnthropicSlowFallbackState();
 }
 subscribeOAuthAccountPauseChanges(provider => { if (isAnthropicInstanceId(provider)) handlers.get(provider)?.onPause(); });
 subscribeOAuthAccountRoutingPolicyChanges(event => { if (isAnthropicInstanceId(event.provider)) handlers.get(event.provider)?.onPolicy(event); });
@@ -1557,6 +1662,31 @@ export function getEligibleAnthropicAccounts(now = Date.now(), model?: string): 
   return anthropicRoutingFor("anthropic").getEligibleAnthropicAccounts(now, model);
 }
 
+export function getSlowFallbackEligibleAccounts(config: EpxConfig, now = Date.now(), model?: string): string[] {
+  return anthropicRoutingFor("anthropic").getSlowFallbackEligibleAccounts(config, now, model);
+}
+
+export function pickSlowFallbackAccount(
+  config: EpxConfig,
+  now: number,
+  decision: AnthropicRouteDecision | null,
+  model?: string,
+  excludeId?: string,
+  excludedAccountIds?: ReadonlySet<string>,
+): string | null {
+  return anthropicRoutingFor("anthropic").pickSlowFallbackAccount(config, now, decision, model, excludeId, excludedAccountIds);
+}
+
+export function isAnthropicAccountSelectionAdmissible(
+  accountId: string,
+  config: EpxConfig,
+  now = Date.now(),
+  model?: string,
+  decision: AnthropicRouteDecision | null = null,
+): boolean {
+  return anthropicRoutingFor("anthropic").isAnthropicAccountSelectionAdmissible(accountId, config, now, model, decision);
+}
+
 export function hasAnthropicFailoverQuorum(now = Date.now()): boolean {
   return anthropicRoutingFor("anthropic").hasAnthropicFailoverQuorum(now);
 }
@@ -1628,14 +1758,15 @@ export function rotateAnthropicAccountOn429(
   rateLimitHeaders?: AnthropicRateLimitHeaders | null,
   decision: AnthropicRouteDecision | null = null,
   model?: string,
+  sentSlow = false,
 ): string | null {
-  return anthropicRoutingFor("anthropic").rotateAnthropicAccountOn429(config, failedAccountId, retryAfterHeader, sessionKey, now, rateLimitHeaders, decision, model);
+  return anthropicRoutingFor("anthropic").rotateAnthropicAccountOn429(config, failedAccountId, retryAfterHeader, sessionKey, now, rateLimitHeaders, decision, model, sentSlow);
 }
 
 export function rotateAnthropicAccountOnRefusal(
   config: EpxConfig,
   failedAccountId: string,
-  status: 429 | 403,
+  status: 429 | 403 | 402 | 400,
   retryAfterHeader: string | null | undefined,
   sessionKey?: string | null,
   now = Date.now(),
@@ -1643,8 +1774,9 @@ export function rotateAnthropicAccountOnRefusal(
   decision: AnthropicRouteDecision | null = null,
   model?: string,
   excludedAccountIds?: ReadonlySet<string>,
+  sentSlow = false,
 ): string | null {
-  return anthropicRoutingFor("anthropic").rotateAnthropicAccountOnRefusal(config, failedAccountId, status, retryAfterHeader, sessionKey, now, rateLimitHeaders, decision, model, excludedAccountIds);
+  return anthropicRoutingFor("anthropic").rotateAnthropicAccountOnRefusal(config, failedAccountId, status, retryAfterHeader, sessionKey, now, rateLimitHeaders, decision, model, excludedAccountIds, sentSlow);
 }
 
 export function recordAnthropicAccount429(
@@ -1653,19 +1785,21 @@ export function recordAnthropicAccount429(
   retryAfterHeader: string | null | undefined,
   now = Date.now(),
   rateLimitHeaders?: AnthropicRateLimitHeaders | null,
+  sentSlow = false,
 ): boolean {
-  return anthropicRoutingFor("anthropic").recordAnthropicAccount429(config, failedAccountId, retryAfterHeader, now, rateLimitHeaders);
+  return anthropicRoutingFor("anthropic").recordAnthropicAccount429(config, failedAccountId, retryAfterHeader, now, rateLimitHeaders, sentSlow);
 }
 
 export function recordAnthropicAccountRefusal(
   config: EpxConfig,
   failedAccountId: string,
-  status: 429 | 403,
+  status: 429 | 403 | 402 | 400,
   retryAfterHeader: string | null | undefined,
   now = Date.now(),
   rateLimitHeaders?: AnthropicRateLimitHeaders | null,
+  sentSlow = false,
 ): boolean {
-  return anthropicRoutingFor("anthropic").recordAnthropicAccountRefusal(config, failedAccountId, status, retryAfterHeader, now, rateLimitHeaders);
+  return anthropicRoutingFor("anthropic").recordAnthropicAccountRefusal(config, failedAccountId, status, retryAfterHeader, now, rateLimitHeaders, sentSlow);
 }
 
 export function promoteAnthropicActiveAccount(

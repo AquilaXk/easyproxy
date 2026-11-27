@@ -57,6 +57,7 @@ export interface NativeOAuthBinding {
   readonly model?: string;
   readonly config: EpxConfig;
   readonly manualSelectionGeneration: number;
+  readonly slowMode?: boolean;
 }
 
 /** The selection moved or became ineligible while resolving. Maps to a 409 retry. */
@@ -154,9 +155,14 @@ export async function resolveNativeOAuthBindingForInstance(
     if (!routeIsCurrent(instance, config, model, routeDecision)) continue;
     const proposed = routing.resolveAnthropicAccountForSession(sessionKey, config, Date.now(), routeDecision, model);
     if (!selection) continue;
-    if (!routeCandidates(routing.getEligibleAnthropicAccounts(Date.now(), model), routeDecision).includes(accountId)) {
+    const now = Date.now();
+    const normallyEligible = routeCandidates(routing.getEligibleAnthropicAccounts(now, model), routeDecision).includes(accountId);
+    const slowEligible = !normallyEligible
+      && routeCandidates(routing.getSlowFallbackEligibleAccounts(config, now, model), routeDecision).includes(accountId);
+    if (!normallyEligible && !slowEligible) {
       throw new NativeOAuthSelectionChangedError();
     }
+    const slowMode = slowEligible || (accountId === proposed.accountId && proposed.slowMode === true);
     const candidate = await routing.getAnthropicPoolAccessSnapshot(accountId);
     assertOwner();
     if (candidate.provider !== instance) throw new NativeOAuthSelectionChangedError();
@@ -172,12 +178,16 @@ export async function resolveNativeOAuthBindingForInstance(
         || manualSelectionGeneration !== routing.captureAnthropicManualSelectionGeneration()) continue;
       if (!routing.commitAnthropicSelectionRouting(candidate.accountId, selection, committed, {
         config, sessionKey, model, routeDecision,
-        reason: accountId === proposed.accountId ? proposed.reason : undefined,
+        reason: accountId === proposed.accountId ? proposed.reason : (slowEligible ? "slow-fallback" : undefined),
         expectedCredentialGeneration: candidate.generation,
       })) continue;
       const row = getAccountCredentialWithStatus(instance, candidate.accountId);
       if (!row || row.credential.access !== candidate.accessToken || credentialGeneration(row.credential) !== candidate.generation) continue;
-      const binding: NativeOAuthBinding = { instance, routeTarget, selection: committed, snapshot: candidate, providerAccountUuid: row.credential.accountId, routeDecision, sessionKey, model, config, manualSelectionGeneration };
+      const binding: NativeOAuthBinding = {
+        instance, routeTarget, selection: committed, snapshot: candidate,
+        providerAccountUuid: row.credential.accountId, routeDecision, sessionKey, model, config,
+        manualSelectionGeneration, ...(slowMode ? { slowMode: true } : {}),
+      };
       if (nativeOAuthBindingIsCurrent(binding)) return binding;
     }
   }
@@ -206,10 +216,14 @@ export function nativeOAuthBindingIsCurrent(binding: NativeOAuthBinding): boolea
   const selectionCurrent = sessionRoute?.reason === "affinity"
     && sessionRoute.accountId === binding.snapshot.accountId
     || (selected?.accountId === binding.selection.accountId && selected?.revision === binding.selection.revision);
+  const now = Date.now();
+  const normalAdmissible = !routing.getAnthropicAccountHealthSnapshot(binding.snapshot.accountId, now)
+    && routeCandidates(routing.getEligibleAnthropicAccounts(now, binding.model), binding.routeDecision).includes(binding.snapshot.accountId);
+  const slowAdmissible = binding.slowMode === true
+    && routeCandidates(routing.getSlowFallbackEligibleAccounts(binding.config, now, binding.model), binding.routeDecision).includes(binding.snapshot.accountId);
   return selectionCurrent
-    && !!row && !row.paused && !row.needsReauth && row.credential.expires > Date.now()
-    && !routing.getAnthropicAccountHealthSnapshot(binding.snapshot.accountId)
-    && routeCandidates(routing.getEligibleAnthropicAccounts(Date.now(), binding.model), binding.routeDecision).includes(binding.snapshot.accountId)
+    && !!row && !row.paused && !row.needsReauth && row.credential.expires > now
+    && (normalAdmissible || slowAdmissible)
     && row.credential.access === binding.snapshot.accessToken
     && credentialGeneration(row.credential) === binding.snapshot.generation
     && row.credential.accountId === binding.providerAccountUuid;

@@ -12,6 +12,8 @@
  *   prevent needless byte-prefix cache invalidation.
  */
 
+import { CopyOnWriteMutator } from "./mutable-json-copy";
+
 export type PromptCacheInjectionTtl = "auto" | "5m" | "1h";
 
 export interface PromptCacheInjectionConfig {
@@ -24,6 +26,7 @@ export interface PromptCacheInjectionResult {
   injectedBreakpoints: number;
   existingBreakpoints: number;
   normalizedTimestamps: number;
+  body?: unknown;
 }
 
 export const MAX_ANTHROPIC_CACHE_BREAKPOINTS = 4;
@@ -54,54 +57,88 @@ function normalizeSystemClockText(text: string): { text: string; count: number }
   return { text: next, count };
 }
 
-export function normalizeVolatileSystemTimestampsInPlace(body: Rec): number {
+export function normalizeVolatileSystemTimestampsInPlace(body: Rec, mutator?: CopyOnWriteMutator): number {
   let normalized = 0;
 
   if (typeof body.instructions === "string") {
     const res = normalizeSystemClockText(body.instructions);
     if (res.count > 0) {
-      body.instructions = res.text;
+      if (mutator) mutator.write([{ container: body, key: "instructions" }], res.text);
+      else body.instructions = res.text;
       normalized += res.count;
     }
   }
 
-  if (typeof body.system === "string") {
-    const res = normalizeSystemClockText(body.system);
+  const curBody = (mutator ? mutator.root : body) as Rec;
+  if (typeof curBody.system === "string") {
+    const res = normalizeSystemClockText(curBody.system);
     if (res.count > 0) {
-      body.system = res.text;
+      if (mutator) mutator.write([{ container: curBody, key: "system" }], res.text);
+      else curBody.system = res.text;
       normalized += res.count;
     }
-  } else if (Array.isArray(body.system)) {
-    const limit = Math.min(body.system.length, 32);
+  } else if (Array.isArray(curBody.system)) {
+    const systemArr = curBody.system;
+    const limit = Math.min(systemArr.length, 32);
     for (let i = 0; i < limit; i++) {
-      const block = body.system[i];
+      const block = systemArr[i];
       if (isRec(block) && block.type === "text" && typeof block.text === "string") {
         const res = normalizeSystemClockText(block.text);
         if (res.count > 0) {
-          block.text = res.text;
+          if (mutator) {
+            mutator.write(
+              [{ container: curBody, key: "system" }, { container: systemArr, key: i }, { container: block, key: "text" }],
+              res.text,
+            );
+          } else {
+            block.text = res.text;
+          }
           normalized += res.count;
         }
       }
     }
   }
 
-  if (Array.isArray(body.messages) && body.messages.length > 0) {
-    const first = body.messages[0];
+  const latestBody = (mutator ? mutator.root : body) as Rec;
+  if (Array.isArray(latestBody.messages) && latestBody.messages.length > 0) {
+    const messagesArr = latestBody.messages;
+    const first = messagesArr[0];
     if (isRec(first) && (first.role === "system" || first.role === "developer")) {
       if (typeof first.content === "string") {
         const res = normalizeSystemClockText(first.content);
         if (res.count > 0) {
-          first.content = res.text;
+          if (mutator) {
+            mutator.write(
+              [{ container: latestBody, key: "messages" }, { container: messagesArr, key: 0 }, { container: first, key: "content" }],
+              res.text,
+            );
+          } else {
+            first.content = res.text;
+          }
           normalized += res.count;
         }
       } else if (Array.isArray(first.content)) {
-        const limit = Math.min(first.content.length, 16);
+        const contentArr = first.content;
+        const limit = Math.min(contentArr.length, 16);
         for (let i = 0; i < limit; i++) {
-          const part = first.content[i];
+          const part = contentArr[i];
           if (isRec(part) && typeof part.text === "string") {
             const res = normalizeSystemClockText(part.text);
             if (res.count > 0) {
-              part.text = res.text;
+              if (mutator) {
+                mutator.write(
+                  [
+                    { container: latestBody, key: "messages" },
+                    { container: messagesArr, key: 0 },
+                    { container: first, key: "content" },
+                    { container: contentArr, key: i },
+                    { container: part, key: "text" },
+                  ],
+                  res.text,
+                );
+              } else {
+                part.text = res.text;
+              }
               normalized += res.count;
             }
           }
@@ -113,10 +150,13 @@ export function normalizeVolatileSystemTimestampsInPlace(body: Rec): number {
   return normalized;
 }
 
-type NormalizedTtlRank = 1 | 2; // 2 = "1h", 1 = "5m" (or default ephemeral)
+// 2 = explicit "1h", 1.5 = omitted ttl (ephemeral without ttl), 1 = explicit "5m"
+type NormalizedTtlRank = 1 | 1.5 | 2;
 
 function ttlRank(ttl: unknown): NormalizedTtlRank {
-  return ttl === "1h" ? 2 : 1;
+  if (ttl === "1h") return 2;
+  if (ttl === undefined) return 1.5;
+  return 1;
 }
 
 interface SectionScan {
@@ -163,7 +203,7 @@ function isCacheUnsupportedAnthropicModel(model: unknown): boolean {
   return lower.includes("claude-2") || lower.includes("claude-instant");
 }
 
-function rejectsOneHourCacheTtl(model: unknown): boolean {
+export function rejectsOneHourCacheTtl(model: unknown): boolean {
   if (typeof model !== "string") return false;
   const lower = model.trim().toLowerCase();
   // Vertex-addressed Claude 3.x IDs (`claude-3-7-sonnet@20250219`, `claude-3-5-sonnet-v2@...`, `claude-3-opus@...`)
@@ -245,12 +285,20 @@ function isTurnScopedReminderText(text: string): boolean {
 
 function makeCacheControl(
   preferredTtl: PromptCacheInjectionTtl,
-  minAllowedRank: NormalizedTtlRank,
+  minAllowedRank: 1 | 2,
   maxAllowedRank: NormalizedTtlRank,
 ): Rec | null {
-  if (minAllowedRank > maxAllowedRank) return null;
+  if (minAllowedRank > maxAllowedRank) {
+    // Upstream has an unset ephemeral breakpoint and downstream pinned "1h": emit an unset
+    // breakpoint so downstream retention promotion can upgrade the chain consistently.
+    if (minAllowedRank === 2 && maxAllowedRank === 1.5) return { type: "ephemeral" };
+    return null;
+  }
   if (preferredTtl === "1h") {
     if (maxAllowedRank >= 2) return { type: "ephemeral", ttl: "1h" };
+    // Preserve unset upstream ttl without downgrading downstream sections to explicit "5m",
+    // allowing downstream native/forward 1h promotion to upgrade all unset breakpoints together.
+    if (maxAllowedRank === 1.5) return { type: "ephemeral" };
     return minAllowedRank <= 1 ? { type: "ephemeral", ttl: "5m" } : null;
   }
   if (preferredTtl === "5m") {
@@ -305,44 +353,42 @@ export function injectPromptCacheBreakpointsInPlace(
   config?: PromptCacheInjectionConfig,
 ): PromptCacheInjectionResult {
   if (!isRec(body)) {
-    return { injectedBreakpoints: 0, existingBreakpoints: 0, normalizedTimestamps: 0 };
+    return { injectedBreakpoints: 0, existingBreakpoints: 0, normalizedTimestamps: 0, body };
   }
 
+  const mutator = new CopyOnWriteMutator(body);
   const normalizedTimestamps = config?.stripVolatileSystemTimestamps === true
-    ? normalizeVolatileSystemTimestampsInPlace(body)
+    ? normalizeVolatileSystemTimestampsInPlace(body, mutator)
     : 0;
+  let workingBody = mutator.root as Rec;
 
-  if (config?.enabled !== true || !looksLikeAnthropicMessagesWire(body)) {
-    return { injectedBreakpoints: 0, existingBreakpoints: 0, normalizedTimestamps };
+  if (config?.enabled !== true || !looksLikeAnthropicMessagesWire(workingBody)) {
+    return { injectedBreakpoints: 0, existingBreakpoints: 0, normalizedTimestamps, body: workingBody };
   }
-  if (isRec(body.cache_control)) {
-    return { injectedBreakpoints: 0, existingBreakpoints: 1, normalizedTimestamps };
+  if (isRec(workingBody.cache_control)) {
+    return { injectedBreakpoints: 0, existingBreakpoints: 1, normalizedTimestamps, body: workingBody };
   }
 
-  const toolsScan = scanSectionBreakpoints(body.tools);
-  const systemScan = scanSectionBreakpoints(body.system);
-  const messagesScan = scanSectionBreakpoints(body.messages);
+  const toolsScan = scanSectionBreakpoints(workingBody.tools);
+  const systemScan = scanSectionBreakpoints(workingBody.system);
+  const messagesScan = scanSectionBreakpoints(workingBody.messages);
   if (toolsScan.aborted || systemScan.aborted || messagesScan.aborted) {
-    return { injectedBreakpoints: 0, existingBreakpoints: 0, normalizedTimestamps };
+    return { injectedBreakpoints: 0, existingBreakpoints: 0, normalizedTimestamps, body: workingBody };
   }
 
   const existingBreakpoints = toolsScan.count + systemScan.count + messagesScan.count;
   let remaining = MAX_ANTHROPIC_CACHE_BREAKPOINTS - existingBreakpoints;
   if (remaining <= 0) {
-    return { injectedBreakpoints: 0, existingBreakpoints, normalizedTimestamps };
+    return { injectedBreakpoints: 0, existingBreakpoints, normalizedTimestamps, body: workingBody };
   }
 
   // Anthropic wire evaluation order for TTL non-increasing check: tools -> system -> messages.
   const rawPreferred: PromptCacheInjectionTtl = config.ttl ?? "auto";
   const preferredTtl: PromptCacheInjectionTtl =
-    rawPreferred === "1h" && rejectsOneHourCacheTtl(body.model) ? "5m" : rawPreferred;
+    rawPreferred === "1h" && rejectsOneHourCacheTtl(workingBody.model) ? "5m" : rawPreferred;
   let injected = 0;
 
-  const maxDownstreamOfTools: NormalizedTtlRank = Math.max(
-    1,
-    ...systemScan.ranks,
-    ...messagesScan.ranks,
-  ) as NormalizedTtlRank;
+  const maxDownstreamOfTools: 1 | 2 = systemScan.ranks.includes(2) || messagesScan.ranks.includes(2) ? 2 : 1;
   let minSeenInTools: NormalizedTtlRank = toolsScan.ranks.length > 0
     ? (Math.min(...toolsScan.ranks) as NormalizedTtlRank)
     : 2;
@@ -351,19 +397,24 @@ export function injectPromptCacheBreakpointsInPlace(
   if (
     remaining > 0
     && toolsScan.count === 0
-    && Array.isArray(body.tools)
-    && body.tools.length > 0
-    && estimateBoundedChars(body.tools, MIN_CACHEABLE_SECTION_CHARS) >= MIN_CACHEABLE_SECTION_CHARS
+    && Array.isArray(workingBody.tools)
+    && workingBody.tools.length > 0
+    && estimateBoundedChars(workingBody.tools, MIN_CACHEABLE_SECTION_CHARS) >= MIN_CACHEABLE_SECTION_CHARS
   ) {
-    for (let i = body.tools.length - 1; i >= 0; i--) {
-      const tool = body.tools[i];
+    const toolsArr = workingBody.tools;
+    for (let i = toolsArr.length - 1; i >= 0; i--) {
+      const tool = toolsArr[i];
       if (!isRec(tool) || isRec(tool.cache_control)) continue;
       // Skip provider-executed server tools whose schema may reject client cache_control.
       const toolType = typeof tool.type === "string" ? tool.type : "custom";
       if (toolType !== "custom" && !("input_schema" in tool)) continue;
       const cc = makeCacheControl(preferredTtl, maxDownstreamOfTools, 2);
       if (cc) {
-        tool.cache_control = cc;
+        mutator.write(
+          [{ container: workingBody, key: "tools" }, { container: toolsArr, key: i }, { container: tool, key: "cache_control" }],
+          cc,
+        );
+        workingBody = mutator.root as Rec;
         minSeenInTools = ttlRank(cc.ttl);
         injected += 1;
         remaining -= 1;
@@ -372,9 +423,7 @@ export function injectPromptCacheBreakpointsInPlace(
     }
   }
 
-  const maxDownstreamOfSystem: NormalizedTtlRank = messagesScan.ranks.length > 0
-    ? (Math.max(...messagesScan.ranks) as NormalizedTtlRank)
-    : 1;
+  const maxDownstreamOfSystem: 1 | 2 = messagesScan.ranks.includes(2) ? 2 : 1;
   let minSeenUpToSystem: NormalizedTtlRank = systemScan.ranks.length > 0
     ? (Math.min(minSeenInTools, ...systemScan.ranks) as NormalizedTtlRank)
     : minSeenInTools;
@@ -383,22 +432,31 @@ export function injectPromptCacheBreakpointsInPlace(
   if (
     remaining > 0
     && systemScan.count === 0
-    && body.system !== undefined
-    && estimateBoundedChars(body.system, MIN_CACHEABLE_SECTION_CHARS) >= MIN_CACHEABLE_SECTION_CHARS
+    && workingBody.system !== undefined
+    && estimateBoundedChars(workingBody.system, MIN_CACHEABLE_SECTION_CHARS) >= MIN_CACHEABLE_SECTION_CHARS
   ) {
     const cc = makeCacheControl(preferredTtl, maxDownstreamOfSystem, minSeenInTools);
     if (cc) {
-      if (typeof body.system === "string" && !isTurnScopedReminderText(body.system)) {
-        body.system = [{ type: "text", text: body.system, cache_control: cc }];
+      if (typeof workingBody.system === "string" && !isTurnScopedReminderText(workingBody.system)) {
+        mutator.write(
+          [{ container: workingBody, key: "system" }],
+          [{ type: "text", text: workingBody.system, cache_control: cc }],
+        );
+        workingBody = mutator.root as Rec;
         minSeenUpToSystem = Math.min(minSeenUpToSystem, ttlRank(cc.ttl)) as NormalizedTtlRank;
         injected += 1;
         remaining -= 1;
-      } else if (Array.isArray(body.system)) {
-        for (let i = body.system.length - 1; i >= 0; i--) {
-          const block = body.system[i];
+      } else if (Array.isArray(workingBody.system)) {
+        const systemArr = workingBody.system;
+        for (let i = systemArr.length - 1; i >= 0; i--) {
+          const block = systemArr[i];
           if (!isRec(block) || isRec(block.cache_control)) continue;
           if (block.type === "text" && typeof block.text === "string" && block.text.trim().length > 0 && !isTurnScopedReminderText(block.text)) {
-            block.cache_control = cc;
+            mutator.write(
+              [{ container: workingBody, key: "system" }, { container: systemArr, key: i }, { container: block, key: "cache_control" }],
+              cc,
+            );
+            workingBody = mutator.root as Rec;
             minSeenUpToSystem = Math.min(minSeenUpToSystem, ttlRank(cc.ttl)) as NormalizedTtlRank;
             injected += 1;
             remaining -= 1;
@@ -415,32 +473,48 @@ export function injectPromptCacheBreakpointsInPlace(
     : minSeenUpToSystem;
   if (
     remaining > 0
-    && Array.isArray(body.messages)
-    && body.messages.length > 0
+    && Array.isArray(workingBody.messages)
+    && workingBody.messages.length > 0
     && (messagesScan.count === 0
-      ? estimateBoundedChars(body.messages, MIN_CACHEABLE_SECTION_CHARS) >= MIN_CACHEABLE_SECTION_CHARS
-      : uncachedMessagesTailChars(body.messages) >= MIN_CACHEABLE_SECTION_CHARS)
+      ? estimateBoundedChars(workingBody.messages, MIN_CACHEABLE_SECTION_CHARS) >= MIN_CACHEABLE_SECTION_CHARS
+      : uncachedMessagesTailChars(workingBody.messages) >= MIN_CACHEABLE_SECTION_CHARS)
   ) {
     const cc = makeCacheControl(preferredTtl, 1, minSeenBeforeTail);
     if (cc) {
-      outer: for (let mIdx = body.messages.length - 1; mIdx >= 0; mIdx--) {
-        const msg = body.messages[mIdx];
+      const messagesArr = workingBody.messages;
+      outer: for (let mIdx = messagesArr.length - 1; mIdx >= 0; mIdx--) {
+        const msg = messagesArr[mIdx];
         if (!isRec(msg)) continue;
         if (isRec(msg.cache_control)) break outer;
         if (typeof msg.content === "string") {
           if (msg.content.trim().length > 0 && !isTurnScopedReminderText(msg.content)) {
-            msg.content = [{ type: "text", text: msg.content, cache_control: cc }];
+            mutator.write(
+              [{ container: workingBody, key: "messages" }, { container: messagesArr, key: mIdx }, { container: msg, key: "content" }],
+              [{ type: "text", text: msg.content, cache_control: cc }],
+            );
+            workingBody = mutator.root as Rec;
             injected += 1;
             remaining -= 1;
             break;
           }
         } else if (Array.isArray(msg.content)) {
-          for (let bIdx = msg.content.length - 1; bIdx >= 0; bIdx--) {
-            const block = msg.content[bIdx];
+          const contentArr = msg.content;
+          for (let bIdx = contentArr.length - 1; bIdx >= 0; bIdx--) {
+            const block = contentArr[bIdx];
             if (!isRec(block)) continue;
             if (isRec(block.cache_control)) break outer;
             if (isEligibleMessageBlock(block)) {
-              block.cache_control = cc;
+              mutator.write(
+                [
+                  { container: workingBody, key: "messages" },
+                  { container: messagesArr, key: mIdx },
+                  { container: msg, key: "content" },
+                  { container: contentArr, key: bIdx },
+                  { container: block, key: "cache_control" },
+                ],
+                cc,
+              );
+              workingBody = mutator.root as Rec;
               injected += 1;
               remaining -= 1;
               break outer;
@@ -455,5 +529,6 @@ export function injectPromptCacheBreakpointsInPlace(
     injectedBreakpoints: injected,
     existingBreakpoints,
     normalizedTimestamps,
+    body: mutator.root,
   };
 }

@@ -35,37 +35,29 @@ if (import.meta.main) {
     }
   };
 
-  const diffNames = (range: string): string[] => {
+  const diffNames = (range: string): string[] | null => {
     try {
-      const diff = spawnSync("git", ["diff", "--name-only", range], {
+      const diff = spawnSync("git", ["diff", "--name-only", "-z", "--no-renames", range], {
         cwd: repoRoot,
         encoding: "utf8",
       });
-      if (diff.status !== 0) return [];
-      return (diff.stdout ?? "")
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean);
+      if (diff.status !== 0) return null;
+      return (diff.stdout ?? "").split("\0").filter(Boolean);
     } catch {
-      return [];
+      return null;
     }
   };
 
-  let files: string[];
-  let hadBase = true;
+  let files: string[] | null;
   if (process.env.LINT_FILES !== undefined) {
     files = process.env.LINT_FILES.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
   } else {
-    let range: string | null = null;
-    if (hasRef("@{u}")) range = "@{u}...HEAD";
-    else if (hasRef("origin/dev")) range = "origin/dev...HEAD";
-    else if (hasRef("dev")) range = "dev...HEAD";
-    hadBase = range !== null;
-    files = range ? diffNames(range) : [];
+    const base = ["upstream/main", "origin/main", "main"].find(hasRef);
+    files = base ? diffNames(`${base}...HEAD`) : null;
   }
 
-  // No usable base — run lint so GUI pushes still get a check.
-  const shouldRun = hadBase ? guiPathsChanged(files) : true;
+  // No usable base or failed diff — run lint so GUI pushes still get a check.
+  const shouldRun = files === null ? true : guiPathsChanged(files);
 
   if (process.env.LINT_DRY_RUN === "1") {
     console.log(shouldRun ? "lint:run" : "lint:skip");
@@ -80,7 +72,7 @@ if (import.meta.main) {
   console.log("lint:gui: gui/ changed — running oxlint (trigger=gui-changed, scope=full-gui)");
   const [cmd, ...args] = process.env.LINT_CMD
     ? process.env.LINT_CMD.split(" ")
-    : ["bun", "run", "lint"];
+    : [process.execPath, "run", "lint"];
 
   const result = spawnSync(cmd!, args, {
     cwd: guiDir,

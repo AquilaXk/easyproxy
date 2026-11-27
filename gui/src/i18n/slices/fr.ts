@@ -273,7 +273,7 @@ export const uxOverhaulCopyFr = {
   "ux.logs.apiKeyLabel": "Clé API", "ux.logs.apiKeyAll": "Toutes les clés",
   "ux.logs.durationLabel": "Latence min.", "ux.logs.durationAll": "Toutes les latences",
   "ux.logs.duration1s": "≥ 1 s", "ux.logs.duration5s": "≥ 5 s", "ux.logs.duration30s": "≥ 30 s",
-  "ux.logs.ttftCompact": "TTFT {ms}ms", "ux.logs.copyJson": "Copier JSON", "ux.logs.replayPlayground": "Rejouer dans le Playground",
+  "ux.logs.ttftCompact": "TTFT {ms} ms", "ux.logs.copyJson": "Copier JSON", "ux.logs.replayPlayground": "Rejouer dans le Playground",
   "ux.budget.unsaved": "Non enregistré",
   "ux.combobox.empty": "Aucune option correspondante",
   "ux.logs.exportJsonl": "Exporter JSONL", "ux.logs.exportCsv": "Exporter CSV",

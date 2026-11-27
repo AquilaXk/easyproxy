@@ -8,6 +8,7 @@ import { resolveAudioUpstream, TRANSCRIPTION_MODEL } from "./audio-upstream";
 import { readBodyCapped } from "./live";
 import type { RequestLogContext } from "./request-log";
 import { registerTurn, unregisterTurn } from "./lifecycle";
+import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 
 export const AUDIO_FILE_MAX_BYTES = 25_000_000;
 export const AUDIO_BODY_MAX_BYTES = 32 * 1024 * 1024;
@@ -87,6 +88,13 @@ async function transcribeAdmitted(
   const input = await parseTranscription(req, operation.signal);
   if (input instanceof Response) return input;
   if (operation.signal.aborted) return formatErrorResponse(499, "client_closed_request", "Audio request canceled");
+  if (typeof input.prompt === "string" && input.prompt.length > 0) {
+    const hygieneBody = { prompt: input.prompt };
+    if (applyOutboundPayloadHygiene(hygieneBody, config, log).blocked) {
+      return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+    }
+    input.prompt = hygieneBody.prompt;
+  }
   const relay = await resolveAudioUpstream(req.headers, config, log, { admission, model: input.model, lease: operation.lease, signal: operation.signal });
   if (relay instanceof Response) return relay;
   const signal = signalWithTimeout(AUDIO_TIMEOUT_MS, operation.signal);

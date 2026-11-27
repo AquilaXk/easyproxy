@@ -43,6 +43,7 @@ import {
 import { dropResponsesReasoningInputItems, mapRoutedResponsesReasoningEffort, normalizeConfiguredReasoningSummaryDelivery, sanitizeReasoningInputContent, stripDisabledReasoningSummaries, stripDisabledVerbosity, stripInternalReasoningEnabled, stripNoneReasoningSummary, stripUnsupportedReasoningSummaryDelivery } from "./reasoning";
 import { repairUrlCitationAnnotations, scrubEpxCompactionItems, stripUnsupportedOutputInclude, stripArkKimiOrphanCipher, stripCanonicalOnlyInputItems, stripCanonicalOnlyToolFields, stripCanonicalOnlyTopLevelFields, stripInternalChatMessageMetadataPassthrough, stripInvalidItemIds, stripItemIdsWhenUnstored, stripProviderInputItemMetadata, stripRejectedSamplingParams } from "./request-strips";
 import { destinationHostOfUrl, isConfigurationUpdateUnsupportedMemoized } from "./config-update-fallback";
+import { applyOpenAIResponsesPerMessageEffort } from "./per-message-effort";
 import { notePlaintextReasoningDropped } from "./plaintext-reasoning-notice";
 import { applyOutboundPromptCacheKeyLaneSharding, stripCanonicalForwardPromptCacheOptions, stripDeprecatedPromptCacheRetention } from "./prompt-cache";
 import { stripBridgeCacheControlsForResponsesWire } from "../../protocols/cache-control";
@@ -315,6 +316,7 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         outBody = repairUrlCitationAnnotations(stripProviderInputItemMetadata(outBody));
         if (
           parsed._stripConfigurationUpdateItems === true
+          || parsed._compactionRequest === true
           || isConfigurationUpdateUnsupportedMemoized(destinationHostOfUrl(url), parsed.modelId)
         ) {
           outBody = stripCanonicalOnlyInputItems(outBody);
@@ -558,6 +560,15 @@ export function createResponsesPassthroughAdapter(provider: EpxProviderConfig): 
         providerName: incoming.providerName,
         url,
       });
+      if (isPlainObject(finalBody)) {
+        finalBody = applyOpenAIResponsesPerMessageEffort({
+          provider,
+          parsed,
+          incoming,
+          body: finalBody,
+          url,
+        });
+      }
       observeOutbound(parsed._rawBody, finalBody, headers);
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         validateFinalCustomToolCompatibility(finalBody, provider.supportsResponsesCustomTools);

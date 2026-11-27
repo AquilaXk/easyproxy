@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { SPAWN_BUDGET_MS } from "../helpers/test-budget";
 import { CODEBUDDY_TOOL_LIMITS } from "../../src/adapters/codebuddy/tool-bridge";
 import { codeBuddyMcpInvocation } from "../../src/adapters/coding-agent/turn";
 
@@ -93,7 +94,7 @@ describe("CodeBuddy capture-only MCP server", () => {
     } finally {
       await client.close();
     }
-  });
+  }, SPAWN_BUDGET_MS);
 
   test("advertises only the private catalog, rejects unknown tools, and never executes known tools", async () => {
     const dir = mkdtempSync(join(tmpdir(), "easyproxy-codebuddy-mcp-test-"));

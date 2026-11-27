@@ -57,6 +57,29 @@ export interface ContextGridCell {
   cached: boolean;
 }
 
+export interface PromptCacheBreakevenRates {
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheReadPerMTok: number;
+  cacheWritePerMTok: number;
+}
+
+export interface PromptCacheBreakevenDiagnostics {
+  prefixTokens: number;
+  writeTtl: "5m" | "1h";
+  economicsAvailable: boolean;
+  writePremiumUsd: number;
+  perHitSavingsUsd: number;
+  breakevenFollowUpHits: number | null;
+  breakevenHitCount: number | null;
+  warmRefreshCostUsd: number;
+  missPenaltyUsd: number;
+  activeExpectedSavingsUsd: number;
+  idleExpectedSavingsUsd: number;
+  worthwhileActive: boolean;
+  worthwhileIdle: boolean;
+}
+
 export interface ContextCacheDiagnostics {
   wireFormat: ContextWireFormat;
   explicitBreakpoints: number;
@@ -66,6 +89,7 @@ export interface ContextCacheDiagnostics {
   hasPromptCacheKey: boolean;
   promptCacheRetention: string | null;
   warnings: ContextWarningCode[];
+  breakeven?: PromptCacheBreakevenDiagnostics;
 }
 
 export interface ContextInspectionReport {
@@ -90,6 +114,9 @@ export const CONTEXT_GRID_CELLS = 128;
 export const MAX_CONTEXT_INSPECT_CHARS = 2 * 1024 * 1024;
 export const MAX_CONTEXT_JSON_DEPTH = 48;
 export const MAX_ENTRY_PREVIEW_CHARS = 8_192;
+export const CACHE_BREAKEVEN_IDLE_CONTINUATION_PROBABILITY = 0.15;
+export const CACHE_BREAKEVEN_MIN_EXPECTED_SAVINGS_USD = 0.05;
+export const CACHE_WRITE_1H_MULTIPLIER = 2 / 1.25;
 const MAX_SCAN_ITEMS = 2_048;
 const CHARS_PER_TOKEN = 4;
 const MEDIA_ATTACHMENT_TOKENS = 1_000;
@@ -313,9 +340,107 @@ function buildProportionalCells(
   return cells;
 }
 
+export interface ContextInspectionOptions {
+  contextWindowTokens?: number;
+  rates?: PromptCacheBreakevenRates;
+  writeTtl?: "5m" | "1h";
+}
+
+function cleanNonNegativeRate(raw: number): number {
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+/**
+ * Pure manual prompt-cache breakeven diagnostic calculator (ported from `earendil-works/pi`
+ * `packages/ai/src/cache-warming.ts`, MIT). Computes write-amortization hit counts and
+ * warm/miss expected savings strictly on caller-supplied numbers without dispatching requests.
+ */
+export function evaluatePromptCacheBreakeven(input: {
+  prefixTokens: number;
+  rates: PromptCacheBreakevenRates;
+  writeTtl?: "5m" | "1h";
+  idleContinuationProbability?: number;
+  minimumExpectedSavingsUsd?: number;
+}): PromptCacheBreakevenDiagnostics {
+  const prefixTokens = typeof input.prefixTokens === "number" && Number.isFinite(input.prefixTokens) && input.prefixTokens > 0
+    ? Math.trunc(input.prefixTokens)
+    : 0;
+  const writeTtl = input.writeTtl === "1h" ? "1h" : "5m";
+  const inRate = cleanNonNegativeRate(input.rates.inputPerMTok);
+  const outRate = cleanNonNegativeRate(input.rates.outputPerMTok);
+  const readRate = cleanNonNegativeRate(input.rates.cacheReadPerMTok);
+  const baseWriteRate = cleanNonNegativeRate(input.rates.cacheWritePerMTok);
+  const effectiveWriteRate = writeTtl === "1h" && baseWriteRate > 0
+    ? baseWriteRate * CACHE_WRITE_1H_MULTIPLIER
+    : baseWriteRate;
+
+  const economicsAvailable = prefixTokens > 0 && (inRate > 0 || readRate > 0 || effectiveWriteRate > 0);
+  if (!economicsAvailable) {
+    return {
+      prefixTokens,
+      writeTtl,
+      economicsAvailable: false,
+      writePremiumUsd: 0,
+      perHitSavingsUsd: 0,
+      breakevenFollowUpHits: null,
+      breakevenHitCount: null,
+      warmRefreshCostUsd: 0,
+      missPenaltyUsd: 0,
+      activeExpectedSavingsUsd: 0,
+      idleExpectedSavingsUsd: 0,
+      worthwhileActive: false,
+      worthwhileIdle: false,
+    };
+  }
+
+  const writePremiumUsd = (prefixTokens * Math.max(0, effectiveWriteRate - inRate)) / 1_000_000;
+  const perHitSavingsUsd = (prefixTokens * Math.max(0, inRate - readRate)) / 1_000_000;
+  let breakevenFollowUpHits: number | null = null;
+  if (effectiveWriteRate <= inRate) {
+    breakevenFollowUpHits = inRate > readRate ? 0 : null;
+  } else if (inRate > readRate) {
+    breakevenFollowUpHits = (effectiveWriteRate - inRate) / (inRate - readRate);
+  }
+  const breakevenHitCount = breakevenFollowUpHits === null ? null : Math.ceil(breakevenFollowUpHits);
+
+  const cacheHitCostUsd = (prefixTokens * readRate) / 1_000_000;
+  const missRate = effectiveWriteRate > 0 ? effectiveWriteRate : inRate;
+  const cacheMissCostUsd = (prefixTokens * missRate) / 1_000_000;
+  const warmRefreshCostUsd = (prefixTokens * readRate + outRate) / 1_000_000;
+  const missPenaltyUsd = Math.max(0, cacheMissCostUsd - cacheHitCostUsd);
+
+  const idleProb = typeof input.idleContinuationProbability === "number"
+    && Number.isFinite(input.idleContinuationProbability)
+    ? Math.max(0, Math.min(1, input.idleContinuationProbability))
+    : CACHE_BREAKEVEN_IDLE_CONTINUATION_PROBABILITY;
+  const minSavings = typeof input.minimumExpectedSavingsUsd === "number"
+    && Number.isFinite(input.minimumExpectedSavingsUsd) && input.minimumExpectedSavingsUsd >= 0
+    ? input.minimumExpectedSavingsUsd
+    : CACHE_BREAKEVEN_MIN_EXPECTED_SAVINGS_USD;
+
+  const activeExpectedSavingsUsd = missPenaltyUsd - warmRefreshCostUsd;
+  const idleExpectedSavingsUsd = idleProb * missPenaltyUsd - warmRefreshCostUsd;
+
+  return {
+    prefixTokens,
+    writeTtl,
+    economicsAvailable: true,
+    writePremiumUsd,
+    perHitSavingsUsd,
+    breakevenFollowUpHits,
+    breakevenHitCount,
+    warmRefreshCostUsd,
+    missPenaltyUsd,
+    activeExpectedSavingsUsd,
+    idleExpectedSavingsUsd,
+    worthwhileActive: activeExpectedSavingsUsd >= minSavings,
+    worthwhileIdle: idleExpectedSavingsUsd >= minSavings,
+  };
+}
+
 export function inspectPromptContextJson(
   jsonText: string,
-  options?: { contextWindowTokens?: number },
+  options?: ContextInspectionOptions,
 ): ContextInspectionReport {
   if (typeof jsonText !== "string" || jsonText.trim().length === 0) {
     return emptyErrorReport("Paste a JSON request payload to inspect context composition.", options?.contextWindowTokens);
@@ -381,7 +506,7 @@ function emptyErrorReport(error: string, explicitWindow?: number): ContextInspec
 
 export function inspectPromptContextPayload(
   payload: unknown,
-  options?: { contextWindowTokens?: number },
+  options?: ContextInspectionOptions,
 ): ContextInspectionReport {
   if (!isRec(payload)) {
     return emptyErrorReport("Request payload must be a JSON object.", options?.contextWindowTokens);
@@ -660,6 +785,16 @@ export function inspectPromptContextPayload(
 
   const hasPromptCacheKey = typeof payload.prompt_cache_key === "string" && payload.prompt_cache_key.trim().length > 0;
   const promptCacheRetention = typeof payload.prompt_cache_retention === "string" ? payload.prompt_cache_retention : null;
+  const inferredTtl: "5m" | "1h" = options?.writeTtl
+    ?? ((segments.some(seg => seg.cached && seg.breakpointTtlRank === 2)
+      || (isRec(payload.cache_control) && payload.cache_control.ttl === "1h")) ? "1h" : "5m");
+  const breakeven = options?.rates && cacheablePrefixTokens > 0
+    ? evaluatePromptCacheBreakeven({
+        prefixTokens: cacheablePrefixTokens,
+        rates: options.rates,
+        writeTtl: inferredTtl,
+      })
+    : undefined;
 
   return {
     ok: true,
@@ -682,6 +817,7 @@ export function inspectPromptContextPayload(
       hasPromptCacheKey,
       promptCacheRetention,
       warnings: [...warnings],
+      ...(breakeven ? { breakeven } : {}),
     },
   };
 }

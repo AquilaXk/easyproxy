@@ -31,6 +31,7 @@ import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "../p
 import { providerCodexAccountMode } from "../providers/registry";
 import { configuredAnthropicInstance } from "../providers/anthropic-instance";
 import { captureConfigGeneration, type GenerationContext } from "../lib/state-store-sweeper";
+import { isInteractiveMacOSPowerReady } from "../lib/macos-power-state";
 import { tryAcquireNativeMainProfileClaim } from "../codex/native-main-admission";
 
 export interface TokenGuardianHandle {
@@ -318,9 +319,14 @@ export function reconcileGuardianBackoff(context: GenerationContext): number {
  * runs even when the guardian is disabled (each sweep is a cheap no-op) so toggling `enabled` in
  * config takes effect on the next tick without a restart.
  */
-export function startTokenGuardian(): TokenGuardianHandle {
+export interface TokenGuardianOptions {
+  isPowerReady?: () => Promise<boolean>;
+}
+
+export function startTokenGuardian(options?: TokenGuardianOptions): TokenGuardianHandle {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const isPowerReady = options?.isPowerReady ?? isInteractiveMacOSPowerReady;
 
   const scheduleNext = () => {
     if (stopped) return;
@@ -331,12 +337,14 @@ export function startTokenGuardian(): TokenGuardianHandle {
   };
 
   const runSweep = () => {
-    void guardianSweep()
-      .then(r => {
-        if (r.enabled && (r.refreshed.length || r.warmed.length || r.failed.length)) {
-          console.log(`🛡️  token-guardian: refreshed ${r.refreshed.length}, warmed ${r.warmed.length}, failed ${r.failed.length}`);
-        }
-      })
+    void (async () => {
+      if (!(await isPowerReady())) return;
+      if (stopped) return;
+      const r = await guardianSweep();
+      if (r.enabled && (r.refreshed.length || r.warmed.length || r.failed.length)) {
+        console.log(`🛡️  token-guardian: refreshed ${r.refreshed.length}, warmed ${r.warmed.length}, failed ${r.failed.length}`);
+      }
+    })()
       .catch(err => console.log(`token-guardian sweep error: ${err instanceof Error ? err.message : String(err)}`))
       .finally(scheduleNext);
   };

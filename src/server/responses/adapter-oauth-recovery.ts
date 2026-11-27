@@ -248,7 +248,7 @@ export async function recoverAnthropicOAuthPool(
   // Anthropic OAuth: recover a rate limit or proven account entitlement refusal
   // before output, within the shared request and account rotation limits.
   while (
-    (upstreamResponse.status === 429 || upstreamResponse.status === 403 || upstreamResponse.status === 401)
+    (upstreamResponse.status === 429 || upstreamResponse.status === 403 || upstreamResponse.status === 402 || upstreamResponse.status === 400 || upstreamResponse.status === 401)
     && anthropicInstance
     && transportState.anthropicPoolAccountId
   ) {
@@ -260,6 +260,7 @@ export async function recoverAnthropicOAuthPool(
       `${route.providerName}|${route.modelId}|anthropic-pool-rotation`,
       !adapterOwnsDispatch && genericRefetchCountsSends(),
     );
+    const sentSlow = route.provider._anthropicSlowMode === true;
     let nextAccountId: string | null;
     try {
       nextAccountId = await rotateAnthropicAccountOnResponseForInstance(anthropicInstance, upstreamResponse, {
@@ -270,6 +271,7 @@ export async function recoverAnthropicOAuthPool(
         requestKey: transportState,
         decision: transportState.anthropicRouteDecision,
         currentDecision: transportState.currentAnthropicRouteDecision,
+        sentSlow,
         signal: upstream.signal,
         // A denied reservation must not rotate on base headroom its bounds cannot see.
         canRetry: hop.allowed && (hop.permit !== undefined || !sendBudgetState.sendBudgetExhausted())
@@ -291,7 +293,13 @@ export async function recoverAnthropicOAuthPool(
       try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
       transportState.anthropicPoolAccountId = admitted.accountId;
       transportState.anthropicPoolFailovers += 1;
-      route.provider = { ...route.provider, apiKey: admitted.accessToken };
+      const slowFallbackOnly = !anthropicRoutingFor(anthropicInstance).getEligibleAnthropicAccounts(Date.now(), route.modelId).includes(admitted.accountId)
+        && anthropicRoutingFor(anthropicInstance).getSlowFallbackEligibleAccounts(config, Date.now(), route.modelId).includes(admitted.accountId);
+      route.provider = {
+        ...route.provider,
+        apiKey: admitted.accessToken,
+        _anthropicSlowMode: slowFallbackOnly ? true : undefined,
+      };
       logCtx.provider = formatAnthropicProviderForLog(anthropicInstance, admitted.accountId, config);
       rebindAdapterForProvider(ctx, route.provider);
       // The replay IS this hop's send; the dispatching layer settles the reservation.
@@ -301,7 +309,7 @@ export async function recoverAnthropicOAuthPool(
         result = await rebuildAndRefetch(
           !anthropicRefusalCredentialChanged(upstreamResponse, admitted) ? "rate-limit-429"
             : upstreamResponse.status === 401 ? "oauth-401"
-            : upstreamResponse.status === 403 ? "oauth-account-403" : "anthropic-oauth-429",
+            : (upstreamResponse.status === 403 || upstreamResponse.status === 402 || upstreamResponse.status === 400) ? "oauth-account-403" : "anthropic-oauth-429",
           () => { if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError(); },
         );
       } finally {

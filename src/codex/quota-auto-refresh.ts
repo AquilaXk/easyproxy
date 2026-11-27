@@ -1,5 +1,6 @@
 import { mutatePersistedConfig } from "../config";
 import { captureConfigGeneration, registerStateSweepAfterTick } from "../lib/state-store-sweeper";
+import { isInteractiveMacOSPowerReady } from "../lib/macos-power-state";
 import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "../providers/openai-tiers";
 import { normalizeResetAt } from "../providers/quota-wire";
 import { providerCodexAccountMode } from "../providers/registry";
@@ -417,10 +418,19 @@ export async function runCodexQuotaAutoRefresh(
 }
 
 /** Attach activation to the shared minute sweep and return its owner-scoped cleanup. */
-export function registerCodexQuotaAutoRefreshWorker(config: EpxConfig): () => void {
+export function registerCodexQuotaAutoRefreshWorker(
+  config: EpxConfig,
+  deps?: { isPowerReady?: () => Promise<boolean> },
+): () => void {
+  const isPowerReady = deps?.isPowerReady ?? isInteractiveMacOSPowerReady;
   return registerStateSweepAfterTick({
     name: "codex-quota-auto-refresh",
-    afterTick: () => { void runCodexQuotaAutoRefresh(config); },
+    afterTick: () => {
+      void (async () => {
+        if (!(await isPowerReady())) return;
+        await runCodexQuotaAutoRefresh(config);
+      })();
+    },
   });
 }
 

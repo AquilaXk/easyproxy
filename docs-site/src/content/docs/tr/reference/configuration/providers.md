@@ -215,9 +215,9 @@ yapılandırılır.
 
 ### Bir sağlayıcı kaydı neleri korur
 
-Var olan bir sağlayıcının adıyla gönderilen `POST /api/providers`, saklanan satırı istekten oluşturulan bir satırla değiştirir. Panodaki ekleme/düzenleme formu her alanı gönderemez; bu yüzden kayıt, isteğin atladığı bazı saklanan alanları korur. Bunlardan on dördü belirli bir üst kaynağın nasıl davrandığını kaydeder: `preserveReasoningContentModels`, `preserveResponsesReasoningContent`, `requiresReasoningPlaceholderModels`, `foldDeveloperRoleToSystem`, `singleLeadingSystemMessage`, `reasoningWireFormat`, `omitReasoningEffortWithToolsModels`, `promoteAdditionalTools`, `retryOn429`, `transientRetryOn5xx`, `retryOnReset`, `unsupportedHostedTools`, `unsupportedHostedToolsWithClientTools`, `forwardAdvisorTool`.
+Var olan bir sağlayıcının adıyla gönderilen `POST /api/providers`, saklanan satırı istekten oluşturulan bir satırla değiştirir. Panodaki ekleme/düzenleme formu her alanı gönderemez; bu yüzden kayıt, isteğin atladığı bazı saklanan alanları korur. Bunlardan on altısı belirli bir üst kaynağın nasıl davrandığını kaydeder: `preserveReasoningContentModels`, `preserveResponsesReasoningContent`, `requiresReasoningPlaceholderModels`, `foldDeveloperRoleToSystem`, `singleLeadingSystemMessage`, `reasoningWireFormat`, `omitReasoningEffortWithToolsModels`, `promoteAdditionalTools`, `retryOn429`, `transientRetryOn5xx`, `retryOnReset`, `unsupportedHostedTools`, `unsupportedHostedToolsWithClientTools`, `forwardAdvisorTool`, `gatewayToolSearch`, `thinkingBudgetRectifier`.
 
-| Kayıt | On dört ayar | Saklanan `apiKeyPool` |
+| Kayıt | On altı ayar | Saklanan `apiKeyPool` |
 | --- | --- | --- |
 | Aynı hedef, alan atlanmış | Saklanan değer korunur, açık bir `[]` veya `false` dahil | Korunur |
 | Yeni hedef, alan atlanmış | Korunmaz; yeni hedef için kayıt defteri varsayılanları uygulanabilir | Korunmaz |

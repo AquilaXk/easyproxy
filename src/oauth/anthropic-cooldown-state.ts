@@ -19,8 +19,8 @@ export interface AccountHealth {
   cooldownGeneration: number;
   /** When the refusal was recorded; a reset settled earlier must not lift it. */
   recordedAt: number;
-  /** 429 (shared quota) or 403 (entitlement); only a quota refusal can be lifted by a reset grant. */
-  refusalStatus: 429 | 403;
+  /** 429 (shared quota) or 403/402/400 (entitlement/billing); only a quota refusal can be lifted by a reset grant. */
+  refusalStatus: 429 | 403 | 402 | 400;
   /** Windows a 429 reported as rejected, whatever set the deadline; empty when it named none. */
   refusedQuotaWindows: AnthropicQuotaWindow[];
   /**

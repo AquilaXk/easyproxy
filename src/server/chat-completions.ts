@@ -237,10 +237,12 @@ async function handleChatCompletionsWithBudget(
     );
   }
   logIds?.onRequestBodyRead?.();
-  if (applyOutboundPayloadHygiene(chatBody, config, logCtx).blocked) {
+  const hygiene = applyOutboundPayloadHygiene(chatBody, config, logCtx);
+  if (hygiene.blocked) {
     if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 400, { closeReason: "non_stream" });
     return chatCompletionsErrorResponse(400, OUTBOUND_SECRET_BLOCKED_MESSAGE, "invalid_request_error", "outbound_secret_guard");
   }
+  chatBody = hygiene.body as Rec;
 
   const requestedModel = chatBody.model as string;
   const { fastRow, effortRow } = parseSyntheticRowId(requestedModel, config);

@@ -535,9 +535,9 @@ and `modelContextWindows` for that exact id when needed. Unknown ids are not gue
 
 ### What a provider save keeps
 
-`POST /api/providers` with the name of an existing provider replaces the stored row with one built from the request. The dashboard's add/edit form cannot send every field, so the save keeps some stored fields the request omits. Fourteen of them record how one upstream behaves: `preserveReasoningContentModels`, `preserveResponsesReasoningContent`, `requiresReasoningPlaceholderModels`, `foldDeveloperRoleToSystem`, `singleLeadingSystemMessage`, `reasoningWireFormat`, `omitReasoningEffortWithToolsModels`, `promoteAdditionalTools`, `retryOn429`, `transientRetryOn5xx`, `retryOnReset`, `unsupportedHostedTools`, `unsupportedHostedToolsWithClientTools` and `forwardAdvisorTool`.
+`POST /api/providers` with the name of an existing provider replaces the stored row with one built from the request. The dashboard's add/edit form cannot send every field, so the save keeps some stored fields the request omits. Sixteen of them record how one upstream behaves: `preserveReasoningContentModels`, `preserveResponsesReasoningContent`, `requiresReasoningPlaceholderModels`, `foldDeveloperRoleToSystem`, `singleLeadingSystemMessage`, `reasoningWireFormat`, `omitReasoningEffortWithToolsModels`, `promoteAdditionalTools`, `retryOn429`, `transientRetryOn5xx`, `retryOnReset`, `unsupportedHostedTools`, `unsupportedHostedToolsWithClientTools`, `forwardAdvisorTool`, `gatewayToolSearch` and `thinkingBudgetRectifier`.
 
-| Save | The fourteen settings | Stored `apiKeyPool` |
+| Save | The sixteen settings | Stored `apiKeyPool` |
 | --- | --- | --- |
 | Same destination, field omitted | Stored value kept, including an explicit `[]` or `false` | Kept |
 | New destination, field omitted | Not kept; registry defaults for the new destination may apply | Not kept |

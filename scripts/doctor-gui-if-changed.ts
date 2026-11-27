@@ -58,37 +58,29 @@ if (import.meta.main) {
     }
   };
 
-  const diffNames = (range: string): string[] => {
+  const diffNames = (range: string): string[] | null => {
     try {
-      const diff = spawnSync("git", ["diff", "--name-only", range], {
+      const diff = spawnSync("git", ["diff", "--name-only", "-z", "--no-renames", range], {
         cwd: repoRoot,
         encoding: "utf8",
       });
-      if (diff.status !== 0) return [];
-      return (diff.stdout ?? "")
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean);
+      if (diff.status !== 0) return null;
+      return (diff.stdout ?? "").split("\0").filter(Boolean);
     } catch {
-      return [];
+      return null;
     }
   };
 
-  let files: string[];
-  let hadBase = true;
+  let files: string[] | null;
   if (process.env.DOCTOR_FILES !== undefined) {
     files = process.env.DOCTOR_FILES.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
   } else {
-    let range: string | null = null;
-    if (hasRef("@{u}")) range = "@{u}...HEAD";
-    else if (hasRef("origin/dev")) range = "origin/dev...HEAD";
-    else if (hasRef("dev")) range = "dev...HEAD";
-    hadBase = range !== null;
-    files = range ? diffNames(range) : [];
+    const base = ["upstream/main", "origin/main", "main"].find(hasRef);
+    files = base ? diffNames(`${base}...HEAD`) : null;
   }
 
-  // No usable base — run doctor so GUI pushes still get a check.
-  const shouldRun = hadBase ? guiPathsChanged(files) : true;
+  // No usable base or failed diff — run doctor so GUI pushes still get a check.
+  const shouldRun = files === null ? true : guiPathsChanged(files);
 
   if (process.env.DOCTOR_DRY_RUN === "1") {
     console.log(shouldRun ? "doctor:run" : "doctor:skip");
@@ -103,7 +95,7 @@ if (import.meta.main) {
   console.log("doctor:gui: gui/ changed — running React Doctor (scope=changed)");
   const [cmd, ...args] = process.env.DOCTOR_CMD
     ? process.env.DOCTOR_CMD.split(" ")
-    : ["bun", "run", "doctor"];
+    : [process.execPath, "run", "doctor"];
 
   // spawnSync (not execFileSync): explicit maxBuffer + status/error channels so
   // oversized doctor output cannot be mistaken for an offline soft-skip.

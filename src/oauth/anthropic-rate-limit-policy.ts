@@ -20,14 +20,20 @@ export function anthropicRetryAfterMs(value: string | null | undefined, now: num
   return Number.isFinite(new Date(at).getTime()) && at > now ? Math.ceil(at - now) : undefined;
 }
 
-export function classifyAnthropic429(headers: RateLimitHeaders, now = Date.now()): AnthropicRateLimitKind {
+export function classifyAnthropic429(headers: RateLimitHeaders, now = Date.now(), options?: { sentSlow?: boolean }): AnthropicRateLimitKind {
+  const slowStatus = headers.get("anthropic-ratelimit-unified-slow-status")?.trim();
+  if (options?.sentSlow && slowStatus === "slot_busy") {
+    return "transient-rate";
+  }
   const rejected = (window: string) => headers.get(`anthropic-ratelimit-unified-${window}-status`)?.trim() === "rejected";
   if (rejected("5h") || rejected("7d")) return "shared-quota";
   if (rejected("7d_oi")) return "family-quota";
-  if (headers.get("anthropic-ratelimit-unified-status")?.trim() === "rejected") return "shared-quota";
+  const unifiedStatus = headers.get("anthropic-ratelimit-unified-status")?.trim();
+  if (unifiedStatus === "rejected") return "shared-quota";
   // Retry-After is an account-local admission pause, not proof of spent subscription quota.
   if (anthropicRetryAfterMs(headers.get("retry-after"), now) !== undefined
-    || headers.get("anthropic-ratelimit-unified-status")?.trim() === "allowed") return "transient-rate";
+    || unifiedStatus === "allowed"
+    || unifiedStatus === "allowed_warning") return "transient-rate";
   return "request-scoped-unknown";
 }
 

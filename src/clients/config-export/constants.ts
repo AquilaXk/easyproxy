@@ -36,6 +36,13 @@ export const HERMES_API_KEY_ENV_REF = `\${${HERMES_API_KEY_ENV}}`;
 export const OPENCLAW_API_KEY_ENV = "EASYPROXY_OPENCLAW_API_KEY";
 export const OPENCLAW_API_KEY_ENV_REF = `\${${OPENCLAW_API_KEY_ENV}}`;
 
+/** Pi expands `$VAR` inside provider headers via `parseConfigValueTemplate`. */
+export const PI_API_KEY_ENV = "EASYPROXY_PI_API_KEY";
+export const PI_API_KEY_ENV_REF = `$${PI_API_KEY_ENV}`;
+
+/** OMP resolves bare env var names inside provider headers via `$envExact`. */
+export const OMP_API_KEY_ENV = "EASYPROXY_OMP_API_KEY";
+
 /**
  * Placeholder credential for loopback-only clients (Kimi, Pi). A loopback
  * bind needs no real admission key, so we emit the same placeholder the Grok

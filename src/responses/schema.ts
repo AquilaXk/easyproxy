@@ -160,6 +160,7 @@ export const toolSchema = z.object({
   // Unknown keys are stripped here, so a field the parser is expected to read has to be
   // declared: an undeclared allowed_callers never reached buildTools at all (#5210).
   allowed_callers: z.array(z.string()).optional(),
+  defer_loading: z.boolean().optional(),
   cache_control: cacheControlFieldSchema,
 });
 

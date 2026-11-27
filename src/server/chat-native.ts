@@ -66,6 +66,7 @@ import {
   rotateProviderTransportOn401,
   transientRetryPolicyFor,
 } from "../providers/key-failover";
+import { rotateCreditOrBudgetKeyOnResponse } from "../providers/anthropic-billing-recovery";
 import { fastPolicyForModel } from "../providers/service-tier";
 import { RequestPacingQueueOverloadError } from "../providers/request-pacing";
 import { stampApiKeyAccountLabel } from "../providers/label";
@@ -687,23 +688,35 @@ export async function runNativeChatAttempt(
     }
     // Same reason as above, plus a second one: rotating here would write a cooldown against
     // a key that rate-limited nothing, and that false signal outlives the request.
-    while ((response.status === 429 || (response.status === 401 && activeProvider._apiKeyAttempt?.distributed))
+    while ((response.status === 429 || (response.status === 401 && activeProvider._apiKeyAttempt?.distributed)
+        || [400, 402, 403, 422].includes(response.status))
       && responseOwnsDistributedKey && !isNonReplayableResponse(response) && hasKeyPoolFailover(activeProvider)) {
       const failureStatus = response.status;
-      const rotate = failureStatus === 401 ? rotateProviderTransportOn401 : rotateProviderTransportOn429;
-      const rotated = rotate(config, route.providerName, activeProvider, {
-        retryAfter: response.headers.get("retry-after"),
-        now: Date.now(),
-        attemptedKey: activeProvider.apiKey,
-        attemptedSelection: activeProvider._apiKeyAttempt,
-        promptCacheKey: typeof execution.chatBody.prompt_cache_key === "string" ? execution.chatBody.prompt_cache_key : undefined,
-      });
+      const rotated = failureStatus === 401
+        ? rotateProviderTransportOn401(config, route.providerName, activeProvider, {
+          now: Date.now(),
+          attemptedKey: activeProvider.apiKey,
+          attemptedSelection: activeProvider._apiKeyAttempt,
+          promptCacheKey: typeof execution.chatBody.prompt_cache_key === "string" ? execution.chatBody.prompt_cache_key : undefined,
+        })
+        : failureStatus === 429
+          ? rotateProviderTransportOn429(config, route.providerName, activeProvider, {
+            retryAfter: response.headers.get("retry-after"),
+            now: Date.now(),
+            attemptedKey: activeProvider.apiKey,
+            attemptedSelection: activeProvider._apiKeyAttempt,
+            promptCacheKey: typeof execution.chatBody.prompt_cache_key === "string" ? execution.chatBody.prompt_cache_key : undefined,
+          })
+          : await rotateCreditOrBudgetKeyOnResponse(response, config, route.providerName, activeProvider, {
+            signal: upstream.signal,
+            promptCacheKey: typeof execution.chatBody.prompt_cache_key === "string" ? execution.chatBody.prompt_cache_key : undefined,
+          });
       if (!rotated) break;
       // Rotation also records the failed key's cooldown and persists the next healthy key.
       // Keep that bookkeeping when this request has spent its final send, but preserve the
-      // terminal 429 body and do not dispatch with the replacement credential.
+      // terminal refusal body and do not dispatch with the replacement credential.
       if (!transientSendAvailable()) break;
-      const recovery = failureStatus === 401 ? "key-401" : "key-429";
+      const recovery = failureStatus === 401 ? "key-401" : failureStatus === 429 ? "key-429" : "key-401";
       sealCredentialRefusal(logCtx, failureStatus, recovery);
       try { void response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
       activeProvider = rotated;

@@ -215,9 +215,9 @@ Claude Code настраивается через
 
 ### Что сохраняется при сохранении провайдера
 
-`POST /api/providers` с именем существующего провайдера заменяет сохранённую строку строкой, собранной из запроса. Форма добавления и редактирования в панели не может отправить все поля, поэтому сохранение переносит часть сохранённых полей, которые запрос опустил. Четырнадцать из них описывают поведение конкретного апстрима: `preserveReasoningContentModels`, `preserveResponsesReasoningContent`, `requiresReasoningPlaceholderModels`, `foldDeveloperRoleToSystem`, `singleLeadingSystemMessage`, `reasoningWireFormat`, `omitReasoningEffortWithToolsModels`, `promoteAdditionalTools`, `retryOn429`, `transientRetryOn5xx`, `retryOnReset`, `unsupportedHostedTools`, `unsupportedHostedToolsWithClientTools`, `forwardAdvisorTool`.
+`POST /api/providers` с именем существующего провайдера заменяет сохранённую строку строкой, собранной из запроса. Форма добавления и редактирования в панели не может отправить все поля, поэтому сохранение переносит часть сохранённых полей, которые запрос опустил. Шестнадцать из них описывают поведение конкретного апстрима: `preserveReasoningContentModels`, `preserveResponsesReasoningContent`, `requiresReasoningPlaceholderModels`, `foldDeveloperRoleToSystem`, `singleLeadingSystemMessage`, `reasoningWireFormat`, `omitReasoningEffortWithToolsModels`, `promoteAdditionalTools`, `retryOn429`, `transientRetryOn5xx`, `retryOnReset`, `unsupportedHostedTools`, `unsupportedHostedToolsWithClientTools`, `forwardAdvisorTool`, `gatewayToolSearch`, `thinkingBudgetRectifier`.
 
-| Сохранение | Четырнадцать настроек | Сохранённый `apiKeyPool` |
+| Сохранение | Шестнадцать настроек | Сохранённый `apiKeyPool` |
 | --- | --- | --- |
 | Та же точка назначения, поле опущено | Сохранённое значение остаётся, включая явный `[]` или `false` | Остаётся |
 | Новая точка назначения, поле опущено | Не переносится; могут примениться значения реестра по умолчанию для новой точки | Не переносится |

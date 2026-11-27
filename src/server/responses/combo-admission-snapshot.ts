@@ -13,7 +13,7 @@ const providerFields = [
   "noReasoningModels", "modelSuppressSyntheticMax", "supportsResponsesCustomTools",
   "dropResponsesReasoningItems", "preserveReasoningContentModels", "allowEncryptedV2AgentTasks", "keyOptional",
   "allowPrivateNetwork", "googleMode", "fastWire", "apiKeySelectionRevision",
-  "forwardAdvisorTool", "autoToolChoiceOnlyModels", "preserveResponsesReasoningContent", "requiresAdjacentResponsesToolResults",
+  "forwardAdvisorTool", "gatewayToolSearch", "thinkingBudgetRectifier", "autoToolChoiceOnlyModels", "preserveResponsesReasoningContent", "requiresAdjacentResponsesToolResults",
 ] as const satisfies readonly (keyof EpxProviderConfig)[];
 
 function dataValue<T, K extends keyof T>(value: T | undefined, key: K): T[K] | undefined {

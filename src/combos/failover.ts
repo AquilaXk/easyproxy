@@ -5,6 +5,7 @@ import { parseHttpDate } from "../lib/http-date";
 import { isNonReplayableUpstreamCode } from "../lib/upstream-retry";
 import { isShortOpenRouterInFlightBudget402 } from "../lib/upstream-condition";
 import { isAnthropicBillingFailure, isAnthropicExtraUsageFailure } from "../providers/anthropic-billing-refusal";
+import { isCreditOrBudgetExhaustedRefusal, isSpendingCapacityThrottleText } from "../lib/credit-budget-refusal";
 import { hasConflictingReasoningEffortCode } from "../providers/reasoning-metadata";
 import { isKiroAccountProfileRefusal } from "../adapters/kiro-refusal";
 import type { EpxComboTarget } from "../types";
@@ -1549,6 +1550,10 @@ export function comboFailureCooldownScope(
     return "target";
   }
   if (isAnthropicBillingFailure(status, message, rawCode)) return "provider";
+  if (status !== 413 && !isDefiniteContextOverflow(status, message) && !isSpendingCapacityThrottleText(message)
+    && isCreditOrBudgetExhaustedRefusal({ status, code: rawCode, rootCode: options?.rootCode, type: options?.type, message })) {
+    return "provider";
+  }
   // Request-shape refusals first: an oversized request must not cool a healthy target.
   // A native transport can surface a zero-output model overflow as a generic
   // upstream_server_error carrying precise context-window prose, so consult the bounded
@@ -1852,6 +1857,10 @@ function decideComboFailure(
     : isUnofferedToolCallRefusal(status, message, rawCode)) return "hop";
   if (isAnthropicBillingFailure(status, message, rawCode)) return "hop";
   if (isAnthropicExtraUsageFailure(status, message, rawCode)) return "hop";
+  if (status !== 413 && !isDefiniteContextOverflow(status, message) && !isSpendingCapacityThrottleText(message)
+    && isCreditOrBudgetExhaustedRefusal({ status, code: rawCode, message })) {
+    return "hop";
+  }
   // Kiro's body validator rejects the request for the identity it was routed under. The account
   // layer rotates logins first; this is the no-alternate case, so the next combo target is the
   // only remaining chance to serve the turn. Only a caller that knows the failed target is a Kiro

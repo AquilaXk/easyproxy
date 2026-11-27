@@ -14,6 +14,7 @@ import {
   OPENCODE_API_KEY_ENV,
   OPENCODE_CONFIG_SCHEMA,
   OPENCODE_PROVIDER_ID,
+  PI_API_KEY_ENV,
   LOOPBACK_API_KEY_PLACEHOLDER,
   buildClientConfig,
   normalizeExportModels,
@@ -389,7 +390,7 @@ describe("GET /api/client-config", () => {
 
     expect(body.client).toBe("pi");
     expect(body.filename).toBe("pi-models.json");
-    expect(body.apiKeyEnv).toBe("");
+    expect(body.apiKeyEnv).toBe(PI_API_KEY_ENV);
 
     const provider = (body.config as PiGeneratedConfig).providers[OPENCODE_PROVIDER_ID];
     expect(Array.isArray(provider.models)).toBe(true);

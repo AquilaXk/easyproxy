@@ -58,14 +58,12 @@ function ctx(config: EpxConfig = LOOPBACK): ExportContext {
 
 describe("no secret reaches a client config", () => {
   test("the generated client support policy identifies every loopback-only integration", () => {
-    // Pi, Kimi, Gajae, Aside and Raycast cannot emit the dedicated admission
-    // header -- Aside's observed provider block has four keys and none is
-    // `headers`; Raycast's `api_keys` is read literally with no env
-    // interpolation. OMP, Prime and omo can carry provider headers, but remote
-    // credential wiring is deliberately deferred from those initial generated
-    // integrations -- omo and Gentle Shell reuse Pi's builder, which emits no headers at all.
+    // Qoder, WorkBuddy, Kimi, Gajae, Aside and Raycast stay loopback-only: some lack
+    // a provider `headers` block or env interpolation; Prime, omo and Gentle Shell
+    // intentionally defer remote credential wiring, while Pi and OMP emit
+    // `headers["x-easyproxy-api-key"]` for non-loopback binds.
     const loopbackOnly = EXPORT_CLIENT_IDS.filter(id => EXPORT_CLIENTS[id].loopbackOnly);
-    expect(loopbackOnly).toEqual(["qoder", "qoder-cn", "workbuddy", "workbuddy-ai", "pi", "omp", "kimi", "gajae", "dsh", "mcode", "zcode", "commandcode", "prime", "aside", "raycast", "omo", "cline", "droid", "gentle-shell", "t3code"]);
+    expect(loopbackOnly).toEqual(["qoder", "qoder-cn", "workbuddy", "workbuddy-ai", "kimi", "gajae", "dsh", "mcode", "zcode", "commandcode", "prime", "aside", "raycast", "omo", "cline", "droid", "gentle-shell", "t3code"]);
   });
 
   test("every client that is not loopback-only carries the header on a remote bind", () => {

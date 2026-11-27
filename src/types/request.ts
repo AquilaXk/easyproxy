@@ -241,6 +241,13 @@ export interface EpxParsedRequest {
   _perMessageEffort?: PerMessageEffortTurn;
   /** Strip OpenAI-private `configuration_update` input items on rebuild after a 400 refusal. */
   _stripConfigurationUpdateItems?: boolean;
+  /** Synthetic non-Anthropic `defer_loading` (`epx_tool_search`) loop guard (`src/responses/gateway-tool-search.ts`). */
+  _gatewayToolSearchGuard?: (options: {
+    parsed: EpxParsedRequest;
+    translatorBudget?: TranslatorBudget;
+    firstEvents: AsyncIterable<AdapterEvent>;
+    continuation: (parsed: EpxParsedRequest) => AsyncIterable<AdapterEvent> | Promise<AsyncIterable<AdapterEvent>>;
+  }) => AsyncGenerator<AdapterEvent>;
   /**
    * Core-owned registration slot for the optional advisor subsystem (src/advisor). Set per request
    * by the sidecar planner, never at module load: the core Responses path only sees this

@@ -656,6 +656,8 @@ export interface EpxProviderConfig {
   apiKeySelectionRevision?: string;
   /** Runtime only. Never expose in management responses or persist a routed provider. */
   _apiKeyAttempt?: ProviderApiKeySelection;
+  /** Runtime only. True when Anthropic OAuth pool selected 5h-exhausted slow-lane fallback. */
+  _anthropicSlowMode?: boolean;
   defaultModel?: string;
   models?: string[];
   /**
@@ -1267,6 +1269,17 @@ export interface EpxProviderConfig {
    * cache survives the change. Any turn the history cannot prove is sent exactly as without it.
    */
   perMessageEffort?: boolean;
+  /**
+   * Opt-in gateway-side `defer_loading` (`tool_search`) emulation for non-Anthropic targets that
+   * lack native deferred tool discovery (`maximhq/bifrost`, Apache-2.0).
+   */
+  gatewayToolSearch?: boolean;
+  /**
+   * Opt-in pre-request `thinking.budget_tokens` and `max_tokens` rectifier on managed native
+   * Messages passthrough (`farion1231/cc-switch`, MIT). Sub-minimum budgets (< 1024) are
+   * always rectified pre-flight; setting `true` also raises `max_tokens <= budget_tokens`.
+   */
+  thinkingBudgetRectifier?: boolean;
   /**
    * Model ids that do NOT accept image inputs. The proxy gives them "eyes" via the vision sidecar:
    * attached images are described by a gpt vision model and replaced with text before the call.

@@ -28,6 +28,7 @@ import { reservePreDispatchApiKeyHold } from "./api-key-budget-estimate";
 import type { DataPlaneAdmission } from "./auth-cors";
 import { readJsonRequestBody, resolveInboundBodyLimitBytes } from "./request-decompress";
 import { addFinalRequestLog, markLocalRequestLogRefusal, type RequestLogContext } from "./request-log";
+import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 
 const MAX_EMBEDDING_INPUT_ITEMS = 2_048;
 const MAX_EMBEDDING_TOTAL_CHARS = 2_000_000;
@@ -305,6 +306,19 @@ export async function handleEmbeddings(
   }
 
   const parsed = validated.body;
+  const hygienePayload: { input: ValidatedEmbeddingsRequest["input"]; user?: string } = {
+    input: parsed.input,
+    ...(parsed.user !== undefined ? { user: parsed.user } : {}),
+  };
+  const hygiene = applyOutboundPayloadHygiene(hygienePayload, config, logCtx);
+  if (hygiene.blocked) {
+    releaseEmbeddingLeaseOnRefusal(logCtx, false);
+    addFinalRequestLog(options.requestId, options.start, logCtx, 400, { closeReason: "non_stream" });
+    return markProxyError(formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE));
+  }
+  const sanitized = hygiene.body as typeof hygienePayload;
+  parsed.input = sanitized.input;
+  if (sanitized.user !== undefined) parsed.user = sanitized.user;
   logCtx.requestedModel = parsed.model;
   let route: RouteResult;
   try {

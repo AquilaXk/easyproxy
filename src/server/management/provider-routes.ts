@@ -200,6 +200,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       preserveResponsesReasoningContent: p.preserveResponsesReasoningContent,
       promoteAdditionalTools: p.promoteAdditionalTools,
       forwardAdvisorTool: p.forwardAdvisorTool,
+      gatewayToolSearch: p.gatewayToolSearch,
+      thinkingBudgetRectifier: p.thinkingBudgetRectifier,
       liveModels: p.liveModels !== false,
       requestPacing: p.requestPacing,
       models: p.models ?? [],

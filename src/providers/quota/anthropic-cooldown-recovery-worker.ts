@@ -3,6 +3,7 @@ import { ANTHROPIC_INSTANCE_IDS, type AnthropicInstanceId } from "../anthropic-i
 import { getAccountSet } from "../../oauth/store";
 import { anthropicRoutingFor } from "../../oauth/anthropic-routing";
 import { registerStateSweepAfterTick, STATE_SWEEP_INTERVAL_MS } from "../../lib/state-store-sweeper";
+import { isInteractiveMacOSPowerReady } from "../../lib/macos-power-state";
 import { fetchAnthropicAccountQuota } from "./anthropic-account-quota";
 
 /**
@@ -107,10 +108,19 @@ export async function runAnthropicCooldownRecoveryProbes(config: EpxConfig, now 
   return inFlight;
 }
 
-export function registerAnthropicCooldownRecoveryProbeWorker(config: EpxConfig): () => void {
+export function registerAnthropicCooldownRecoveryProbeWorker(
+  config: EpxConfig,
+  deps?: { isPowerReady?: () => Promise<boolean> },
+): () => void {
+  const isPowerReady = deps?.isPowerReady ?? isInteractiveMacOSPowerReady;
   return registerStateSweepAfterTick({
     name: "anthropic-cooldown-recovery",
-    afterTick: () => { void runAnthropicCooldownRecoveryProbes(config); },
+    afterTick: () => {
+      void (async () => {
+        if (!(await isPowerReady())) return;
+        await runAnthropicCooldownRecoveryProbes(config);
+      })();
+    },
   });
 }
 

@@ -276,10 +276,12 @@ export async function prepareResponsesRequest(
       || options.visionDescribeTerminal || options.shadowCallIntercepted ? undefined
       : body && typeof body === "object" ? (body as { model?: unknown }).model : undefined);
   options.clientModelLabel ??= clientFacingModelLabel(originalSelector);
-  redactHostedImageDisplayPaths(body);
-  if (applyOutboundPayloadHygiene(body, config, logCtx).blocked) {
+  body = redactHostedImageDisplayPaths(body);
+  const hygiene = applyOutboundPayloadHygiene(body, config, logCtx);
+  if (hygiene.blocked) {
     return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
   }
+  body = hygiene.body;
   observeCacheDiagnosticInbound(
     logCtx,
     body,
@@ -501,8 +503,12 @@ export async function prepareResponsesRequest(
         "Continuation state is unavailable or corrupt; resend the full conversation without previous_response_id.",
       ));
     }
-    if (body !== originalBody && applyOutboundPayloadHygiene(body, config, logCtx).blocked) {
-      return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+    if (body !== originalBody) {
+      const expandedHygiene = applyOutboundPayloadHygiene(body, config, logCtx);
+      if (expandedHygiene.blocked) {
+        return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+      }
+      body = expandedHygiene.body;
     }
   }
   const previousResponseInputExpanded = options.comboReplaySnapshot?.previousResponseInputExpanded

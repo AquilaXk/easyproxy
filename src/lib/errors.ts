@@ -1,5 +1,6 @@
 import { formatRetryAfterAdvice, parseRetryAfterFromMessage } from "./retry-delay";
 import { isMetaMusePlanFailure, META_MUSE_PLAN_REFUSAL_MESSAGE } from "../providers/meta-muse-plan-refusal";
+import { isCreditOrBudgetExhaustedRefusal, isSpendingCapacityThrottleText } from "./credit-budget-refusal";
 
 export interface EpxErrorPayload {
   message: string;
@@ -529,6 +530,9 @@ export function classifyError(status: number, type: string, message: string): Ep
   if (text.includes("cursor rate limit exceeded")) {
     return { message, type: "rate_limit_error", code: "rate_limit_exceeded" };
   }
+  if (isSpendingCapacityThrottleText(message)) {
+    return { message, type: "rate_limit_error", code: "rate_limit_exceeded" };
+  }
   if (
     text.includes("insufficient_quota") ||
     text.includes("exceeded your current quota") ||
@@ -537,7 +541,8 @@ export function classifyError(status: number, type: string, message: string): Ep
     text.includes("account quota exceeded") ||
     text.includes("monthly quota exceeded") ||
     text.includes("weekly quota exceeded") ||
-    text.includes("daily quota exceeded")
+    text.includes("daily quota exceeded") ||
+    isCreditOrBudgetExhaustedRefusal({ status, code: type, type, message })
   ) {
     return { message, type: "insufficient_quota", code: "insufficient_quota" };
   }

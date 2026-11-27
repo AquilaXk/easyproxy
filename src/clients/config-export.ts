@@ -38,7 +38,7 @@ import type { EpxConfig } from "../types";
 
 export type { ConfigFormat } from "../integrations/serialize";
 export type { ManagedFragment, ManagedContribution, BuildContribution, OpencodeLaunchEnv, OpencodeCatalogModel, ExportModel, ExportContext, ExportClientId, ExportClientSpec, PiModelEntry, DroidReasoningDefaults } from "./config-export/contracts";
-export { OPENCODE_PROVIDER_ID, OPENCODE_CONFIG_SCHEMA, OPENCODE_API_KEY_ENV, OPENCODE_API_KEY_ENV_REF, KILO_API_KEY_ENV, KILO_API_KEY_ENV_REF, KILO_CONFIG_SCHEMA, HERMES_API_KEY_ENV, HERMES_API_KEY_ENV_REF, OPENCLAW_API_KEY_ENV, OPENCLAW_API_KEY_ENV_REF, LOOPBACK_API_KEY_PLACEHOLDER, GAJAE_API_KEY_ENV, SCHEMA_REQUIRED_OUTPUT_BUDGET, OPENCODE_PROVIDER_BLOCK_DEFAULT_CONFIG } from "./config-export/constants";
+export { OPENCODE_PROVIDER_ID, OPENCODE_CONFIG_SCHEMA, OPENCODE_API_KEY_ENV, OPENCODE_API_KEY_ENV_REF, KILO_API_KEY_ENV, KILO_API_KEY_ENV_REF, KILO_CONFIG_SCHEMA, HERMES_API_KEY_ENV, HERMES_API_KEY_ENV_REF, OPENCLAW_API_KEY_ENV, OPENCLAW_API_KEY_ENV_REF, PI_API_KEY_ENV, PI_API_KEY_ENV_REF, OMP_API_KEY_ENV, LOOPBACK_API_KEY_PLACEHOLDER, GAJAE_API_KEY_ENV, SCHEMA_REQUIRED_OUTPUT_BUDGET, OPENCODE_PROVIDER_BLOCK_DEFAULT_CONFIG } from "./config-export/constants";
 export { normalizeExportModels } from "./config-export/model-metadata";
 export type { OmpModelEntry, OmpProviderBlock, OmpGeneratedConfig } from "./config-export/omp";
 export type { ZcodeModelEntry, ZcodeProviderBlock, ZcodeGeneratedConfig } from "./config-export/zcode";
@@ -63,7 +63,7 @@ export { droidHomeDir, droidConfigPath, buildDroidClientConfig, summarizeDroid, 
 export type { DroidModelEntry, DroidGeneratedConfig } from "./config-export/droid";
 
 import type { ExportModel, OpencodeLaunchEnv, OpencodeCatalogModel, ExportContext, PiModelEntry, ManagedContribution, ManagedFragment, ExportClientId, ExportClientSpec } from "./config-export/contracts";
-import { OPENCODE_API_KEY_ENV_REF, OPENCODE_PROVIDER_BLOCK_DEFAULT_CONFIG, OPENCODE_CONFIG_SCHEMA, OPENCODE_PROVIDER_ID, PI_API_DIALECT, LOOPBACK_API_KEY_PLACEHOLDER, HERMES_API_KEY_ENV_REF, OPENCLAW_API_KEY_ENV_REF, OPENCODE_API_KEY_ENV, HERMES_API_KEY_ENV, OPENCLAW_API_KEY_ENV, KILO_API_KEY_ENV } from "./config-export/constants";
+import { OPENCODE_API_KEY_ENV_REF, OPENCODE_PROVIDER_BLOCK_DEFAULT_CONFIG, OPENCODE_CONFIG_SCHEMA, OPENCODE_PROVIDER_ID, PI_API_DIALECT, LOOPBACK_API_KEY_PLACEHOLDER, HERMES_API_KEY_ENV_REF, OPENCLAW_API_KEY_ENV_REF, PI_API_KEY_ENV, PI_API_KEY_ENV_REF, OMP_API_KEY_ENV, OPENCODE_API_KEY_ENV, HERMES_API_KEY_ENV, OPENCLAW_API_KEY_ENV, KILO_API_KEY_ENV } from "./config-export/constants";
 import { exportModelLabel, authoritativeContextWindow, outputBudgetFor, inputBudgetFor, normalizeExportModels, inputModalitiesForClient, opencodeModelCapabilities, proxyAdmissionHeaders, singleFragment } from "./config-export/model-metadata";
 import { exportReasoningEfforts, exportDefaultReasoningEffort, legacyReasoningMetadata, type LegacyEffortVariant } from "./config-export/reasoning-metadata";
 import { opencodeModelUsesChat } from "./config-export/opencode-wire";
@@ -904,6 +904,7 @@ export interface PiProviderBlock {
   baseUrl: string;
   api: string;
   apiKey: string;
+  headers?: Record<string, string>;
   compat?: PiProviderCompat;
   models: PiModelEntry[];
 }
@@ -944,6 +945,8 @@ interface PiExportOptions {
   foldDeveloperRole?: boolean;
   /** Provider dialect; omitted writes `PI_API_DIALECT`. */
   api?: "openai-completions" | "openai-responses";
+  /** Env var reference for `headers["x-easyproxy-api-key"]` on remote/auth-required binds. */
+  admissionHeaderEnvRef?: string;
 }
 
 export interface PiGeneratedConfig {
@@ -1146,12 +1149,14 @@ function buildPiClientConfig(ctx: ExportContext, options: PiExportOptions = {}):
     ...(options.sendSessionAffinityHeaders ? { sendSessionAffinityHeaders: true } : {}),
     ...(options.foldDeveloperRole ? { supportsDeveloperRole: false } : {}),
   };
+  const headers = options.admissionHeaderEnvRef ? proxyAdmissionHeaders(ctx.config, options.admissionHeaderEnvRef) : undefined;
   return {
     providers: {
       [OPENCODE_PROVIDER_ID]: {
         baseUrl: ctx.baseUrl,
         api: options.api ?? PI_API_DIALECT,
         apiKey: LOOPBACK_API_KEY_PLACEHOLDER,
+        ...(headers ? { headers } : {}),
         ...(Object.keys(compat).length > 0 ? { compat } : {}),
         models,
       },
@@ -1165,7 +1170,12 @@ function buildPiClientConfig(ctx: ExportContext, options: PiExportOptions = {}):
  * its models.json `compat` block (docs/models.md, docs/custom-provider.md).
  */
 const PI_EXPORT_OPTIONS: PiExportOptions = { sendSessionAffinityHeaders: true, foldDeveloperRole: true };
-const PI_NATIVE_SELECTOR_OPTIONS: PiExportOptions = { ...PI_EXPORT_OPTIONS, rawNestedModelIds: true, omitNativeInCodexDirect: true };
+const PI_NATIVE_SELECTOR_OPTIONS: PiExportOptions = {
+  ...PI_EXPORT_OPTIONS,
+  rawNestedModelIds: true,
+  omitNativeInCodexDirect: true,
+  admissionHeaderEnvRef: PI_API_KEY_ENV_REF,
+};
 /**
  * Prime and Aside run the Pi runtime and read the same models.json, so they need Pi's developer-role
  * statement (#8864): without it they send their system prompt as `developer`, which DashScope and
@@ -1542,29 +1552,27 @@ export const EXPORT_CLIENTS: Record<ExportClientId, ExportClientSpec> = {
     id: "pi",
     filename: "pi-models.json",
     destination: env => piConfigPath(env),
-    apiKeyEnv: "",
-    exportHint: "Pi reads a non-secret placeholder from models.json; loopback needs no key.",
+    apiKeyEnv: PI_API_KEY_ENV,
+    exportHint: `export ${PI_API_KEY_ENV}=<your key>`,
     build: ctx => buildPiClientConfig(ctx, PI_NATIVE_SELECTOR_OPTIONS),
     format: "json",
     summarize: summarizePi,
     buildContribution: buildPiContribution,
-    // No header field in Pi's provider block, so there is nowhere to put the
-    // dedicated admission header a remote bind requires.
-    loopbackOnly: true,
+    // Carries the dedicated admission header ($EASYPROXY_PI_API_KEY) on non-loopback/auth-required binds.
+    loopbackOnly: false,
   },
   omp: {
     id: "omp",
     filename: "omp-models.yaml",
     destination: env => ompModelsConfigPath(env),
-    apiKeyEnv: "",
-    exportHint: "OMP reads a non-secret placeholder from models.yml; loopback needs no key.",
+    apiKeyEnv: OMP_API_KEY_ENV,
+    exportHint: `export ${OMP_API_KEY_ENV}=<your key>`,
     build: buildOmpClientConfig,
     format: "yaml",
     summarize: summarizeOmp,
     buildContribution: buildOmpContribution,
-    // OMP supports provider-level headers, but remote credential wiring is
-    // intentionally deferred from this initial loopback-only integration.
-    loopbackOnly: true,
+    // Carries the dedicated admission header (EASYPROXY_OMP_API_KEY) on non-loopback/auth-required binds.
+    loopbackOnly: false,
   },
   hermes: {
     id: "hermes",

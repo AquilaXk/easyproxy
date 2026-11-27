@@ -13,6 +13,8 @@ import { configuredAnthropicInstance } from "../providers/anthropic-instance";
 import type { AnthropicInstanceId } from "../providers/anthropic-instance-id";
 import { captureAnthropicPhysicalSendOwnership, anthropicPhysicalSendOwnershipIsCurrent,
   type AnthropicPhysicalSendOwnership } from "./anthropic-send-ownership";
+import { isCreditOrBudgetExhaustedRefusal } from "../lib/credit-budget-refusal";
+import { anthropicSlowFallbackFor, recordAnthropicSlowSignalForInstance } from "./anthropic-slow-fallback";
 
 const responseCredentials = new WeakMap<Response, AnthropicPhysicalSendOwnership & { providerAccountUuid?: string; checkProviderUuid: boolean }>();
 type RetryState = { firstAccountId: string; sameAccount: boolean; detour: boolean };
@@ -72,6 +74,8 @@ async function isRevokedOAuthToken(response: Response, signal?: AbortSignal): Pr
 }
 
 async function isAccountRefusal(response: Response, signal?: AbortSignal): Promise<boolean> {
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType && !/^application\/(?:json|[a-z0-9.+-]+\+json)$/.test(contentType)) return false;
   try {
     const body = await readBoundedResponseBody(response.clone(), { signal });
     if (!body.displaySafe || body.truncated) return false;
@@ -80,16 +84,32 @@ async function isAccountRefusal(response: Response, signal?: AbortSignal): Promi
     const error = payload.error;
     if (!error || typeof error !== "object" || Array.isArray(error) || !("type" in error) || !("message" in error)
       || typeof error.message !== "string") return false;
+    const code = "code" in error && typeof error.code === "string" ? error.code : null;
     // Whole-message patterns: request-policy/model/resource refusals and quoted diagnostics
     // must not acquire account authority merely by containing entitlement keywords.
     if ("code" in error && error.code != null
-      && (typeof error.code !== "string" || !["subscription_required", "insufficient_quota", "permission_denied", "oauth_org_not_allowed"].includes(error.code))) return false;
+      && (typeof error.code !== "string" || ![
+        "subscription_required",
+        "insufficient_quota",
+        "permission_denied",
+        "oauth_org_not_allowed",
+        "credits_required",
+        "usage_pricing_required",
+        "budget_exceeded",
+      ].includes(error.code))) return false;
     // The organization disabled subscription access: an account-scoped verdict, cooled like its siblings.
-    if (error.type === "oauth_org_not_allowed" || ("code" in error && error.code === "oauth_org_not_allowed")) return true;
+    if (error.type === "oauth_org_not_allowed" || code === "oauth_org_not_allowed") return true;
+    if (code === "credits_required") return true;
     const message = error.message.trim();
     if (error.type === "permission_error" && /^(?:Your account does not have access to Claude Code|Your (?:Claude )?subscription (?:has expired|is (?:expired|inactive))|Your account does not have an active subscription|(?:Your|This) organization has disabled Claude subscription access for Claude Code(?:\. Use an Anthropic API key instead, or ask your admin to enable access)?)[.!]?$/i.test(message)) return true;
-    return (error.type === "billing_error" || error.type === "permission_error")
-      && /^Your credit balance is too low to access the Anthropic API\.(?: Please go to Plans & Billing to upgrade or purchase credits\.)?$/i.test(message);
+    if (response.status === 403 && (error.type === "billing_error" || error.type === "permission_error")
+      && /^Your credit balance is too low to access the Anthropic API\.(?: Please go to Plans & Billing to upgrade or purchase credits\.)?$/i.test(message)) return true;
+    return isCreditOrBudgetExhaustedRefusal({
+      status: response.status,
+      code,
+      type: typeof error.type === "string" ? error.type : null,
+      message,
+    });
   } catch {
     // Malformed, over-limit, interrupted and unreadable error bodies are never authority.
     return false;
@@ -115,6 +135,8 @@ export async function rotateAnthropicAccountOnResponseForInstance(
     excludedAccountIds?: ReadonlySet<string>;
     /** Native dispatch re-reads operator policy after asynchronous classification/waits. */
     currentDecision?: () => AnthropicRouteDecision | null;
+    /** Whether the physical request sent `anthropic-usage-limit: slow`. */
+    sentSlow?: boolean;
   },
 ): Promise<string | null> {
   if (options.signal?.aborted || isNonReplayableResponse(response)
@@ -124,7 +146,7 @@ export async function rotateAnthropicAccountOnResponseForInstance(
   const routing = anthropicRoutingFor(instance);
   const { pauseAnthropicRateAdmission, anthropicRatePauseUntil } = anthropicRatePolicyFor(instance);
   const { recordAnthropicAccountRefusal, rotateAnthropicAccountOnRefusal,
-    hasAnthropicFailoverQuorum, isAnthropicAccountPoolEnabled, pickAlternateAnthropicAccount } = routing;
+    hasAnthropicFailoverQuorum, isAnthropicAccountPoolEnabled, pickAlternateAnthropicAccount, pickSlowFallbackAccount } = routing;
   if (wasAccountAutoPaused(response)) {
     routing.clearAnthropicSessionAffinityForAccount(sent.accountId);
     if (!options.canRetry || options.signal?.aborted) return null;
@@ -165,7 +187,9 @@ export async function rotateAnthropicAccountOnResponseForInstance(
     const current = ownedCurrent();
     if (!current) return null;
     options.currentDecision?.();
-    const kind = classifyAnthropic429(response.headers);
+    const signalNow = Date.now();
+    recordAnthropicSlowSignalForInstance(instance, sent.accountId, response.headers, signalNow);
+    const kind = classifyAnthropic429(response.headers, signalNow, { sentSlow: options.sentSlow });
     if (kind === "family-quota") {
       if (anthropicModelFamily(options.model) !== "Fable" || !options.canRetry || options.allow429Recovery === false) return null;
       return pickAlternateAnthropicAccount(options.config, sent.accountId, Date.now(), (options.currentDecision ? options.currentDecision() : options.decision ?? null), options.model, options.excludedAccountIds);
@@ -182,33 +206,58 @@ export async function rotateAnthropicAccountOnResponseForInstance(
       if (!state) { state = { firstAccountId: sent.accountId, sameAccount: false, detour: false }; retryStates.set(options.requestKey, state); }
       // A concurrent committed selection may have moved the same-account proposal.
       if (state.firstAccountId !== sent.accountId) state.detour = true;
-      const wait = Math.max(delay, (anthropicRatePauseUntil(sent.accountId) ?? now) - now);
+      const slowState = options.sentSlow ? anthropicSlowFallbackFor(instance) : undefined;
+      const slowSnap = slowState?.getSlowSnapshot(sent.accountId);
+      const slowWait = !slowSnap ? 0
+        : slowSnap.offer === "control" ? Number.POSITIVE_INFINITY
+        : Math.max(0, (slowSnap.blockedUntil ?? 0) - now, (slowSnap.slotBusyUntil ?? 0) - now);
+      const wait = Math.max(delay, (anthropicRatePauseUntil(sent.accountId, now) ?? now) - now, slowWait);
       if (!state.sameAccount && wait <= ANTHROPIC_MAX_INLINE_THROTTLE_MS && !current.paused) {
         state.sameAccount = true;
         // Millisecond rounding can wake just before this deadline; later extensions still bind.
         const retryAt = now + wait;
         try { await sleepWithAbort(wait, options.signal); } catch { return null; }
+        if (options.sentSlow && slowState) {
+          const postSnap = slowState.getSlowSnapshot(sent.accountId);
+          const remainingBusy = (postSnap?.slotBusyUntil ?? 0) - Date.now();
+          if (remainingBusy > 0 && remainingBusy <= 50 && postSnap?.offer !== "control" && !((postSnap?.blockedUntil ?? 0) > Date.now())) {
+            try { await sleepWithAbort(remainingBusy + 1, options.signal); } catch { return null; }
+          }
+        }
         const live = ownedCurrent();
         if (!live || live.paused || live.needsReauth || options.signal?.aborted
           || credentialGeneration(live.credential) !== sent.generation
           || sent.checkProviderUuid && live.credential.accountId !== sent.providerAccountUuid
           || anthropicRatePauseUntil(sent.accountId, Math.max(Date.now(), retryAt))) return null;
+        if (options.sentSlow && slowState && !slowState.isSlowEligible(sent.accountId, Date.now())) {
+          if (kind === "transient-rate" && !state.detour) {
+            state.detour = true;
+            const resolvedDecision = options.currentDecision ? options.currentDecision() : options.decision ?? null;
+            const detourNow = Date.now();
+            return pickAlternateAnthropicAccount(options.config, sent.accountId, detourNow, resolvedDecision, options.model, options.excludedAccountIds)
+              ?? pickSlowFallbackAccount(options.config, detourNow, resolvedDecision, options.model, sent.accountId, options.excludedAccountIds);
+          }
+          return null;
+        }
         options.currentDecision?.();
         return sent.accountId;
       }
       if (kind === "transient-rate" && !state.detour) {
         state.detour = true;
-        return pickAlternateAnthropicAccount(options.config, sent.accountId, Date.now(), (options.currentDecision ? options.currentDecision() : options.decision ?? null), options.model, options.excludedAccountIds);
+        const resolvedDecision = options.currentDecision ? options.currentDecision() : options.decision ?? null;
+        const detourNow = Date.now();
+        return pickAlternateAnthropicAccount(options.config, sent.accountId, detourNow, resolvedDecision, options.model, options.excludedAccountIds)
+          ?? (options.sentSlow ? pickSlowFallbackAccount(options.config, detourNow, resolvedDecision, options.model, sent.accountId, options.excludedAccountIds) : null);
       }
       return null;
     }
     if (options.allow429Recovery === false) {
       options.currentDecision?.();
-      recordAnthropicAccountRefusal(options.config, options.accountId, 429, response.headers.get("retry-after"), Date.now(), response.headers);
+      recordAnthropicAccountRefusal(options.config, options.accountId, 429, response.headers.get("retry-after"), Date.now(), response.headers, options.sentSlow);
       return null;
     }
   } else {
-    if (response.status !== 403 || options.allowAccountRefusal === false) return null;
+    if ((response.status !== 403 && response.status !== 402 && response.status !== 400) || options.allowAccountRefusal === false) return null;
     let verdict = verdicts.get(response);
     if (!verdict) {
       verdict = isAccountRefusal(response, options.signal);
@@ -221,14 +270,14 @@ export async function rotateAnthropicAccountOnResponseForInstance(
       || sent.checkProviderUuid && current.credential.accountId !== sent.providerAccountUuid) return null;
   }
   const decision = options.currentDecision ? options.currentDecision() : options.decision;
-  const status = response.status === 429 ? 429 : 403;
+  const status: 429 | 403 | 402 | 400 = response.status === 429 ? 429 : response.status === 402 ? 402 : response.status === 400 ? 400 : 403;
   if (!options.canRetry) {
     recordAnthropicAccountRefusal(options.config, options.accountId, status,
-      response.headers.get("retry-after"), Date.now(), response.headers);
+      response.headers.get("retry-after"), Date.now(), response.headers, options.sentSlow);
     return null;
   }
   return rotateAnthropicAccountOnRefusal(options.config, options.accountId, status,
-    response.headers.get("retry-after"), options.sessionKey, Date.now(), response.headers, decision, options.model, options.excludedAccountIds);
+    response.headers.get("retry-after"), options.sessionKey, Date.now(), response.headers, decision, options.model, options.excludedAccountIds, options.sentSlow);
 }
 
 /** Compatibility entrypoint: legacy consumers always recover inside the primary pool. */

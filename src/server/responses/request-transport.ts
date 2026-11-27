@@ -245,6 +245,7 @@ export async function prepareResponsesTransport(
   let anthropicPoolAccountId: string | null = null;
   let anthropicPoolFailovers = 0;
   let anthropicRouteDecision: AnthropicRouteDecision | null = null;
+  let anthropicSlowMode = false;
   // Generic OAuth rotation (#2568) for providers with no pool of their own. Bound to the account
   // the request actually used, so a concurrent rotation cannot cool an innocent replacement.
   let genericFailoverAccountId: string | null = null;
@@ -321,7 +322,7 @@ export async function prepareResponsesTransport(
       requireAnthropicAdmission();
       if (candidate.provider !== route.providerName) return null;
       if (anthropicInstance) anthropicRouteDecision = currentAnthropicRouteDecision();
-      if (anthropicRouteDecision && !routeCandidates(anthropicRouting!.getEligibleAnthropicAccounts(Date.now(), route.modelId), anthropicRouteDecision).includes(candidate.accountId)) return null;
+      if (anthropicRouteDecision && !anthropicRouting!.isAnthropicAccountSelectionAdmissible(candidate.accountId, config, Date.now(), route.modelId, anthropicRouteDecision)) return null;
       // #7500: no admission, initial or a recovery/failover rebind, may land on an Antigravity
       // account whose own roster omits the model. Callers abandon the send on null.
       if (antigravityModelRefusal(config, route.providerName, candidate.accountId, route.modelId)) return null;
@@ -362,7 +363,10 @@ export async function prepareResponsesTransport(
         ? anthropicRouting!.resolveAnthropicAccountForSession(anthropicSessionKey, config, Date.now(), anthropicRouteDecision, route.modelId) : null;
       const revisedAnthropicId = revisedAnthropic?.accountId;
       if (anthropicInstance !== undefined && !revisedAnthropicId) return null;
-      if (revisedAnthropic) anthropicReason = revisedAnthropic.reason;
+      if (revisedAnthropic) {
+        anthropicReason = revisedAnthropic.reason;
+        anthropicSlowMode = revisedAnthropic.slowMode === true;
+      }
       const genericAccountId = genericAffinityMode && !selectionChanged
         ? (genericSessionAccountEligible(config, route.providerName, candidate.accountId, route.modelId, Date.now(), true)
           ? candidate.accountId : (preferredGenericSessionAccount(config, route.providerName, genericSessionKey, route.modelId)
@@ -619,6 +623,14 @@ export async function prepareResponsesTransport(
     if (!deferPhysicalAttribution) stampOAuthAccountLabel(logCtx, route.providerName, route.provider, snapshot.accountId);
     if (anthropicInstance !== undefined) {
       anthropicPoolAccountId = snapshot.accountId;
+      anthropicSlowMode = anthropicRouting
+        ? !routeCandidates(anthropicRouting.getEligibleAnthropicAccounts(Date.now(), route.modelId), anthropicRouteDecision).includes(snapshot.accountId)
+          && anthropicRouting.getSlowFallbackEligibleAccounts(config, Date.now(), route.modelId).includes(snapshot.accountId)
+        : false;
+      route.provider = {
+        ...route.provider,
+        ...(anthropicSlowMode ? { _anthropicSlowMode: true } : { _anthropicSlowMode: undefined }),
+      };
       logCtx.provider = formatAnthropicProviderForLog(anthropicInstance!, snapshot.accountId, config);
     } else if (!deferPhysicalAttribution) {
       genericFailoverAccountId = snapshot.accountId;
@@ -742,13 +754,18 @@ export async function prepareResponsesTransport(
     if (binding.snapshot.provider !== route.providerName) return false;
     if (anthropicInstance) {
       anthropicRouteDecision = currentAnthropicRouteDecision();
-      if (anthropicRouteDecision && !routeCandidates(anthropicRouting!.getEligibleAnthropicAccounts(Date.now(), route.modelId), anthropicRouteDecision).includes(binding.snapshot.accountId)) return false;
+      const now = Date.now();
+      const normalOk = (!anthropicRouteDecision || routeCandidates(anthropicRouting!.getEligibleAnthropicAccounts(now, route.modelId), anthropicRouteDecision).includes(binding.snapshot.accountId))
+        && !anthropicRouting!.getAnthropicAccountHealthSnapshot(binding.snapshot.accountId, now);
+      const slowOk = anthropicSlowMode
+        && routeCandidates(anthropicRouting!.getSlowFallbackEligibleAccounts(config, now, route.modelId), anthropicRouteDecision).includes(binding.snapshot.accountId);
+      if (!normalOk && !slowOk) return false;
     }
     const selected = captureOAuthAccountSelection(route.providerName);
     const row = getAccountCredentialWithStatus(route.providerName, binding.snapshot.accountId);
     return selected?.accountId === binding.selection.accountId && selected?.revision === binding.selection.revision
       && !!row && !row.paused && !row.needsReauth && row.credential.expires > Date.now()
-      && (anthropicInstance === undefined || !anthropicRouting!.getAnthropicAccountHealthSnapshot(binding.snapshot.accountId) && !anthropicRatePolicy!.anthropicRatePauseUntil(binding.snapshot.accountId) && !anthropicQuota!.anthropicFamilyRejected(binding.snapshot.accountId, route.modelId))
+      && (anthropicInstance === undefined || !anthropicRatePolicy!.anthropicRatePauseUntil(binding.snapshot.accountId) && !anthropicQuota!.anthropicFamilyRejected(binding.snapshot.accountId, route.modelId))
       && (!genericAffinityMode
         || genericSessionAccountEligible(config, route.providerName, binding.snapshot.accountId, route.modelId, Date.now(), true))
       && credentialGeneration(row.credential) === binding.snapshot.generation;
@@ -1418,11 +1435,12 @@ export async function prepareResponsesTransport(
           }
           return markProxyError(formatErrorResponse(401, "authentication_error", anthropicRouteDecision ? "No eligible Anthropic OAuth account for this model route" : "No eligible Anthropic OAuth account available"));
         }
+        anthropicSlowMode = selection.slowMode === true;
         const admitted = await commitResolvedOAuthSelection(await anthropicRouting!.getAnthropicPoolAccessSnapshot(selection.accountId), true, selection.reason);
         if (!admitted) return markProxyError(formatErrorResponse(409, "conflict_error", "OAuth account selection changed; retry the request"));
         anthropicPoolAccountId = admitted.accountId;
         if (anthropicRouteDecision) console.info(`[${anthropicInstance}-pool] route:#${anthropicRouteDecision.position} ${selection.reason}`);
-        route.provider = { ...route.provider, apiKey: admitted.accessToken };
+        route.provider = { ...route.provider, apiKey: admitted.accessToken, ...(anthropicSlowMode ? { _anthropicSlowMode: true } : {}) };
         logCtx.provider = formatAnthropicProviderForLog(anthropicInstance!, admitted.accountId, config);
       } else {
         // Prefer the account with known headroom BEFORE the first attempt. Rotation alone
@@ -1745,6 +1763,7 @@ export async function prepareResponsesTransport(
   const anthropicRosterSize = anthropicRouting && anthropicPoolAccountId ? new Set([
     anthropicPoolAccountId,
     ...anthropicRouting.getEligibleAnthropicAccounts(Date.now(), route.modelId),
+    ...anthropicRouting.getSlowFallbackEligibleAccounts(config, Date.now(), route.modelId),
   ]).size : 0;
   const anthropicFundedAccounts = Math.min(anthropicRosterSize, GENERIC_OAUTH_MAX_ACCOUNTS_PER_REQUEST);
   const anthropicFailoverLimit = Math.max(ANTHROPIC_POOL_MAX_FAILOVERS_PER_REQUEST, anthropicFundedAccounts - 1);

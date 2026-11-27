@@ -851,14 +851,22 @@ export function createAdapterContinuations(
           onHiddenUsage,
         })
       : retryEvents;
-    return parsed._advisorGuard
-      ? parsed._advisorGuard({
+    const toolSearchRetry = parsed._gatewayToolSearchGuard
+      ? parsed._gatewayToolSearchGuard({
           parsed,
           translatorBudget,
           firstEvents: terminalGuardedRetry,
           continuation: fetchTerminalGuardContinuation,
         })
       : terminalGuardedRetry;
+    return parsed._advisorGuard
+      ? parsed._advisorGuard({
+          parsed,
+          translatorBudget,
+          firstEvents: toolSearchRetry,
+          continuation: fetchTerminalGuardContinuation,
+        })
+      : toolSearchRetry;
   };
 
   return {

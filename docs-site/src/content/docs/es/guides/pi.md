@@ -21,7 +21,7 @@ Mantén ese proceso en ejecución. En una segunda terminal, muestra la configura
 epx export --client pi
 ```
 
-La salida comienza con el JSON e indica después la ruta de destino, la advertencia para combinar la configuración, la indicación de uso local y cuántos modelos tienen límites de contexto confirmados. Esta exportación solo admite un proxy de loopback sin autenticación; no configura el acceso remoto.
+La salida comienza con el JSON e indica después la ruta de destino, la advertencia para combinar la configuración y cuántos modelos tienen límites de contexto confirmados. En escucha de loopback exporta el marcador no secreto `apiKey`; cuando escucha fuera de loopback o con `apiAuth` habilitado, también emite `headers["x-easyproxy-api-key"]: "$EASYPROXY_PI_API_KEY"`.
 
 ```json
 {
@@ -81,7 +81,7 @@ El bloque exportado es una instantánea estática. Vuelve a ejecutar `epx export
 
 ## La clave de acceso
 
-El `apiKey` exportado es el marcador no secreto `easyproxy-loopback`. No se genera ni se requiere una variable `EASYPROXY_API_KEY`. El exportador solo admite un proxy local de loopback sin autenticación y rechaza servidores remotos o protegidos con token. Las credenciales de los proveedores permanecen en la configuración de easyproxy, como explica [Proveedores](/es/guides/providers/); nunca pongas una clave del proveedor de origen en este bloque de Pi. Para acceso remoto, usa una integración que admita credenciales de acceso al proxy. Cambiar el marcador no habilita la exportación remota de Pi.
+El campo `apiKey` exportado es siempre el marcador no secreto `easyproxy-loopback`, de modo que Pi carga el proveedor incluso sin una variable de entorno en loopback. Cuando el proxy escucha en una dirección distinta de loopback o la autenticación de API está habilitada, `epx export --client pi` agrega `"headers": { "x-easyproxy-api-key": "$EASYPROXY_PI_API_KEY" }` al bloque del proveedor — exporta `EASYPROXY_PI_API_KEY` en el shell que ejecuta Pi en lugar de guardar secretos en disco. Las credenciales de los proveedores permanecen en la configuración propia de easyproxy, como explica [Proveedores](/es/guides/providers/); nunca pongas una clave del proveedor de origen en este bloque de Pi.
 
 <a id="model-metadata"></a>
 

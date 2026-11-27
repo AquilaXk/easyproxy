@@ -865,5 +865,10 @@
   "provider-egress-and-cc-switch-routes.test.ts": "server",
   "workflow-refs.test.ts": "ci-workflows",
   "release-guards.test.ts": "ci-workflows",
-  "token-efficiency-guardrails-and-cache.test.ts": "server"
+  "token-efficiency-guardrails-and-cache.test.ts": "server",
+  "darkwake-and-test-log-folding.test.ts": "lib",
+  "anthropic-slow-budget-beta-regressions.test.ts": "adapters/anthropic",
+  "responses-config-update-and-tool-search.test.ts": "responses",
+  "rerank-and-audio-speech.test.ts": "server",
+  "audit-guardrails-scenario-regressions.test.ts": "server"
 }

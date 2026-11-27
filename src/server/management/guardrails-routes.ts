@@ -6,7 +6,8 @@ import {
   promptCacheInjectionSchema,
   toolOutputCompressionSchema,
 } from "../../config/schema/leaf-validators";
-import { inspectPromptContextJson, type ContextInspectionReport } from "../../lib/context-inspector";
+import { inspectPromptContextJson, type ContextInspectionReport, type PromptCacheBreakevenRates } from "../../lib/context-inspector";
+import { resolveMatchedPrice } from "../../usage/cost";
 import { inspectAndApplyOutboundSecretGuard } from "../../lib/outbound-secret-guard";
 import { injectPromptCacheBreakpointsInPlace } from "../../lib/prompt-cache-injection";
 import { compressResponsesToolOutputsInPlace } from "../../lib/tool-output-compression";
@@ -27,6 +28,26 @@ const MAX_DRY_RUN_BODY_BYTES = 512 * 1024;
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function resolveDryRunBreakevenRates(model: string | null): PromptCacheBreakevenRates | undefined {
+  if (!model) return undefined;
+  const slash = model.indexOf("/");
+  const candidates = slash > 0
+    ? [[model.slice(0, slash), model.slice(slash + 1)]] as const
+    : [["anthropic", model], ["openai", model], ["google", model]] as const;
+  for (const [provider, modelId] of candidates) {
+    const matched = resolveMatchedPrice(provider, modelId);
+    if (matched) {
+      return {
+        inputPerMTok: matched.cost4.input,
+        outputPerMTok: matched.cost4.output,
+        cacheReadPerMTok: matched.cost4.cacheRead,
+        cacheWritePerMTok: matched.cost4.cacheWrite,
+      };
+    }
+  }
+  return undefined;
 }
 
 function guardrailsView(ctx: ManagementContext): Response {
@@ -149,38 +170,52 @@ async function dryRunGuardrails(ctx: ManagementContext): Promise<Response> {
   let injectedCacheBreakpoints = 0;
   let normalizedTimestamps = 0;
   let contextInspection: ContextInspectionReport | undefined;
+  let payloadGuard = secretGuard;
   const trimmedText = body.text.trim();
-  if (!secretGuard.blocked && trimmedText.startsWith("{") && trimmedText.endsWith("}")) {
+  if (!payloadGuard.blocked && trimmedText.startsWith("{") && trimmedText.endsWith("}")) {
     const preInspect = inspectPromptContextJson(trimmedText);
     if (preInspect.ok && preInspect.cache.wireFormat !== "unknown") {
       try {
         const clonedPayload = JSON.parse(trimmedText) as Record<string, unknown>;
-        const cacheRes = injectPromptCacheBreakpointsInPlace(clonedPayload, previewCacheInjection);
-        injectedCacheBreakpoints = cacheRes.injectedBreakpoints;
-        normalizedTimestamps = cacheRes.normalizedTimestamps;
-        contextInspection = inspectPromptContextJson(JSON.stringify(clonedPayload));
+        const inspectedGuard = inspectAndApplyOutboundSecretGuard(clonedPayload, previewGuard);
+        if (inspectedGuard.blocked) {
+          payloadGuard = inspectedGuard;
+          contextInspection = undefined;
+        } else {
+          if (inspectedGuard.redactions > payloadGuard.redactions || inspectedGuard.matches > payloadGuard.matches) {
+            payloadGuard = inspectedGuard;
+          }
+          compressResponsesToolOutputsInPlace(clonedPayload, previewCompression);
+          const cacheRes = injectPromptCacheBreakpointsInPlace(clonedPayload, previewCacheInjection);
+          injectedCacheBreakpoints = cacheRes.injectedBreakpoints;
+          normalizedTimestamps = cacheRes.normalizedTimestamps;
+          const dryRunRates = resolveDryRunBreakevenRates(preInspect.model);
+          const postInspect = inspectPromptContextJson(JSON.stringify(clonedPayload), dryRunRates ? { rates: dryRunRates } : undefined);
+          if (postInspect.ok) contextInspection = postInspect;
+        }
       } catch {
-        contextInspection = preInspect;
+        // Fail closed: never expose preInspect parsed from unredacted raw input.
+        contextInspection = undefined;
       }
     }
   }
 
-  const previewText = secretGuard.blocked
+  const previewText = payloadGuard.blocked
     ? ""
     : duplicatePass
       ? samplePayload.input[1]!.output
       : samplePayload.input[0]!.output;
-  const outputChars = secretGuard.blocked
+  const outputChars = payloadGuard.blocked
     ? 0
     : samplePayload.input.reduce((sum, item) => sum + item.output.length, 0);
 
   const estSavedTokens = compression.estimatedSavedTokens ?? Math.floor(compression.savedChars / 4);
   const response = jsonResponse({
-    blocked: secretGuard.blocked,
-    limitExceeded: secretGuard.limitExceeded,
-    matches: secretGuard.matches,
-    redactions: secretGuard.redactions,
-    findings: secretGuard.findings,
+    blocked: payloadGuard.blocked,
+    limitExceeded: payloadGuard.limitExceeded,
+    matches: payloadGuard.matches,
+    redactions: payloadGuard.redactions,
+    findings: payloadGuard.findings,
     compressedItems: compression.compressedItems,
     ...((compression.compactedJsonItems ?? 0) > 0 ? { compactedJsonItems: compression.compactedJsonItems } : {}),
     ...((compression.foldedLogItems ?? 0) > 0 ? { foldedLogItems: compression.foldedLogItems } : {}),
@@ -225,7 +260,11 @@ async function updateGuardrails(ctx: ManagementContext): Promise<Response> {
     } else if (!isPlainRecord(body.outboundSecretGuard)) {
       return jsonResponse({ error: "outboundSecretGuard must be an object", code: "invalid_request" }, 400, req, config);
     } else {
-      candidate.outboundSecretGuard = body.outboundSecretGuard as NonNullable<typeof candidate.outboundSecretGuard>;
+      const parsedGuard = outboundSecretGuardSchema.safeParse(body.outboundSecretGuard);
+      if (!parsedGuard.success) {
+        return jsonResponse({ error: "invalid outboundSecretGuard options", code: "invalid_request" }, 400, req, config);
+      }
+      candidate.outboundSecretGuard = { ...(config.outboundSecretGuard ?? {}), ...parsedGuard.data };
     }
   }
   if (body.toolOutputCompression !== undefined) {
@@ -234,7 +273,11 @@ async function updateGuardrails(ctx: ManagementContext): Promise<Response> {
     } else if (!isPlainRecord(body.toolOutputCompression)) {
       return jsonResponse({ error: "toolOutputCompression must be an object", code: "invalid_request" }, 400, req, config);
     } else {
-      candidate.toolOutputCompression = body.toolOutputCompression as NonNullable<typeof candidate.toolOutputCompression>;
+      const parsedCompression = toolOutputCompressionSchema.safeParse(body.toolOutputCompression);
+      if (!parsedCompression.success) {
+        return jsonResponse({ error: "invalid toolOutputCompression options", code: "invalid_request" }, 400, req, config);
+      }
+      candidate.toolOutputCompression = { ...(config.toolOutputCompression ?? {}), ...parsedCompression.data };
     }
   }
   if (body.promptCacheInjection !== undefined) {
@@ -243,7 +286,11 @@ async function updateGuardrails(ctx: ManagementContext): Promise<Response> {
     } else if (!isPlainRecord(body.promptCacheInjection)) {
       return jsonResponse({ error: "promptCacheInjection must be an object", code: "invalid_request" }, 400, req, config);
     } else {
-      candidate.promptCacheInjection = body.promptCacheInjection as NonNullable<typeof candidate.promptCacheInjection>;
+      const parsedCache = promptCacheInjectionSchema.safeParse(body.promptCacheInjection);
+      if (!parsedCache.success) {
+        return jsonResponse({ error: "invalid promptCacheInjection options", code: "invalid_request" }, 400, req, config);
+      }
+      candidate.promptCacheInjection = { ...(config.promptCacheInjection ?? {}), ...parsedCache.data };
     }
   }
 

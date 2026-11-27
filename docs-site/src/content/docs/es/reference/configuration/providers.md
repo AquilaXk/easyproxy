@@ -408,9 +408,9 @@ Las declaraciones de insumos explícitos y las modalidades notificadas siguen te
 
 ### Lo que un proveedor guarda
 
-`POST /api/providers` con el nombre de un proveedor existente sustituye la fila almacenada por la de la solicitud. Como el formulario no envía todos los campos, conserva los omitidos que describen el comportamiento del proveedor: `preserveReasoningContentModels`, `preserveResponsesReasoningContent`, `requiresReasoningPlaceholderModels`, `foldDeveloperRoleToSystem`, `singleLeadingSystemMessage`, `reasoningWireFormat`, `omitReasoningEffortWithToolsModels`, `promoteAdditionalTools`, `retryOn429`, `transientRetryOn5xx`, `retryOnReset`, `unsupportedHostedTools`, `unsupportedHostedToolsWithClientTools` y `forwardAdvisorTool`.
+`POST /api/providers` con el nombre de un proveedor existente sustituye la fila almacenada por la de la solicitud. Como el formulario no envía todos los campos, conserva los dieciséis ajustes omitidos que describen el comportamiento del proveedor: `preserveReasoningContentModels`, `preserveResponsesReasoningContent`, `requiresReasoningPlaceholderModels`, `foldDeveloperRoleToSystem`, `singleLeadingSystemMessage`, `reasoningWireFormat`, `omitReasoningEffortWithToolsModels`, `promoteAdditionalTools`, `retryOn429`, `transientRetryOn5xx`, `retryOnReset`, `unsupportedHostedTools`, `unsupportedHostedToolsWithClientTools`, `forwardAdvisorTool`, `gatewayToolSearch` y `thinkingBudgetRectifier`.
 
-| Guardado | Los once ajustes | `apiKeyPool` almacenado |
+| Guardado | Los dieciséis ajustes | `apiKeyPool` almacenado |
 | --- | --- | --- |
 | Mismo destino, campo omitido | Valor almacenado mantenido, incluyendo un `[]` o `false` explícito | Conservado |
 | Nuevo destino, campo omitido | No se mantiene; pueden aplicarse los valores predeterminados del registro para el nuevo destino | No se conserva |

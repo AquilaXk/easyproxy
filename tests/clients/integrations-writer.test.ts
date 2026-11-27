@@ -809,8 +809,8 @@ describe("apply", () => {
     expect(readFileSync(configPath, "utf8")).toBe("{{{ not yaml\n");
   });
 
-  test("refuses a loopback-only client on a remote bind without denying manual OMP headers", () => {
-    for (const clientId of ["gajae", "omp", "dsh", "commandcode"] as const) {
+  test("refuses a loopback-only client on a remote bind and writes header auth for OMP", () => {
+    for (const clientId of ["gajae", "dsh", "commandcode"] as const) {
       const spec = INTEGRATION_CLIENTS[clientId];
       mkdirSync(spec.detectDir(TEST_ENV, home), { recursive: true });
       const result = applyIntegration(input({
@@ -824,6 +824,14 @@ describe("apply", () => {
         expect(result.message).not.toContain("writing one by hand would not help");
       }
     }
+    const ompSpec = INTEGRATION_CLIENTS.omp;
+    mkdirSync(ompSpec.detectDir(TEST_ENV, home), { recursive: true });
+    const ompResult = applyIntegration(input({
+      clientId: "omp",
+      config: { ...CONFIG, hostname: "0.0.0.0" } as EpxConfig,
+    }));
+    expect(ompResult.ok).toBe(true);
+    expect(readFileSync(ompSpec.configPath(TEST_ENV, home), "utf8")).toContain("EASYPROXY_OMP_API_KEY");
   });
 
   test("a write failure reports the snapshot rather than claiming success", () => {

@@ -82,8 +82,8 @@ describe("Cursor native grep globs", () => {
     expect(await matchedFiles(root, "[ab].*")).toEqual(["a.ts", "b.tsx"]);
   });
 
-  // Bun 1.4.3 is still the repository's test runner; these runtime features arrived in 1.4.4.
-  test.skipIf(!Bun.semver.satisfies(Bun.version, ">=1.4.4"))("uses Bun 1.4.4 extglobs and brace ranges", async () => {
+  // The pinned repository test runner (testRunnerBun: 1.4.4) supports these runtime features.
+  test("uses Bun 1.4.4 extglobs and brace ranges", async () => {
     const root = fixture({
       "src/item-1.ts": "needle", "src/item-2.ts": "needle", "src/item-3.ts": "needle",
       "src/item-4.ts": "needle", "src/item-2.test.ts": "needle", "src/deep/item-2.ts": "needle",

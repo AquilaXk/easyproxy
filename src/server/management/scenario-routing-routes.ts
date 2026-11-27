@@ -20,7 +20,7 @@ import type { ManagementContext } from "./context";
 import { isPlainRecord } from "./shared";
 
 function persistClearedScenarioRouting(ctx: ManagementContext): Response {
-  const { config } = ctx;
+  const { req, config } = ctx;
   const rollback = captureConfigTopLevelRollback(config, ["scenarioRouting"]);
   try {
     deleteConfigTopLevelKey(config, "scenarioRouting");
@@ -30,14 +30,14 @@ function persistClearedScenarioRouting(ctx: ManagementContext): Response {
     throw error;
   }
   reconcileLiveStateStores();
-  return jsonResponse({ success: true, scenarioRouting: null });
+  return jsonResponse({ success: true, scenarioRouting: null }, 200, req, config);
 }
 
 export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config } = ctx;
 
   if (url.pathname === "/api/routing/scenario" && req.method === "GET") {
-    return jsonResponse({ scenarioRouting: config.scenarioRouting ?? null });
+    return jsonResponse({ scenarioRouting: config.scenarioRouting ?? null }, 200, req, config);
   }
 
   if (url.pathname === "/api/routing/scenario" && req.method === "DELETE") {
@@ -50,10 +50,10 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
       rawBody = await readManagementJsonBody(req);
     } catch (error) {
       rethrowManagementBodyTooLarge(error);
-      return jsonResponse({ error: "invalid JSON body" }, 400);
+      return jsonResponse({ error: "invalid JSON body" }, 400, req, config);
     }
     if (!isPlainRecord(rawBody)) {
-      return jsonResponse({ error: "request body must be an object" }, 400);
+      return jsonResponse({ error: "request body must be an object" }, 400, req, config);
     }
     const payload = Object.hasOwn(rawBody, "scenarioRouting") ? rawBody.scenarioRouting : rawBody;
     if (payload === null) {
@@ -67,7 +67,7 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
       return jsonResponse({
         error: issue?.message ?? "invalid scenarioRouting configuration",
         ...(field ? { field } : {}),
-      }, 400);
+      }, 400, req, config);
     }
 
     const next: EpxScenarioRoutingConfig = parsed.data;
@@ -81,7 +81,7 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
         return jsonResponse({
           error: `scenario route "${kind}" target "${selector}" is unavailable: ${err instanceof Error ? err.message : String(err)}`,
           field: `routes.${kind}`,
-        }, 400);
+        }, 400, req, config);
       }
     }
 
@@ -94,7 +94,7 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
       throw error;
     }
     reconcileLiveStateStores();
-    return jsonResponse({ success: true, scenarioRouting: config.scenarioRouting });
+    return jsonResponse({ success: true, scenarioRouting: config.scenarioRouting }, 200, req, config);
   }
 
   if (url.pathname === "/api/routing/scenario/classify" && req.method === "POST") {
@@ -103,10 +103,10 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
       rawBody = await readManagementJsonBody(req);
     } catch (error) {
       rethrowManagementBodyTooLarge(error);
-      return jsonResponse({ error: "invalid JSON body" }, 400);
+      return jsonResponse({ error: "invalid JSON body" }, 400, req, config);
     }
     if (!isPlainRecord(rawBody)) {
-      return jsonResponse({ error: "request body must be an object" }, 400);
+      return jsonResponse({ error: "request body must be an object" }, 400, req, config);
     }
 
     let candidateConfig = config.scenarioRouting;
@@ -116,7 +116,7 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
         return jsonResponse({
           error: parsedCfg.error.issues[0]?.message ?? "invalid scenarioRouting override",
           field: "scenarioRouting",
-        }, 400);
+        }, 400, req, config);
       }
       candidateConfig = parsedCfg.data;
     }
@@ -124,7 +124,7 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
     let parsedHeaders: Record<string, string | undefined> | undefined;
     if (rawBody.headers !== undefined) {
       if (!isPlainRecord(rawBody.headers)) {
-        return jsonResponse({ error: "headers must be an object of string values", field: "headers" }, 400);
+        return jsonResponse({ error: "headers must be an object of string values", field: "headers" }, 400, req, config);
       }
       parsedHeaders = {};
       const entries = Object.entries(rawBody.headers).slice(0, 32);
@@ -133,10 +133,10 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
       }
     }
     if (rawBody.isCompaction !== undefined && typeof rawBody.isCompaction !== "boolean") {
-      return jsonResponse({ error: "isCompaction must be a boolean", field: "isCompaction" }, 400);
+      return jsonResponse({ error: "isCompaction must be a boolean", field: "isCompaction" }, 400, req, config);
     }
     if (rawBody.selector !== undefined && typeof rawBody.selector !== "string") {
-      return jsonResponse({ error: "selector must be a string", field: "selector" }, 400);
+      return jsonResponse({ error: "selector must be a string", field: "selector" }, 400, req, config);
     }
 
     const requestBody = rawBody.body ?? {};
@@ -196,7 +196,7 @@ export async function handleScenarioRoutingRoutes(ctx: ManagementContext): Promi
       resolvedEffort,
       ...(resolveError ? { resolveError } : {}),
       classification: heuristicProbe,
-    });
+    }, 200, req, config);
   }
 
   return null;

@@ -129,6 +129,9 @@ import {
 } from "../claude-messages";
 import { handleChatCompletions } from "../chat-completions";
 import { handleEmbeddings } from "../embeddings";
+import { handleRerank } from "../rerank";
+import { handleAudioSpeech } from "../audio-speech";
+import { handleJsonDataPlaneRoute } from "./data-plane-routes";
 import { isOtlpTracingEnabled, startOtlpRequestSpan } from "../../telemetry/otlp";
 import { anthropicErrorResponse } from "../../claude/outbound";
 import { desktopSnapshotBusyResponse, renderAnthropicModelListing } from "./anthropic-model-listing";
@@ -1591,26 +1594,25 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         return ownsRequestLog ? withRequestLogId(response, requestId) : response;
       }
 
-      if (url.pathname === "/v1/embeddings" && req.method === "POST") {
-        if (isDraining()) return drainingResponse(req, policy);
-        const admission = resolveResponsesApiAuth(req, policy);
-        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "easyproxy API key required"), req, policy);
-        if (!isAllowedRequestOrigin(req, policy)) return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, policy);
-        const start = Date.now();
-        const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = {
-          model: "unknown", provider: "unknown", ...requestMetricsLogContext,
-          client: classifyUsageClient(req.headers), ...admissionFields(admission),
-          ...(isOtlpTracingEnabled(config) ? { otlpSpan: startOtlpRequestSpan(req, config, { method: req.method, pathname: url.pathname, protocol: "embeddings" }) } : {}),
-        };
-        return runAdmittedHttpTurn(req, policy, async () => {
-          const response = withCors(
-            await handleEmbeddings(req, config, logCtx, { requestId, start, admission, onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer) }),
-            req, policy,
-          );
-          logCtx.otlpSpan?.finish({ status: response.status, errorCode: logCtx.errorCode });
-          return withRequestLogId(response, requestId);
-        }, { requestId, start, logCtx });
+      if ((url.pathname === "/v1/embeddings" || url.pathname === "/v1/rerank" || url.pathname === "/v1/audio/speech") && req.method === "POST") {
+        const isRerank = url.pathname === "/v1/rerank";
+        const isSpeech = url.pathname === "/v1/audio/speech";
+        return handleJsonDataPlaneRoute({
+          req,
+          url,
+          config,
+          policy,
+          isDraining,
+          drainingResponse,
+          nextRequestLogId,
+          requestMetricsLogContext,
+          runAdmittedHttpTurn,
+          withRequestLogId,
+          disableResponsesRequestTimeout: r => disableResponsesRequestTimeout(r, requestServer),
+          protocol: isRerank ? "rerank" : isSpeech ? "audio" : "embeddings",
+          originBlockedMessage: isSpeech ? "cross-origin audio request blocked" : "cross-origin data-plane request blocked",
+          handler: isRerank ? handleRerank : isSpeech ? handleAudioSpeech : handleEmbeddings,
+        });
       }
 
       if (url.pathname === "/v1/audio/transcriptions" && req.method === "POST") {

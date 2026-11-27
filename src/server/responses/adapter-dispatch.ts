@@ -39,6 +39,7 @@ import { credentialRecoveryStatus } from "../request-log-attempt-recovery";
 import { anthropicPoolCooldownResponse, clientCancelledResponse, readDisplaySafeErrorText } from "./core-errors";
 import { isTranslatorBudgetExceededError } from "../../lib/translator-budget";
 import { redactSecretString } from "../../lib/redact";
+import { readCreditOrBudgetExhaustedResponse } from "../../lib/credit-budget-refusal";
 import { rewriteUpstreamPolicyRefusal } from "./policy-refusal";
 import { HostedAdvisorSpendRefusal } from "./policy-request-scope";
 import { withProviderRequestSlot } from "../../providers/request-pacing";
@@ -1185,8 +1186,7 @@ export async function prepareAdapterExchange(
         // The refusal is a 429 too: without this the while condition is still true and the
         // next configured attempt replays it on the same target.
         if (isNonReplayableResponse(upstreamResponse)
-          || (isAnthropicBillingKeyPool(route.provider)
-            && [400, 402].includes(upstreamResponse.status))) continue recovery;
+          || ([400, 402, 403, 422].includes(upstreamResponse.status) && !sendBudgetExhausted())) continue recovery;
      }
 
       const key429Outcome = await recoverApiKeyPool429(keyPoolRecoveryCtx, upstreamResponse);
@@ -1281,7 +1281,9 @@ export async function prepareAdapterExchange(
       }
       } else {
       while (
-        upstreamResponse.status === 429
+        (upstreamResponse.status === 429
+          || ((upstreamResponse.status === 400 || upstreamResponse.status === 402 || upstreamResponse.status === 403 || upstreamResponse.status === 422)
+            && await readCreditOrBudgetExhaustedResponse(upstreamResponse, upstream.signal)))
         && transportState.genericFailoverAccountId
         && transportState.genericFailovers < transportState.genericFailoverLimit
         && isGenericOAuthFailoverEnabled(config, route.providerName)
@@ -1300,22 +1302,34 @@ export async function prepareAdapterExchange(
         // provider and model, not from the account, so an account rotation cannot move the
         // replay between these two shapes.
         const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
+        const recoveryKind = upstreamResponse.status === 429 ? "oauth-account-429" : "oauth-account-403";
+        const refusalKind = upstreamResponse.status === 429 ? "rate" : "billing";
         const hop = reserveCredentialHop(
           "auth-recovery",
-          `${route.providerName}|${route.modelId}|adapter-recovery-oauth-429`,
+          `${route.providerName}|${route.modelId}|adapter-recovery-${recoveryKind}`,
           // Counted generic helpers report physical sends; an adapter-owned
           // ladder settles its own booking.
           !adapterOwnsDispatch && genericRefetchCountsSends(),
         );
         if (!hop.allowed) break;
-        const nextAccountId = rotateGenericOAuthAccountOn429(
-          config,
-          route.providerName,
-          transportState.genericFailoverAccountId,
-          upstreamResponse.headers.get("retry-after"),
-          Date.now(),
-          route.modelId,
-        );
+        const nextAccountId = refusalKind === "billing"
+          ? rotateGenericOAuthAccountOnRefusal(
+            config,
+            route.providerName,
+            transportState.genericFailoverAccountId,
+            "billing",
+            upstreamResponse.headers.get("retry-after"),
+            Date.now(),
+            route.modelId,
+          )
+          : rotateGenericOAuthAccountOn429(
+            config,
+            route.providerName,
+            transportState.genericFailoverAccountId,
+            upstreamResponse.headers.get("retry-after"),
+            Date.now(),
+            route.modelId,
+          );
         if (!nextAccountId) {
           hop.permit?.release();
           break;
@@ -1355,7 +1369,7 @@ export async function prepareAdapterExchange(
             // adapter-owned ladder is the exception -- its own reservation is the confirmation,
             // and settling here first would hand it a dead permit, which it reads as an
             // exhausted request and stops sending on.
-            result = await rebuildAndRefetch("oauth-account-429", () => {
+            result = await rebuildAndRefetch(recoveryKind, () => {
               if (!adapterOwnsDispatch && hop.permit?.use() === false) throw new SendBudgetExhaustedError();
             });
           } finally {

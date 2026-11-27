@@ -9,6 +9,7 @@ import {
   chargeImageBudget, createImageBudget, decodeValidatedImageBase64,
   artifactHttpUrl, getArtifactsDir, MAX_ENCODED_BYTES_PER_IMAGE, pruneArtifacts, sniffImageExtension,
 } from "../images/artifacts";
+import { CopyOnWriteMutator } from "../lib/mutable-json-copy";
 import { sseDataPayload, replaceSseDataPayload, type SseBlockRewrite } from "./sse-payload-rewrite";
 
 type Row = Record<string, any>;
@@ -41,8 +42,9 @@ function comparablePath(value: string, foldCase: boolean): string | undefined {
  * Full client replay can include display-only messages even without their generated ids.
  * Shared by Responses request preparation and the remote compaction handler.
  */
-export function redactHostedImageDisplayPaths(body: unknown, platform: NodeJS.Platform = process.platform): void {
-  if (!object(body) || !Array.isArray(body.input)) return;
+export function redactHostedImageDisplayPaths(body: unknown, platform: NodeJS.Platform = process.platform): unknown {
+  if (!object(body) || !Array.isArray(body.input)) return body;
+  const mutator = new CopyOnWriteMutator(body);
   // macOS and Windows filesystems fold case by default, so either spelling names the artifact.
   const foldCase = platform === "darwin" || platform === "win32";
   const dir = comparablePath(getArtifactsDir(), foldCase);
@@ -56,17 +58,43 @@ export function redactHostedImageDisplayPaths(body: unknown, platform: NodeJS.Pl
     // No file read or existence check: history may outlive artifact retention.
     return "![Generated image](<" + artifactHttpUrl(name) + ">)";
   });
-  for (const item of body.input) {
+  const inputArr = body.input;
+  for (let i = 0; i < inputArr.length; i += 1) {
+    const item = inputArr[i];
     if (!object(item) || item.role !== "assistant"
       || (item.type !== undefined && item.type !== "message")) continue;
-    if (typeof item.content === "string") item.content = redact(item.content);
-    else if (Array.isArray(item.content)) {
-      for (const part of item.content) {
+    if (typeof item.content === "string") {
+      const next = redact(item.content);
+      if (next !== item.content) {
+        mutator.write(
+          [{ container: body, key: "input" }, { container: inputArr, key: i }, { container: item, key: "content" }],
+          next,
+        );
+      }
+    } else if (Array.isArray(item.content)) {
+      const contentArr = item.content;
+      for (let j = 0; j < contentArr.length; j += 1) {
+        const part = contentArr[j];
         if (object(part) && ["output_text", "input_text", "text"].includes(part.type)
-          && typeof part.text === "string") part.text = redact(part.text);
+          && typeof part.text === "string") {
+          const next = redact(part.text);
+          if (next !== part.text) {
+            mutator.write(
+              [
+                { container: body, key: "input" },
+                { container: inputArr, key: i },
+                { container: item, key: "content" },
+                { container: contentArr, key: j },
+                { container: part, key: "text" },
+              ],
+              next,
+            );
+          }
+        }
       }
     }
   }
+  return mutator.root;
 }
 
 /** Local filesystem links are only appropriate for the loopback Codex client. */

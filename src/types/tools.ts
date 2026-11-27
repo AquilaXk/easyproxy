@@ -19,6 +19,10 @@ export interface EpxTool {
   freeform?: boolean;
   /** Client-executed tool discovery (tool_search): the model's call must be relayed as a tool_search_call. */
   toolSearch?: boolean;
+  /** Caller requested `defer_loading: true`; non-Anthropic targets may load on demand when gatewayToolSearch is enabled. */
+  deferLoading?: boolean;
+  /** Gateway-synthesized deferred-tool search function executed inside EasyProxy (`src/responses/gateway-tool-search.ts`). */
+  gatewayToolSearch?: boolean;
   /** Tool definition restored from a prior tool_search output; transports may prioritize it when catalogs are bounded. */
   loadedFromToolSearch?: boolean;
   /** Cursor-only synthetic exact-match edit tool; never inferred from the wire name. */

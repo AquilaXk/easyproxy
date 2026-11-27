@@ -1260,11 +1260,34 @@ describe("EXPORT_CLIENTS registry", () => {
   test("apiKeyEnv and exportHint name the variable the config references", () => {
     expect(EXPORT_CLIENTS.opencode.apiKeyEnv).toBe(OPENCODE_API_KEY_ENV);
     expect(EXPORT_CLIENTS.opencode.exportHint).toContain(OPENCODE_API_KEY_ENV);
-    expect(EXPORT_CLIENTS.pi.apiKeyEnv).toBe("");
-    expect(EXPORT_CLIENTS.pi.exportHint).toContain("loopback");
+    expect(EXPORT_CLIENTS.pi.apiKeyEnv).toBe("EASYPROXY_PI_API_KEY");
+    expect(EXPORT_CLIENTS.pi.exportHint).toContain("EASYPROXY_PI_API_KEY");
+    expect(EXPORT_CLIENTS.omp.apiKeyEnv).toBe("EASYPROXY_OMP_API_KEY");
+    expect(EXPORT_CLIENTS.omp.exportHint).toContain("EASYPROXY_OMP_API_KEY");
     for (const id of EXPORT_CLIENT_IDS) {
       expect(EXPORT_CLIENTS[id].exportHint).not.toContain("epx_");
     }
+  });
+
+  test("pi and omp emit dedicated admission headers on non-loopback binds and preserve loopback placeholders", () => {
+    const remoteConfig = {
+      port: 10100,
+      hostname: "0.0.0.0",
+      apiAuth: { required: true, keys: ["k"] },
+      defaultProvider: "mock",
+      providers: {},
+    } as unknown as EpxConfig;
+    const piRemote = buildClientConfig("pi", { baseUrl: "http://192.168.1.10:10100/v1", models: FIXTURE, config: remoteConfig }) as PiGeneratedConfig;
+    expect(piRemote.providers.easyproxy!.headers).toEqual({ "x-easyproxy-api-key": "$EASYPROXY_PI_API_KEY" });
+    expect(piRemote.providers.easyproxy!.apiKey).toBe(LOOPBACK_API_KEY_PLACEHOLDER);
+    expect(piRemote.providers.easyproxy!.compat).toEqual({
+      sendSessionAffinityHeaders: true,
+      supportsDeveloperRole: false,
+    });
+    const ompRemote = buildClientConfig("omp", { baseUrl: "http://192.168.1.10:10100/v1", models: FIXTURE, config: remoteConfig }) as omp.OmpGeneratedConfig;
+    expect(ompRemote.providers.easyproxy!.headers).toEqual({ "x-easyproxy-api-key": "EASYPROXY_OMP_API_KEY" });
+    expect(ompRemote.providers.easyproxy!.apiKey).toBe(LOOPBACK_API_KEY_PLACEHOLDER);
+    expect(ompRemote.providers.easyproxy!.compat).toEqual({ supportsDeveloperRole: false });
   });
 
   test("build() on a spec matches buildClientConfig for the same context", () => {

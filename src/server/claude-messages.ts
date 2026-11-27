@@ -66,6 +66,7 @@ import {
 import { isClientClosedMessage, recognizedUpstreamError, UNDECLARED_TOOL_CALL_ERROR_CODE } from "../lib/errors";
 import { formatClientRetryAfter, resolveClientRetryAfter } from "../lib/retry-after";
 import { anthropicRateLimitHeaders } from "./anthropic-rate-limit-headers";
+import { ANTHROPIC_USAGE_LIMIT_HEADER, normalizeInboundAnthropicUsageLimit } from "../adapters/anthropic/slow-mode";
 import { messagesSuccessContentType, upstreamMessagesRequestIdHeaders } from "./messages-response-headers";
 import {
   anthropicErrorBody,
@@ -121,6 +122,7 @@ import { nativeMessagesDeclineReason, type NativeMessagesSelector } from "./mess
 import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 import { applyAnthropicEffortInPlace, applyAnthropicScenarioEffort } from "../routing/scenario";
 import { applyAnthropicNativeCacheTtlDefault, resolveAnthropicCacheRetention } from "../adapters/anthropic/cache-retention";
+import { rejectsOneHourCacheTtl } from "../lib/prompt-cache-injection";
 import {
   isApiAuthRequired,
   isDataPlaneAdmissionSecret,
@@ -391,14 +393,23 @@ async function anthropicNativePassthrough(
     enforceAnthropicImageLimits(body.messages);
     sanitizePassthroughToolCallIds(body.messages);
   }
+  const cacheInjectionTtl = config.promptCacheInjection?.ttl ?? "auto";
   const outboundBody = config.promptCacheInjection?.enabled === true
-    && (config.promptCacheInjection.ttl ?? "auto") === "auto"
-    ? applyAnthropicNativeCacheTtlDefault(body, resolveAnthropicCacheRetention(config.cacheRetention, { baseUrl: base, authMode: "forward" }))
+    && (cacheInjectionTtl === "auto" || cacheInjectionTtl === "1h")
+    ? applyAnthropicNativeCacheTtlDefault(
+      body,
+      cacheInjectionTtl === "1h" && config.cacheRetention === undefined && !rejectsOneHourCacheTtl(body.model)
+        ? "long"
+        : resolveAnthropicCacheRetention(config.cacheRetention, { baseUrl: base, authMode: "forward" }),
+    )
     : body;
   const headers = new Headers();
   req.headers.forEach((value, name) => {
     if (shouldForwardNativeHeader(name, value, config)) headers.set(name, value);
   });
+  const normalizedSlow = normalizeInboundAnthropicUsageLimit(headers.get(ANTHROPIC_USAGE_LIMIT_HEADER));
+  headers.delete(ANTHROPIC_USAGE_LIMIT_HEADER);
+  if (normalizedSlow) headers.set(ANTHROPIC_USAGE_LIMIT_HEADER, normalizedSlow);
   headers.set("content-type", "application/json");
   if (logCtx.otlpSpan?.traceparent) {
     headers.set("traceparent", logCtx.otlpSpan.traceparent);
@@ -799,10 +810,12 @@ async function handleClaudeMessagesWithBudget(
         isRec(anthropicBody.metadata) ? anthropicBody.metadata : undefined,
       );
       if (claudeConversationId) logCtx.conversationId = claudeConversationId;
-      if (applyOutboundPayloadHygiene(anthropicBody, config, logCtx).blocked) {
+      const hygiene = applyOutboundPayloadHygiene(anthropicBody, config, logCtx);
+      if (hygiene.blocked) {
         if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 400, { closeReason: "non_stream" });
         return anthropicErrorResponse(400, OUTBOUND_SECRET_BLOCKED_MESSAGE, "invalid_request_error", "outbound_secret_guard");
       }
+      anthropicBody = hygiene.body as Rec;
     }
     // A fast row blocks passthrough, unlike the chat case: native passthrough forwards the
     // caller's body with the caller's credential and never runs the Anthropic adapter, so the
@@ -1296,6 +1309,7 @@ async function handleClaudeMessagesWithBudget(
       // Compatibility identity is an opaque request-local handle, separate from credentials.
       clientIdentity: captureAnthropicClientIdentity(req.headers),
       callerAnthropicBeta: req.headers.get("anthropic-beta"),
+      callerAnthropicUsageLimit: req.headers.get("anthropic-usage-limit"),
       sessionKey: anthropicSessionKeyFromParts({
         sessionIdHeader: req.headers.get("session_id")?.trim() || req.headers.get("x-claude-code-session-id"),
         threadIdHeader: req.headers.get("thread_id"),
@@ -1377,6 +1391,7 @@ async function handleClaudeMessagesWithBudget(
         echoModel: clientFacingModelText(clientModelLabel),
         modelScope: resolveAdmissionModelScope(config, logIds?.admission),
         callerAnthropicBeta: req.headers.get("anthropic-beta"),
+        callerAnthropicUsageLimit: req.headers.get("anthropic-usage-limit"),
         clientIdentity: captureAnthropicClientIdentity(req.headers),
         sessionKey: anthropicSessionKeyFromParts({
           sessionIdHeader: req.headers.get("session_id")?.trim() || req.headers.get("x-claude-code-session-id"),
@@ -1764,7 +1779,7 @@ async function handleClaudeCountTokensInner(
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return anthropicErrorResponse(400, "request body must be a JSON object");
   }
-  const raw = body as Rec;
+  let raw = body as Rec;
   if (typeof raw.model !== "string" || raw.model.length === 0) {
     return anthropicErrorResponse(400, "model is required");
   }
@@ -1795,6 +1810,17 @@ async function handleClaudeCountTokensInner(
       raw.model = model;
     }
     captureClaudeInbound("count_tokens", raw, resolveInboundModel(model, cc), req.headers.get("anthropic-beta") ?? undefined);
+    const countHygiene = applyOutboundPayloadHygiene(raw, config);
+    if (countHygiene.blocked) {
+      return ownedAnthropicErrorResponse({
+        status: 400,
+        type: "invalid_request_error",
+        code: "outbound_secret_guard",
+        evidence: { status: 400 },
+        localError: markProxyError({ message: OUTBOUND_SECRET_BLOCKED_MESSAGE }),
+      });
+    }
+    raw = countHygiene.body as Rec;
     if (wantsNativePassthrough(req, config, requestPolicy, model, cc)) {
       return await anthropicNativePassthrough(req, config, { model, provider: "anthropic-native", surface: "claude" }, undefined, raw, "/v1/messages/count_tokens");
     }

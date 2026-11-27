@@ -10,6 +10,7 @@
  *    (adapted from Apache-2.0 reference gateway patterns — see `THIRD_PARTY_NOTICES.md`).
  */
 import { createHash } from "node:crypto";
+import { CopyOnWriteMutator, type CopyOnWriteSegment } from "./mutable-json-copy";
 
 export interface ToolOutputCompressionConfig {
   enabled?: boolean;
@@ -30,6 +31,7 @@ export interface ToolOutputCompressionResult {
   foldedLogItems?: number;
   deduplicatedItems?: number;
   estimatedSavedTokens?: number;
+  body?: unknown;
 }
 
 export const MAX_COMPRESSIBLE_STRING_BYTES = 16 * 1024 * 1024;
@@ -354,10 +356,61 @@ function parseProgressLine(line: string): ParsedProgressLine | null {
   return { skeleton: `redraw:${normalizedSkeleton}`, value };
 }
 
+// Command-aware consecutive passing test line matcher (adapted from rtk-ai/rtk, Apache-2.0).
+// Explicitly matches unambiguous passing test status lines across Bun/Vitest/Jest/Cargo/Pytest/Go,
+// while leaving failures, skips, stack traces, warnings, and summaries completely untouched.
+const PASS_TRAILING_HAZARD_RE = /\b(?:FAIL(?:ED)?|SKIP(?:PED)?|TODO|IGNORED|XFAIL|ERROR)\s*$/i;
+const PASS_BUN_VITEST_MARK_RE = /^\s*(?:✓|✔)\s+\S.{1,260}$/;
+const PASS_BUN_ASCII_RE = /^\s*\(pass\)\s+\S.{1,260}$/;
+const PASS_JEST_FILE_RE = /^\s*PASS\s+(?:\S+\/)?\S+\.(?:(?:test|spec)\.[A-Za-z0-9]{1,8}|js|ts|jsx|tsx|mjs|cjs)(?:\s+\([^)]+\))?\s*$/;
+const PASS_CARGO_TEST_RE = /^\s*test\s+[A-Za-z0-9_:<>.,/-]+(?:\s+\([^)]*\))?\s+\.\.\.\s+ok\s*$/;
+const PASS_PYTEST_VERBOSE_RE = /^\s*\S+\.py::\S+\s+PASSED(?:\s+\[\s*\d+%\s*\])?\s*$/;
+const PASS_PYTEST_DOTS_RE = /^\s*\S+\.py\s+\.{3,}\s*(?:\[\s*\d+%\s*\])?\s*$/;
+const PASS_GO_RUN_RE = /^\s*===\s+RUN\s+(\S+)\s*$/;
+const PASS_GO_PASS_RE = /^\s*---\s+PASS:\s+(\S+)(?:\s+\([^)]*\))?\s*$/;
+const PASS_GO_PKG_RE = /^\s*ok\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\))(?:\s+coverage:[^\r\n]*)?\s*$/;
+
+interface PassingTestUnit {
+  family: string;
+  lineCount: number;
+}
+
+function classifyPassingTestUnit(lines: string[], index: number): PassingTestUnit | null {
+  const line = lines[index]!;
+  if (line.length === 0 || line.length > 320 || line.indexOf("\x00") !== -1) return null;
+  if (STACK_FRAME_LINE_RE.test(line)) return null;
+
+  // Go verbose pair: exact `=== RUN <name>` immediately followed by `--- PASS: <name>`.
+  if (index + 1 < lines.length) {
+    const runMatch = PASS_GO_RUN_RE.exec(line);
+    if (runMatch) {
+      const passMatch = PASS_GO_PASS_RE.exec(lines[index + 1]!);
+      if (passMatch && passMatch[1] === runMatch[1]) {
+        return { family: "go_test_case", lineCount: 2 };
+      }
+      return null;
+    }
+  }
+
+  if (line.indexOf("✗") !== -1 || line.indexOf("×") !== -1 || PASS_TRAILING_HAZARD_RE.test(line)) {
+    return null;
+  }
+
+  if (PASS_BUN_VITEST_MARK_RE.test(line)) return { family: "bun_vitest_mark", lineCount: 1 };
+  if (PASS_BUN_ASCII_RE.test(line)) return { family: "bun_ascii_pass", lineCount: 1 };
+  if (PASS_JEST_FILE_RE.test(line)) return { family: "jest_vitest_file", lineCount: 1 };
+  if (PASS_CARGO_TEST_RE.test(line)) return { family: "cargo_test", lineCount: 1 };
+  if (PASS_PYTEST_VERBOSE_RE.test(line)) return { family: "pytest_verbose", lineCount: 1 };
+  if (PASS_PYTEST_DOTS_RE.test(line)) return { family: "pytest_dots", lineCount: 1 };
+  if (PASS_GO_PASS_RE.test(line)) return { family: "go_test_case", lineCount: 1 };
+  if (PASS_GO_PKG_RE.test(line)) return { family: "go_test_pkg", lineCount: 1 };
+  return null;
+}
+
 /**
- * Folds runs of identical non-error CLI/log lines (3+) and multi-step progress counter
- * sequences (4+) in O(N) time while strictly preserving unified diffs, stack traces,
- * and error outputs.
+ * Folds runs of identical non-error CLI/log lines (3+), multi-step progress counter
+ * sequences (4+), and consecutive passing test lines (4+) in O(N) time while strictly
+ * preserving unified diffs, stack traces, and error outputs.
  */
 export function foldRepetitiveLogLines(input: string): { text: string; folded: boolean } {
   if (input.length < 160 || input.indexOf("\n") === -1) {
@@ -377,9 +430,11 @@ export function foldRepetitiveLogLines(input: string): { text: string; folded: b
   if (newlineCount < 2) return { text: input, folded: false };
 
   const lines = input.split("\n");
+  let hasStackFrame = false;
   for (let i = 0; i < lines.length; i++) {
     if (STACK_FRAME_LINE_RE.test(lines[i]!)) {
-      return { text: input, folded: false };
+      hasStackFrame = true;
+      break;
     }
   }
 
@@ -390,42 +445,68 @@ export function foldRepetitiveLogLines(input: string): { text: string; folded: b
     const line = lines[i]!;
     const trimmed = line.trim();
 
-    // 1. Fold 3+ consecutive byte-identical non-trivial lines.
-    if (trimmed.length >= 4 && !PROGRESS_SKELETON_HAZARD_RE.test(trimmed)) {
-      let runEnd = i + 1;
-      while (runEnd < lines.length && lines[runEnd] === line) {
-        runEnd += 1;
+    if (!hasStackFrame) {
+      // 1. Fold 3+ consecutive byte-identical non-trivial lines.
+      if (trimmed.length >= 4 && !PROGRESS_SKELETON_HAZARD_RE.test(trimmed)) {
+        let runEnd = i + 1;
+        while (runEnd < lines.length && lines[runEnd] === line) {
+          runEnd += 1;
+        }
+        const count = runEnd - i;
+        if (count >= 3) {
+          out.push(line);
+          out.push(`[... repeated ${count - 1} more times]`);
+          changed = true;
+          i = runEnd;
+          continue;
+        }
       }
-      const count = runEnd - i;
-      if (count >= 3) {
-        out.push(line);
-        out.push(`[... repeated ${count - 1} more times]`);
-        changed = true;
-        i = runEnd;
-        continue;
+
+      // 2. Fold 4+ consecutive monotonic progress/counter lines sharing an identical skeleton, keeping first & last.
+      const firstProg = parseProgressLine(line);
+      if (firstProg !== null) {
+        let runEnd = i + 1;
+        let lastValue = firstProg.value;
+        while (runEnd < lines.length) {
+          const nextProg = parseProgressLine(lines[runEnd]!);
+          if (nextProg === null || nextProg.skeleton !== firstProg.skeleton || nextProg.value < lastValue) {
+            break;
+          }
+          lastValue = nextProg.value;
+          runEnd += 1;
+        }
+        const count = runEnd - i;
+        if (count >= 4 && lastValue > firstProg.value) {
+          out.push(line);
+          out.push(`[... ${count - 2} intermediate progress lines folded]`);
+          out.push(lines[runEnd - 1]!);
+          changed = true;
+          i = runEnd;
+          continue;
+        }
       }
     }
 
-    // 2. Fold 4+ consecutive monotonic progress/counter lines sharing an identical skeleton, keeping first & last.
-    const firstProg = parseProgressLine(line);
-    if (firstProg !== null) {
-      let runEnd = i + 1;
-      let lastValue = firstProg.value;
-      while (runEnd < lines.length) {
-        const nextProg = parseProgressLine(lines[runEnd]!);
-        if (nextProg === null || nextProg.skeleton !== firstProg.skeleton || nextProg.value < lastValue) {
-          break;
-        }
-        lastValue = nextProg.value;
-        runEnd += 1;
+    // 3. Fold 4+ consecutive unambiguous passing test units from the same runner family,
+    //    preserving the first, last, and any subsequent failure/summary blocks losslessly.
+    const firstPass = classifyPassingTestUnit(lines, i);
+    if (firstPass !== null) {
+      const units: Array<{ start: number; end: number }> = [{ start: i, end: i + firstPass.lineCount }];
+      let cursor = i + firstPass.lineCount;
+      while (cursor < lines.length) {
+        const nextPass = classifyPassingTestUnit(lines, cursor);
+        if (nextPass === null || nextPass.family !== firstPass.family) break;
+        units.push({ start: cursor, end: cursor + nextPass.lineCount });
+        cursor += nextPass.lineCount;
       }
-      const count = runEnd - i;
-      if (count >= 4 && lastValue > firstProg.value) {
-        out.push(line);
-        out.push(`[... ${count - 2} intermediate progress lines folded]`);
-        out.push(lines[runEnd - 1]!);
+      if (units.length >= 4) {
+        const firstUnit = units[0]!;
+        const lastUnit = units[units.length - 1]!;
+        for (let k = firstUnit.start; k < firstUnit.end; k++) out.push(lines[k]!);
+        out.push(`[... ${units.length - 2} intermediate passing tests folded]`);
+        for (let k = lastUnit.start; k < lastUnit.end; k++) out.push(lines[k]!);
         changed = true;
-        i = runEnd;
+        i = cursor;
         continue;
       }
     }
@@ -663,6 +744,8 @@ function compressOutputPart(
   state: CompressionWalkState,
   callId?: unknown,
   parentContainer?: Record<string, unknown>,
+  mutator?: CopyOnWriteMutator,
+  path?: readonly CopyOnWriteSegment[],
 ): void {
   const value = obj[field];
   if (typeof value !== "string") return;
@@ -697,7 +780,8 @@ function compressOutputPart(
       if (prior && prior.callId !== callId && prior.canonicalText === canonical) {
         const stub = `${DEDUP_MARKER_PREFIX} identical to call_id=${prior.callId} (${prior.wireChars} chars)]`;
         if (value.length - stub.length >= MIN_USEFUL_SAVINGS) {
-          obj[field] = stub;
+          if (mutator && path) mutator.write(path, stub);
+          else obj[field] = stub;
           state.compressedItems += 1;
           state.deduplicatedItems += 1;
           state.savedChars += value.length - stub.length;
@@ -715,7 +799,8 @@ function compressOutputPart(
     recordedEntry.wireChars = compressed !== value ? compressed.length : value.length;
   }
   if (compressed === value) return;
-  obj[field] = compressed;
+  if (mutator && path) mutator.write(path, compressed);
+  else obj[field] = compressed;
   const saved = Math.max(0, value.length - compressed.length);
   if (saved > 0) {
     state.compressedItems += 1;
@@ -731,11 +816,14 @@ function compressTextBlocks(
   state: CompressionWalkState,
   singleTextCallId?: unknown,
   parentContainer?: Record<string, unknown>,
+  mutator?: CopyOnWriteMutator,
+  blocksPath?: readonly CopyOnWriteSegment[],
 ): void {
   const canDedupSinglePart = singleTextCallId !== undefined
     && parentContainer !== undefined
     && blocks.length === 1;
-  for (const part of blocks) {
+  for (let i = 0; i < blocks.length; i += 1) {
+    const part = blocks[i];
     if (state.visited >= MAX_SCAN_ITEMS) break;
     state.visited += 1;
     if (!part || typeof part !== "object" || Array.isArray(part)) continue;
@@ -748,6 +836,8 @@ function compressTextBlocks(
       state,
       canDedupSinglePart ? singleTextCallId : undefined,
       parentContainer,
+      mutator,
+      blocksPath ? [...blocksPath, { container: blocks, key: i }, { container: partRec, key: "text" }] : undefined,
     );
   }
 }
@@ -769,10 +859,12 @@ export function compressResponsesToolOutputsInPlace(
       foldedLogItems: 0,
       deduplicatedItems: 0,
       estimatedSavedTokens: 0,
+      body,
     };
   }
 
   const record = body as Record<string, unknown>;
+  const mutator = new CopyOnWriteMutator(body);
   const state: CompressionWalkState = {
     compressedItems: 0,
     savedChars: 0,
@@ -791,7 +883,8 @@ export function compressResponsesToolOutputsInPlace(
   }
 
   if (Array.isArray(record.input)) {
-    for (const item of record.input) {
+    for (let i = 0; i < record.input.length; i += 1) {
+      const item = record.input[i];
       if (state.visited >= MAX_SCAN_ITEMS) break;
       state.visited += 1;
       if (!item || typeof item !== "object" || Array.isArray(item)) continue;
@@ -799,37 +892,103 @@ export function compressResponsesToolOutputsInPlace(
       if (entry.type !== "function_call_output" && entry.type !== "custom_tool_call_output") {
         continue;
       }
+      const entryPath: CopyOnWriteSegment[] = [
+        { container: record, key: "input" },
+        { container: record.input, key: i },
+      ];
       if (typeof entry.output === "string") {
-        compressOutputPart(entry, "output", config, state, entry.call_id);
+        compressOutputPart(
+          entry,
+          "output",
+          config,
+          state,
+          entry.call_id,
+          undefined,
+          mutator,
+          [...entryPath, { container: entry, key: "output" }],
+        );
       } else if (Array.isArray(entry.output)) {
-        compressTextBlocks(entry.output, config, state, entry.call_id, entry);
+        compressTextBlocks(
+          entry.output,
+          config,
+          state,
+          entry.call_id,
+          entry,
+          mutator,
+          [...entryPath, { container: entry, key: "output" }],
+        );
       }
     }
   }
 
   if (Array.isArray(record.messages)) {
-    for (const msg of record.messages) {
+    for (let i = 0; i < record.messages.length; i += 1) {
+      const msg = record.messages[i];
       if (state.visited >= MAX_SCAN_ITEMS) break;
       state.visited += 1;
       if (!msg || typeof msg !== "object" || Array.isArray(msg)) continue;
       const entry = msg as Record<string, unknown>;
+      const msgPath: CopyOnWriteSegment[] = [
+        { container: record, key: "messages" },
+        { container: record.messages, key: i },
+      ];
       if (entry.role === "tool") {
         if (typeof entry.content === "string") {
-          compressOutputPart(entry, "content", config, state, entry.tool_call_id);
+          compressOutputPart(
+            entry,
+            "content",
+            config,
+            state,
+            entry.tool_call_id,
+            undefined,
+            mutator,
+            [...msgPath, { container: entry, key: "content" }],
+          );
         } else if (Array.isArray(entry.content)) {
-          compressTextBlocks(entry.content, config, state, entry.tool_call_id, entry);
+          compressTextBlocks(
+            entry.content,
+            config,
+            state,
+            entry.tool_call_id,
+            entry,
+            mutator,
+            [...msgPath, { container: entry, key: "content" }],
+          );
         }
       } else if (entry.role === "user" && Array.isArray(entry.content)) {
-        for (const block of entry.content) {
+        for (let j = 0; j < entry.content.length; j += 1) {
+          const block = entry.content[j];
           if (state.visited >= MAX_SCAN_ITEMS) break;
           state.visited += 1;
           if (!block || typeof block !== "object" || Array.isArray(block)) continue;
           const blockRec = block as Record<string, unknown>;
           if (blockRec.type !== "tool_result") continue;
+          const blockPath: CopyOnWriteSegment[] = [
+            ...msgPath,
+            { container: entry, key: "content" },
+            { container: entry.content, key: j },
+          ];
           if (typeof blockRec.content === "string") {
-            compressOutputPart(blockRec, "content", config, state, blockRec.tool_use_id);
+            compressOutputPart(
+              blockRec,
+              "content",
+              config,
+              state,
+              blockRec.tool_use_id,
+              undefined,
+              mutator,
+              [...blockPath, { container: blockRec, key: "content" }],
+            );
           } else if (Array.isArray(blockRec.content)) {
-            compressTextBlocks(blockRec.content, config, state, blockRec.tool_use_id, blockRec);
+            compressTextBlocks(
+              blockRec.content,
+              config,
+              state,
+              blockRec.tool_use_id,
+              blockRec,
+              mutator,
+              [...blockPath, { container: blockRec, key: "content" }],
+            );
           }
         }
       }
@@ -843,5 +1002,6 @@ export function compressResponsesToolOutputsInPlace(
     foldedLogItems: state.foldedLogItems,
     deduplicatedItems: state.deduplicatedItems,
     estimatedSavedTokens: Math.floor(state.savedChars / 4),
+    body: mutator.root,
   };
 }

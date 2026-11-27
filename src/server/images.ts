@@ -38,6 +38,7 @@ import { recordDistributedKeyFailure, selectProactiveApiKeyTransport } from "../
 import { requestPacingOverloadResponse } from "./responses/pacing-overload";
 import { getProviderRegistryEntry } from "../providers/registry";
 import { readJsonRequestBody, resolveInboundBodyLimitBytes } from "./request-decompress";
+import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential } from "./auth-cors";
 import type { DataPlaneAdmission } from "./auth-cors";
 import { admissionScopeDenial } from "./admission-model-scope";
@@ -707,6 +708,115 @@ async function tryXaiImageRelay(
   }
 }
 
+const IMAGE_TEXT_FIELDS = ["prompt", "input", "negative_prompt", "style", "user"] as const;
+
+function applyImageRequestHygiene(
+  body: unknown,
+  config: EpxConfig,
+  logCtx: RequestLogContext,
+): { blocked: boolean; body: unknown } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { blocked: applyOutboundPayloadHygiene(body, config, logCtx).blocked, body };
+  }
+  const rec = body as Record<string, unknown>;
+  // Scan only text/URL fields and exclude raw base64/binary image data so large inline
+  // images never trigger byte-limit refusals in strict block mode.
+  const scanTarget: Record<string, unknown> = {};
+  for (const field of IMAGE_TEXT_FIELDS) {
+    if (typeof rec[field] === "string") scanTarget[field] = rec[field];
+  }
+  if (typeof rec.image_url === "string" && !rec.image_url.trimStart().startsWith("data:")) {
+    scanTarget.image_url = rec.image_url;
+  }
+  if (typeof rec.image === "string" && /^https?:\/\//i.test(rec.image.trim())) {
+    scanTarget.image = rec.image;
+  }
+  if (Array.isArray(rec.images)) {
+    scanTarget.images = rec.images.map((entry) => {
+      if (typeof entry === "string") {
+        return entry.trimStart().startsWith("data:") ? "" : entry;
+      }
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        const entryRec = entry as Record<string, unknown>;
+        const copied: Record<string, unknown> = {};
+        if (typeof entryRec.url === "string" && !entryRec.url.trimStart().startsWith("data:")) {
+          copied.url = entryRec.url;
+        }
+        if (typeof entryRec.image_url === "string" && !entryRec.image_url.trimStart().startsWith("data:")) {
+          copied.image_url = entryRec.image_url;
+        } else if (entryRec.image_url && typeof entryRec.image_url === "object" && !Array.isArray(entryRec.image_url)) {
+          const nestedUrl = (entryRec.image_url as Record<string, unknown>).url;
+          if (typeof nestedUrl === "string" && !nestedUrl.trimStart().startsWith("data:")) {
+            copied.image_url = { url: nestedUrl };
+          }
+        }
+        return copied;
+      }
+      return entry;
+    });
+  }
+  if (applyOutboundPayloadHygiene(scanTarget, config, logCtx).blocked) {
+    return { blocked: true, body };
+  }
+  let outRec: Record<string, unknown> | undefined;
+  const ensureOut = () => (outRec ??= { ...rec });
+  for (const field of IMAGE_TEXT_FIELDS) {
+    if (typeof scanTarget[field] === "string" && scanTarget[field] !== rec[field]) {
+      ensureOut()[field] = scanTarget[field];
+    }
+  }
+  if (typeof scanTarget.image_url === "string" && scanTarget.image_url !== rec.image_url) {
+    ensureOut().image_url = scanTarget.image_url;
+  }
+  if (typeof scanTarget.image === "string" && scanTarget.image !== rec.image) {
+    ensureOut().image = scanTarget.image;
+  }
+  if (Array.isArray(scanTarget.images) && Array.isArray(rec.images)) {
+    let outImages: unknown[] | undefined;
+    const ensureOutImages = () => {
+      if (!outImages) {
+        outImages = [...(rec.images as unknown[])];
+        ensureOut().images = outImages;
+      }
+      return outImages;
+    };
+    for (let i = 0; i < rec.images.length; i += 1) {
+      const orig = rec.images[i];
+      const cleaned = scanTarget.images[i];
+      if (typeof orig === "string" && !orig.trimStart().startsWith("data:") && typeof cleaned === "string" && cleaned !== orig) {
+        ensureOutImages()[i] = cleaned;
+      } else if (orig && typeof orig === "object" && !Array.isArray(orig) && cleaned && typeof cleaned === "object" && !Array.isArray(cleaned)) {
+        const origRec = orig as Record<string, unknown>;
+        const cleanRec = cleaned as Record<string, unknown>;
+        let entryOut: Record<string, unknown> | undefined;
+        const ensureEntryOut = () => {
+          if (!entryOut) {
+            entryOut = { ...origRec };
+            ensureOutImages()[i] = entryOut;
+          }
+          return entryOut;
+        };
+        if (typeof cleanRec.url === "string" && cleanRec.url !== origRec.url) {
+          ensureEntryOut().url = cleanRec.url;
+        }
+        if (typeof cleanRec.image_url === "string" && cleanRec.image_url !== origRec.image_url) {
+          ensureEntryOut().image_url = cleanRec.image_url;
+        } else if (
+          cleanRec.image_url && typeof cleanRec.image_url === "object" && !Array.isArray(cleanRec.image_url)
+          && origRec.image_url && typeof origRec.image_url === "object" && !Array.isArray(origRec.image_url)
+        ) {
+          const origNested = origRec.image_url as Record<string, unknown>;
+          const cleanNested = (cleanRec.image_url as Record<string, unknown>).url;
+          if (typeof cleanNested === "string" && cleanNested !== origNested.url) {
+            ensureEntryOut().image_url = { ...origNested, url: cleanNested };
+          }
+        }
+      }
+    }
+  }
+  return { blocked: false, body: outRec ?? body };
+}
+
 export async function handleImages(
   req: Request,
   config: EpxConfig,
@@ -721,6 +831,11 @@ export async function handleImages(
   } catch (err) {
     return decodeRequestErrorResponse(err, "images");
   }
+  const hygiene = applyImageRequestHygiene(body, config, logCtx);
+  if (hygiene.blocked) {
+    return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+  }
+  body = hygiene.body;
   const model = (body as { model?: unknown } | null)?.model;
   if (typeof model === "string" && model) logCtx.model = model;
 

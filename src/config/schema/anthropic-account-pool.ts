@@ -6,6 +6,7 @@ import { redactSecretString } from "../../lib/redact";
 /** Historical A load contract, shared verbatim with B: recover only the native preference. */
 export const anthropicAccountPoolSchema = z.object({
   nativeMessages: z.boolean().optional().catch(false),
+  slowFallback: z.boolean().optional().catch(false),
 }).passthrough().optional().catch(undefined);
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -20,6 +21,9 @@ function poolError(value: unknown, path: string): string | undefined {
   if (!pool) return `schema_invalid: ${path}: must be an object`;
   if (Object.hasOwn(pool, "nativeMessages") && typeof pool.nativeMessages !== "boolean") {
     return `schema_invalid: ${path}.nativeMessages: must be a boolean`;
+  }
+  if (Object.hasOwn(pool, "slowFallback") && typeof pool.slowFallback !== "boolean") {
+    return `schema_invalid: ${path}.slowFallback: must be a boolean`;
   }
   if (pool.routes !== undefined) {
     const parsed = parseAnthropicModelRoutes(pool.routes);

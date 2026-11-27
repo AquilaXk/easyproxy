@@ -32,8 +32,10 @@ import {
   hasEligibleGenericOAuthFailoverTarget,
   isGenericOAuthFailoverEnabled,
   rotateGenericOAuthAccountOn429,
+  rotateGenericOAuthAccountOnRefusal,
   failoverAccountSnapshot,
 } from "../../oauth/generic-account-failover";
+import { isCreditOrBudgetExhaustedRefusal } from "../../lib/credit-budget-refusal";
 import { OAuthAccountPausedError, OAuthTokenRefreshBusyError, publicOAuthAuthenticationErrorMessage, type OAuthAccessSnapshot } from "../../oauth/index";
 import { tryAlternateAfterTerminalRefresh } from "../../oauth/kiro-terminal-failover";
 import { resolveWireProtocolOverride } from "../adapter-resolve";
@@ -642,8 +644,10 @@ export async function executeResponsesRunTurn(
       // because it answers before any rotation arm is reached.
       if (error.code === SEND_BUDGET_EXHAUSTED_CODE) return false;
       const status = error.status ?? adapterFailureFromMessage(error.message).httpStatus;
+      const isBillingRefusal = (status === 400 || status === 402 || status === 403 || status === 422)
+        && isCreditOrBudgetExhaustedRefusal({ status, code: error.code, type: error.errorType, message: error.message });
       if (
-        status !== 429
+        (status !== 429 && !isBillingRefusal)
         || !transportState.genericFailoverAccountId
         || transportState.genericFailovers >= transportState.genericFailoverLimit
         || !isGenericOAuthFailoverEnabled(config, route.providerName)
@@ -653,9 +657,10 @@ export async function executeResponsesRunTurn(
       // replayed turn is dispatched by runTurnAttempt and never reaches `onSendsConsumed`, so
       // this reservation is the charge. Refusing returns false, which leaves the preflight 429
       // to reach the client exactly as the adapter produced it.
+      const recoveryKind = isBillingRefusal ? "oauth-account-403" : "oauth-account-429";
       const hop = reserveCredentialHop(
         "auth-recovery",
-        `${route.providerName}|${route.modelId}|runturn-oauth-429`,
+        `${route.providerName}|${route.modelId}|runturn-${recoveryKind}`,
       );
       if (!hop.allowed) {
         // The activation quorum deliberately ignores cooldowns. Attribute a withheld recovery
@@ -665,19 +670,29 @@ export async function executeResponsesRunTurn(
         )) noteAttemptRecoveryWithheld(logCtx.activeAttempt, "rotation-send-budget");
         return false;
       }
-      const nextAccountId = rotateGenericOAuthAccountOn429(
-        config,
-        route.providerName,
-        transportState.genericFailoverAccountId,
-        null,
-        Date.now(),
-        route.modelId,
-      );
+      const nextAccountId = isBillingRefusal
+        ? rotateGenericOAuthAccountOnRefusal(
+          config,
+          route.providerName,
+          transportState.genericFailoverAccountId,
+          "billing",
+          null,
+          Date.now(),
+          route.modelId,
+        )
+        : rotateGenericOAuthAccountOn429(
+          config,
+          route.providerName,
+          transportState.genericFailoverAccountId,
+          null,
+          Date.now(),
+          route.modelId,
+        );
       if (!nextAccountId) {
         hop.permit?.release();
         return false;
       }
-      sealCredentialRefusal(logCtx, status, "oauth-account-429");
+      sealCredentialRefusal(logCtx, status, recoveryKind);
       try {
         const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
         transportState.genericFailovers += 1;

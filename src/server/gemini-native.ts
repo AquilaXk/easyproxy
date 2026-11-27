@@ -180,7 +180,7 @@ export async function handleGeminiNative(
       return geminiNativeError(400, OUTBOUND_SECRET_BLOCKED_MESSAGE, "outbound_secret_guard");
     }
     if (secretGuard.redactions > 0) {
-      raw = JSON.stringify(requestPayload);
+      raw = JSON.stringify(secretGuard.body ?? requestPayload);
     }
     ac.signal.throwIfAborted();
     const clientModel = clientFacingModelLabel(logCtx?.requestedModel ?? model);

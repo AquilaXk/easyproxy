@@ -1,6 +1,6 @@
 import type { AttemptRecoveryKind } from "../../usage/log";
 import { SendBudgetExhaustedError, isNonReplayableResponse } from "../../lib/upstream-retry";
-import { rotateAnthropicBillingKeyOnResponse } from "../../providers/anthropic-billing-recovery";
+import { rotateCreditOrBudgetKeyOnResponse } from "../../providers/anthropic-billing-recovery";
 import {
   hasKeyPoolFailover,
   readQuotaResetAt,
@@ -180,8 +180,8 @@ export async function recoverAnthropicBillingKeyPool(
   const { parsed, route } = requestState;
   let upstreamResponse = initialResponse;
 
-  while ((upstreamResponse.status === 400 || upstreamResponse.status === 402) && hasKeyPoolFailover(route.provider)) {
-    const rotated = await rotateAnthropicBillingKeyOnResponse(upstreamResponse, config, route.providerName, route.provider, {
+  while ((upstreamResponse.status === 400 || upstreamResponse.status === 402 || upstreamResponse.status === 403 || upstreamResponse.status === 422) && hasKeyPoolFailover(route.provider)) {
+    const rotated = await rotateCreditOrBudgetKeyOnResponse(upstreamResponse, config, route.providerName, route.provider, {
       signal: upstream.signal,
       promptCacheKey: parsed.options.promptCacheKey,
     });
@@ -288,7 +288,7 @@ export async function recoverApiKeyPool429(
     // nothing, which outlives the request.
     if (isNonReplayableResponse(upstreamResponse)
       || (recoveryFlags.billingRecoveryActive && upstreamResponse.status === 401)
-      || (route.provider.adapter === "anthropic" && [400, 402].includes(upstreamResponse.status))) {
+      || [400, 402, 403, 422].includes(upstreamResponse.status)) {
       return { kind: "continue", response: upstreamResponse };
     }
   }

@@ -9,8 +9,8 @@
  * "tsc -b" is local and deterministic, so a failure always fails the push —
  * there is no soft-skip path.
  *
- * The base is the merge base with the integration branch (upstream/dev, then origin/dev, then
- * dev, the order "test:changed" uses), not "@{u}": "prepush" is a package script, not a git hook,
+ * The base is the merge base with the integration branch (upstream/main, then origin/main, then
+ * main, the order "test:changed" uses), not "@{u}": "prepush" is a package script, not a git hook,
  * so it never sees the push destination, and a tracking branch can already hold a GUI change
  * the destination lacks. Everything the branch adds over dev is a superset of any push range.
  * Paths are read NUL-delimited so a quoted non-ASCII name still matches "gui/", and with rename
@@ -67,7 +67,7 @@ if (import.meta.main) {
   if (process.env.TYPECHECK_FILES !== undefined) {
     files = process.env.TYPECHECK_FILES.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
   } else {
-    const base = ["upstream/dev", "origin/dev", "dev"].find(hasRef);
+    const base = ["upstream/main", "origin/main", "main"].find(hasRef);
     files = base ? diffNames(`${base}...HEAD`) : null;
   }
 

@@ -22,9 +22,10 @@ Leave that process running. In a second terminal, print the configuration:
 epx export --client pi
 ```
 
-The output leads with the JSON, then prints the destination path, the merge warning, a loopback
-usage hint, and how many models carry authoritative context limits. This export supports only
-an unauthenticated loopback proxy; it does not configure remote admission.
+The output leads with the JSON, then prints the destination path, the merge warning, and how
+many models carry authoritative context limits. On loopback binds it exports a non-secret placeholder
+`apiKey`; when listening non-loopback or with `apiAuth` enabled, it also emits
+`headers["x-easyproxy-api-key"]: "$EASYPROXY_PI_API_KEY"`.
 
 ```json
 {
@@ -92,13 +93,12 @@ provider or changing model visibility, and merge the new block over the old one.
 
 ## The admission key
 
-The exported `apiKey` is the non-secret placeholder `easyproxy-loopback`. No
-`EASYPROXY_API_KEY` export is emitted or required. This exporter supports only an
-unauthenticated loopback proxy and refuses a remote or token-protected listener.
-Provider credentials remain in easyproxy's own configuration, as described in
-[Providers](/guides/providers/); never put an upstream provider key in this Pi block.
-For remote access, use a client integration that supports proxy admission credentials;
-changing this placeholder does not enable remote Pi export.
+The exported `apiKey` is always the non-secret placeholder `easyproxy-loopback` so Pi loads the
+provider block even without an env token on loopback. When the listener is non-loopback or API auth
+is enabled, `epx export --client pi` adds `"headers": { "x-easyproxy-api-key": "$EASYPROXY_PI_API_KEY" }`
+to the provider block — export `EASYPROXY_PI_API_KEY` in the shell running Pi rather than storing
+a plaintext secret on disk. Provider credentials remain in easyproxy's own configuration, as described
+in [Providers](/guides/providers/); never put an upstream provider key in this Pi block.
 
 ## Model metadata
 

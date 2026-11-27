@@ -529,13 +529,15 @@ export async function handleResponsesCompact(
     // which is the request a long task depends on to keep going.
     // Direct compact bypasses the adapter's Google replay projection (#7111).
     const compactBody = repairLegacyDottedToolCallNames(
-      stripProviderInputItemMetadata(sanitizeReasoningInputContent(compactBodyRaw, {
-        preserveRawReasoningContent: !isOpenAiOperatedResponsesDestination(compactProvider)
-          && compactProvider.preserveResponsesReasoningContent === true,
-        dropNullContentChannel: !isOpenAiOperatedResponsesDestination(compactProvider),
-        stripEncryptedContent: requireCompactPlaintextReasoning,
-        requirePlaintextReasoning: requireCompactPlaintextReasoning,
-      })),
+      stripCanonicalOnlyInputItems(
+        stripProviderInputItemMetadata(sanitizeReasoningInputContent(compactBodyRaw, {
+          preserveRawReasoningContent: !isOpenAiOperatedResponsesDestination(compactProvider)
+            && compactProvider.preserveResponsesReasoningContent === true,
+          dropNullContentChannel: !isOpenAiOperatedResponsesDestination(compactProvider),
+          stripEncryptedContent: requireCompactPlaintextReasoning,
+          requirePlaintextReasoning: requireCompactPlaintextReasoning,
+        })),
+      ),
     ) as typeof compactBodyRaw;
     {
       const binding = conversationStateBindingFromAuth(authCtx, codexPoolAffinityKey(req.headers));
@@ -742,7 +744,8 @@ export async function handleResponsesCompact(
         }
         // A queued key selection can refresh the destination; project only for this send.
         replayBody = isOpenAiOperatedResponsesDestination(sendProvider)
-          ? repairUrlCitationAnnotations(replayBody) : stripCanonicalOnlyInputItems(stripCanonicalOnlyTopLevelFields(replayBody));
+          ? stripCanonicalOnlyInputItems(repairUrlCitationAnnotations(replayBody))
+          : stripCanonicalOnlyInputItems(stripCanonicalOnlyTopLevelFields(replayBody));
         // Only an explicit `false` lowers custom tools here; with no declaration, native compact
         // forwards every custom tool and its history exactly as before this capability existed.
         if (sendProvider.supportsResponsesCustomTools === false && !isCanonicalOpenAiForwardProvider(sendProvider)) {

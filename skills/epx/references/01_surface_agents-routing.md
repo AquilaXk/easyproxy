@@ -1548,7 +1548,7 @@ State-changing: yes. JSON mode: `payload`.
 
 Usage: `epx guardrails status [--json]`
 
-Inspect outbound secret guardrails, tool-output compression settings, and live hygiene counters.
+Inspect outbound secret guardrails, tool-output compression, prompt cache injection, and live hygiene counters.
 
 State-changing: no. JSON mode: `payload`.
 
@@ -1560,13 +1560,13 @@ State-changing: no. JSON mode: `payload`.
 |---|---|---|
 | `--json` | boolean | Emit guardrail settings and live hygiene stats as JSON. |
 
-- Also accepted without `status` (`epx guardrails [--json]`). Reads current effective outboundSecretGuard, toolOutputCompression, and process hygiene counters.
+- Also accepted without `status` (`epx guardrails [--json]`). Reads current effective outboundSecretGuard, toolOutputCompression, promptCacheInjection, and process hygiene counters.
 
 ### `epx guardrails set`
 
-Usage: `epx guardrails set [--secret-mode <off|redact|block>] [--compress <on|off>] [--min-chars <512..500000>] [--head-chars <0..100000>] [--tail-chars <0..100000>] [--strip-ansi <on|off>] [--reset-secret-guard] [--reset-compression] [--json]`
+Usage: `epx guardrails set [--secret-mode <off|redact|block>] [--compress <on|off>] [--min-chars <512..500000>] [--head-chars <0..100000>] [--tail-chars <0..100000>] [--strip-ansi <on|off>] [--compact-json <on|off>] [--fold-lines <on|off>] [--dedup <on|off>] [--dedup-min-chars <128..500000>] [--cache-inject <on|off>] [--cache-ttl <auto|5m|1h>] [--strip-timestamps <on|off>] [--reset-secret-guard] [--reset-compression] [--reset-prompt-cache] [--json]`
 
-Update outbound secret guardrails or tool-output compression settings.
+Update outbound secret guardrails, tool-output compression, or prompt cache injection settings.
 
 State-changing: yes. JSON mode: `payload`.
 
@@ -1582,18 +1582,26 @@ State-changing: yes. JSON mode: `payload`.
 | `--head-chars` | number | Leading characters preserved when compressing (integer 0..100000). |
 | `--tail-chars` | number | Trailing characters preserved when compressing (integer 0..100000). |
 | `--strip-ansi` | string | Strip ANSI escapes before compression: on \| off. |
+| `--compact-json` | string | Compact pretty-printed JSON tool outputs: on \| off. |
+| `--fold-lines` | string | Fold repetitive log lines during compression: on \| off. |
+| `--dedup` | string | Deduplicate identical repeated tool outputs: on \| off. |
+| `--dedup-min-chars` | number | Minimum chars before deduplicating repeated tool outputs (integer 128..500000). |
+| `--cache-inject` | string | Prompt cache breakpoint injection toggle: on \| off. |
+| `--cache-ttl` | string | Prompt cache injection TTL target: auto \| 5m \| 1h. |
+| `--strip-timestamps` | string | Normalize volatile ISO timestamps in system prompts: on \| off. |
 | `--reset-secret-guard` | boolean | Reset outboundSecretGuard to defaults (cannot combine with --secret-mode). |
 | `--reset-compression` | boolean | Reset toolOutputCompression to defaults (cannot combine with compression flags). |
+| `--reset-prompt-cache` | boolean | Reset promptCacheInjection to defaults (cannot combine with prompt cache flags). |
 | `--json` | boolean | Emit updated guardrail settings and stats as JSON. |
 
-- Persists validated outboundSecretGuard or toolOutputCompression sections; requires at least one setting or reset flag.
-- Each modified section replaces that section in persisted config using the schema defaults for omitted compression fields.
+- Persists validated outboundSecretGuard, toolOutputCompression, or promptCacheInjection sections via partial merge with existing values; requires at least one setting or reset flag.
+- Each reset flag sends JSON null for that section to restore built-in defaults.
 
 ### `epx guardrails dry-run`
 
-Usage: `epx guardrails dry-run (--text <str> | --file <path>) [--secret-mode <off|redact|block>] [--compress <on|off>] [--min-chars <512..500000>] [--head-chars <0..100000>] [--tail-chars <0..100000>] [--strip-ansi <on|off>] [--json]`
+Usage: `epx guardrails dry-run (--text <str> | --file <path>) [--secret-mode <off|redact|block>] [--compress <on|off>] [--min-chars <512..500000>] [--head-chars <0..100000>] [--tail-chars <0..100000>] [--strip-ansi <on|off>] [--compact-json <on|off>] [--fold-lines <on|off>] [--dedup <on|off>] [--dedup-min-chars <128..500000>] [--cache-inject <on|off>] [--cache-ttl <auto|5m|1h>] [--strip-timestamps <on|off>] [--duplicate-pass] [--json]`
 
-Evaluate outbound secret guardrails and tool-output compression on synthetic text without mutating state.
+Evaluate outbound secret guardrails, tool-output compression, and prompt cache injection on synthetic text without mutating state.
 
 State-changing: no. JSON mode: `payload`.
 
@@ -1611,6 +1619,14 @@ State-changing: no. JSON mode: `payload`.
 | `--head-chars` | number | Override leading preserved characters (integer 0..100000). |
 | `--tail-chars` | number | Override trailing preserved characters (integer 0..100000). |
 | `--strip-ansi` | string | Override ANSI stripping: on \| off. |
+| `--compact-json` | string | Override JSON compaction: on \| off. |
+| `--fold-lines` | string | Override repetitive log folding: on \| off. |
+| `--dedup` | string | Override identical tool-output deduplication: on \| off. |
+| `--dedup-min-chars` | number | Override minimum chars for deduplication (integer 128..500000). |
+| `--cache-inject` | string | Override prompt cache breakpoint injection: on \| off. |
+| `--cache-ttl` | string | Override prompt cache injection TTL: auto \| 5m \| 1h. |
+| `--strip-timestamps` | string | Override volatile ISO timestamp normalization: on \| off. |
+| `--duplicate-pass` | boolean | Simulate a duplicate consecutive tool output pass to preview deduplication. |
 | `--json` | boolean | Emit dry-run findings and preview output as JSON. |
 
 - Rejects symlinks, non-regular files, byte reads above 262144, text above 65536 characters, and serialized bodies above 524288 bytes before sending a request.

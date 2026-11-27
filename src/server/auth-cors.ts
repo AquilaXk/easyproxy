@@ -855,6 +855,8 @@ export const AUTH_MATRIX: readonly ApiAuthMatrixRow[] = [
   { endpoint: "/v1/responses", bearer: "accepted", dedicated: "accepted", xApiKey: "rejected" },
   { endpoint: "/v1/chat/completions", bearer: "accepted", dedicated: "accepted", xApiKey: "rejected" },
   { endpoint: "/v1/embeddings", bearer: "accepted", dedicated: "accepted", xApiKey: "rejected" },
+  { endpoint: "/v1/rerank", bearer: "accepted", dedicated: "accepted", xApiKey: "rejected" },
+  { endpoint: "/v1/audio/speech", bearer: "accepted", dedicated: "accepted", xApiKey: "rejected" },
   { endpoint: "/v1/messages", bearer: "accepted", dedicated: "accepted", xApiKey: "accepted" },
   { endpoint: "/v1/models", bearer: "accepted", dedicated: "accepted", xApiKey: "accepted" },
   // #809: least-privilege catalog read for remote Codex clients. Same admission set as
@@ -1065,7 +1067,7 @@ export function requireResponsesApiAuth(req: Request, config: RequestPolicyView)
 const FORBIDDEN_PROVIDER_RUNTIME_FIELDS = [
   "virtualModels", "codexAuthContext", "selectedForwardHeaders",
   "sidecarOutcomeRecorder", "_codexAccountOverride", "_codexAccountRequired",
-  "_apiKeyAttempt",
+  "_apiKeyAttempt", "_anthropicSlowMode",
 ] as const;
 
 function sameCanonicalProviderSeed(actual: Record<string, unknown>, expected: EpxProviderConfig): boolean {
@@ -1512,6 +1514,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   accountAutoPause: "editor",
   apiKeySelectionRevision: "runtime",
   _apiKeyAttempt: "runtime",
+  _anthropicSlowMode: "runtime",
   defaultModel: "editor",
   models: "editor",
   liveModels: "editor",
@@ -1617,6 +1620,8 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   anthropicImageContextRecovery: "editor",
   forwardAdvisorTool: "editor",
   perMessageEffort: "editor",
+  gatewayToolSearch: "editor",
+  thinkingBudgetRectifier: "editor",
   noVisionModels: "editor",
   googleMode: "editor",
   project: "editor",

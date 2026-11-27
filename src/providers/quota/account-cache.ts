@@ -3,6 +3,7 @@ import { clearDecisionAccountQuotas, decisionQuotaSinkActive } from "../../lib/d
 import { bindRawDecisionWindows, publishAnthropicDecisionQuota } from "../quota-decision-publication";
 import { parseAnthropicFamilyHeaders, mergeAnthropicFamilyWindows } from "./anthropic-family-headers";
 import { anthropicFamilyQuotaStateFor, ANTHROPIC_PASSIVE_FAMILY_MAX_AGE_MS } from "../../oauth/anthropic-family-quota-state";
+import { recordAnthropicSlowSignalForInstance } from "../../oauth/anthropic-slow-fallback";
 import { createHash } from "node:crypto";
 import { getValidAccessTokenForAccount } from "../../oauth";
 import { anthropicCredentialEvidenceKey, credentialGeneration, getAccountCredential, getAccountCredentialWithStatus, getAccountSet, loadAuthStore, type AuthStore } from "../../oauth/store";
@@ -461,6 +462,7 @@ export function recordAnthropicAccountQuotaFromHeadersForInstance(
   const account = getAccountSet(instance)?.accounts.find(row => row.id === accountId);
   const credentialKey = account && anthropicCredentialEvidenceKey(account);
   if (sendCredentialKey !== undefined && sendCredentialKey !== credentialKey) return;
+  recordAnthropicSlowSignalForInstance(instance, accountId, headers, Date.now());
   if (status !== undefined && status >= 200 && status < 300) clearAnthropicRequestedFamilyQuota(accountId, model);
   const observed = parseAnthropicRateLimitHeaders(headers, status);
   if (!observed) return;

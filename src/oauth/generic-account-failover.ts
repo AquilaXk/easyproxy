@@ -62,6 +62,7 @@ export const GENERIC_OAUTH_MAX_FAILOVERS_PER_REQUEST = 3;
 export const GENERIC_OAUTH_MAX_ACCOUNTS_PER_REQUEST = 6;
 
 const DEFAULT_COOLDOWN_MS = 60_000;
+const BILLING_COOLDOWN_MS = 60 * 60_000;
 
 /**
  * How long a presence answer may be reused before the store is consulted again.
@@ -89,7 +90,7 @@ const EXCLUDED_PROVIDERS = new Set(["openai", "anthropic"]);
 
 interface AccountHealth {
   cooldownUntil: number;
-  cooldownSource: "retry-after" | "default" | "kiro-suspension" | "auth";
+  cooldownSource: "retry-after" | "default" | "kiro-suspension" | "auth" | "billing";
   identity?: string;
 }
 
@@ -128,6 +129,13 @@ export function quarantineKiroSuspendedAccount(accountId: string, generation?: s
 }
 
 function isCooled(provider: string, accountId: string, now: number, family?: QuotaModelFamily): boolean {
+  if (family !== undefined) {
+    const accountWide = health.get(healthKey(provider, accountId, undefined));
+    if (accountWide && (accountWide.cooldownSource === "billing" || accountWide.cooldownSource === "kiro-suspension")
+      && isCooled(provider, accountId, now, undefined)) {
+      return true;
+    }
+  }
   const entry = health.get(healthKey(provider, accountId, family));
   if (!entry) return false;
   if (provider === "google-antigravity" && entry.cooldownSource === "auth") {
@@ -685,19 +693,19 @@ export function rotateGenericOAuthAccountOn429(
     retryAfterHeader, now, requestedModelId, undefined, commit);
 }
 
-/** Kiro adds account-scoped refusal classes; all other providers retain their 429 policy. */
+/** Kiro adds account-scoped refusal classes; all generic providers also rotate on billing/credit exhaustion. */
 export function rotateGenericOAuthAccountOnRefusal(
   config: EpxConfig,
   providerName: string,
   failedAccountId: string,
-  kind: KiroRefusalKind,
+  kind: KiroRefusalKind | "billing",
   retryAfterHeader: string | null | undefined,
   now = Date.now(),
   requestedModelId?: string | null,
   monthlyCooldownMs?: number,
   commit = true,
 ): string | null {
-  if (kind === "other" || (providerName !== "kiro" && kind !== "rate")) return null;
+  if (kind === "other" || (providerName !== "kiro" && kind !== "rate" && kind !== "billing")) return null;
   if (!isGenericOAuthFailoverEnabled(config, providerName)) return null;
   const set = getAccountSet(providerName);
   // A single stored account has nowhere to go; rotating to itself would just replay the 429.
@@ -712,18 +720,19 @@ export function rotateGenericOAuthAccountOnRefusal(
   // An account whose allowance is provably spent gets a reset-aligned cooldown instead of
   // the default minute: retrying it every 60s until the window rolls over is pure waste.
   // A Retry-After from upstream still wins — it is the server's own instruction.
-  const exhausted = parsed === undefined && providerName !== "kiro"
+  const exhausted = parsed === undefined && providerName !== "kiro" && kind !== "billing"
     ? exhaustedCooldownMs(providerName, failedAccountId, now, set.accounts.find(account => account.id === failedAccountId)) : null;
   const cooldownMs = kind === "suspended" ? 24 * 60 * 60_000
     : kind === "monthly_quota" ? (monthlyCooldownMs ?? ACCOUNT_QUOTA_TTL_MS)
+    : kind === "billing" ? BILLING_COOLDOWN_MS
     : providerName === "kiro" ? (parsed ?? 10_000)
     : (exhausted ?? parsed ?? DEFAULT_COOLDOWN_MS);
   const family = classifyModelFamilyForQuota(providerName, requestedModelId);
   // Suspension is recorded by the caller with the sent generation before the quorum check.
   // Rewriting it here would lose its login-identity fence.
-  if (kind !== "suspended") health.set(healthKey(providerName, failedAccountId, providerName === "kiro" ? undefined : family), {
+  if (kind !== "suspended") health.set(healthKey(providerName, failedAccountId, providerName === "kiro" || kind === "billing" ? undefined : family), {
     cooldownUntil: now + cooldownMs,
-    cooldownSource: parsed ? "retry-after" : "default",
+    cooldownSource: kind === "billing" ? "billing" : parsed ? "retry-after" : "default",
   });
   sweepExpiredOnWrite(now);
 

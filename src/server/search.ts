@@ -48,6 +48,7 @@ import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential } f
 import type { RequestLogContext } from "./request-log";
 import { codexLogAccountId, decodeRequestErrorResponse } from "./responses";
 import type { AdmissionLease } from "../lib/admission";
+import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "./outbound-payload-hygiene";
 import { codexAccountSelectionForTurn } from "./lifecycle";
 import { codexModelAvailabilityErrorResponse } from "./responses/codex-auth-error";
 
@@ -74,6 +75,11 @@ export async function handleSearch(
   } catch (err) {
     return decodeRequestErrorResponse(err, "search");
   }
+  const hygiene = applyOutboundPayloadHygiene(body, config, logCtx);
+  if (hygiene.blocked) {
+    return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+  }
+  body = hygiene.body;
   const model = (body as { model?: unknown } | null)?.model;
   if (typeof model === "string" && model) logCtx.model = model;
 

@@ -1037,6 +1037,33 @@ export function rotateProviderTransportOn401(
   return applyRotatedTransport(providerName, routedProvider, rotated, options.promptCacheKey);
 }
 
+function headerShape(provider: EpxProviderConfig): string {
+  return JSON.stringify(Object.entries(provider.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function rotateProviderTransportOnBillingOrCredit(
+  config: EpxConfig,
+  providerName: string,
+  routedProvider: EpxProviderTransport,
+  options: Omit<RotateProviderTransportOptions, "retryAfter">,
+  requireAnthropicAdapter: boolean,
+): EpxProviderTransport | null {
+  if ((requireAnthropicAdapter && routedProvider.adapter !== "anthropic")
+    || (routedProvider.authMode !== undefined && routedProvider.authMode !== "key")
+    || !hasKeyPoolFailover(routedProvider)) return null;
+  const sentHeaders = headerShape(routedProvider);
+  const sentTransport = routedProvider.apiKeyTransport ?? "x-api-key";
+  const acceptsFreshProvider = (fresh: EpxProviderConfig): boolean => fresh.adapter === routedProvider.adapter
+    && (fresh.authMode === undefined || fresh.authMode === "key") && hasKeyPoolFailover(fresh)
+    && (fresh.apiKeyTransport ?? "x-api-key") === sentTransport
+    && headerShape(fresh) === sentHeaders
+    && providerApiKeySelectionIsCurrent({ ...config, providers: { ...config.providers, [providerName]: fresh } },
+      providerName, routedProvider);
+  const rotated = rotateKeyAfterFailure(config, providerName, "billing", null, options.now,
+    options.attemptedKey, options.attemptedSelection ?? routedProvider._apiKeyAttempt, undefined, acceptsFreshProvider);
+  return rotated ? applyRotatedTransport(providerName, routedProvider, rotated, options.promptCacheKey) : null;
+}
+
 /** Exact Anthropic billing refusal: cool the key for ANTHROPIC_BILLING_COOLDOWN_MS. */
 export function rotateProviderTransportOnAnthropicBilling(
   config: EpxConfig,
@@ -1044,20 +1071,17 @@ export function rotateProviderTransportOnAnthropicBilling(
   routedProvider: EpxProviderTransport,
   options: Omit<RotateProviderTransportOptions, "retryAfter"> = {},
 ): EpxProviderTransport | null {
-  if (routedProvider.adapter !== "anthropic"
-    || (routedProvider.authMode !== undefined && routedProvider.authMode !== "key")
-    || !hasKeyPoolFailover(routedProvider)) return null;
-  const headerShape = (provider: EpxProviderConfig) => JSON.stringify(Object.entries(provider.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)));
-  const sentHeaders = headerShape(routedProvider);
-  const acceptsFreshProvider = (fresh: EpxProviderConfig): boolean => fresh.adapter === routedProvider.adapter
-    && (fresh.authMode === undefined || fresh.authMode === "key") && hasKeyPoolFailover(fresh)
-    && (fresh.apiKeyTransport ?? "x-api-key") === (routedProvider.apiKeyTransport ?? "x-api-key")
-    && headerShape(fresh) === sentHeaders
-    && providerApiKeySelectionIsCurrent({ ...config, providers: { ...config.providers, [providerName]: fresh } },
-      providerName, routedProvider);
-  const rotated = rotateKeyAfterFailure(config, providerName, "billing", null, options.now,
-    options.attemptedKey, options.attemptedSelection ?? routedProvider._apiKeyAttempt, undefined, acceptsFreshProvider);
-  return rotated ? applyRotatedTransport(providerName, routedProvider, rotated, options.promptCacheKey) : null;
+  return rotateProviderTransportOnBillingOrCredit(config, providerName, routedProvider, options, true);
+}
+
+/** Multi-provider credit/balance/budget exhaustion rotation for key pools across adapters. */
+export function rotateProviderTransportOnCreditOrBudget(
+  config: EpxConfig,
+  providerName: string,
+  routedProvider: EpxProviderTransport,
+  options: Omit<RotateProviderTransportOptions, "retryAfter"> = {},
+): EpxProviderTransport | null {
+  return rotateProviderTransportOnBillingOrCredit(config, providerName, routedProvider, options, false);
 }
 
 function applyRotatedTransport(

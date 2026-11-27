@@ -4,6 +4,11 @@ import { NativeSteeringChannel, NativeSteeringError } from "../responses/native-
 import { createNativeSteeringLogObserver } from "../responses/native-steering-log";
 import { reasoningArchiveErrorResponse } from "../responses/reasoning-archive-error";
 import { captureAdmissionPolicy } from "../capture-admission-policy";
+import {
+  commitOutboundPayloadHygiene,
+  evaluateOutboundPayloadHygiene,
+  OUTBOUND_SECRET_BLOCKED_MESSAGE,
+} from "../outbound-payload-hygiene";
 import type { Server, ServerWebSocket } from "bun";
 import {
   LIVE_SIDEBAND_UPSTREAM_OPEN_TIMEOUT_MS,
@@ -308,18 +313,71 @@ export function createWebsocketHandler(
             if (ws.data.nativeControlDisabled && frame.type !== "response.create") throw new NativeSteeringError("native_control_unavailable_on_link", "Native response control is unavailable on a Remote Link WebSocket.");
             if (frame.type === "response.inject") {
               if (!ws.data.nativeControl?.inject) throw new NativeSteeringError("injection_not_supported", "Native injection is disabled or unavailable on this route.");
-              ws.data.nativeControl.inject(frame);
-              ws.data.responsesActivity?.acceptResults(frame.input);
+              const cleanFrame = structuredClone(frame);
+              const hygiene = evaluateOutboundPayloadHygiene(cleanFrame, config);
+              if (hygiene.secretGuard.blocked) {
+                commitOutboundPayloadHygiene(hygiene, config);
+                throw new NativeSteeringError("outbound_secret_guard", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+              }
+              ws.data.nativeControl.inject(cleanFrame);
+              commitOutboundPayloadHygiene(hygiene, config);
+              ws.data.responsesActivity?.acceptResults(cleanFrame.input);
               return;
             }
             if (frame.type === "response.steer") {
               if (!ws.data.nativeControl) throw new NativeSteeringError("steering_not_supported", ws.data.nativeSteeringUnavailable ?? "Native steering transport is unavailable; the route may be unsupported or using HTTP fallback.");
-              ws.data.nativeControl.steer(frame);
+              const cleanFrame = structuredClone(frame);
+              const hygiene = evaluateOutboundPayloadHygiene(cleanFrame, config);
+              if (hygiene.secretGuard.blocked) {
+                commitOutboundPayloadHygiene(hygiene, config);
+                throw new NativeSteeringError("outbound_secret_guard", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+              }
+              ws.data.nativeControl.steer(cleanFrame);
+              commitOutboundPayloadHygiene(hygiene, config);
               return;
             }
-            if (ws.data.nativeControl?.continue(frame)) {
-              ws.data.responsesActivity?.acceptResults(frame.input);
-              return;
+            {
+              const cleanFrame = structuredClone(frame);
+              let activeHygiene = evaluateOutboundPayloadHygiene(cleanFrame, config);
+              if (activeHygiene.secretGuard.blocked) {
+                commitOutboundPayloadHygiene(activeHygiene, config);
+                throw new NativeSteeringError("outbound_secret_guard", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+              }
+              let activeFrame = cleanFrame;
+              let continued = false;
+              try {
+                continued = ws.data.nativeControl?.continue(activeFrame) === true;
+              } catch (error) {
+                // Separate failed response.inject frames have no cross-batch deduplication, whereas a
+                // combined continuation carries all items at once; retry without dedup if that triggered
+                // a fingerprint mismatch on recovered results.
+                if (
+                  error instanceof NativeSteeringError
+                  && error.code === "invalid_injection"
+                  && config.toolOutputCompression?.enabled === true
+                  && config.toolOutputCompression.deduplicateIdentical !== false
+                ) {
+                  const dedupFreeFrame = structuredClone(frame);
+                  const dedupFreeHygiene = evaluateOutboundPayloadHygiene(dedupFreeFrame, {
+                    ...config,
+                    toolOutputCompression: { ...config.toolOutputCompression, deduplicateIdentical: false },
+                  });
+                  if (!dedupFreeHygiene.secretGuard.blocked && ws.data.nativeControl?.continue(dedupFreeFrame) === true) {
+                    activeHygiene = dedupFreeHygiene;
+                    activeFrame = dedupFreeFrame;
+                    continued = true;
+                  } else {
+                    throw error;
+                  }
+                } else {
+                  throw error;
+                }
+              }
+              if (continued) {
+                commitOutboundPayloadHygiene(activeHygiene, config);
+                ws.data.responsesActivity?.acceptResults(activeFrame.input);
+                return;
+              }
             }
           } catch (error) {
             sendJsonFrame(ws, buildWsErrorFrame(400, {
@@ -338,8 +396,15 @@ export function createWebsocketHandler(
           const idleMs = typeof config.stallTimeoutSec === "number" && Number.isFinite(config.stallTimeoutSec)
             ? Math.max(1, config.stallTimeoutSec) * 1000 : 300_000;
           const mode = ws.data.nativeControlDisabled ? undefined : nativeResponseControlMode(frame, config);
-          nativeControl = mode === "injection" ? new NativeInjectionChannel(frame, idleMs, config.maxUpstreamBodyBytes)
-            : mode === "steering" ? new NativeSteeringChannel(frame, idleMs, config.maxUpstreamBodyBytes) : undefined;
+          let controlInitial = frame;
+          if (mode) {
+            const sanitizedInitial = structuredClone(frame);
+            if (!evaluateOutboundPayloadHygiene(sanitizedInitial, config).secretGuard.blocked) {
+              controlInitial = sanitizedInitial;
+            }
+          }
+          nativeControl = mode === "injection" ? new NativeInjectionChannel(controlInitial, idleMs, config.maxUpstreamBodyBytes)
+            : mode === "steering" ? new NativeSteeringChannel(controlInitial, idleMs, config.maxUpstreamBodyBytes) : undefined;
         } catch {
           sendJsonFrame(ws, buildWsErrorFrame(400, { type: "invalid_request_error", message: "Invalid native steering request settings" }));
           return;

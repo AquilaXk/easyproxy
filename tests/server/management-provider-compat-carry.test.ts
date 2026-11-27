@@ -17,7 +17,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildOpenAIChatPassthroughRequest, createOpenAIChatAdapter } from "../../src/adapters/openai-chat";
 import { createResponsesPassthroughAdapter } from "../../src/adapters/openai-responses";
+import { anthropicMessagesNativeWireBody } from "../../src/adapters/anthropic/passthrough";
 import { planAnthropicServerTools } from "../../src/adapters/anthropic/advisor-tool";
+import { installGatewayToolSearchEmulation } from "../../src/responses/gateway-tool-search";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
 import { loadConfig, saveConfig } from "../../src/config";
 import * as destinationPolicy from "../../src/lib/destination-policy";
@@ -215,6 +217,32 @@ const CASES: Record<ProviderCompatCarryField, CarryCase> = {
     // The Anthropic adapter's server-tool plan for this (non-first-party) gateway.
     probe: provider => planAnthropicServerTools({ ...provider, adapter: "anthropic" },
       [{ type: "advisor_20260301", name: "advisor", model: "claude-opus-4-8" }], undefined, new Set(), false).declared,
+  },
+  gatewayToolSearch: {
+    seed: { gatewayToolSearch: true },
+    probe: provider => {
+      const parsed = parseRequest({
+        model: MODEL,
+        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "search docs" }] }],
+        tools: [{ type: "function", name: "search_docs", parameters: { type: "object", properties: {} }, defer_loading: true }],
+      });
+      parsed.modelId = MODEL;
+      const installed = installGatewayToolSearchEmulation(parsed, provider);
+      return { installed, tools: parsed.context.tools?.map(t => t.name) };
+    },
+  },
+  thinkingBudgetRectifier: {
+    seed: { thinkingBudgetRectifier: true },
+    probe: provider => anthropicMessagesNativeWireBody(
+      { ...provider, adapter: "anthropic" },
+      "claude-opus-4-6",
+      {
+        model: "claude-opus-4-6",
+        max_tokens: 4096,
+        thinking: { type: "enabled", budget_tokens: 512 },
+        messages: [{ role: "user", content: "hi" }],
+      },
+    ).wireBody.thinking,
   },
 };
 

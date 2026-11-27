@@ -30,4 +30,9 @@ export interface AnthropicAccountPoolConfig {
   quotaWindow?: EpxAccountPoolQuotaWindow;
   /** Ordered model allowlists; inactive while the pool is disabled. Stored account IDs only. */
   routes?: AnthropicModelRoute[];
+  /**
+   * Opt-in fallback to Anthropic slow lane (`anthropic-usage-limit: slow`) when every eligible
+   * OAuth account in the pool has exhausted its 5-hour quota while weekly capacity remains.
+   */
+  slowFallback?: boolean;
 }

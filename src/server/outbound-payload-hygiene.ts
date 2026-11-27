@@ -12,6 +12,7 @@ export interface OutboundPayloadHygieneOutcome {
   redactions: number;
   compressedItems: number;
   injectedCacheBreakpoints?: number;
+  body: unknown;
 }
 
 export interface OutboundPayloadHygieneStats {
@@ -66,6 +67,77 @@ export function recordOutboundSecretOutcome(matches: number, blocked: boolean): 
   if (blocked) hygieneStats.secretBlocks += 1;
 }
 
+export interface OutboundPayloadHygieneEvaluation {
+  secretGuard: ReturnType<typeof inspectAndApplyOutboundSecretGuard>;
+  compression: ReturnType<typeof compressResponsesToolOutputsInPlace>;
+  cachePass: ReturnType<typeof injectPromptCacheBreakpointsInPlace>;
+  body: unknown;
+}
+
+/**
+ * Evaluates and applies configured outbound secret guarding, tool-output compression,
+ * and prompt-cache injection to `body` without mutating process hygiene counters.
+ */
+export function evaluateOutboundPayloadHygiene(
+  body: unknown,
+  config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
+): OutboundPayloadHygieneEvaluation {
+  const secretGuard = inspectAndApplyOutboundSecretGuard(body, config.outboundSecretGuard);
+  const afterSecretBody = secretGuard.body !== undefined ? secretGuard.body : body;
+  if (secretGuard.blocked) {
+    return {
+      secretGuard,
+      compression: { compressedItems: 0, savedChars: 0, body: afterSecretBody },
+      cachePass: { existingBreakpoints: 0, injectedBreakpoints: 0, normalizedTimestamps: 0, body: afterSecretBody },
+      body: afterSecretBody,
+    };
+  }
+  const compression = compressResponsesToolOutputsInPlace(afterSecretBody, config.toolOutputCompression);
+  const afterCompressionBody = compression.body !== undefined ? compression.body : afterSecretBody;
+  const cachePass = injectPromptCacheBreakpointsInPlace(afterCompressionBody, config.promptCacheInjection);
+  const finalBody = cachePass.body !== undefined ? cachePass.body : afterCompressionBody;
+  return { secretGuard, compression, cachePass, body: finalBody };
+}
+
+/**
+ * Commits process-wide hygiene telemetry counters and request log refusal markers
+ * for an evaluated outbound payload hygiene pass.
+ */
+export function commitOutboundPayloadHygiene(
+  evaluation: OutboundPayloadHygieneEvaluation,
+  config: Pick<EpxConfig, "outboundSecretGuard">,
+  logCtx?: RequestLogContext,
+): OutboundPayloadHygieneOutcome {
+  if ((config.outboundSecretGuard?.mode ?? "off") !== "off") hygieneStats.scannedRequests += 1;
+  const { secretGuard, compression, cachePass } = evaluation;
+  if (secretGuard.matches > 0) hygieneStats.secretDetections += secretGuard.matches;
+  if (secretGuard.blocked) {
+    hygieneStats.secretBlocks += 1;
+    if (logCtx) {
+      markLocalRequestLogRefusal(logCtx, "outbound_secret_guard");
+      logCtx.errorCode = "outbound_secret_guard";
+    }
+    return { blocked: true, redactions: 0, compressedItems: 0, injectedCacheBreakpoints: 0, body: evaluation.body };
+  }
+  if (compression.compressedItems > 0) hygieneStats.compressedToolOutputs += compression.compressedItems;
+  if ((compression.compactedJsonItems ?? 0) > 0) hygieneStats.compactedJsonOutputs += compression.compactedJsonItems!;
+  if ((compression.foldedLogItems ?? 0) > 0) hygieneStats.foldedLogOutputs += compression.foldedLogItems!;
+  if ((compression.deduplicatedItems ?? 0) > 0) hygieneStats.deduplicatedToolOutputs += compression.deduplicatedItems!;
+  if (compression.savedChars > 0) {
+    hygieneStats.savedChars += compression.savedChars;
+    hygieneStats.estimatedSavedTokens = Math.floor(hygieneStats.savedChars / 4);
+  }
+  if (cachePass.injectedBreakpoints > 0) hygieneStats.injectedCacheBreakpoints += cachePass.injectedBreakpoints;
+  if (cachePass.normalizedTimestamps > 0) hygieneStats.normalizedSystemTimestamps += cachePass.normalizedTimestamps;
+  return {
+    blocked: false,
+    redactions: secretGuard.redactions,
+    compressedItems: compression.compressedItems,
+    injectedCacheBreakpoints: cachePass.injectedBreakpoints,
+    body: evaluation.body,
+  };
+}
+
 /**
  * Applies configured outbound secret guarding, tool-output compression, and opt-in
  * prompt-cache breakpoint / prefix hygiene across translated and native passthrough
@@ -76,35 +148,11 @@ export function applyOutboundPayloadHygiene(
   config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
   logCtx?: RequestLogContext,
 ): OutboundPayloadHygieneOutcome {
-  if ((config.outboundSecretGuard?.mode ?? "off") !== "off") hygieneStats.scannedRequests += 1;
-  const secretGuard = inspectAndApplyOutboundSecretGuard(body, config.outboundSecretGuard);
-  if (secretGuard.matches > 0) hygieneStats.secretDetections += secretGuard.matches;
-  if (secretGuard.blocked) {
-    hygieneStats.secretBlocks += 1;
-    if (logCtx) {
-      markLocalRequestLogRefusal(logCtx, "outbound_secret_guard");
-      logCtx.errorCode = "outbound_secret_guard";
-    }
-    return { blocked: true, redactions: 0, compressedItems: 0, injectedCacheBreakpoints: 0 };
-  }
-  const compression = compressResponsesToolOutputsInPlace(body, config.toolOutputCompression);
-  if (compression.compressedItems > 0) hygieneStats.compressedToolOutputs += compression.compressedItems;
-  if ((compression.compactedJsonItems ?? 0) > 0) hygieneStats.compactedJsonOutputs += compression.compactedJsonItems!;
-  if ((compression.foldedLogItems ?? 0) > 0) hygieneStats.foldedLogOutputs += compression.foldedLogItems!;
-  if ((compression.deduplicatedItems ?? 0) > 0) hygieneStats.deduplicatedToolOutputs += compression.deduplicatedItems!;
-  if (compression.savedChars > 0) {
-    hygieneStats.savedChars += compression.savedChars;
-    hygieneStats.estimatedSavedTokens = Math.floor(hygieneStats.savedChars / 4);
-  }
-  const cachePass = injectPromptCacheBreakpointsInPlace(body, config.promptCacheInjection);
-  if (cachePass.injectedBreakpoints > 0) hygieneStats.injectedCacheBreakpoints += cachePass.injectedBreakpoints;
-  if (cachePass.normalizedTimestamps > 0) hygieneStats.normalizedSystemTimestamps += cachePass.normalizedTimestamps;
-  return {
-    blocked: false,
-    redactions: secretGuard.redactions,
-    compressedItems: compression.compressedItems,
-    injectedCacheBreakpoints: cachePass.injectedBreakpoints,
-  };
+  return commitOutboundPayloadHygiene(
+    evaluateOutboundPayloadHygiene(body, config),
+    config,
+    logCtx,
+  );
 }
 
 /**
@@ -117,6 +165,6 @@ export function prepareCompactionBodyHygiene(
   config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
   logCtx?: RequestLogContext,
 ): boolean {
-  redactHostedImageDisplayPaths(body);
-  return applyOutboundPayloadHygiene(body, config, logCtx).blocked;
+  const redacted = redactHostedImageDisplayPaths(body);
+  return applyOutboundPayloadHygiene(redacted, config, logCtx).blocked;
 }
