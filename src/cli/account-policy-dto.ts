@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidCodexAccountId, MAIN_CODEX_ACCOUNT_ID } from "../codex/account-id";
+import { isValidStrictTimestamp } from "../lib/strict-timestamp";
 import { parseAnthropicModelRoutes } from "../oauth/anthropic-model-routes";
 
 const text = z.string().max(4096);
@@ -48,8 +49,8 @@ export const remainingQuotaReceipt = z.object({ ok: z.literal(true), id: account
 export const creditAllReceipt = z.object({ ok: z.literal(true), all: z.boolean(),
   ids: z.array(accountId).refine(ids => new Set(ids).size === ids.length) });
 const window = z.enum(["five_hour", "seven_day", "seven_day_overage_included"]);
-// The server preserves any Date.parse-compatible timestamp; do not narrow it to Z-only ISO.
-const date = text.refine(value => !Number.isNaN(Date.parse(value))).nullable();
+// The server preserves any strict ISO-8601 or RFC 9110 HTTP-date timestamp; do not narrow it to Z-only ISO.
+const date = text.refine(value => isValidStrictTimestamp(value)).nullable();
 const grantId = z.string().regex(/^[a-z0-9_-]{1,40}$/);
 const grant = z.object({ id: grantId, label: text, resetsTotal: z.number().int().nonnegative(),
   resetsLeft: z.number().int().nonnegative(), startsAt: date, endsAt: date, clears: z.array(window),

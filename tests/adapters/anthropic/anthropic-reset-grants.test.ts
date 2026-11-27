@@ -105,7 +105,18 @@ describe("reset-grant status parsing", () => {
   });
 
   test("rejects JSC Date.parse heuristics and calendar overflows fail-closed while preserving ISO offset/fractional and HTTP-date compatibility", () => {
-    for (const bad of ["bad-1", "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z", "", "   ", "2026-09-22T25:00:00Z"]) {
+    for (const bad of [
+      "bad-1",
+      "2026-02-30T00:00:00Z",
+      "2026-02-29T00:00:00Z",
+      "2026-04-31T00:00:00Z",
+      "2026-09-22T24:00:00Z",
+      "2026-09-22T25:00:00Z",
+      "Mon, 21 Oct 2026 07:28:00 GMT",
+      "Tue, 31 Feb 2026 00:00:00 GMT",
+      "",
+      "   ",
+    ]) {
       expect(parseAnthropicResetGrantStatus(block({ grants: [grant({ starts_at: bad })] }))).toBeNull();
       expect(parseAnthropicResetGrantStatus(block({ grants: [grant({ ends_at: bad })] }))).toBeNull();
       expect(parseAnthropicResetGrantStatus(block({ weekly_resets_at: bad }))).toBeNull();
@@ -127,6 +138,13 @@ describe("reset-grant status parsing", () => {
       startsAt: "2026-09-22T16:00:00.123456+09:00",
       endsAt: "Thu, 22 Oct 2026 16:00:00 GMT",
     });
+
+    const dateOnlyAndCompactOffset = parseAnthropicResetGrantStatus(block({
+      weekly_resets_at: "2026-09-25",
+      cooldown_until: "2026-09-25T15:00:00+0900",
+      grants: [grant({ starts_at: "2026-09-22", ends_at: "2026-10-22T16:00:00-05:30" })],
+    }));
+    expect(dateOnlyAndCompactOffset).not.toBeNull();
   });
 
   test("labels lose control characters and unknown reasons collapse to unknown", () => {

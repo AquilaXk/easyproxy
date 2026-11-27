@@ -369,6 +369,36 @@ describe("unverified outcomes refuse success", () => {
     const f = fixture(() => ({ accountId: "anthropic-one", eligible: false, grants: [], error: PRIVATE }));
     expect(await policy("anthropic-reset-grants", ["--json"], f.deps)).toBe(1); expect(stdout.mock.calls).toHaveLength(0); privateOutput();
   });
+  test("reset CLI DTO rejects JSC Date.parse heuristics and calendar overflows while keeping ISO/HTTP-date compatibility", async () => {
+    const validGrant = {
+      id: "g1", label: "Reset", resetsTotal: 2, resetsLeft: 1,
+      startsAt: "2026-10-04", endsAt: "Thu, 22 Oct 2026 16:00:00 GMT", clears: ["five_hour"],
+      paused: false, usableNow: true, useRequiresLimit: true, percentUsed: { five_hour: 100 },
+    };
+    for (const bad of ["bad-1", "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z", "2026-09-22T24:00:00Z", "Mon, 21 Oct 2026 07:28:00 GMT"]) {
+      for (const payload of [
+        { ...grants, weeklyResetsAt: bad },
+        { ...grants, cooldownUntil: bad },
+        { ...grants, eligible: true, grants: [{ ...validGrant, startsAt: bad }] },
+        { ...grants, eligible: true, grants: [{ ...validGrant, endsAt: bad }] },
+      ]) {
+        const f = fixture(() => payload);
+        expect(await policy("anthropic-reset-grants", ["--json"], f.deps)).toBe(1);
+        expect(stdout.mock.calls).toHaveLength(0);
+      }
+    }
+    const ok = {
+      ...grants,
+      eligible: true,
+      weeklyResetsAt: "Wed, 21 Oct 2026 07:28:00 GMT",
+      cooldownUntil: "2024-02-29T12:00:00.250+09:00",
+      grants: [validGrant],
+    };
+    const f = fixture(() => ok);
+    expect(await policy("anthropic-reset-grants", ["--json"], f.deps)).toBe(0);
+    expect(result()).toEqual(ok);
+    privateOutput();
+  });
   test("human terminal output escapes grant labels", async () => {
     const f = fixture(() => ({ ...grants, accountId: "fixture\u001b[2J" }));
     expect(await policy("anthropic-reset-grants", [], f.deps)).toBe(0);

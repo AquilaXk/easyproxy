@@ -122,7 +122,7 @@ let harnessController: ReturnType<typeof useAnthropicResetGrants> | undefined;
 function Harness() {
   const t = useT();
   const controller = useAnthropicResetGrants({ apiBase: "", accountIds: ["acct-1"], enabled: true });
-  harnessController = controller;
+  useLayoutEffect(() => { harnessController = controller; }, [controller]);
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -334,8 +334,11 @@ test("the default grant is the usable one that expires first, not upstream order
       grant("jsc-bad-1", { endsAt: "bad-1" }),
       grant("feb-30", { endsAt: "2026-02-30T00:00:00Z" }),
       grant("feb-29", { endsAt: "2026-02-29T00:00:00Z" }),
+      grant("apr-31", { endsAt: "2026-04-31T00:00:00Z" }),
+      grant("hour-24", { endsAt: "2026-09-22T24:00:00Z" }),
+      grant("bad-weekday", { endsAt: "Mon, 21 Oct 2026 07:28:00 GMT" }),
       grant("none", { endsAt: null }),
-      grant("real"),
+      grant("real", { endsAt: "2026-03-05T00:00:00Z" }),
     ],
   } as unknown as AnthropicResetGrantSnapshot;
   expect(spendableGrant(odd)?.id).toBe("real");
@@ -554,6 +557,7 @@ test("rejects bad-1 and calendar overflow timestamps in modal display and FEFO d
       grants: [
         grant("quirk-bad-1", { startsAt: "bad-1", endsAt: "2026-02-30T00:00:00Z", clears: [] }),
         grant("quirk-feb-30", { startsAt: "2026-02-30T00:00:00Z", endsAt: "bad-1", clears: [] }),
+        grant("quirk-hour-24", { startsAt: "Mon, 21 Oct 2026 07:28:00 GMT", endsAt: "2026-09-22T24:00:00Z", clears: [] }),
         grant("valid-later", { startsAt: "2026-09-22T16:00:00.250+00:00", endsAt: "Sun, 01 Nov 2099 00:00:00 GMT", clears: ["five_hour"] }),
       ],
     }),
@@ -561,17 +565,23 @@ test("rejects bad-1 and calendar overflow timestamps in modal display and FEFO d
   const { container, root } = await mount();
   await click(container, "[data-anthropic-grant-badge]");
 
-  // valid-later must be chosen over bad-1 / 2026-02-30T00:00:00Z.
+  // valid-later must be chosen over bad-1 / 2026-02-30T00:00:00Z / hour-24 / bad-weekday.
   expect(checkedId(container)).toBe("valid-later");
-  const listText = container.textContent ?? "";
-  expect(listText).not.toContain("2001");
-  expect(listText).not.toContain("Mar 2, 2026");
-  expect(listText).not.toContain("Invalid Date");
-  expect(listText).not.toContain("NaN");
-  // valid-later's offset ISO startsAt and HTTP-date endsAt both render cleanly.
-  expect(listText).toContain("Valid from");
-  expect(listText).toContain("Expires");
-  expect(listText).toContain("2099");
+  for (const badId of ["quirk-bad-1", "quirk-feb-30", "quirk-hour-24"]) {
+    const optionText = radio(container, badId).textContent ?? "";
+    expect(optionText).not.toContain("Valid from");
+    expect(optionText).not.toContain("Expires");
+    expect(optionText).not.toContain("—");
+    expect(optionText).not.toContain("0d left");
+    expect(optionText).not.toContain("2001");
+    expect(optionText).not.toContain("Mar 2, 2026");
+    expect(optionText).not.toContain("Invalid Date");
+    expect(optionText).not.toContain("NaN");
+  }
+  const validOptionText = radio(container, "valid-later").textContent ?? "";
+  expect(validOptionText).toContain("Valid from");
+  expect(validOptionText).toContain("Expires");
+  expect(validOptionText).toContain("2099");
 
   // Even when a user manually picks a grant with quirk dates, confirm view must omit unparseable expiry rather than showing 2001/Mar 2, 2026.
   await act(async () => { radio(container, "quirk-bad-1").click(); });

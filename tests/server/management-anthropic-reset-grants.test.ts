@@ -152,7 +152,12 @@ describe("GET /api/anthropic/reset-grants", () => {
 
   test("rejects JSC Date.parse heuristics and calendar overflows fail-closed on read and preserves compatible formats", async () => {
     const up = upstream();
-    for (const bad of ["bad-1", "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z", ""]) {
+    for (const bad of ["bad-1", "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z", "2026-09-22T24:00:00Z", "Mon, 21 Oct 2026 07:28:00 GMT", ""]) {
+      up.status = () => Response.json({ cedar_ember: grantBlock({ grants: [{ ...grantBlock().grants[0], starts_at: bad }] }) });
+      expect(await call("GET", "/api/anthropic/reset-grants", deps(up))).toMatchObject({
+        status: 502,
+        json: { error: { code: "upstream_unavailable" } },
+      });
       up.status = () => Response.json({ cedar_ember: grantBlock({ grants: [{ ...grantBlock().grants[0], ends_at: bad }] }) });
       expect(await call("GET", "/api/anthropic/reset-grants", deps(up))).toMatchObject({
         status: 502,
@@ -221,7 +226,7 @@ describe("POST /api/anthropic/reset-grants/consume", () => {
 
   test("consume fails closed without claiming when the pre-claim status read returns bad-1 or calendar overflow timestamps", async () => {
     const up = upstream();
-    for (const bad of ["bad-1", "2026-02-30T00:00:00Z"]) {
+    for (const bad of ["bad-1", "2026-02-30T00:00:00Z", "2026-09-22T24:00:00Z", "Mon, 21 Oct 2026 07:28:00 GMT"]) {
       up.status = () => Response.json({
         cedar_ember: grantBlock({ grants: [{ ...grantBlock().grants[0], ends_at: bad }] }),
       });
