@@ -1544,6 +1544,64 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
     } finally {
       singleBudgetSpy.mockRestore();
     }
+
+    // 4. Unmocked default createInferenceSendBudget (maxTotalModelSends = 4): 3x 401 key rotations + 4th key 400 budget_tokens stops at 4 sends without a 5th over-send.
+    clearKeyCooldowns();
+    let pool4Calls = 0;
+    const pool4Cfg: EpxConfig = {
+      port: 0,
+      defaultProvider: "anth4",
+      protocols: { rollout: { managedMessagesNative: true } },
+      providers: {
+        anth4: {
+          adapter: "anthropic",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "key",
+          apiKey: "sk-ant-p1",
+          apiKeyPool: [
+            { id: "p1", key: "sk-ant-p1" },
+            { id: "p2", key: "sk-ant-p2" },
+            { id: "p3", key: "sk-ant-p3" },
+            { id: "p4", key: "sk-ant-p4" },
+          ],
+          models: ["claude-sonnet-4-5"],
+          fetch: (async (_input, init) => {
+            pool4Calls += 1;
+            const key = new Headers(init?.headers).get("x-api-key");
+            if (key !== "sk-ant-p4") {
+              return Response.json(
+                { type: "error", error: { type: "authentication_error", message: "bad key" } },
+                { status: 401 },
+              );
+            }
+            return Response.json(
+              { type: "error", error: { type: "invalid_request_error", message: "max_tokens must be greater than thinking.budget_tokens" } },
+              { status: 400 },
+            );
+          }) as typeof fetch,
+        } as EpxProviderConfig & { fetch: typeof fetch },
+      },
+    };
+    saveConfig(pool4Cfg);
+    const pool4Res = await handleClaudeMessages(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: "anth4/claude-sonnet-4-5",
+          max_tokens: 2048,
+          thinking: { type: "enabled", budget_tokens: 4096 },
+          messages: [{ role: "user", content: "solve" }],
+        }),
+      }),
+      pool4Cfg,
+      {},
+    );
+    expect(pool4Res.status).toBe(400);
+    expect(pool4Calls).toBe(4);
+    const pool4Text = await pool4Res.text();
+    expect(pool4Text).toContain("invalid_request_error");
+    expect(pool4Text).not.toContain("send_budget_exhausted");
   });
 
   test("passthrough credit/budget 400/402/403/422 key rotation records key-401 rather than key-429", async () => {
@@ -1562,6 +1620,7 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
           apiKeyPool: [
             { id: "p1", key: "sk-pt-1" },
             { id: "p2", key: "sk-pt-2" },
+            { id: "p3", key: "sk-pt-3" },
           ],
           models: ["gpt-5"],
           fetch: (async (_input, init) => {
@@ -1571,6 +1630,12 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
               return Response.json(
                 { error: { code: "credits_required", message: "Usage credits are required" } },
                 { status: 402 },
+              );
+            }
+            if (auth === "Bearer sk-pt-2") {
+              return Response.json(
+                { error: { code: "budget_exceeded", message: "Budget has been exceeded!" } },
+                { status: 422 },
               );
             }
             return Response.json({
@@ -1584,6 +1649,47 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
                 role: "assistant",
                 status: "completed",
                 content: [{ type: "output_text", text: "pt-ok", annotations: [] }],
+              }],
+            });
+          }) as typeof fetch,
+        } as EpxProviderConfig & { fetch: typeof fetch },
+        ptmixed: {
+          adapter: "openai-responses",
+          baseUrl: "https://api.example.test/v1",
+          authMode: "key",
+          apiKey: "sk-pm-1",
+          apiKeyPool: [
+            { id: "m1", key: "sk-pm-1" },
+            { id: "m2", key: "sk-pm-2" },
+            { id: "m3", key: "sk-pm-3" },
+          ],
+          models: ["gpt-5"],
+          fetch: (async (_input, init) => {
+            const auth = new Headers(init?.headers).get("authorization") ?? "";
+            seenKeys.push(auth);
+            if (auth === "Bearer sk-pm-1") {
+              return Response.json(
+                { error: { code: "spend_limit_reached", message: "Monthly spend limit reached" } },
+                { status: 403 },
+              );
+            }
+            if (auth === "Bearer sk-pm-2") {
+              return Response.json(
+                { error: { message: "rate limited" } },
+                { status: 429 },
+              );
+            }
+            return Response.json({
+              id: "resp_pm_ok",
+              object: "response",
+              status: "completed",
+              model: "gpt-5",
+              output: [{
+                id: "msg_pm",
+                type: "message",
+                role: "assistant",
+                status: "completed",
+                content: [{ type: "output_text", text: "pm-ok", annotations: [] }],
               }],
             });
           }) as typeof fetch,
@@ -1605,9 +1711,28 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
       { requestId, start: Date.now() },
     );
     expect(ptRes.status).toBe(200);
-    expect(seenKeys).toEqual(["Bearer sk-pt-1", "Bearer sk-pt-2"]);
-    expect(logCtx.attempts).toHaveLength(2);
+    expect(logCtx.attempts).toHaveLength(3);
     expect(logCtx.attempts?.[1]?.recoveryKinds).toEqual(["key-401"]);
-    expect(logCtx.attempts?.[1]?.recoveryKinds).not.toContain("key-429");
+    expect(logCtx.attempts?.[2]?.recoveryKinds).toEqual(["key-401"]);
+
+    const mixedLogCtx: RequestLogContext = { model: "", provider: "" };
+    const mixedRes = await handleResponses(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ptmixed/gpt-5", input: "hello" }),
+      }),
+      ptCfg,
+      mixedLogCtx,
+      { requestId: `pt-mixed-${crypto.randomUUID()}`, start: Date.now() },
+    );
+    expect(mixedRes.status).toBe(200);
+    expect(seenKeys).toEqual([
+      "Bearer sk-pt-1", "Bearer sk-pt-2", "Bearer sk-pt-3",
+      "Bearer sk-pm-1", "Bearer sk-pm-2", "Bearer sk-pm-3",
+    ]);
+    expect(mixedLogCtx.attempts).toHaveLength(3);
+    expect(mixedLogCtx.attempts?.[1]?.recoveryKinds).toEqual(["key-401"]);
+    expect(mixedLogCtx.attempts?.[2]?.recoveryKinds).toEqual(["key-429"]);
   });
 });

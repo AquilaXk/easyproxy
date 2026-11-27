@@ -602,5 +602,42 @@ describe("outbound-secret-guard", () => {
     expect(reverseOut.first).toBe("[REDACTED:github_token]");
     expect(reverseOut.second).toBe("[REDACTED:openai_key]");
     expect(reverseObj.second).toBe(k1);
+
+    // Root-level extensible object & array with non-writable first secret + writable second secret + self cycle.
+    const rootObj: Record<string, unknown> = {};
+    Object.defineProperty(rootObj, "secret1", {
+      get: () => k1,
+      enumerable: true,
+      configurable: true,
+    });
+    rootObj.secret2 = k2;
+    rootObj.self = rootObj;
+    const rootObjResult = inspectAndApplyOutboundSecretGuard(rootObj, { mode: "redact" });
+    expect(rootObjResult.redactions).toBe(2);
+    const clonedRootObj = rootObjResult.body as { secret1: string; secret2: string; self: unknown };
+    expect(clonedRootObj).not.toBe(rootObj);
+    expect(clonedRootObj.secret1).toBe("[REDACTED:openai_key]");
+    expect(clonedRootObj.secret2).toBe("[REDACTED:github_token]");
+    expect(clonedRootObj.self).toBe(clonedRootObj);
+    expect(rootObj.secret1).toBe(k1);
+    expect(rootObj.secret2).toBe(k2);
+    expect(rootObj.self).toBe(rootObj);
+
+    const rootArr: unknown[] = [];
+    Object.defineProperty(rootArr, 0, {
+      value: k1,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    rootArr[1] = k2;
+    const rootArrResult = inspectAndApplyOutboundSecretGuard(rootArr, { mode: "redact" });
+    expect(rootArrResult.redactions).toBe(2);
+    const clonedRootArr = rootArrResult.body as string[];
+    expect(clonedRootArr).not.toBe(rootArr);
+    expect(clonedRootArr[0]).toBe("[REDACTED:openai_key]");
+    expect(clonedRootArr[1]).toBe("[REDACTED:github_token]");
+    expect(rootArr[0]).toBe(k1);
+    expect(rootArr[1]).toBe(k2);
   });
 });

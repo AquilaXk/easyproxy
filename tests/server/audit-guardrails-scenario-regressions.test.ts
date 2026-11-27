@@ -554,11 +554,13 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
     spendLeases.push(acquireOwnedSpendHome());
 
     let upstreamHits = 0;
+    let lastImgBody: Record<string, unknown> | undefined;
     const imgServer = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      fetch() {
+      async fetch(req) {
         upstreamHits += 1;
+        lastImgBody = await req.json() as Record<string, unknown>;
         return Response.json({ created: 1, data: [{ b64_json: "iVBORw0KGgo=" }] });
       },
     });
@@ -682,6 +684,7 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
       // ...while /v1/images/edits skips large inline data:image base64 blobs cleanly (including mixed/uppercase DATA:) and succeeds!
       const largeDataUrl = `data:image/png;base64,${"A".repeat(120_000)}`;
       const upperDataUrl = `  DATA:image/png;base64,${"A".repeat(120_000)}_${SYNTHETIC_SECRET}`;
+      const upperArrayDataUrl = `  DATA:image/png;base64,${"B".repeat(16)}_${SYNTHETIC_SECRET}`;
       const imgSafe = await handleImages(
         new Request("http://127.0.0.1/v1/images/edits", {
           method: "POST",
@@ -692,6 +695,7 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
             image_url: upperDataUrl,
             images: [
               largeDataUrl,
+              upperArrayDataUrl,
               { url: `Data:image/png;base64,${SYNTHETIC_SECRET}` },
               { image_url: `dAtA:image/png;base64,${SYNTHETIC_SECRET}` },
               { image_url: { url: `DATA:image/jpeg;base64,${SYNTHETIC_SECRET}` } },
@@ -706,6 +710,36 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
       );
       expect(imgSafe.status).toBe(200);
       expect(upstreamHits).toBe(1);
+
+      // In redact mode, mixed/uppercase DATA: strings in `images` stay intact (not overwritten with "") while text/https fields redact.
+      const redactCfg: EpxConfig = { ...cfg, outboundSecretGuard: { mode: "redact" } };
+      saveConfig(redactCfg);
+      const imgRedact = await handleImages(
+        new Request("http://127.0.0.1/v1/images/edits", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "imgOk/gpt-image-1",
+            prompt: `edit with ${SYNTHETIC_SECRET}`,
+            images: [
+              upperArrayDataUrl,
+              `https://example.invalid/ref.png?token=${SYNTHETIC_SECRET}`,
+            ],
+          }),
+        }),
+        redactCfg,
+        "edits",
+        {},
+        undefined,
+        loopbackAdmission,
+      );
+      expect(imgRedact.status).toBe(200);
+      expect(upstreamHits).toBe(2);
+      expect(lastImgBody?.prompt).toBe("edit with [REDACTED:openai_key]");
+      expect(lastImgBody?.images).toEqual([
+        upperArrayDataUrl,
+        "https://example.invalid/ref.png?token=[REDACTED:openai_key]",
+      ]);
     } finally {
       await imgServer.stop(true);
     }

@@ -790,4 +790,231 @@ describe("native Messages candidates in a combo", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]!.body).not.toHaveProperty("top_k");
   });
+
+  test("combo child preserves upstream 400 budget_tokens without retry or 429 conversion when parent sendBudget is exhausted", async () => {
+    const { saveConfig } = await import("../../src/config");
+    const budgetError = {
+      type: "error",
+      error: { type: "invalid_request_error", message: "max_tokens must be greater than thinking.budget_tokens" },
+    };
+
+    // 1. 2-target combo: target 1 consumes 4 sends (baseSendAllowance = 4), target 2 (native API-key) spends the 5th reserve send and gets 400 budget_tokens.
+    let t1Calls = 0;
+    let t2Calls = 0;
+    const keyComboCfg: EpxConfig = {
+      port: 0,
+      defaultProvider: "anth",
+      protocols: { rollout: { managedMessagesNative: true } },
+      combos: {
+        waterfall: {
+          strategy: "failover",
+          targets: [
+            { provider: "lead", model: "lead-model" },
+            { provider: "anth", model: "claude-sonnet-4-6" },
+          ],
+        },
+      },
+      providers: {
+        lead: {
+          adapter: "openai-chat",
+          baseUrl: "https://lead.fixture.invalid/v1",
+          authMode: "key",
+          apiKey: "sk-lead-1",
+          apiKeyPool: [
+            { id: "l1", key: "sk-lead-1", addedAt: 1 },
+            { id: "l2", key: "sk-lead-2", addedAt: 2 },
+            { id: "l3", key: "sk-lead-3", addedAt: 3 },
+            { id: "l4", key: "sk-lead-4", addedAt: 4 },
+          ],
+          models: ["lead-model"],
+          fetch: (async (_input, init) => {
+            t1Calls += 1;
+            const auth = new Headers(init?.headers).get("authorization") ?? "";
+            if (auth !== "Bearer sk-lead-4") {
+              return Response.json({ error: { message: "bad key" } }, { status: 401 });
+            }
+            return Response.json({ error: { message: "lead down" } }, { status: 503 });
+          }) as typeof fetch,
+        } as EpxConfig["providers"][string],
+        anth: {
+          adapter: "anthropic",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "key",
+          apiKey: "fixture-managed-key",
+          models: ["claude-sonnet-4-6"],
+          fetch: (async () => {
+            t2Calls += 1;
+            return Response.json(budgetError, { status: 400 });
+          }) as typeof fetch,
+        } as EpxConfig["providers"][string],
+      },
+    };
+    saveConfig(keyComboCfg);
+    const keyRes = await send({
+      config: keyComboCfg,
+      stream: false,
+      extra: { max_tokens: 2048, thinking: { type: "enabled", budget_tokens: 4096 } },
+    });
+    expect(keyRes.response.status).toBe(400);
+    expect(t1Calls).toBe(4);
+    expect(t2Calls).toBe(1);
+    expect(keyRes.text).toContain("invalid_request_error");
+    expect(keyRes.text).not.toContain("send_budget_exhausted");
+
+    // 2. 2-target combo with OAuth native child at the 5th reserve send.
+    clearComboSelectionState(); clearComboTargetCooldowns(); clearKeyCooldowns();
+    await saveCredential("anthropic", {
+      access: "synthetic-combo-oauth-access",
+      refresh: "synthetic-combo-oauth-refresh",
+      expires: Date.now() + 3_600_000,
+      accountId: "synthetic-combo-oauth-uuid",
+      source: "oauth",
+    });
+    let oauthT1Calls = 0;
+    let oauthT2Calls = 0;
+    const oauthComboCfg: EpxConfig = {
+      port: 0,
+      defaultProvider: "anthropic",
+      anthropicAccountPool: { enabled: true },
+      protocols: { rollout: { managedMessagesNative: true, managedMessagesNativeOAuth: true } },
+      combos: {
+        waterfall: {
+          strategy: "failover",
+          targets: [
+            { provider: "lead2", model: "lead-model" },
+            { provider: "anthropic", model: "claude-sonnet-4-6" },
+          ],
+        },
+      },
+      providers: {
+        lead2: {
+          adapter: "openai-chat",
+          baseUrl: "https://lead2.fixture.invalid/v1",
+          authMode: "key",
+          apiKey: "sk-l2-1",
+          apiKeyPool: [
+            { id: "o1", key: "sk-l2-1", addedAt: 1 },
+            { id: "o2", key: "sk-l2-2", addedAt: 2 },
+            { id: "o3", key: "sk-l2-3", addedAt: 3 },
+            { id: "o4", key: "sk-l2-4", addedAt: 4 },
+          ],
+          models: ["lead-model"],
+          fetch: (async (_input, init) => {
+            oauthT1Calls += 1;
+            const auth = new Headers(init?.headers).get("authorization") ?? "";
+            if (auth !== "Bearer sk-l2-4") {
+              return Response.json({ error: { message: "bad key" } }, { status: 401 });
+            }
+            return Response.json({ error: { message: "lead down" } }, { status: 503 });
+          }) as typeof fetch,
+        } as EpxConfig["providers"][string],
+        anthropic: {
+          adapter: "anthropic",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "oauth",
+          models: ["claude-sonnet-4-6"],
+          fetch: (async () => {
+            oauthT2Calls += 1;
+            return Response.json(budgetError, { status: 400 });
+          }) as typeof fetch,
+        } as EpxConfig["providers"][string],
+      },
+    };
+    saveConfig(oauthComboCfg);
+    const oauthRes = await send({
+      config: oauthComboCfg,
+      stream: false,
+      extra: { max_tokens: 2048, thinking: { type: "enabled", budget_tokens: 4096 } },
+    });
+    expect(oauthRes.response.status).toBe(400);
+    expect(oauthT1Calls).toBe(4);
+    expect(oauthT2Calls).toBe(1);
+    expect(oauthRes.text).toContain("invalid_request_error");
+    expect(oauthRes.text).not.toContain("send_budget_exhausted");
+
+    // 3. 3-target combo holdback: target 1 spends 3 sends, target 2 (native API-key) spends remaining base allowance (2 sends -> 5/5 base, 1 held back for target 3).
+    clearComboSelectionState(); clearComboTargetCooldowns(); clearKeyCooldowns();
+    let holdT1Calls = 0;
+    let holdT2Calls = 0;
+    let holdT3Calls = 0;
+    const holdbackCfg: EpxConfig = {
+      port: 0,
+      defaultProvider: "anth",
+      protocols: { rollout: { managedMessagesNative: true } },
+      combos: {
+        waterfall: {
+          strategy: "failover",
+          targets: [
+            { provider: "lead3", model: "lead-model" },
+            { provider: "anth", model: "claude-sonnet-4-6" },
+            { provider: "backup", model: "fallback" },
+          ],
+        },
+      },
+      providers: {
+        lead3: {
+          adapter: "openai-chat",
+          baseUrl: "https://lead3.fixture.invalid/v1",
+          authMode: "key",
+          apiKey: "sk-l3-1",
+          apiKeyPool: [
+            { id: "h1", key: "sk-l3-1", addedAt: 1 },
+            { id: "h2", key: "sk-l3-2", addedAt: 2 },
+            { id: "h3", key: "sk-l3-3", addedAt: 3 },
+          ],
+          models: ["lead-model"],
+          fetch: (async (_input, init) => {
+            holdT1Calls += 1;
+            const auth = new Headers(init?.headers).get("authorization") ?? "";
+            if (auth !== "Bearer sk-l3-3") {
+              return Response.json({ error: { message: "bad key" } }, { status: 401 });
+            }
+            return Response.json({ error: { message: "lead3 down" } }, { status: 503 });
+          }) as typeof fetch,
+        } as EpxConfig["providers"][string],
+        anth: {
+          adapter: "anthropic",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "key",
+          apiKey: "sk-anth-1",
+          apiKeyPool: [
+            { id: "a1", key: "sk-anth-1", addedAt: 1 },
+            { id: "a2", key: "sk-anth-2", addedAt: 2 },
+          ],
+          models: ["claude-sonnet-4-6"],
+          fetch: (async (_input, init) => {
+            holdT2Calls += 1;
+            const key = new Headers(init?.headers).get("x-api-key");
+            if (key === "sk-anth-1") {
+              return Response.json({ type: "error", error: { type: "authentication_error", message: "bad key" } }, { status: 401 });
+            }
+            return Response.json(budgetError, { status: 400 });
+          }) as typeof fetch,
+        } as EpxConfig["providers"][string],
+        backup: {
+          adapter: "openai-responses",
+          baseUrl: "https://backup.fixture.invalid/v1",
+          authMode: "key",
+          apiKey: "sk-backup",
+          models: ["fallback"],
+          fetch: (async () => {
+            holdT3Calls += 1;
+            return Response.json({ id: "resp_unused", object: "response", status: "completed", model: "fallback", output: [] });
+          }) as typeof fetch,
+        } as EpxConfig["providers"][string],
+      },
+    };
+    saveConfig(holdbackCfg);
+    const holdRes = await send({
+      config: holdbackCfg,
+      stream: false,
+      extra: { max_tokens: 2048, thinking: { type: "enabled", budget_tokens: 4096 } },
+    });
+    expect(holdRes.response.status).toBe(400);
+    expect(holdT1Calls).toBe(3);
+    expect(holdT2Calls).toBe(2);
+    expect(holdT3Calls).toBe(0);
+    expect(holdRes.text).toContain("invalid_request_error");
+    expect(holdRes.text).not.toContain("send_budget_exhausted");
+  });
 });

@@ -1084,8 +1084,7 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
       response = await send(changed ? recovery : "rate-limit-429");
     }
     const thinkingRetrySendAvailable = (): boolean =>
-      transientSendAvailable()
-      && (oauthBinding ? oauthPhysicalSendAvailable() : keySendAvailable())
+      (oauthBinding ? transientSendAvailable() : keySendAvailable())
       && oauthPhysicalSendAvailable();
     if (response.status === 400 && !isNonReplayableResponse(response) && thinkingRetrySendAvailable()) {
       let errorPreview = "";

@@ -352,11 +352,12 @@ describe("P1-D(b): Opt-in gateway defer_loading (epx_tool_search) emulation", ()
     };
     const literalExprTool: EpxTool = {
       name: "literal_expr_tool",
-      description: "Matches literal (a+)+! marker cleanly",
+      description: "Matches literal (.*)+! and (a+)+! markers cleanly",
       parameters: { type: "object", properties: {} },
       deferLoading: true,
     };
-    for (const evilQuery of ["(.*)+!", "(a+)+!", "(a+)+$"]) {
+    const nestedEvilQuery = `${"(".repeat(200)}a+${")".repeat(200)}`;
+    for (const evilQuery of ["(.*)+!", "(a+)+!", "(a+)+$", "(x+x+)+y", nestedEvilQuery]) {
       const startNs = Bun.nanoseconds();
       const hits = searchDeferredTools([...deferred, repeatDescTool], evilQuery);
       const elapsedMs = (Bun.nanoseconds() - startNs) / 1e6;
@@ -364,7 +365,8 @@ describe("P1-D(b): Opt-in gateway defer_loading (epx_tool_search) emulation", ()
       expect(hits).toEqual([]);
     }
     const literalStartNs = Bun.nanoseconds();
-    const literalHits = searchDeferredTools([repeatDescTool, literalExprTool], "(a+)+!");
+    // Query with zero alphanumeric tokens bypasses BM25 and exercises the literal substring fallback directly.
+    const literalHits = searchDeferredTools([repeatDescTool, literalExprTool], "(.*)+!");
     expect((Bun.nanoseconds() - literalStartNs) / 1e6).toBeLessThan(10);
     expect(literalHits.map(t => t.name)).toEqual(["literal_expr_tool"]);
 
