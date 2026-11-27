@@ -709,6 +709,7 @@ async function tryXaiImageRelay(
 }
 
 const IMAGE_TEXT_FIELDS = ["prompt", "input", "negative_prompt", "style", "user"] as const;
+const isDataUrl = (value: string): boolean => /^data:/i.test(value.trimStart());
 
 function applyImageRequestHygiene(
   body: unknown,
@@ -726,7 +727,7 @@ function applyImageRequestHygiene(
   for (const field of IMAGE_TEXT_FIELDS) {
     if (typeof rec[field] === "string") scanTarget[field] = rec[field];
   }
-  if (typeof rec.image_url === "string" && !rec.image_url.trimStart().startsWith("data:")) {
+  if (typeof rec.image_url === "string" && !isDataUrl(rec.image_url)) {
     scanTarget.image_url = rec.image_url;
   }
   if (typeof rec.image === "string" && /^https?:\/\//i.test(rec.image.trim())) {
@@ -735,19 +736,19 @@ function applyImageRequestHygiene(
   if (Array.isArray(rec.images)) {
     scanTarget.images = rec.images.map((entry) => {
       if (typeof entry === "string") {
-        return entry.trimStart().startsWith("data:") ? "" : entry;
+        return isDataUrl(entry) ? "" : entry;
       }
       if (entry && typeof entry === "object" && !Array.isArray(entry)) {
         const entryRec = entry as Record<string, unknown>;
         const copied: Record<string, unknown> = {};
-        if (typeof entryRec.url === "string" && !entryRec.url.trimStart().startsWith("data:")) {
+        if (typeof entryRec.url === "string" && !isDataUrl(entryRec.url)) {
           copied.url = entryRec.url;
         }
-        if (typeof entryRec.image_url === "string" && !entryRec.image_url.trimStart().startsWith("data:")) {
+        if (typeof entryRec.image_url === "string" && !isDataUrl(entryRec.image_url)) {
           copied.image_url = entryRec.image_url;
         } else if (entryRec.image_url && typeof entryRec.image_url === "object" && !Array.isArray(entryRec.image_url)) {
           const nestedUrl = (entryRec.image_url as Record<string, unknown>).url;
-          if (typeof nestedUrl === "string" && !nestedUrl.trimStart().startsWith("data:")) {
+          if (typeof nestedUrl === "string" && !isDataUrl(nestedUrl)) {
             copied.image_url = { url: nestedUrl };
           }
         }
@@ -786,7 +787,7 @@ function applyImageRequestHygiene(
     for (let i = 0; i < rec.images.length; i += 1) {
       const orig = rec.images[i];
       const cleaned = cleanTarget.images[i];
-      if (typeof orig === "string" && !orig.trimStart().startsWith("data:") && typeof cleaned === "string" && cleaned !== orig) {
+      if (typeof orig === "string" && !isDataUrl(orig) && typeof cleaned === "string" && cleaned !== orig) {
         ensureOutImages()[i] = cleaned;
       } else if (orig && typeof orig === "object" && !Array.isArray(orig) && cleaned && typeof cleaned === "object" && !Array.isArray(cleaned)) {
         const origRec = orig as Record<string, unknown>;

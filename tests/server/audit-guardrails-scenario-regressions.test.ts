@@ -679,8 +679,9 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
       expect(imgBlock.status).toBe(400);
       expect(upstreamHits).toBe(0);
 
-      // ...while /v1/images/edits skips large inline data:image base64 blobs cleanly and succeeds!
+      // ...while /v1/images/edits skips large inline data:image base64 blobs cleanly (including mixed/uppercase DATA:) and succeeds!
       const largeDataUrl = `data:image/png;base64,${"A".repeat(120_000)}`;
+      const upperDataUrl = `  DATA:image/png;base64,${"A".repeat(120_000)}_${SYNTHETIC_SECRET}`;
       const imgSafe = await handleImages(
         new Request("http://127.0.0.1/v1/images/edits", {
           method: "POST",
@@ -688,7 +689,13 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
           body: JSON.stringify({
             model: "imgOk/gpt-image-1",
             prompt: "clean portrait edit",
-            image_url: largeDataUrl,
+            image_url: upperDataUrl,
+            images: [
+              largeDataUrl,
+              { url: `Data:image/png;base64,${SYNTHETIC_SECRET}` },
+              { image_url: `dAtA:image/png;base64,${SYNTHETIC_SECRET}` },
+              { image_url: { url: `DATA:image/jpeg;base64,${SYNTHETIC_SECRET}` } },
+            ],
           }),
         }),
         cfg,
@@ -1053,5 +1060,90 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
     expect(compactOutcome.redactions).toBe(1);
     expect((compactOutcome.body as typeof frozenCompact).input[0]!.content).toBe("compact [REDACTED:openai_key]");
     expect(frozenCompact.input[0]!.content).toContain(SYNTHETIC_SECRET);
+  });
+
+  test("extensible object and array with non-writable secret before writable sibling secret mask all siblings on CoW clone without mutating caller", () => {
+    const secret2 = ["ghp", "9876543210abcdefghij987654"].join("_");
+
+    // 1. Extensible record: non-writable secret1 followed by writable secret2 inside { x: shared } and aliased { a: shared, b: shared }.
+    const shared: Record<string, unknown> = {};
+    Object.defineProperty(shared, "secret1", {
+      value: `first=${SYNTHETIC_SECRET}`,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    shared.secret2 = `second=${secret2}`;
+
+    const objPayload = { x: shared };
+    const objRes = inspectAndApplyOutboundSecretGuard(objPayload, { mode: "redact" });
+    expect(objRes.blocked).toBe(false);
+    expect(objRes.redactions).toBe(2);
+    const objOut = objRes.body as { x: { secret1: string; secret2: string } };
+    expect(objOut.x).not.toBe(shared);
+    expect(objOut.x.secret1).toBe("first=[REDACTED:openai_key]");
+    expect(objOut.x.secret2).toBe("second=[REDACTED:github_token]");
+    expect(shared.secret1).toBe(`first=${SYNTHETIC_SECRET}`);
+    expect(shared.secret2).toBe(`second=${secret2}`);
+
+    const aliasedRes = inspectAndApplyOutboundSecretGuard({ a: shared, b: shared }, { mode: "redact" });
+    expect(aliasedRes.redactions).toBe(2);
+    const aliasedOut = aliasedRes.body as {
+      a: { secret1: string; secret2: string };
+      b: { secret1: string; secret2: string };
+    };
+    expect(aliasedOut.a.secret1).toBe("first=[REDACTED:openai_key]");
+    expect(aliasedOut.a.secret2).toBe("second=[REDACTED:github_token]");
+    expect(aliasedOut.b).toBe(aliasedOut.a);
+    expect(shared.secret2).toBe(`second=${secret2}`);
+
+    // 2. Extensible array: non-writable element 0 followed by writable element 1.
+    const arr: unknown[] = [];
+    Object.defineProperty(arr, 0, {
+      value: `arr0=${SYNTHETIC_SECRET}`,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    arr[1] = `arr1=${secret2}`;
+
+    const arrRes = inspectAndApplyOutboundSecretGuard({ items: arr }, { mode: "redact" });
+    expect(arrRes.blocked).toBe(false);
+    expect(arrRes.redactions).toBe(2);
+    const arrOut = arrRes.body as { items: string[] };
+    expect(arrOut.items).not.toBe(arr);
+    expect(arrOut.items[0]).toBe("arr0=[REDACTED:openai_key]");
+    expect(arrOut.items[1]).toBe("arr1=[REDACTED:github_token]");
+    expect(arr[0]).toBe(`arr0=${SYNTHETIC_SECRET}`);
+    expect(arr[1]).toBe(`arr1=${secret2}`);
+
+    // 3. Tool-output compression with non-writable block[0].text and writable sibling block[1].text on extensible array/object.
+    const noisy1 = "step-alpha\n".repeat(120);
+    const noisy2 = "step-beta\n".repeat(120);
+    const part0: Record<string, unknown> = { type: "text" };
+    Object.defineProperty(part0, "text", {
+      value: noisy1,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    const part1: Record<string, unknown> = { type: "text", text: noisy2 };
+    const blocks: unknown[] = [];
+    Object.defineProperty(blocks, 0, {
+      value: part0,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    blocks[1] = part1;
+    const compRes = compressResponsesToolOutputsInPlace(
+      { input: [{ type: "function_call_output", call_id: "c_cow", output: blocks }] },
+      { enabled: true, minChars: 256, headChars: 40, tailChars: 40 },
+    );
+    expect(compRes.compressedItems).toBe(2);
+    const compBlocks = (compRes.body as { input: Array<{ output: Array<{ text: string }> }> }).input[0]!.output;
+    expect(compBlocks[0]!.text).toContain("repeated 119 more times");
+    expect(compBlocks[1]!.text).toContain("repeated 119 more times");
+    expect(part0.text).toBe(noisy1);
   });
 });

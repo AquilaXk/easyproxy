@@ -343,8 +343,30 @@ describe("P1-D(b): Opt-in gateway defer_loading (epx_tool_search) emulation", ()
     expect(searchDeferredTools(deferred, "select:invoice_lookup").map(t => t.name)).toEqual(["invoice_lookup"]);
     expect(searchDeferredTools(deferred, "billing invoice").map(t => t.name)).toEqual(["invoice_lookup"]);
     expect(searchDeferredTools(deferred, "camel case repo").map(t => t.name)).toEqual(["camelCaseSearchRepo"]);
-    // Evil nested quantifier falls back safely to substring match without hanging.
-    expect(searchDeferredTools(deferred, "(a+)+$")).toEqual([]);
+    // Evil nested quantifier patterns never compile RegExp and return cleanly via literal substring match (< 10ms).
+    const repeatDescTool: EpxTool = {
+      name: "repeat_desc",
+      description: "a".repeat(32),
+      parameters: { type: "object", properties: {} },
+      deferLoading: true,
+    };
+    const literalExprTool: EpxTool = {
+      name: "literal_expr_tool",
+      description: "Matches literal (a+)+! marker cleanly",
+      parameters: { type: "object", properties: {} },
+      deferLoading: true,
+    };
+    for (const evilQuery of ["(.*)+!", "(a+)+!", "(a+)+$"]) {
+      const startNs = Bun.nanoseconds();
+      const hits = searchDeferredTools([...deferred, repeatDescTool], evilQuery);
+      const elapsedMs = (Bun.nanoseconds() - startNs) / 1e6;
+      expect(elapsedMs).toBeLessThan(10);
+      expect(hits).toEqual([]);
+    }
+    const literalStartNs = Bun.nanoseconds();
+    const literalHits = searchDeferredTools([repeatDescTool, literalExprTool], "(a+)+!");
+    expect((Bun.nanoseconds() - literalStartNs) / 1e6).toBeLessThan(10);
+    expect(literalHits.map(t => t.name)).toEqual(["literal_expr_tool"]);
 
     const parsedWithDeferred = parseRequest({
       model: "mock/gpt-5-mini",

@@ -386,7 +386,7 @@ export function inspectAndApplyOutboundSecretGuard(
           matches += result.matches;
           redactions += result.redactions;
           if (redact && result.next !== value) {
-            if (!frameProtected && canWriteProperty(container, i)) {
+            if (!frameProtected && canWriteProperty(container, i) && mutator!.resolve(container) === container) {
               container[i] = result.next;
             } else {
               mutator!.write(buildCopyOnWritePath(frame, i), result.next);
@@ -464,7 +464,7 @@ export function inspectAndApplyOutboundSecretGuard(
         matches += result.matches;
         redactions += result.redactions;
         if (redact && result.next !== value) {
-          if (!frameProtected && canWriteProperty(record, key)) {
+          if (!frameProtected && canWriteProperty(record, key) && mutator!.resolve(record) === record) {
             writePropertySafe(record, key, result.next);
           } else {
             mutator!.write(buildCopyOnWritePath(frame, key), result.next);

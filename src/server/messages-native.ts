@@ -1083,7 +1083,11 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
       logCtx.provider = formatAnthropicProviderForLog(route.providerName, oauthBinding.snapshot.accountId, config);
       response = await send(changed ? recovery : "rate-limit-429");
     }
-    if (response.status === 400 && !isNonReplayableResponse(response) && transientSendAvailable()) {
+    const thinkingRetrySendAvailable = (): boolean =>
+      transientSendAvailable()
+      && (oauthBinding ? oauthPhysicalSendAvailable() : keySendAvailable())
+      && oauthPhysicalSendAvailable();
+    if (response.status === 400 && !isNonReplayableResponse(response) && thinkingRetrySendAvailable()) {
       let errorPreview = "";
       try {
         const read = await readBoundedResponseBody(response.clone(), {
@@ -1095,7 +1099,7 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
       } catch {
         if (upstream.signal.aborted) throw upstream.signal.reason;
       }
-      if (shouldRectifyAnthropicThinkingBudgetError(errorPreview.slice(0, 8192))) {
+      if (thinkingRetrySendAvailable() && shouldRectifyAnthropicThinkingBudgetError(errorPreview.slice(0, 8192))) {
         const rectified = rectifyAnthropicThinkingBudgetOnError(activeBody);
         if (rectified.applied) {
           activeBody = rectified.body;

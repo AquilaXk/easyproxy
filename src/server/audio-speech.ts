@@ -18,6 +18,7 @@ import { readBoundedResponseBytes } from "../lib/bounded-body";
 import { markProxyError } from "../lib/client-error-body";
 import { providerDestinationConfigError, providerDestinationResolvedError } from "../lib/destination-policy";
 import { clientFacingModelLabel } from "../lib/error-destination";
+import { redactSecretString } from "../lib/redact";
 import { isTransientUpstreamStatus } from "../lib/upstream-retry";
 import { getValidAccessToken } from "../oauth/index";
 import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "../providers/api-key-pause";
@@ -569,7 +570,7 @@ export async function handleAudioSpeech(
         return formatErrorResponse(499, "client_closed_request", "request cancelled by client");
       }
       lastErrorStatus = 502;
-      lastErrorMessage = error instanceof Error ? error.message : String(error);
+      lastErrorMessage = redactSecretString(error instanceof Error ? error.message : String(error));
       lastErrorCode = "upstream_fetch_failed";
       recordComboFailure(candidate);
       if (hasMore) continue;

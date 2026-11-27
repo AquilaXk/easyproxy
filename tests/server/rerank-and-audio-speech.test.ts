@@ -524,4 +524,61 @@ describe("P2-A: POST /v1/rerank and POST /v1/audio/speech data planes", () => {
     expect(entries.some(e => e.requestId === "rr-combo-1" && e.status === 200 && e.totalTokens === 33)).toBe(true);
     expect(entries.some(e => e.requestId === "sp-combo-1" && e.status === 200 && (e.usage?.inputTokens ?? 0) > 0)).toBe(true);
   });
+
+  test("redacts secrets from upstream fetch exceptions on /v1/rerank and /v1/audio/speech 502 responses", async () => {
+    const home = createTempHome("epx-rerank-speech-redact-");
+    process.env.EASYPROXY_HOME = home;
+    activeSpendLeases.push(acquireOwnedSpendHome());
+
+    const epxLeak = ["epx", "data", "0123456789abcdef0123456789abcdef01234567"].join("_");
+    const leakFetch = (async () => {
+      throw new Error(`upstream connect error Authorization: Bearer ${SYNTHETIC_SECRET} token=${epxLeak}`);
+    }) as typeof fetch;
+
+    const cfg: EpxConfig = {
+      ...getDefaultConfig(),
+      providers: {
+        leaky: {
+          adapter: "openai-compatible",
+          baseUrl: "https://api.example.test/v1",
+          authMode: "key",
+          apiKey: "sk-leaky",
+          models: ["rerank-english-v3", "tts-1"],
+          fetch: leakFetch,
+        } as EpxProviderTransport as EpxConfig["providers"][string],
+      },
+    };
+
+    const rrRes = await handleRerank(
+      new Request("http://127.0.0.1/v1/rerank", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "leaky/rerank-english-v3", query: "test", documents: ["doc"] }),
+      }),
+      cfg,
+      {},
+      { requestId: "rr-fetch-leak", start: Date.now() },
+    );
+    expect(rrRes.status).toBe(502);
+    const rrBody = await rrRes.text();
+    expect(rrBody).toContain("[REDACTED]");
+    expect(rrBody).not.toContain(SYNTHETIC_SECRET);
+    expect(rrBody).not.toContain(epxLeak);
+
+    const spRes = await handleAudioSpeech(
+      new Request("http://127.0.0.1/v1/audio/speech", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "leaky/tts-1", input: "hello", voice: "alloy" }),
+      }),
+      cfg,
+      {},
+      { requestId: "sp-fetch-leak", start: Date.now() },
+    );
+    expect(spRes.status).toBe(502);
+    const spBody = await spRes.text();
+    expect(spBody).toContain("[REDACTED]");
+    expect(spBody).not.toContain(SYNTHETIC_SECRET);
+    expect(spBody).not.toContain(epxLeak);
+  });
 });

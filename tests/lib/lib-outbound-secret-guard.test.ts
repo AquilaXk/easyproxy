@@ -551,4 +551,56 @@ describe("outbound-secret-guard", () => {
       removeTreeWithRetry(home);
     }
   });
+
+  test("redacts writable sibling properties and elements after partial CoW cloning without leaking or mutating cloned originals", () => {
+    const k1 = fakeOpenAiKey();
+    const k2 = fakeGhToken();
+
+    const sharedObj: Record<string, unknown> = {};
+    Object.defineProperty(sharedObj, "secret1", {
+      value: k1,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    sharedObj.secret2 = k2;
+    const objResult = inspectAndApplyOutboundSecretGuard({ x: sharedObj }, { mode: "redact" });
+    expect(objResult.redactions).toBe(2);
+    const outObj = (objResult.body as { x: { secret1: string; secret2: string } }).x;
+    expect(outObj.secret1).toBe("[REDACTED:openai_key]");
+    expect(outObj.secret2).toBe("[REDACTED:github_token]");
+    expect(sharedObj.secret1).toBe(k1);
+    expect(sharedObj.secret2).toBe(k2);
+
+    const sharedArr: unknown[] = [];
+    Object.defineProperty(sharedArr, 0, {
+      value: k1,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    sharedArr[1] = k2;
+    const arrResult = inspectAndApplyOutboundSecretGuard({ list: sharedArr }, { mode: "redact" });
+    expect(arrResult.redactions).toBe(2);
+    const outArr = (arrResult.body as { list: string[] }).list;
+    expect(outArr[0]).toBe("[REDACTED:openai_key]");
+    expect(outArr[1]).toBe("[REDACTED:github_token]");
+    expect(sharedArr[0]).toBe(k1);
+    expect(sharedArr[1]).toBe(k2);
+
+    // Reverse order (writable before non-writable) also redacts both properties in result.body.
+    const reverseObj: Record<string, unknown> = { first: k2 };
+    Object.defineProperty(reverseObj, "second", {
+      value: k1,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    const reverseResult = inspectAndApplyOutboundSecretGuard({ x: reverseObj }, { mode: "redact" });
+    expect(reverseResult.redactions).toBe(2);
+    const reverseOut = (reverseResult.body as { x: { first: string; second: string } }).x;
+    expect(reverseOut.first).toBe("[REDACTED:github_token]");
+    expect(reverseOut.second).toBe("[REDACTED:openai_key]");
+    expect(reverseObj.second).toBe(k1);
+  });
 });

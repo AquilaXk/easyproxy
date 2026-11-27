@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../../../src/config";
 import { clearRequestLogsForTests, type RequestLogContext } from "../../../src/server/request-log";
+import * as inferenceContext from "../../../src/server/inference/context";
+import { createRequestExecutionBudget } from "../../../src/lib/request-execution-budget";
 import { acquireOwnedSpendHome } from "../../helpers/owned-spend-home";
 import { removeTreeWithRetry } from "../../helpers/remove-tree";
 import { resetSharedSpendLedgerForTest } from "../../../src/lib/spend-reservation-ledger";
@@ -1364,5 +1366,248 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
     affinityCfg.providers.xai!.headers = { "x-org-account": "other" };
     saveConfig(affinityCfg);
     expect(rotateProviderTransportOnCreditOrBudget(affinityCfg, "xai", xaiEditedRouted)).toBeNull();
+  });
+
+  test("native /v1/messages preserves upstream 400 budget_tokens error without retry or 429 conversion when send budget is exhausted", async () => {
+    // 1. OAuth mode with physical send budget = 1 (exhausted on initial send)
+    await seedAnthropicOAuthAccounts(1);
+    let oauthCalls = 0;
+    const oauthBudget = createRequestExecutionBudget({
+      maxTotalModelSends: 1,
+      baseSendAllowance: 1,
+      finalRecoveryAllowance: 0,
+      maxAlternateTargetSends: 0,
+      maxTargetTransitions: 0,
+    });
+    const budgetSpy = spyOn(inferenceContext, "createInferenceSendBudget").mockReturnValue(oauthBudget);
+    try {
+      const oauthCfg = makeProviderConfig(async () => {
+        oauthCalls += 1;
+        return Response.json(
+          {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: "max_tokens must be greater than thinking.budget_tokens",
+            },
+          },
+          { status: 400 },
+        );
+      });
+      oauthCfg.protocols = { rollout: { managedMessagesNative: true, managedMessagesNativeOAuth: true } };
+      saveConfig(oauthCfg);
+
+      const oauthRes = await handleClaudeMessages(
+        new Request("http://localhost/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({
+            model: "anthropic/claude-sonnet-4-5",
+            max_tokens: 2048,
+            thinking: { type: "enabled", budget_tokens: 4096 },
+            messages: [{ role: "user", content: "solve" }],
+          }),
+        }),
+        oauthCfg,
+        {},
+      );
+      expect(oauthRes.status).toBe(400);
+      expect(oauthCalls).toBe(1);
+      const oauthText = await oauthRes.text();
+      expect(oauthText).toContain("invalid_request_error");
+      expect(oauthText).not.toContain("send_budget_exhausted");
+    } finally {
+      budgetSpy.mockRestore();
+    }
+
+    // 2. API-key mode with billing recovery consuming maxTotalModelSends before 400 budget_tokens refusal
+    clearKeyCooldowns();
+    let keyCalls = 0;
+    const keyBudget = createRequestExecutionBudget({
+      maxTotalModelSends: 2,
+      baseSendAllowance: 2,
+      finalRecoveryAllowance: 0,
+      maxAlternateTargetSends: 0,
+      maxTargetTransitions: 0,
+    });
+    const keyBudgetSpy = spyOn(inferenceContext, "createInferenceSendBudget").mockReturnValue(keyBudget);
+    try {
+      const keyCfg: EpxConfig = {
+        port: 0,
+        defaultProvider: "anthkey",
+        protocols: { rollout: { managedMessagesNative: true } },
+        providers: {
+          anthkey: {
+            adapter: "anthropic",
+            baseUrl: "https://api.anthropic.com",
+            authMode: "key",
+            apiKey: "sk-ant-k1",
+            apiKeyPool: [
+              { id: "k1", key: "sk-ant-k1" },
+              { id: "k2", key: "sk-ant-k2" },
+            ],
+            models: ["claude-sonnet-4-5"],
+            fetch: (async (_input, init) => {
+              keyCalls += 1;
+              const apiKey = new Headers(init?.headers).get("x-api-key");
+              if (apiKey === "sk-ant-k1") {
+                return Response.json(
+                  { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } },
+                  { status: 400 },
+                );
+              }
+              return Response.json(
+                { type: "error", error: { type: "invalid_request_error", message: "max_tokens must be greater than thinking.budget_tokens" } },
+                { status: 400 },
+              );
+            }) as typeof fetch,
+          } as EpxProviderConfig & { fetch: typeof fetch },
+        },
+      };
+      saveConfig(keyCfg);
+
+      const keyRes = await handleClaudeMessages(
+        new Request("http://localhost/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({
+            model: "anthkey/claude-sonnet-4-5",
+            max_tokens: 2048,
+            thinking: { type: "enabled", budget_tokens: 4096 },
+            messages: [{ role: "user", content: "solve" }],
+          }),
+        }),
+        keyCfg,
+        {},
+      );
+      expect(keyRes.status).toBe(400);
+      expect(keyCalls).toBe(2);
+      const keyText = await keyRes.text();
+      expect(keyText).toContain("invalid_request_error");
+      expect(keyText).not.toContain("send_budget_exhausted");
+    } finally {
+      keyBudgetSpy.mockRestore();
+    }
+
+    // 3. API-key mode with physical send budget = 1 (exhausted on 1st send without billing recovery)
+    let singleCalls = 0;
+    const singleBudget = createRequestExecutionBudget({
+      maxTotalModelSends: 1,
+      baseSendAllowance: 1,
+      finalRecoveryAllowance: 0,
+      maxAlternateTargetSends: 0,
+      maxTargetTransitions: 0,
+    });
+    const singleBudgetSpy = spyOn(inferenceContext, "createInferenceSendBudget").mockReturnValue(singleBudget);
+    try {
+      const singleCfg: EpxConfig = {
+        port: 0,
+        defaultProvider: "anthsingle",
+        protocols: { rollout: { managedMessagesNative: true } },
+        providers: {
+          anthsingle: {
+            adapter: "anthropic",
+            baseUrl: "https://api.anthropic.com",
+            authMode: "key",
+            apiKey: "sk-ant-single",
+            models: ["claude-sonnet-4-5"],
+            fetch: (async () => {
+              singleCalls += 1;
+              return Response.json(
+                { type: "error", error: { type: "invalid_request_error", message: "max_tokens must be greater than thinking.budget_tokens" } },
+                { status: 400 },
+              );
+            }) as typeof fetch,
+          } as EpxProviderConfig & { fetch: typeof fetch },
+        },
+      };
+      saveConfig(singleCfg);
+      const singleRes = await handleClaudeMessages(
+        new Request("http://localhost/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({
+            model: "anthsingle/claude-sonnet-4-5",
+            max_tokens: 2048,
+            thinking: { type: "enabled", budget_tokens: 4096 },
+            messages: [{ role: "user", content: "solve" }],
+          }),
+        }),
+        singleCfg,
+        {},
+      );
+      expect(singleRes.status).toBe(400);
+      expect(singleCalls).toBe(1);
+      const singleText = await singleRes.text();
+      expect(singleText).toContain("invalid_request_error");
+      expect(singleText).not.toContain("send_budget_exhausted");
+    } finally {
+      singleBudgetSpy.mockRestore();
+    }
+  });
+
+  test("passthrough credit/budget 400/402/403/422 key rotation records key-401 rather than key-429", async () => {
+    clearKeyCooldowns();
+    clearRequestLogsForTests();
+    const seenKeys: string[] = [];
+    const ptCfg: EpxConfig = {
+      port: 0,
+      defaultProvider: "ptpool",
+      providers: {
+        ptpool: {
+          adapter: "openai-responses",
+          baseUrl: "https://api.example.test/v1",
+          authMode: "key",
+          apiKey: "sk-pt-1",
+          apiKeyPool: [
+            { id: "p1", key: "sk-pt-1" },
+            { id: "p2", key: "sk-pt-2" },
+          ],
+          models: ["gpt-5"],
+          fetch: (async (_input, init) => {
+            const auth = new Headers(init?.headers).get("authorization") ?? "";
+            seenKeys.push(auth);
+            if (auth === "Bearer sk-pt-1") {
+              return Response.json(
+                { error: { code: "credits_required", message: "Usage credits are required" } },
+                { status: 402 },
+              );
+            }
+            return Response.json({
+              id: "resp_pt_ok",
+              object: "response",
+              status: "completed",
+              model: "gpt-5",
+              output: [{
+                id: "msg_pt",
+                type: "message",
+                role: "assistant",
+                status: "completed",
+                content: [{ type: "output_text", text: "pt-ok", annotations: [] }],
+              }],
+            });
+          }) as typeof fetch,
+        } as EpxProviderConfig & { fetch: typeof fetch },
+      },
+    };
+    saveConfig(ptCfg);
+
+    const requestId = `pt-credit-${crypto.randomUUID()}`;
+    const logCtx: RequestLogContext = { model: "", provider: "" };
+    const ptRes = await handleResponses(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "ptpool/gpt-5", input: "hello" }),
+      }),
+      ptCfg,
+      logCtx,
+      { requestId, start: Date.now() },
+    );
+    expect(ptRes.status).toBe(200);
+    expect(seenKeys).toEqual(["Bearer sk-pt-1", "Bearer sk-pt-2"]);
+    expect(logCtx.attempts).toHaveLength(2);
+    expect(logCtx.attempts?.[1]?.recoveryKinds).toEqual(["key-401"]);
+    expect(logCtx.attempts?.[1]?.recoveryKinds).not.toContain("key-429");
   });
 });

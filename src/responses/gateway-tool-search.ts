@@ -137,7 +137,7 @@ function parseSearchArgs(rawArgs: string): { query: string; limit: number } {
 
 /**
  * Ranks deferred tools matching `query` via `"select:name1,name2"` exact selection, BM25
- * (`k1=1.2, b=0.75`), or a safe bounded substring/simple-regex fallback.
+ * (`k1=1.2, b=0.75`), or a case-insensitive literal substring fallback.
  */
 export function searchDeferredTools(
   tools: readonly EpxTool[],
@@ -202,25 +202,15 @@ export function searchDeferredTools(
     }
   }
 
-  // Bounded ReDoS-safe fallback: only compile short patterns without nested quantifiers;
-  // otherwise fall back to lowercase substring matching.
+  // Literal case-insensitive substring fallback with zero RegExp compilation on untrusted queries.
   const queryLower = query.toLowerCase();
-  const safePattern = query.length <= 96 && !/([+*?}]|\.\*)[^)]*[+*?}]/.test(query);
-  let regex: RegExp | null = null;
-  if (safePattern) {
-    try {
-      regex = new RegExp(query, "i");
-    } catch {
-      regex = null;
-    }
-  }
   const matched: EpxTool[] = [];
   for (const tool of tools) {
     const wire = wireKeyForTool(tool);
-    const hit = regex
-      ? regex.test(wire) || regex.test(tool.description ?? "")
-      : wire.toLowerCase().includes(queryLower) || (tool.description ?? "").toLowerCase().includes(queryLower);
-    if (hit) {
+    if (
+      wire.toLowerCase().includes(queryLower)
+      || (tool.description ?? "").toLowerCase().includes(queryLower)
+    ) {
       matched.push(tool);
       if (matched.length >= cappedLimit) break;
     }

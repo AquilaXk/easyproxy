@@ -1618,7 +1618,7 @@ export async function preparePassthroughExchange(
       }
       if (retryFrom && upstreamResponse === retryFrom) break passthroughRecovery;
     }
-    const keyRotation = await rotatePassthroughKeyOn429({ config, route, parsed, response: upstreamResponse, adapterName: transportState.adapter.name, signal: upstream.signal, budgetSpent: () => sendBudgetExhausted(transientSendAttempts()), refetch: () => rebuildAndRefetch("key-429") }); if (keyRotation) { if ("failed" in keyRotation) return keyRotation.failed; upstreamResponse = keyRotation; continue passthroughRecovery; }
+    const keyRotation = await rotatePassthroughKeyOn429({ config, route, parsed, response: upstreamResponse, adapterName: transportState.adapter.name, signal: upstream.signal, budgetSpent: () => sendBudgetExhausted(transientSendAttempts()), refetch: recovery => rebuildAndRefetch(recovery) }); if (keyRotation) { if ("failed" in keyRotation) return keyRotation.failed; upstreamResponse = keyRotation; continue passthroughRecovery; }
     const captureAffinityResponse = (
       response: Response,
       captureAuthCtx: CodexAuthContext = admissionState.authCtx,

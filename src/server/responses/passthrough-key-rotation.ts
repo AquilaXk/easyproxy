@@ -50,7 +50,7 @@ export async function rotatePassthroughKeyOn429<T>(options: {
   adapterName: string;
   signal?: AbortSignal;
   budgetSpent: () => boolean;
-  refetch: () => Promise<T>;
+  refetch: (recovery: "key-429" | "key-401") => Promise<T>;
 }): Promise<T | undefined> {
   const { config, route, parsed, response, adapterName, refetch } = options;
   if (options.signal?.aborted || isNonReplayableResponse(response) || !hasKeyPoolFailover(route.provider)
@@ -65,7 +65,7 @@ export async function rotatePassthroughKeyOn429<T>(options: {
     try { void response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
     route.provider = rotated;
     bindRouteReasoningReplayScope({ parsed, providerName: route.providerName, provider: rotated, adapterName });
-    return refetch();
+    return refetch("key-429");
   }
   if (response.status !== 400 && response.status !== 402 && response.status !== 403 && response.status !== 422) return;
   if (!await readCreditOrBudgetExhaustedResponse(response, options.signal) || options.signal?.aborted) return;
@@ -77,5 +77,5 @@ export async function rotatePassthroughKeyOn429<T>(options: {
   try { void response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
   route.provider = rotated;
   bindRouteReasoningReplayScope({ parsed, providerName: route.providerName, provider: rotated, adapterName });
-  return refetch();
+  return refetch("key-401");
 }
