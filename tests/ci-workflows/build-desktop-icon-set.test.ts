@@ -217,9 +217,9 @@ describe("desktop icon set", () => {
 
   /**
    * The menu bar asset has its own SVG because a template image carries no backdrop and must
-   * carve clean gaps between the overlapping isometric slabs and orbit arrow. Every curve in
+   * carve a clean gap between the overlapping prism and chevron layers. Every curve in
    * `tray/icon.svg` comes verbatim from `icon.svg` (which in turn embeds `easyproxy-mark.svg`),
-   * and each occluded layer carries its `<mask>` so the glyph never collapses into a solid blob.
+   * and the occluded layer carries its `<mask>` so the glyph never collapses into a solid blob.
    */
   test("the menu bar source is a subset of the app icon source", () => {
     const icon = readFileSync(join(ICONS_DIR, "icon.svg"), "utf8");
@@ -245,13 +245,13 @@ describe("desktop icon set", () => {
 
     const trayMark = markEnd(tray, "tray/icon.svg");
     const trayPaths = [...trayMark.matchAll(/ d="([^"]+)"/g)].map(m => m[1]!);
-    expect(new Set(trayPaths).size, "tray/icon.svg repeats a curve instead of drawing all four layers")
+    expect(new Set(trayPaths).size, "tray/icon.svg repeats a curve instead of drawing both layers")
       .toBe(trayPaths.length);
-    expect(trayPaths.length, "the menu bar mark draws all 3 layers plus the orbit arrow").toBe(4);
+    expect(trayPaths.length, "the menu bar mark draws both prism and chevron layers").toBe(2);
     const foreign = trayPaths.filter(d => !iconPaths.includes(d));
     expect(foreign, "tray/icon.svg draws curves icon.svg does not have").toEqual([]);
 
-    for (const maskId of ["cut-below-top", "cut-below-arrow", "cut-below-middle"] as const) {
+    for (const maskId of ["cut-below-chevron"] as const) {
       const maskBody = block(tray, `<mask id="${maskId}"`, "</mask>");
       expect(maskBody, `${maskId} must start from a white ground`).toContain("<rect ");
       expect(maskBody, `${maskId} must carve with #000000`).toContain("#000000");
