@@ -25,7 +25,7 @@ import { getProviderRegistryEntry } from "./registry";
 import { isCanonicalCommandCodeBaseUrl, normalizedBaseUrl } from "./quota/vendor-probes-key";
 import type { EpxConfig, EpxProviderConfig, RateLimitRetryPolicy, ResetReplayPolicy, TransientRetryPolicy } from "../types";
 import { OPENCODE_GO_SESSION_HEADER } from "./opencode-go-transport";
-import { resolveProviderTransport, type EpxProviderTransport } from "./xai-transport";
+import { resolveProviderTransport, XAI_CONV_ID_HEADER, type EpxProviderTransport } from "./xai-transport";
 import { sweepExpiredOnWrite } from "../lib/state-store-sweeper";
 import { cacheAffinityApplies, consultProviderCacheAffinity, releaseProviderCacheAffinity } from "./cache-affinity";
 import { ProviderApiKeyPausedError } from "./api-key-pause-state";
@@ -1037,8 +1037,17 @@ export function rotateProviderTransportOn401(
   return applyRotatedTransport(providerName, routedProvider, rotated, options.promptCacheKey);
 }
 
-function headerShape(provider: EpxProviderConfig): string {
-  return JSON.stringify(Object.entries(provider.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+function headerShape(provider: EpxProviderConfig, omitLowerKeys?: ReadonlySet<string>): string {
+  return JSON.stringify(
+    Object.entries(provider.headers ?? {})
+      .filter(([key]) => !omitLowerKeys?.has(key.toLowerCase()))
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+}
+
+function hasHeaderCaseInsensitive(headers: Record<string, string> | undefined, target: string): boolean {
+  const lower = target.toLowerCase();
+  return Object.keys(headers ?? {}).some(key => key.toLowerCase() === lower);
 }
 
 function rotateProviderTransportOnBillingOrCredit(
@@ -1051,14 +1060,25 @@ function rotateProviderTransportOnBillingOrCredit(
   if ((requireAnthropicAdapter && routedProvider.adapter !== "anthropic")
     || (routedProvider.authMode !== undefined && routedProvider.authMode !== "key")
     || !hasKeyPoolFailover(routedProvider)) return null;
-  const sentHeaders = headerShape(routedProvider);
+  const configuredAtStart = config.providers[providerName]?.headers;
+  const runtimeAffinityHeaders = new Set<string>();
+  if (!hasHeaderCaseInsensitive(configuredAtStart, OPENCODE_GO_SESSION_HEADER)) {
+    runtimeAffinityHeaders.add(OPENCODE_GO_SESSION_HEADER.toLowerCase());
+  }
+  if (providerName === "xai" && !hasHeaderCaseInsensitive(configuredAtStart, XAI_CONV_ID_HEADER)) {
+    runtimeAffinityHeaders.add(XAI_CONV_ID_HEADER.toLowerCase());
+  }
+  const sentHeaders = headerShape(routedProvider, runtimeAffinityHeaders);
   const sentTransport = routedProvider.apiKeyTransport ?? "x-api-key";
-  const acceptsFreshProvider = (fresh: EpxProviderConfig): boolean => fresh.adapter === routedProvider.adapter
-    && (fresh.authMode === undefined || fresh.authMode === "key") && hasKeyPoolFailover(fresh)
-    && (fresh.apiKeyTransport ?? "x-api-key") === sentTransport
-    && headerShape(fresh) === sentHeaders
-    && providerApiKeySelectionIsCurrent({ ...config, providers: { ...config.providers, [providerName]: fresh } },
-      providerName, routedProvider);
+  const acceptsFreshProvider = (fresh: EpxProviderConfig): boolean => {
+    const routedFresh = routedProviderConfig(providerName, fresh);
+    return routedFresh.adapter === routedProvider.adapter
+      && (fresh.authMode === undefined || fresh.authMode === "key") && hasKeyPoolFailover(fresh)
+      && (fresh.apiKeyTransport ?? "x-api-key") === sentTransport
+      && headerShape(routedFresh) === sentHeaders
+      && providerApiKeySelectionIsCurrent({ ...config, providers: { ...config.providers, [providerName]: fresh } },
+        providerName, routedProvider);
+  };
   const rotated = rotateKeyAfterFailure(config, providerName, "billing", null, options.now,
     options.attemptedKey, options.attemptedSelection ?? routedProvider._apiKeyAttempt, undefined, acceptsFreshProvider);
   return rotated ? applyRotatedTransport(providerName, routedProvider, rotated, options.promptCacheKey) : null;

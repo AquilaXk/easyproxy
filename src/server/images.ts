@@ -716,7 +716,8 @@ function applyImageRequestHygiene(
   logCtx: RequestLogContext,
 ): { blocked: boolean; body: unknown } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return { blocked: applyOutboundPayloadHygiene(body, config, logCtx).blocked, body };
+    const hygiene = applyOutboundPayloadHygiene(body, config, logCtx);
+    return { blocked: hygiene.blocked, body: hygiene.body };
   }
   const rec = body as Record<string, unknown>;
   // Scan only text/URL fields and exclude raw base64/binary image data so large inline
@@ -755,23 +756,25 @@ function applyImageRequestHygiene(
       return entry;
     });
   }
-  if (applyOutboundPayloadHygiene(scanTarget, config, logCtx).blocked) {
+  const targetHygiene = applyOutboundPayloadHygiene(scanTarget, config, logCtx);
+  if (targetHygiene.blocked) {
     return { blocked: true, body };
   }
+  const cleanTarget = targetHygiene.body as typeof scanTarget;
   let outRec: Record<string, unknown> | undefined;
   const ensureOut = () => (outRec ??= { ...rec });
   for (const field of IMAGE_TEXT_FIELDS) {
-    if (typeof scanTarget[field] === "string" && scanTarget[field] !== rec[field]) {
-      ensureOut()[field] = scanTarget[field];
+    if (typeof cleanTarget[field] === "string" && cleanTarget[field] !== rec[field]) {
+      ensureOut()[field] = cleanTarget[field];
     }
   }
-  if (typeof scanTarget.image_url === "string" && scanTarget.image_url !== rec.image_url) {
-    ensureOut().image_url = scanTarget.image_url;
+  if (typeof cleanTarget.image_url === "string" && cleanTarget.image_url !== rec.image_url) {
+    ensureOut().image_url = cleanTarget.image_url;
   }
-  if (typeof scanTarget.image === "string" && scanTarget.image !== rec.image) {
-    ensureOut().image = scanTarget.image;
+  if (typeof cleanTarget.image === "string" && cleanTarget.image !== rec.image) {
+    ensureOut().image = cleanTarget.image;
   }
-  if (Array.isArray(scanTarget.images) && Array.isArray(rec.images)) {
+  if (Array.isArray(cleanTarget.images) && Array.isArray(rec.images)) {
     let outImages: unknown[] | undefined;
     const ensureOutImages = () => {
       if (!outImages) {
@@ -782,7 +785,7 @@ function applyImageRequestHygiene(
     };
     for (let i = 0; i < rec.images.length; i += 1) {
       const orig = rec.images[i];
-      const cleaned = scanTarget.images[i];
+      const cleaned = cleanTarget.images[i];
       if (typeof orig === "string" && !orig.trimStart().startsWith("data:") && typeof cleaned === "string" && cleaned !== orig) {
         ensureOutImages()[i] = cleaned;
       } else if (orig && typeof orig === "object" && !Array.isArray(orig) && cleaned && typeof cleaned === "object" && !Array.isArray(cleaned)) {

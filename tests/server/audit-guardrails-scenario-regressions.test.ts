@@ -7,7 +7,7 @@ import type { ServerWebSocket } from "bun";
 import { getDefaultConfig, loadConfig, saveConfig } from "../../src/config";
 import { handleGuardrailsCommand } from "../../src/cli/guardrails";
 import { configuredAdminToken } from "../../src/lib/admin-secrets";
-import { inspectAndApplyOutboundSecretGuard } from "../../src/lib/outbound-secret-guard";
+import { inspectAndApplyOutboundSecretGuard, MAX_SECRET_SCAN_DEPTH } from "../../src/lib/outbound-secret-guard";
 import { cloneMutableJsonGraph } from "../../src/lib/mutable-json-copy";
 import { injectPromptCacheBreakpointsInPlace } from "../../src/lib/prompt-cache-injection";
 import { compressResponsesToolOutputsInPlace } from "../../src/lib/tool-output-compression";
@@ -23,6 +23,7 @@ import type { ServeOptionsContext } from "../../src/server/index/serve-options";
 import {
   applyOutboundPayloadHygiene,
   evaluateOutboundPayloadHygiene,
+  prepareCompactionBodyHygiene,
   resetOutboundHygieneStatsForTests,
 } from "../../src/server/outbound-payload-hygiene";
 import * as requestDecompress from "../../src/server/request-decompress";
@@ -944,9 +945,113 @@ describe("Defect 3: dry-run contextInspection hygiene, WS inject/steer & continu
       expect(JSON.stringify(forwardedRespBodies[0])).not.toContain(SYNTHETIC_SECRET);
       expect(JSON.stringify(forwardedRespBodies[0])).toContain("[REDACTED:openai_key]");
       expect(frozenResponsesBody.input[0]!.content).toContain(SYNTHETIC_SECRET);
+
+      // handleResponses with frozen preparsedBody + --fast under mode="off" succeeds without TypeError or original mutation.
+      const frozenFastReq = new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      const frozenFastBody = deepFreeze({
+        model: "mock/gpt-5--fast",
+        input: [{ role: "user", content: "fast turn" }],
+      });
+      requestDecompress.attachParsedRequestBody(frozenFastReq, frozenFastBody);
+      const fastOffCfg: EpxConfig = {
+        ...respCfg,
+        outboundSecretGuard: { mode: "off" },
+      };
+      const frozenFastRes = await handleResponses(frozenFastReq, fastOffCfg, {});
+      expect(frozenFastRes.status).toBe(200);
+      expect(frozenFastBody.model).toBe("mock/gpt-5--fast");
     } finally {
       readSpy.mockRestore();
       globalThis.fetch = origFetch;
     }
+  });
+
+  test("shared/aliased frozen subtrees, cycles, shallow-before-deep limits, and compaction hygiene redact every path without leaking", () => {
+    const deepFreeze = <T>(value: T): T => {
+      if (value && typeof value === "object") {
+        Object.freeze(value);
+        for (const child of Object.values(value as Record<string, unknown>)) {
+          deepFreeze(child);
+        }
+      }
+      return value;
+    };
+
+    // 1. Shared frozen object referenced across multiple paths in mutable root.
+    const sharedFrozen = Object.freeze({ text: `token=${SYNTHETIC_SECRET}` });
+    const aliasedRes = inspectAndApplyOutboundSecretGuard(
+      { first: sharedFrozen, second: sharedFrozen },
+      { mode: "redact" },
+    );
+    expect(aliasedRes.redactions).toBe(1);
+    expect(sharedFrozen.text).toContain(SYNTHETIC_SECRET);
+    const aliasedOut = aliasedRes.body as { first: { text: string }; second: { text: string } };
+    expect(aliasedOut.first.text).toBe("token=[REDACTED:openai_key]");
+    expect(aliasedOut.second.text).toBe("token=[REDACTED:openai_key]");
+
+    // 2. Shared mutable object referenced inside both frozen and mutable parents (both key orders).
+    for (const order of ["mutable-first", "frozen-first"] as const) {
+      const sharedMut = { text: `token=${SYNTHETIC_SECRET}` };
+      const container = order === "mutable-first"
+        ? { a: { sub: sharedMut }, b: Object.freeze({ sub: sharedMut }) }
+        : { a: Object.freeze({ sub: sharedMut }), b: { sub: sharedMut } };
+      const mixedRes = inspectAndApplyOutboundSecretGuard(container, { mode: "redact" });
+      const mixedOut = mixedRes.body as { a: { sub: { text: string } }; b: { sub: { text: string } } };
+      expect(mixedOut.a.sub.text).toBe("token=[REDACTED:openai_key]");
+      expect(mixedOut.b.sub.text).toBe("token=[REDACTED:openai_key]");
+    }
+
+    // 3. Shared frozen item duplicated inside input[] during tool-output compression.
+    const noisy = "ok-line\n".repeat(120);
+    const sharedTool = Object.freeze({ type: "function_call_output", call_id: "c_dup", output: noisy });
+    const compAlias = compressResponsesToolOutputsInPlace(
+      Object.freeze({ input: Object.freeze([sharedTool, sharedTool]) }),
+      { enabled: true, minChars: 256, headChars: 40, tailChars: 40 },
+    );
+    const compOut = compAlias.body as { input: Array<{ output: string }> };
+    expect(compOut.input[0]!.output).toContain("repeated 119 more times");
+    expect(compOut.input[1]!.output).toContain("repeated 119 more times");
+    expect(sharedTool.output).toBe(noisy);
+
+    // 4. Mutually cyclic frozen objects preserve cycle identity after redaction.
+    const nodeA: Record<string, unknown> = {};
+    const nodeB: Record<string, unknown> = { a: nodeA, secret: `key=${SYNTHETIC_SECRET}` };
+    nodeA.b = nodeB;
+    Object.freeze(nodeA);
+    Object.freeze(nodeB);
+    const mutualCyclic = inspectAndApplyOutboundSecretGuard(nodeA, { mode: "redact" });
+    expect(mutualCyclic.redactions).toBe(1);
+    const outA = mutualCyclic.body as { b: { a: unknown; secret: string } };
+    expect(outA.b.secret).toBe("key=[REDACTED:openai_key]");
+    expect(outA.b.a).toBe(outA);
+    expect(nodeB.secret).toContain(SYNTHETIC_SECRET);
+
+    // 5. Frozen object exceeding MAX_SECRET_SCAN_DEPTH still redacts shallow secrets before limit abort.
+    let deepChain: Record<string, unknown> = { leaf: "ok" };
+    for (let i = 0; i <= MAX_SECRET_SCAN_DEPTH + 1; i += 1) {
+      deepChain = { child: deepChain };
+    }
+    const frozenShallowPlusDeep = deepFreeze({ secret: SYNTHETIC_SECRET, deepChain });
+    const shallowDeepRes = inspectAndApplyOutboundSecretGuard(frozenShallowPlusDeep, { mode: "redact" });
+    expect(shallowDeepRes.limitExceeded).toBe(true);
+    expect(shallowDeepRes.redactions).toBe(1);
+    expect((shallowDeepRes.body as { secret: string }).secret).toBe("[REDACTED:openai_key]");
+    expect(frozenShallowPlusDeep.secret).toBe(SYNTHETIC_SECRET);
+
+    // 6. prepareCompactionBodyHygiene returns sanitized copy for frozen compaction payloads.
+    const frozenCompact = deepFreeze({
+      model: "gpt-5",
+      input: [{ role: "user", content: `compact ${SYNTHETIC_SECRET}` }],
+    });
+    const compactOutcome = prepareCompactionBodyHygiene(frozenCompact, {
+      outboundSecretGuard: { mode: "redact" },
+    });
+    expect(compactOutcome.blocked).toBe(false);
+    expect(compactOutcome.redactions).toBe(1);
+    expect((compactOutcome.body as typeof frozenCompact).input[0]!.content).toBe("compact [REDACTED:openai_key]");
+    expect(frozenCompact.input[0]!.content).toContain(SYNTHETIC_SECRET);
   });
 });

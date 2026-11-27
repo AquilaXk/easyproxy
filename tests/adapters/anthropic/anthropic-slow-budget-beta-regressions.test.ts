@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as boundedBody from "../../../src/lib/bounded-body";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,6 +54,8 @@ import {
   rotateProviderTransportOnAnthropicBilling,
   rotateProviderTransportOnCreditOrBudget,
 } from "../../../src/providers/key-failover";
+import { resolveOpenCodeGoTransport } from "../../../src/providers/opencode-go-transport";
+import { resolveProviderTransport } from "../../../src/providers/xai-transport";
 import { routedProviderConfig } from "../../../src/providers/routed-config";
 import {
   isCreditOrBudgetExhaustedRefusal,
@@ -1013,6 +1016,43 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
     );
     expect(abortRes.status).toBe(499);
     expect(abortStreamCancelled).toBe(true);
+
+    // Non-thinking 400 error reuses the bounded preview without reading the response body twice
+    // while still preserving bodyText classification (e.g., context-overflow detection).
+    const boundSpy = spyOn(boundedBody, "readBoundedResponseBody");
+    try {
+      const overflow400Cfg: EpxConfig = {
+        ...config,
+        providers: {
+          anth: {
+            ...config.providers.anth!,
+            fetch: (async () => Response.json(
+              { type: "error", error: { type: "invalid_request_error", message: "prompt is too long: 210000 tokens > 200000 maximum" } },
+              { status: 400 },
+            )) as typeof fetch,
+          } as EpxProviderConfig & { fetch: typeof fetch },
+        },
+      };
+      const overflowRes = await handleClaudeMessages(
+        new Request("http://localhost/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({
+            model: "anth/claude-sonnet-4-5",
+            max_tokens: 2048,
+            messages: [{ role: "user", content: "solve" }],
+          }),
+        }),
+        overflow400Cfg,
+        {},
+      );
+      expect(overflowRes.status).toBe(400);
+      expect(await overflowRes.text()).toContain("prompt is too long");
+      const messagesNativeReads = boundSpy.mock.calls.filter(([, opts]) => opts?.totalTimeoutMs === undefined);
+      expect(messagesNativeReads).toHaveLength(1);
+    } finally {
+      boundSpy.mockRestore();
+    }
   });
 
   test("shared billing/credit key-rotation helper enforces adapter and apiKeyTransport consistency", () => {
@@ -1262,5 +1302,67 @@ describe("P1-D(c): Anthropic thinking.budget_tokens pre-rectifier and reactive H
     );
     expect(chatRes.status).toBe(200);
     expect(seenChatAuths).toEqual(["Bearer sk-chat-1", "Bearer sk-chat-2"]);
+
+    // 5. Runtime-derived affinity headers (opencode-go x-opencode-session, xai x-grok-conv-id) do not block credit rotation,
+    //    while explicit persisted header mutations still revoke rotation.
+    clearKeyCooldowns();
+    const affinityCfg: EpxConfig = {
+      port: 0,
+      providers: {
+        "opencode-go": {
+          adapter: "openai-chat",
+          baseUrl: "https://opencode.ai/zen/go/v1",
+          authMode: "key",
+          apiKey: "sk-go-1",
+          apiKeySelectionRevision: "rev-go",
+          apiKeyPool: [
+            { id: "g1", key: "sk-go-1" },
+            { id: "g2", key: "sk-go-2" },
+          ],
+        },
+        xai: {
+          adapter: "openai-responses",
+          baseUrl: "https://api.x.ai/v1",
+          authMode: "key",
+          apiKey: "sk-xai-1",
+          apiKeySelectionRevision: "rev-xai",
+          apiKeyPool: [
+            { id: "x1", key: "sk-xai-1" },
+            { id: "x2", key: "sk-xai-2" },
+          ],
+        },
+      },
+    };
+    saveConfig(affinityCfg);
+    const goStart = {
+      ...routedProviderConfig("opencode-go", affinityCfg.providers["opencode-go"]),
+      _apiKeyAttempt: { entryId: "g1", reference: "sk-go-1", revision: "rev-go" },
+    };
+    const goRouted = resolveOpenCodeGoTransport(goStart, "lane-abc", goStart);
+    const goRotated = rotateProviderTransportOnCreditOrBudget(affinityCfg, "opencode-go", goRouted);
+    expect(goRotated?.apiKey).toBe("sk-go-2");
+    expect(goRotated?.headers?.["x-opencode-session"]).toBe(goRouted.headers?.["x-opencode-session"]);
+
+    const xaiStart = {
+      ...routedProviderConfig("xai", affinityCfg.providers.xai),
+      _apiKeyAttempt: { entryId: "x1", reference: "sk-xai-1", revision: "rev-xai" },
+    };
+    const xaiRouted = resolveProviderTransport("xai", xaiStart, "cache-key-1");
+    const xaiRotated = rotateProviderTransportOnCreditOrBudget(affinityCfg, "xai", xaiRouted, {
+      promptCacheKey: "cache-key-1",
+    });
+    expect(xaiRotated?.apiKey).toBe("sk-xai-2");
+    expect(xaiRotated?.headers?.["x-grok-conv-id"]).toBe(xaiRouted.headers?.["x-grok-conv-id"]);
+
+    // Persisted header edit on xai still revokes credit/budget rotation.
+    clearKeyCooldowns();
+    const xaiAfterEditStart = {
+      ...routedProviderConfig("xai", affinityCfg.providers.xai),
+      _apiKeyAttempt: { entryId: "x1", reference: "sk-xai-1", revision: "rev-xai" },
+    };
+    const xaiEditedRouted = resolveProviderTransport("xai", xaiAfterEditStart, "cache-key-1");
+    affinityCfg.providers.xai!.headers = { "x-org-account": "other" };
+    saveConfig(affinityCfg);
+    expect(rotateProviderTransportOnCreditOrBudget(affinityCfg, "xai", xaiEditedRouted)).toBeNull();
   });
 });

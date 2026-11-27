@@ -48,11 +48,12 @@ export async function rotatePassthroughKeyOn429<T>(options: {
   parsed: EpxParsedRequest;
   response: Response;
   adapterName: string;
+  signal?: AbortSignal;
   budgetSpent: () => boolean;
   refetch: () => Promise<T>;
 }): Promise<T | undefined> {
   const { config, route, parsed, response, adapterName, refetch } = options;
-  if (isNonReplayableResponse(response) || !hasKeyPoolFailover(route.provider)
+  if (options.signal?.aborted || isNonReplayableResponse(response) || !hasKeyPoolFailover(route.provider)
     || route.provider._apiKeyAttempt?.distributed || options.budgetSpent()) return;
   if (response.status === 429) {
     const rotated = rotateProviderTransportOn429(config, route.providerName, route.provider, {
@@ -67,7 +68,7 @@ export async function rotatePassthroughKeyOn429<T>(options: {
     return refetch();
   }
   if (response.status !== 400 && response.status !== 402 && response.status !== 403 && response.status !== 422) return;
-  if (!await readCreditOrBudgetExhaustedResponse(response)) return;
+  if (!await readCreditOrBudgetExhaustedResponse(response, options.signal) || options.signal?.aborted) return;
   const rotated = rotateProviderTransportOnCreditOrBudget(config, route.providerName, route.provider, {
     attemptedKey: route.provider.apiKey,
     promptCacheKey: parsed.options.promptCacheKey,

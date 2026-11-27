@@ -214,7 +214,9 @@ export async function handleResponsesCompact(
   options = { ...options, clientModelLabel };
   // Compaction body `input` is forwarded history, so only the top-level catalog is counted.
   warnEagerCodexToolCatalog(body, req.headers, { surface: "compact", logicalRequest: logCtx });
-  if (prepareCompactionBodyHygiene(body, config, logCtx)) return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+  const compactHygiene = prepareCompactionBodyHygiene(body, config, logCtx);
+  if (compactHygiene.blocked) return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
+  body = compactHygiene.body;
   if (!options.compactionRoutingOverride) {
     options = { ...options, compactionRoutingOverride: applyCompactionRoutingOverride(body, req.headers, config, { endpoint: "compact" }) };
   }

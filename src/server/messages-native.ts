@@ -952,6 +952,7 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
     try { void response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
   };
 
+  let preReadErrorBody: { response: Response; text: string } | undefined;
   let response: Response;
   try {
     response = await send();
@@ -1040,8 +1041,7 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
       if (wasAccountAutoPaused(response) && autoPauseMoves < 3) continue;
       if (distributedResponseOwnsKey && (
         (billingRecoveryActive && [401, 429].includes(response.status))
-        || (hasKeyPoolFailover(activeProvider)
-          && (activeProvider.adapter === "anthropic" ? [400, 402, 403, 422] : [402, 403, 422]).includes(response.status))
+        || (hasKeyPoolFailover(activeProvider) && [400, 402, 403, 422].includes(response.status))
       )) continue;
       if (!activeProvider._apiKeyAttempt?.distributed || !distributedResponseOwnsKey
         || (response.status !== 401 && response.status !== 429) || pass + 1 >= recoveryPasses) break;
@@ -1091,6 +1091,7 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
           maxBytes: MAX_NATIVE_MESSAGES_ERROR_BYTES,
         });
         if (read.displaySafe && !read.truncated) errorPreview = read.text;
+        preReadErrorBody = { response, text: read.displaySafe ? read.text : "" };
       } catch {
         if (upstream.signal.aborted) throw upstream.signal.reason;
       }
@@ -1159,10 +1160,15 @@ async function runNativeMessagesAttempt(options: NativeMessagesExecution, attemp
   }
   if (!response.ok) {
     let bodyText = "";
-    try {
-      const read = await readBoundedResponseBody(response, { signal: upstream.signal, maxBytes: MAX_NATIVE_MESSAGES_ERROR_BYTES });
-      if (read.displaySafe) bodyText = read.text;
-    } catch { /* status-only fallback */ }
+    if (preReadErrorBody?.response === response) {
+      bodyText = preReadErrorBody.text;
+      discard(response);
+    } else {
+      try {
+        const read = await readBoundedResponseBody(response, { signal: upstream.signal, maxBytes: MAX_NATIVE_MESSAGES_ERROR_BYTES });
+        if (read.displaySafe) bodyText = read.text;
+      } catch { /* status-only fallback */ }
+    }
     cleanupAbort();
     if (req.signal.aborted) {
       upstream.abort();

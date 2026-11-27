@@ -91,6 +91,7 @@ import { responsesHasFileImage, responsesHasInstructionImage } from "../../adapt
 import { anthropicSessionKeyFromParts } from "../../oauth/anthropic-routing";
 import { configuredAnthropicInstance } from "../../providers/anthropic-instance";
 import { isTranslatorBudgetExceededError } from "../../lib/translator-budget";
+import { cloneMutableJsonGraph } from "../../lib/mutable-json-copy";
 import { applyOutboundPayloadHygiene, OUTBOUND_SECRET_BLOCKED_MESSAGE } from "../outbound-payload-hygiene";
 import { bindTurnTerminationScope, rememberDeliveredFinalAnswer } from "../../responses/turn-termination";
 import { beginRequestAttempt, cacheDiagnosticsObserving, finishRequestAttempt, markLocalRequestLogRefusal, noteAttemptSend, noteCodexSelectionAffinity, observeCacheDiagnosticContextTokens, observeCacheDiagnosticInbound, rebindCacheDiagnosticBody, requestLogSpeedLabel, readConfiguredCodexServiceTier, usageFromResponsesPayload } from "../request-log";
@@ -267,6 +268,18 @@ export async function prepareResponsesRequest(
       return clientCancelledResponse();
     }
     return decodeRequestErrorResponse(err, "responses");
+  }
+  if (body !== null && typeof body === "object") {
+    const bodyRec = !Array.isArray(body) ? (body as Record<string, unknown>) : undefined;
+    const inputProtected = bodyRec !== undefined && Array.isArray(bodyRec.input)
+      && (Object.isFrozen(bodyRec.input) || !Object.isExtensible(bodyRec.input));
+    if (Object.isFrozen(body) || !Object.isExtensible(body) || inputProtected) {
+      const cloned = cloneMutableJsonGraph(body, 1_000_000, 2048);
+      if (cloned.limitExceeded) {
+        return formatErrorResponse(413, "request_too_large", "Request body exceeds safe nesting or node bounds");
+      }
+      body = cloned.value;
+    }
   }
   options.responsesInstructionImage ||= responsesHasInstructionImage(body);
   options.responsesFileImage ||= responsesHasFileImage(body);

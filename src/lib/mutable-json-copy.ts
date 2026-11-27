@@ -130,6 +130,16 @@ export function cloneMutableJsonGraph(
   return { value: clonedRoot, limitExceeded: false };
 }
 
+function readContainerProperty(container: object, key: string | number): unknown {
+  if (Array.isArray(container)) return container[key as number];
+  return (container as Record<string, unknown>)[String(key)];
+}
+
+function writeContainerProperty(container: object, key: string | number, value: unknown): void {
+  if (Array.isArray(container)) container[key as number] = value;
+  else writePropertySafe(container as Record<string, unknown>, String(key), value);
+}
+
 /**
  * Writes along a container path, mutating directly when writable and falling back to
  * shallow copy-on-write cloning whenever any ancestor or target container is frozen,
@@ -141,10 +151,15 @@ export class CopyOnWriteMutator {
   private readonly clones = new WeakMap<object, object>();
   private readonly createdClones = new WeakSet<object>();
   private readonly protectedChildrenOf = new WeakSet<object>();
+  private cloneCount = 0;
 
   constructor(root: unknown) {
     this.root = root;
     this.rootProtected = typeof root === "object" && root !== null && (Object.isFrozen(root) || !Object.isExtensible(root));
+  }
+
+  get hasClones(): boolean {
+    return this.cloneCount > 0;
   }
 
   resolve<T extends object>(obj: T): T {
@@ -156,6 +171,7 @@ export class CopyOnWriteMutator {
 
     let subtreeProtected = this.rootProtected;
     let firstCloneIdx = -1;
+    let needsRelink = false;
 
     for (let i = 0; i < path.length; i += 1) {
       const seg = path[i]!;
@@ -169,25 +185,35 @@ export class CopyOnWriteMutator {
       if (needsClone && firstCloneIdx === -1) {
         firstCloneIdx = i;
       }
+      if (i > 0 && cur !== seg.container) {
+        const prevSeg = path[i - 1]!;
+        const prevCur = this.resolve(prevSeg.container);
+        if (readContainerProperty(prevCur, prevSeg.key) !== cur) {
+          needsRelink = true;
+          if (!canWriteProperty(prevCur, prevSeg.key) && (firstCloneIdx === -1 || firstCloneIdx > i - 1)) {
+            firstCloneIdx = i - 1;
+          }
+        }
+      }
       if (this.protectedChildrenOf.has(cur)) {
         subtreeProtected = true;
       }
     }
 
-    if (firstCloneIdx === -1) {
+    if (firstCloneIdx === -1 && !needsRelink) {
       const leafSeg = path[path.length - 1]!;
-      const leaf = this.resolve(leafSeg.container);
-      if (Array.isArray(leaf)) leaf[leafSeg.key as number] = value;
-      else writePropertySafe(leaf as Record<string, unknown>, String(leafSeg.key), value);
+      writeContainerProperty(this.resolve(leafSeg.container), leafSeg.key, value);
       return;
     }
 
-    // Ensure the parent receiving the first clone can accept a property write.
-    while (firstCloneIdx > 0) {
-      const parentSeg = path[firstCloneIdx - 1]!;
-      const parentCur = this.resolve(parentSeg.container);
-      if (canWriteProperty(parentCur, parentSeg.key)) break;
-      firstCloneIdx -= 1;
+    if (firstCloneIdx !== -1) {
+      // Ensure the parent receiving the first clone can accept a property write.
+      while (firstCloneIdx > 0) {
+        const parentSeg = path[firstCloneIdx - 1]!;
+        const parentCur = this.resolve(parentSeg.container);
+        if (canWriteProperty(parentCur, parentSeg.key)) break;
+        firstCloneIdx -= 1;
+      }
     }
 
     let propagateProtected = this.rootProtected;
@@ -198,11 +224,12 @@ export class CopyOnWriteMutator {
       if (!isOurClone && (Object.isFrozen(cur) || !Object.isExtensible(cur))) {
         propagateProtected = true;
       }
-      if (i >= firstCloneIdx && !isOurClone) {
+      if (firstCloneIdx !== -1 && i >= firstCloneIdx && !isOurClone) {
         const mutable = shallowCloneMutableContainer(cur);
         this.clones.set(seg.container, mutable);
         this.clones.set(cur, mutable);
         this.createdClones.add(mutable);
+        this.cloneCount += 1;
         if (propagateProtected) {
           this.protectedChildrenOf.add(mutable);
         }
@@ -211,17 +238,23 @@ export class CopyOnWriteMutator {
         } else {
           const prevSeg = path[i - 1]!;
           const prevMutable = this.resolve(prevSeg.container);
-          if (Array.isArray(prevMutable)) prevMutable[prevSeg.key as number] = mutable;
-          else writePropertySafe(prevMutable as Record<string, unknown>, String(prevSeg.key), mutable);
+          writeContainerProperty(prevMutable, prevSeg.key, mutable);
         }
-      } else if (this.protectedChildrenOf.has(cur)) {
-        propagateProtected = true;
+      } else {
+        if (i > 0) {
+          const prevSeg = path[i - 1]!;
+          const prevMutable = this.resolve(prevSeg.container);
+          if (cur !== seg.container && readContainerProperty(prevMutable, prevSeg.key) !== cur) {
+            writeContainerProperty(prevMutable, prevSeg.key, cur);
+          }
+        }
+        if (this.protectedChildrenOf.has(cur)) {
+          propagateProtected = true;
+        }
       }
     }
 
     const leafSeg = path[path.length - 1]!;
-    const leafMutable = this.resolve(leafSeg.container);
-    if (Array.isArray(leafMutable)) leafMutable[leafSeg.key as number] = value;
-    else writePropertySafe(leafMutable as Record<string, unknown>, String(leafSeg.key), value);
+    writeContainerProperty(this.resolve(leafSeg.container), leafSeg.key, value);
   }
 }

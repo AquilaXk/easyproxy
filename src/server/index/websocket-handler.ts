@@ -319,9 +319,10 @@ export function createWebsocketHandler(
                 commitOutboundPayloadHygiene(hygiene, config);
                 throw new NativeSteeringError("outbound_secret_guard", OUTBOUND_SECRET_BLOCKED_MESSAGE);
               }
-              ws.data.nativeControl.inject(cleanFrame);
+              const sanitizedFrame = hygiene.body as typeof cleanFrame;
+              ws.data.nativeControl.inject(sanitizedFrame);
               commitOutboundPayloadHygiene(hygiene, config);
-              ws.data.responsesActivity?.acceptResults(cleanFrame.input);
+              ws.data.responsesActivity?.acceptResults(sanitizedFrame.input);
               return;
             }
             if (frame.type === "response.steer") {
@@ -332,7 +333,7 @@ export function createWebsocketHandler(
                 commitOutboundPayloadHygiene(hygiene, config);
                 throw new NativeSteeringError("outbound_secret_guard", OUTBOUND_SECRET_BLOCKED_MESSAGE);
               }
-              ws.data.nativeControl.steer(cleanFrame);
+              ws.data.nativeControl.steer(hygiene.body as typeof cleanFrame);
               commitOutboundPayloadHygiene(hygiene, config);
               return;
             }
@@ -343,7 +344,7 @@ export function createWebsocketHandler(
                 commitOutboundPayloadHygiene(activeHygiene, config);
                 throw new NativeSteeringError("outbound_secret_guard", OUTBOUND_SECRET_BLOCKED_MESSAGE);
               }
-              let activeFrame = cleanFrame;
+              let activeFrame = activeHygiene.body as typeof cleanFrame;
               let continued = false;
               try {
                 continued = ws.data.nativeControl?.continue(activeFrame) === true;
@@ -362,9 +363,10 @@ export function createWebsocketHandler(
                     ...config,
                     toolOutputCompression: { ...config.toolOutputCompression, deduplicateIdentical: false },
                   });
-                  if (!dedupFreeHygiene.secretGuard.blocked && ws.data.nativeControl?.continue(dedupFreeFrame) === true) {
+                  const sanitizedDedupFree = dedupFreeHygiene.body as typeof dedupFreeFrame;
+                  if (!dedupFreeHygiene.secretGuard.blocked && ws.data.nativeControl?.continue(sanitizedDedupFree) === true) {
                     activeHygiene = dedupFreeHygiene;
-                    activeFrame = dedupFreeFrame;
+                    activeFrame = sanitizedDedupFree;
                     continued = true;
                   } else {
                     throw error;
@@ -399,8 +401,9 @@ export function createWebsocketHandler(
           let controlInitial = frame;
           if (mode) {
             const sanitizedInitial = structuredClone(frame);
-            if (!evaluateOutboundPayloadHygiene(sanitizedInitial, config).secretGuard.blocked) {
-              controlInitial = sanitizedInitial;
+            const initialHygiene = evaluateOutboundPayloadHygiene(sanitizedInitial, config);
+            if (!initialHygiene.secretGuard.blocked) {
+              controlInitial = initialHygiene.body as typeof frame;
             }
           }
           nativeControl = mode === "injection" ? new NativeInjectionChannel(controlInitial, idleMs, config.maxUpstreamBodyBytes)

@@ -1,7 +1,7 @@
 import {
   canWriteProperty,
-  cloneMutableJsonGraph,
   CopyOnWriteMutator,
+  writePropertySafe,
   type CopyOnWriteSegment,
 } from "./mutable-json-copy";
 
@@ -232,6 +232,34 @@ function buildCopyOnWritePath(leaf: GuardFrame, leafKey: string | number): CopyO
   return path;
 }
 
+interface AliasedBackEdge {
+  parent: GuardFrame;
+  key: string | number;
+  target: object;
+}
+
+function reconcileAliasedBackEdges(
+  mutator: CopyOnWriteMutator,
+  backEdges: readonly AliasedBackEdge[],
+): void {
+  if (!mutator.hasClones || backEdges.length === 0) return;
+  let changed = true;
+  let passes = 0;
+  while (changed && passes <= backEdges.length) {
+    changed = false;
+    passes += 1;
+    for (const edge of backEdges) {
+      const resolvedTarget = mutator.resolve(edge.target);
+      if (resolvedTarget === edge.target) continue;
+      const before = mutator.resolve(edge.parent.container as object);
+      mutator.write(buildCopyOnWritePath(edge.parent, edge.key), resolvedTarget);
+      if (mutator.resolve(edge.parent.container as object) !== before) {
+        changed = true;
+      }
+    }
+  }
+}
+
 /**
  * Inspects an outbound JSON request body for leaked secrets using a bounded,
  * non-recursive traversal. Fails closed in `"block"` mode when traversal bounds
@@ -250,30 +278,12 @@ export function inspectAndApplyOutboundSecretGuard(
 
   const redact = mode === "redact";
   const originalBody: unknown = body;
-  let workingBody: unknown = body;
-  let rootWasCloned = false;
-  if (redact && typeof body === "object" && (Object.isFrozen(body) || !Object.isExtensible(body))) {
-    const cloned = cloneMutableJsonGraph(body, MAX_SECRET_SCAN_NODES + 1, MAX_SECRET_SCAN_DEPTH);
-    if (cloned.limitExceeded) {
-      return {
-        mode,
-        blocked: false,
-        limitExceeded: true,
-        matches: 0,
-        redactions: 0,
-        findings: [],
-        body: originalBody,
-      };
-    }
-    workingBody = cloned.value;
-    rootWasCloned = true;
-  }
-
-  const mutator = redact ? new CopyOnWriteMutator(workingBody) : undefined;
+  const mutator = redact ? new CopyOnWriteMutator(body) : undefined;
   const findings = new Set<string>();
   const visited = new WeakSet<object>();
+  const backEdges: AliasedBackEdge[] = [];
   const stack: GuardFrame[] = [{
-    container: workingBody,
+    container: body,
     depth: 0,
     parent: null,
     parentKey: undefined,
@@ -283,6 +293,22 @@ export function inspectAndApplyOutboundSecretGuard(
   let scannedBytes = 0;
   let matches = 0;
   let redactions = 0;
+
+  const finalizeRedactedBody = (includeRemainingStack: boolean): unknown => {
+    if (!redact || redactions === 0) return originalBody;
+    if (includeRemainingStack && mutator!.hasClones) {
+      for (const pending of stack) {
+        if (
+          typeof pending.container === "object" && pending.container !== null
+          && pending.parent !== null && pending.parentKey !== undefined
+        ) {
+          backEdges.push({ parent: pending.parent, key: pending.parentKey, target: pending.container });
+        }
+      }
+    }
+    reconcileAliasedBackEdges(mutator!, backEdges);
+    return mutator!.root;
+  };
 
   while (stack.length > 0) {
     const frame = stack.pop()!;
@@ -296,12 +322,17 @@ export function inspectAndApplyOutboundSecretGuard(
         matches,
         redactions,
         findings: [...findings],
-        body: redact && redactions > 0 ? mutator!.root : originalBody,
+        body: finalizeRedactedBody(true),
       };
     }
 
     if (typeof container !== "object" || container === null) continue;
-    if (visited.has(container)) continue;
+    if (visited.has(container)) {
+      if (redact && frame.parent !== null && frame.parentKey !== undefined) {
+        backEdges.push({ parent: frame.parent, key: frame.parentKey, target: container });
+      }
+      continue;
+    }
     visited.add(container);
 
     const frameProtected = redact
@@ -319,7 +350,7 @@ export function inspectAndApplyOutboundSecretGuard(
             matches,
             redactions,
             findings: [...findings],
-            body: redact && redactions > 0 ? mutator!.root : originalBody,
+            body: finalizeRedactedBody(true),
           };
         }
         const value = container[i];
@@ -333,7 +364,7 @@ export function inspectAndApplyOutboundSecretGuard(
               matches,
               redactions,
               findings: [...findings],
-              body: redact && redactions > 0 ? mutator!.root : originalBody,
+              body: finalizeRedactedBody(true),
             };
           }
           const pre = measureAndCheckSecretCandidate(value);
@@ -347,7 +378,7 @@ export function inspectAndApplyOutboundSecretGuard(
               matches,
               redactions,
               findings: [...findings],
-              body: redact && redactions > 0 ? mutator!.root : originalBody,
+              body: finalizeRedactedBody(true),
             };
           }
           if (pre.ruleMask === 0) continue;
@@ -397,7 +428,7 @@ export function inspectAndApplyOutboundSecretGuard(
           matches,
           redactions,
           findings: [...findings],
-          body: redact && redactions > 0 ? mutator!.root : originalBody,
+          body: finalizeRedactedBody(true),
         };
       }
       const value = record[key];
@@ -411,7 +442,7 @@ export function inspectAndApplyOutboundSecretGuard(
             matches,
             redactions,
             findings: [...findings],
-            body: redact && redactions > 0 ? mutator!.root : originalBody,
+            body: finalizeRedactedBody(true),
           };
         }
         const pre = measureAndCheckSecretCandidate(value);
@@ -425,7 +456,7 @@ export function inspectAndApplyOutboundSecretGuard(
             matches,
             redactions,
             findings: [...findings],
-            body: redact && redactions > 0 ? mutator!.root : originalBody,
+            body: finalizeRedactedBody(true),
           };
         }
         if (pre.ruleMask === 0) continue;
@@ -434,7 +465,7 @@ export function inspectAndApplyOutboundSecretGuard(
         redactions += result.redactions;
         if (redact && result.next !== value) {
           if (!frameProtected && canWriteProperty(record, key)) {
-            record[key] = result.next;
+            writePropertySafe(record, key, result.next);
           } else {
             mutator!.write(buildCopyOnWritePath(frame, key), result.next);
           }
@@ -462,7 +493,6 @@ export function inspectAndApplyOutboundSecretGuard(
     }
   }
 
-  const finalBody = redact && (redactions > 0 || !rootWasCloned) ? mutator!.root : originalBody;
   return {
     mode,
     blocked: mode === "block" && matches > 0,
@@ -470,6 +500,6 @@ export function inspectAndApplyOutboundSecretGuard(
     matches,
     redactions,
     findings: [...findings],
-    body: finalBody,
+    body: finalizeRedactedBody(false),
   };
 }

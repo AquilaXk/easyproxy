@@ -90,10 +90,11 @@ async function transcribeAdmitted(
   if (operation.signal.aborted) return formatErrorResponse(499, "client_closed_request", "Audio request canceled");
   if (typeof input.prompt === "string" && input.prompt.length > 0) {
     const hygieneBody = { prompt: input.prompt };
-    if (applyOutboundPayloadHygiene(hygieneBody, config, log).blocked) {
+    const hygiene = applyOutboundPayloadHygiene(hygieneBody, config, log);
+    if (hygiene.blocked) {
       return formatErrorResponse(400, "invalid_request_error", OUTBOUND_SECRET_BLOCKED_MESSAGE);
     }
-    input.prompt = hygieneBody.prompt;
+    input.prompt = (hygiene.body as typeof hygieneBody).prompt;
   }
   const relay = await resolveAudioUpstream(req.headers, config, log, { admission, model: input.model, lease: operation.lease, signal: operation.signal });
   if (relay instanceof Response) return relay;

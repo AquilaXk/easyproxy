@@ -163,9 +163,11 @@ async function dryRunGuardrails(ctx: ManagementContext): Promise<Response> {
       }
     : { input: [{ type: "function_call_output", call_id: "call_dryrun_1", output: body.text }] };
   const secretGuard = inspectAndApplyOutboundSecretGuard(samplePayload, previewGuard);
+  const guardedSample = (secretGuard.body ?? samplePayload) as typeof samplePayload;
   const compression = secretGuard.blocked
-    ? { compressedItems: 0, savedChars: 0, compactedJsonItems: 0, foldedLogItems: 0, deduplicatedItems: 0, estimatedSavedTokens: 0 }
-    : compressResponsesToolOutputsInPlace(samplePayload, previewCompression);
+    ? { compressedItems: 0, savedChars: 0, compactedJsonItems: 0, foldedLogItems: 0, deduplicatedItems: 0, estimatedSavedTokens: 0, body: guardedSample }
+    : compressResponsesToolOutputsInPlace(guardedSample, previewCompression);
+  const compressedSample = (compression.body ?? guardedSample) as typeof samplePayload;
 
   let injectedCacheBreakpoints = 0;
   let normalizedTimestamps = 0;
@@ -185,12 +187,15 @@ async function dryRunGuardrails(ctx: ManagementContext): Promise<Response> {
           if (inspectedGuard.redactions > payloadGuard.redactions || inspectedGuard.matches > payloadGuard.matches) {
             payloadGuard = inspectedGuard;
           }
-          compressResponsesToolOutputsInPlace(clonedPayload, previewCompression);
-          const cacheRes = injectPromptCacheBreakpointsInPlace(clonedPayload, previewCacheInjection);
+          const guardedCtxPayload = inspectedGuard.body ?? clonedPayload;
+          const compCtx = compressResponsesToolOutputsInPlace(guardedCtxPayload, previewCompression);
+          const compressedCtxPayload = compCtx.body ?? guardedCtxPayload;
+          const cacheRes = injectPromptCacheBreakpointsInPlace(compressedCtxPayload, previewCacheInjection);
+          const finalCtxPayload = cacheRes.body ?? compressedCtxPayload;
           injectedCacheBreakpoints = cacheRes.injectedBreakpoints;
           normalizedTimestamps = cacheRes.normalizedTimestamps;
           const dryRunRates = resolveDryRunBreakevenRates(preInspect.model);
-          const postInspect = inspectPromptContextJson(JSON.stringify(clonedPayload), dryRunRates ? { rates: dryRunRates } : undefined);
+          const postInspect = inspectPromptContextJson(JSON.stringify(finalCtxPayload), dryRunRates ? { rates: dryRunRates } : undefined);
           if (postInspect.ok) contextInspection = postInspect;
         }
       } catch {
@@ -203,11 +208,11 @@ async function dryRunGuardrails(ctx: ManagementContext): Promise<Response> {
   const previewText = payloadGuard.blocked
     ? ""
     : duplicatePass
-      ? samplePayload.input[1]!.output
-      : samplePayload.input[0]!.output;
+      ? compressedSample.input[1]!.output
+      : compressedSample.input[0]!.output;
   const outputChars = payloadGuard.blocked
     ? 0
-    : samplePayload.input.reduce((sum, item) => sum + item.output.length, 0);
+    : compressedSample.input.reduce((sum, item) => sum + item.output.length, 0);
 
   const estSavedTokens = compression.estimatedSavedTokens ?? Math.floor(compression.savedChars / 4);
   const response = jsonResponse({

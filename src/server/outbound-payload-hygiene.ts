@@ -156,15 +156,15 @@ export function applyOutboundPayloadHygiene(
 }
 
 /**
- * Sanitizes compaction payloads in place by redacting hosted image paths first and
- * then running the shared outbound secret guard and tool-output compression pass.
- * Returns true when the caller must refuse the request with 400.
+ * Sanitizes compaction payloads by redacting hosted image paths first and then
+ * running the shared outbound secret guard and tool-output compression pass.
+ * Callers must refuse the request with 400 when `blocked` is true and forward `body`.
  */
 export function prepareCompactionBodyHygiene(
   body: unknown,
   config: Pick<EpxConfig, "outboundSecretGuard" | "toolOutputCompression" | "promptCacheInjection">,
   logCtx?: RequestLogContext,
-): boolean {
+): OutboundPayloadHygieneOutcome {
   const redacted = redactHostedImageDisplayPaths(body);
-  return applyOutboundPayloadHygiene(redacted, config, logCtx).blocked;
+  return applyOutboundPayloadHygiene(redacted, config, logCtx);
 }

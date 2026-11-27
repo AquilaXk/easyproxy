@@ -170,7 +170,7 @@ export async function recoverApiKeyPool401(
   return { kind: "fallthrough", response: upstreamResponse };
 }
 
-/** Rotate Anthropic API-key pools across billing 400/402 refusals. */
+/** Rotate API-key pools across billing, credit, and budget 400/402/403/422 refusals. */
 export async function recoverAnthropicBillingKeyPool(
   ctx: KeyPoolRecoveryContext,
   initialResponse: Response,
