@@ -970,3 +970,71 @@ test("startConfirm refuses locally expired coupon and triggers refresh instead o
     nowSpy.mockRestore();
   }
 });
+
+test("late settled redeem after apiBase switch never fires stale GET or wipes new server entries", async () => {
+  const { createRoot } = await import("react-dom/client");
+  const baseFetch = globalThis.fetch;
+  const readUrls: string[] = [];
+  let finishRedeem!: (response: Response) => void;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.includes("/api/grok/reset-coupons") && !url.includes("/consume")) {
+      readUrls.push(url);
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+
+  try {
+    const serverACoupon = COUPON("restok_a_old", 4);
+    const serverBCoupon = COUPON("restok_b_new", 9);
+    harness.coupons.set("acct-1", [serverACoupon]);
+    harness.consumeReply = () => new Promise(resolve => { finishRedeem = resolve; });
+
+    let latest!: GrokResetCouponController;
+    function Harness({ apiBase }: { apiBase: string }) {
+      const controller = useGrokResetCoupons({
+        apiBase,
+        accountIds: ["acct-1"],
+        enabled: true,
+      });
+      useLayoutEffect(() => { latest = controller; }, [controller]);
+      return null;
+    }
+
+    const host = testWindow.document.createElement("div");
+    const root = createRoot(host as unknown as HTMLElement);
+    mountedRoots.push(root);
+
+    await act(async () => {
+      root.render(<Harness apiBase="http://server-a.local" />);
+      await flush();
+    });
+    expect(latest.entries["acct-1"]).toEqual({ status: "ready", coupons: [serverACoupon] });
+
+    const req = attempt("restok_a_old");
+    let pendingRedeem!: ReturnType<GrokResetCouponController["redeem"]>;
+    await act(async () => {
+      pendingRedeem = latest.redeem("acct-1", req);
+      await flush();
+    });
+
+    const readsBeforeSwitch = readUrls.filter(u => u.startsWith("http://server-a.local")).length;
+    harness.coupons.set("acct-1", [serverBCoupon]);
+    await act(async () => {
+      root.render(<Harness apiBase="http://server-b.local" />);
+      await flush();
+    });
+    expect(latest.entries["acct-1"]).toEqual({ status: "ready", coupons: [serverBCoupon] });
+
+    await act(async () => {
+      finishRedeem(json({ code: "redeemed" }));
+      await pendingRedeem;
+      await flush();
+    });
+
+    expect(readUrls.filter(u => u.startsWith("http://server-a.local"))).toHaveLength(readsBeforeSwitch);
+    expect(latest.entries["acct-1"]).toEqual({ status: "ready", coupons: [serverBCoupon] });
+  } finally {
+    globalThis.fetch = baseFetch;
+  }
+});

@@ -204,6 +204,9 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
     while (staleGate.waiting.length > 0) {
       staleGate.waiting.shift()?.();
     }
+    return () => {
+      epoch.current += 1;
+    };
   }, [namespace]);
 
   // No synchronous setState here: the effect below calls this directly, and a
@@ -290,7 +293,8 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
     accountId: string,
     request: { tokenId: string; operationId: string },
   ): Promise<GrokRedeemOutcome> => {
-    const key = `${apiBase}\u0000${accountId}`;
+    const redeemEpoch = epoch.current;
+    const key = `${namespace}\u0000${accountId}`;
     const hold = (attempt: GrokCouponAttempt, code = "attempt_unresolved"): GrokRedeemOutcome => (
       { ok: false, code, replayed: false, operationId: attempt.operationId, uncertain: true }
     );
@@ -302,7 +306,7 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
     const clearMatchingHold = () => clearHold(key, request.operationId);
     const bounded = createBoundedFetch(REDEEM_TIMEOUT_MS);
     try {
-      const response = await fetch(`${apiBase}/api/grok/reset-coupons/consume`, {
+      const response = await fetch(`${namespace}/api/grok/reset-coupons/consume`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId, tokenId: request.tokenId, operationId: request.operationId }),
@@ -321,7 +325,7 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
       // Fail closed: an unrecognized or unresolved settled code cannot release the operation.
       if (code === null || !DEFINITIVE_SETTLED_CODES.has(code)) return hold(request, code ?? "attempt_unresolved");
       clearMatchingHold();
-      await read(accountId, epoch.current);
+      if (redeemEpoch === epoch.current) await read(accountId, redeemEpoch);
       return { ok: code === "redeemed", code, replayed };
     } catch {
       // Any transport rejection after dispatch has an unknown outcome: the route
@@ -330,7 +334,7 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
     } finally {
       bounded.clear();
     }
-  }, [apiBase, read]);
+  }, [namespace, read]);
 
   return { entries, uncertain, refresh, redeem };
 }
