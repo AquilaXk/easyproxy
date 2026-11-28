@@ -33,7 +33,10 @@ const APPLE_KEYS = [
   "APPLE_PASSWORD",
   "APPLE_TEAM_ID",
 ] as const;
-const FULL_APPLE = Object.fromEntries(APPLE_KEYS.map(key => [key, key === "APPLE_TEAM_ID" ? "ABCD123456" : `value-of-${key}`]));
+// The import step pipes APPLE_CERTIFICATE through `base64 --decode`; GNU base64 (Linux CI) rejects non-base64 input where macOS accepts it.
+const FAKE_P12_BASE64 = Buffer.from("not-a-real-p12").toString("base64");
+const FULL_APPLE = Object.fromEntries(APPLE_KEYS.map(key => [key,
+  key === "APPLE_TEAM_ID" ? "ABCD123456" : key === "APPLE_CERTIFICATE" ? FAKE_P12_BASE64 : `value-of-${key}`]));
 
 const tempRoots: string[] = [];
 afterEach(() => {
