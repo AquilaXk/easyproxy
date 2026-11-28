@@ -372,56 +372,74 @@ describe("windows signing plan and script fail-closed contracts", () => {
     };
   }
 
-  test("fails closed on non-dry-run when SignPath config is missing, malformed, or test-only", () => {
-    const missingToken = runSigningPlan({ DRY_RUN: "false", SIGNPATH_CONFIGURED: "false" });
-    expect(missingToken.status).not.toBe(0);
-    expect(missingToken.stdout).toContain("::error::");
+  const validVars = {
+    SIGNPATH_CONFIGURED: "true",
+    SIGNPATH_ORGANIZATION_ID: "12345678-1234-1234-1234-1234567890ab",
+    SIGNPATH_PROJECT_SLUG: "easyproxy",
+  };
 
-    const unsetDryRun = runSigningPlan({ SIGNPATH_CONFIGURED: "false" });
-    expect(unsetDryRun.status).not.toBe(0);
+  test("a missing token ships unsigned for real releases and dry runs, with a notice", () => {
+    for (const env of [
+      { DRY_RUN: "false", SIGNPATH_CONFIGURED: "false" },
+      { DRY_RUN: "true", SIGNPATH_CONFIGURED: "false" },
+      { SIGNPATH_CONFIGURED: "false" },
+      { DRY_RUN: "false" },
+    ]) {
+      const plan = runSigningPlan(env);
+      expect(plan.status).toBe(0);
+      expect(plan.output).toBe("mode=skip\npolicy=\ntrust=\n");
+    }
+    const real = runSigningPlan({ DRY_RUN: "false", SIGNPATH_CONFIGURED: "false" });
+    expect(real.stdout).toContain("::notice::");
+    expect(real.stdout).toContain("unsigned");
+    expect(real.stdout).not.toContain("::error::");
+  });
 
+  test("fails closed on a real release when a token comes with missing or malformed variables", () => {
     const missingVars = runSigningPlan({
       DRY_RUN: "false",
       SIGNPATH_CONFIGURED: "true",
       SIGNPATH_ORGANIZATION_ID: "org-1",
     });
     expect(missingVars.status).not.toBe(0);
+    expect(missingVars.stdout).toContain("::error::");
     expect(missingVars.stdout).toContain("SIGNPATH_PROJECT_SLUG");
+    expect(missingVars.stdout).toContain("SIGNPATH_SIGNING_POLICY_SLUG");
+    expect(missingVars.stdout).not.toContain("SIGNPATH_ORGANIZATION_ID");
+
+    const unsetDryRun = runSigningPlan({ ...validVars, SIGNPATH_SIGNING_POLICY: "" });
+    expect(unsetDryRun.status).not.toBe(0);
 
     const badOrg = runSigningPlan({
       DRY_RUN: "false",
-      SIGNPATH_CONFIGURED: "true",
+      ...validVars,
       SIGNPATH_ORGANIZATION_ID: "org bad!",
-      SIGNPATH_PROJECT_SLUG: "easyproxy",
       SIGNPATH_SIGNING_POLICY: "release-signing",
     });
     expect(badOrg.status).not.toBe(0);
 
-    const nonReleasePolicy = runSigningPlan({
-      DRY_RUN: "false",
-      SIGNPATH_CONFIGURED: "true",
-      SIGNPATH_ORGANIZATION_ID: "12345678-1234-1234-1234-1234567890ab",
-      SIGNPATH_PROJECT_SLUG: "easyproxy",
-      SIGNPATH_SIGNING_POLICY: "test-signing",
-    });
-    expect(nonReleasePolicy.status).not.toBe(0);
-    expect(nonReleasePolicy.stdout).toContain("release-signing");
-
-    const validRelease = runSigningPlan({
-      DRY_RUN: "false",
-      SIGNPATH_CONFIGURED: "true",
-      SIGNPATH_ORGANIZATION_ID: "12345678-1234-1234-1234-1234567890ab",
-      SIGNPATH_PROJECT_SLUG: "easyproxy",
-      SIGNPATH_SIGNING_POLICY: "release-signing",
-    });
-    expect(validRelease.status).toBe(0);
-    expect(validRelease.output).toBe("mode=sign\npolicy=release-signing\ntrust=release\n");
+    const badPolicy = runSigningPlan({ DRY_RUN: "false", ...validVars, SIGNPATH_SIGNING_POLICY: "Release Signing" });
+    expect(badPolicy.status).not.toBe(0);
+    expect(badPolicy.stdout).toContain("lowercase slug");
   });
 
-  test("allows skip or test trust only when DRY_RUN is explicitly true", () => {
-    const drySkip = runSigningPlan({ DRY_RUN: "true", SIGNPATH_CONFIGURED: "false" });
-    expect(drySkip.status).toBe(0);
-    expect(drySkip.output).toBe("mode=skip\npolicy=\ntrust=\n");
+  test("signs a real release with release-signing and ships a test-signing policy unsigned", () => {
+    const validRelease = runSigningPlan({ DRY_RUN: "false", ...validVars, SIGNPATH_SIGNING_POLICY: "release-signing" });
+    expect(validRelease.status).toBe(0);
+    expect(validRelease.output).toBe("mode=sign\npolicy=release-signing\ntrust=release\n");
+
+    const testPolicy = runSigningPlan({ DRY_RUN: "false", ...validVars, SIGNPATH_SIGNING_POLICY: "test-signing" });
+    expect(testPolicy.status).toBe(0);
+    expect(testPolicy.output).toBe("mode=skip\npolicy=\ntrust=\n");
+    expect(testPolicy.stdout).toContain("::notice::");
+    expect(testPolicy.stdout).toContain("test-signing");
+  });
+
+  test("dry runs skip a misconfigured SignPath setup with a warning and sign with test trust otherwise", () => {
+    const dryMissing = runSigningPlan({ DRY_RUN: "true", SIGNPATH_CONFIGURED: "true", SIGNPATH_ORGANIZATION_ID: "org-1" });
+    expect(dryMissing.status).toBe(0);
+    expect(dryMissing.stdout).toContain("::warning::");
+    expect(dryMissing.output).toBe("mode=skip\npolicy=\ntrust=\n");
 
     const dryTest = runSigningPlan({
       DRY_RUN: "true",

@@ -1,1 +1,3 @@
-{}
+{
+  "release-unsigned-gate.test.ts": "ci-workflows"
+}

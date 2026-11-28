@@ -118,12 +118,70 @@ describe("fail-fast release credential validation", () => {
     SIGNPATH_SIGNING_POLICY_SLUG: "release-signing",
   };
 
+  const APPLE_KEYS = [
+    "APPLE_CERTIFICATE",
+    "APPLE_CERTIFICATE_PASSWORD",
+    "APPLE_SIGNING_IDENTITY",
+    "APPLE_ID",
+    "APPLE_PASSWORD",
+    "APPLE_TEAM_ID",
+  ] as const;
+  const withoutApple = { ...validEnv, ...Object.fromEntries(APPLE_KEYS.map(key => [key, ""])) };
+  const withoutSignPath = {
+    ...validEnv,
+    SIGNPATH_API_TOKEN: "",
+    SIGNPATH_ORGANIZATION_ID: "",
+    SIGNPATH_PROJECT_SLUG: "",
+    SIGNPATH_SIGNING_POLICY_SLUG: "",
+  };
+
   test("accepts full release credential set and skips dry runs", () => {
     expect(() => validateReleaseCredentials({ DRY_RUN: "true" })).not.toThrow();
+    expect(() => validateReleaseCredentials({ DRY_RUN: "true", ...withoutApple })).not.toThrow();
+    expect(() => validateReleaseCredentials({ ...validEnv, APPLE_ID: "", DRY_RUN: "true" })).not.toThrow();
     expect(() => validateReleaseCredentials(validEnv)).not.toThrow();
   });
 
-  test("rejects missing keys, malformed team ID, dots in SignPath IDs, or non-release SignPath policy", () => {
+  test("a real release with no Apple secrets passes; a full set passes; a partial set fails naming only the missing keys", () => {
+    expect(collectReleaseCredentialErrors(withoutApple)).toEqual([]);
+    expect(collectReleaseCredentialErrors(validEnv)).toEqual([]);
+
+    const partial = { ...validEnv, APPLE_CERTIFICATE: "", APPLE_PASSWORD: "  " };
+    const errors = collectReleaseCredentialErrors(partial);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("partially configured");
+    expect(errors[0]).toContain("Missing: APPLE_CERTIFICATE, APPLE_PASSWORD.");
+    for (const key of APPLE_KEYS) {
+      if (key !== "APPLE_CERTIFICATE" && key !== "APPLE_PASSWORD") expect(errors[0]).not.toContain(key);
+    }
+    // Secret values never reach the message.
+    expect(errors[0]).not.toContain("release@example.test");
+    expect(errors[0]).not.toContain("base64cert");
+    expect(() => validateReleaseCredentials(partial)).toThrow("1 issue");
+
+    for (const key of APPLE_KEYS) {
+      expect(collectReleaseCredentialErrors({ ...validEnv, [key]: "" })).toHaveLength(1);
+    }
+    expect(collectReleaseCredentialErrors({ ...withoutApple, APPLE_TEAM_ID: "ABCD123456" })).toHaveLength(1);
+  });
+
+  test("a real release with no SignPath token passes; a token needs its variables and a slug policy", () => {
+    expect(collectReleaseCredentialErrors(withoutSignPath)).toEqual([]);
+    expect(collectReleaseCredentialErrors({ ...withoutSignPath, SIGNPATH_PROJECT_SLUG: "easyproxy" })).toEqual([]);
+
+    const tokenOnly = collectReleaseCredentialErrors({ ...withoutSignPath, SIGNPATH_API_TOKEN: "sp-token" });
+    expect(tokenOnly).toHaveLength(3);
+    expect(tokenOnly.join("\n")).toContain("SIGNPATH_ORGANIZATION_ID");
+    expect(tokenOnly.join("\n")).toContain("SIGNPATH_PROJECT_SLUG");
+    expect(tokenOnly.join("\n")).toContain("SIGNPATH_SIGNING_POLICY_SLUG");
+    expect(tokenOnly.join("\n")).not.toContain("sp-token");
+    expect(() => validateReleaseCredentials({ ...validEnv, SIGNPATH_PROJECT_SLUG: "" })).toThrow("1 issue");
+  });
+
+  test("keeps the updater key mandatory and rejects malformed values", () => {
+    expect(collectReleaseCredentialErrors({ ...withoutApple, ...withoutSignPath, TAURI_SIGNING_PRIVATE_KEY: "" })).toEqual([
+      "Missing TAURI_SIGNING_PRIVATE_KEY required for signed updater artifacts.",
+    ]);
     expect(() => validateReleaseCredentials({ ...validEnv, TAURI_SIGNING_PRIVATE_KEY: "" })).toThrow("1 issue");
     expect(() => validateReleaseCredentials({ ...validEnv, APPLE_TEAM_ID: "bad-id" })).toThrow("1 issue");
     expect(collectReleaseCredentialErrors({ ...validEnv, SIGNPATH_ORGANIZATION_ID: "org.name" })).toEqual([
@@ -134,7 +192,13 @@ describe("fail-fast release credential validation", () => {
     ]);
     expect(() => validateReleaseCredentials({ ...validEnv, SIGNPATH_ORGANIZATION_ID: "org.name" })).toThrow("1 issue");
     expect(() => validateReleaseCredentials({ ...validEnv, SIGNPATH_PROJECT_SLUG: "proj.slug" })).toThrow("1 issue");
-    expect(() => validateReleaseCredentials({ ...validEnv, SIGNPATH_SIGNING_POLICY_SLUG: "test-signing" })).toThrow("1 issue");
+    expect(collectReleaseCredentialErrors({ ...validEnv, SIGNPATH_SIGNING_POLICY_SLUG: "Test Signing!" })).toEqual([
+      "SIGNPATH_SIGNING_POLICY_SLUG is not a lowercase slug.",
+    ]);
+  });
+
+  test("a well-formed test-signing policy passes the upfront check because the plan ships unsigned", () => {
+    expect(collectReleaseCredentialErrors({ ...validEnv, SIGNPATH_SIGNING_POLICY_SLUG: "test-signing" })).toEqual([]);
   });
 });
 

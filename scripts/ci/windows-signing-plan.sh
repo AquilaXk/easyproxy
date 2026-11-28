@@ -11,14 +11,16 @@
 #
 # Outputs: mode=sign|skip, policy=<slug>, trust=release|test
 #
-# Signing is an improvement layered on a release, never a gate on it: this script always exits 0,
-# and every outcome other than "sign" ships the unsigned binaries exactly as before.
-#   - No token: skip. Forks and unconfigured copies never see the secret.
-#   - A token with a SignPath variable missing, or a policy that is not a plain slug: skip with a
-#     warning, so the misconfiguration is visible without costing the release.
+# Windows signing is optional until a SignPath account exists (QA 2026-11-28). Only a configuration
+# mistake blocks a real release; an unconfigured or test-only setup ships unsigned binaries:
+#   - No token: skip with a notice, for dry runs and real releases alike.
+#   - A token with a SignPath variable missing, or a value that is not a plain slug: a real release
+#     fails; a dry run skips with a warning.
 #   - release-signing: sign; the verifier then requires a trusted chain (trust=release).
-#   - Any other policy (test-signing): sign dry runs only (trust=test). A self-signed test
-#     certificate is never attached to a public release, so a real release skips with a notice.
+#   - Any other well-formed policy (test-signing): sign dry runs only (trust=test). A self-signed
+#     test certificate is never attached to a public release, so a real release skips with a notice
+#     and ships unsigned.
+# The release body states the outcome from the records scripts/ci/windows-signing-outcome.sh writes.
 set -euo pipefail
 
 output="${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
@@ -49,13 +51,9 @@ fail_or_skip() {
 }
 
 if [ "$configured" != "true" ]; then
-  if [ "$dry_run" = "true" ]; then
-    echo "SignPath is not configured for this dry run; Windows binaries stay unsigned."
-    emit skip "" ""
-    exit 0
-  fi
-  echo "::error::SIGNPATH_API_TOKEN is not configured; release builds refuse to ship unsigned Windows binaries."
-  exit 1
+  echo "::notice::SIGNPATH_API_TOKEN is not configured; Windows binaries ship unsigned."
+  emit skip "" ""
+  exit 0
 fi
 
 missing=""
@@ -98,5 +96,6 @@ if [ "$dry_run" = "true" ]; then
   exit 0
 fi
 
-echo "::error::SIGNPATH_SIGNING_POLICY_SLUG is '$policy', not release-signing. Release builds refuse to ship unsigned or test-signed Windows binaries."
-exit 1
+echo "::notice::SIGNPATH_SIGNING_POLICY_SLUG is '$policy', not release-signing. A test certificate is never attached to a release, so Windows binaries ship unsigned."
+emit skip "" ""
+exit 0

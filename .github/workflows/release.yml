@@ -309,18 +309,23 @@ jobs:
         run: |
           set -euo pipefail
           missing=""
+          present=0
           for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             eval "value=\${$name:-}"
-            [ -n "$value" ] || missing="$missing $name"
+            if [ -n "$value" ]; then present=$((present + 1)); else missing="$missing $name"; fi
           done
           if [ -n "$missing" ]; then
-            if [ "${DRY_RUN:-}" != "true" ]; then
-              echo "::error::A real release needs the full Apple signing and notarization credential set."
+            if [ "$present" -gt 0 ] && [ "${DRY_RUN:-}" != "true" ]; then
+              echo "::error::Apple signing secrets are partially configured; set all six or none."
               echo "::error::Missing:$missing"
               exit 1
             fi
             echo "STANDALONE_SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
-            echo "Signing credentials incomplete, leaving standalone binary unsigned/ad-hoc:$missing"
+            if [ "$present" -eq 0 ]; then
+              echo "::notice::Apple signing secrets are not configured; the standalone binary keeps its ad-hoc signature and is not notarized."
+            else
+              echo "Signing credentials incomplete, leaving standalone binary unsigned/ad-hoc:$missing"
+            fi
             exit 0
           fi
           keychain="$RUNNER_TEMP/easyproxy-signing.keychain-db"
@@ -345,16 +350,19 @@ jobs:
           TARGET: ${{ matrix.target }}
           MACOS_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
         run: |
           set -euo pipefail
-          if [ "${STANDALONE_SIGNING_CONFIGURED:-false}" != "true" ]; then
-            if [ "${DRY_RUN:-}" != "true" ]; then
-              echo "::error::Refusing unsigned macOS standalone release."
+          case "${STANDALONE_SIGNING_CONFIGURED:-}" in
+            true) ;;
+            false)
+              echo "Apple signing is not configured for this build; the standalone binary keeps its ad-hoc signature."
+              exit 0
+              ;;
+            *)
+              echo "::error::The macOS standalone signing state was not decided by the import step."
               exit 1
-            fi
-            exit 0
-          fi
+              ;;
+          esac
           bundle="dist/standalone/${TARGET}"
           verify_signed() {
             local file="$1"
@@ -689,19 +697,24 @@ jobs:
         run: |
           set -euo pipefail
           missing=""
+          present=0
           for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             eval "value=\${$name:-}"
-            [ -n "$value" ] || missing="$missing $name"
+            if [ -n "$value" ]; then present=$((present + 1)); else missing="$missing $name"; fi
           done
           if [ -n "$missing" ]; then
-            if [ "${DRY_RUN:-}" != "true" ]; then
-              echo "::error::A real release needs the full signing and notarization credential set."
+            if [ "$present" -gt 0 ] && [ "${DRY_RUN:-}" != "true" ]; then
+              echo "::error::Apple signing secrets are partially configured; set all six or none."
               echo "::error::Missing:$missing"
               exit 1
             fi
             echo "DESKTOP_SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
-            echo "Signing credentials are incomplete, so this build stays ad-hoc signed:$missing"
-            echo "It is usable for local validation and is not a release asset."
+            if [ "$present" -eq 0 ]; then
+              echo "::notice::Apple signing secrets are not configured; this build keeps its ad-hoc signature and is not notarized."
+            else
+              echo "Signing credentials are incomplete, so this build stays ad-hoc signed:$missing"
+              echo "It is usable for local validation and is not a release asset."
+            fi
             exit 0
           fi
           keychain="$RUNNER_TEMP/easyproxy-signing.keychain-db"
@@ -775,16 +788,15 @@ jobs:
         if: runner.os == 'macOS'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
         run: |
           set -euo pipefail
           appex=desktop/src-tauri/widget/EasyProxyWidget.appex
           if [ -z "${APPLE_TEAM_ID:-}" ]; then
-            if [ "${DRY_RUN:-}" != "true" ]; then
-              echo "::error::A real release cannot assert its own signature without APPLE_TEAM_ID."
+            if [ "${DESKTOP_SIGNING_CONFIGURED:-false}" = "true" ]; then
+              echo "::error::Signing is configured but APPLE_TEAM_ID is empty; cannot assert the extension signature."
               exit 1
             fi
-            echo "No team configured; skipping the signature assertion for this non-release build."
+            echo "No Apple team configured; skipping the extension signature assertion for this unsigned build."
             exit 0
           fi
           codesign --verify --strict --deep "$appex"
@@ -799,7 +811,6 @@ jobs:
         env:
           MACOS_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -809,11 +820,7 @@ jobs:
             exit 1
           fi
           if [ "${DESKTOP_SIGNING_CONFIGURED:-false}" != "true" ]; then
-            if [ "${DRY_RUN:-}" != "true" ]; then
-              echo "::error::A real release must sign the packaged keyring addons and native-bin helpers."
-              exit 1
-            fi
-            echo "No signing material; packaged addons and helpers stay as prepared for this non-release build."
+            echo "No signing material; packaged addons and helpers stay as prepared for this unsigned build."
             exit 0
           fi
           sign_and_verify() {
@@ -913,9 +920,9 @@ jobs:
             exit 1
           fi
           app="${apps[0]}"
-          if [ -n "${APPLE_TEAM_ID:-}" ] || [ "${DRY_RUN:-}" != "true" ]; then
+          if [ -n "${APPLE_TEAM_ID:-}" ] || [ "${DESKTOP_SIGNING_CONFIGURED:-false}" = "true" ]; then
             if [ -z "${APPLE_TEAM_ID:-}" ]; then
-              echo "::error::A real release cannot verify its bundle without APPLE_TEAM_ID."
+              echo "::error::Signing is configured but APPLE_TEAM_ID is empty; cannot verify the bundle signature."
               exit 1
             fi
             codesign -dvvv "$app" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID"
