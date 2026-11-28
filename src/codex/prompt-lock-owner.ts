@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, type BigIntStats, type Stats } from "node:fs";
 import { resolveTrustedWindowsPowerShellExe, resolveTrustedWindowsRegExe } from "../lib/windows-elevation";
 import { hostname } from "node:os";
+import { cLocaleEnv } from "../lib/c-locale-env";
 
 import { LockFileBusy, lockFileOperation } from "./prompt-lock-io";
 
@@ -18,7 +19,8 @@ export interface OwnerDeps {
 
 function command(args: string[], timeoutMs: number): string | undefined {
   try {
-    const result = Bun.spawnSync(args, { stdout: "pipe", stderr: "pipe", timeout: timeoutMs });
+    // The recorded `ps` start time is compared across processes, so every reader sees the C layout.
+    const result = Bun.spawnSync(args, { stdout: "pipe", stderr: "pipe", timeout: timeoutMs, env: cLocaleEnv() });
     const value = result.stdout.toString().trim();
     return result.exitCode === 0 && value ? value : undefined;
   } catch { return undefined; }

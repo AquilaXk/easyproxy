@@ -9,6 +9,7 @@
  */
 import { execFile, execFileSync, type ExecFileException } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { cLocaleEnv } from "../lib/c-locale-env";
 import { isProcessAlive, waitForExit } from "../lib/process-control";
 import {
   resolveTrustedWindowsPowerShellExe,
@@ -793,6 +794,7 @@ function readDarwinProcStartMs(pid: number): number | null {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 4_000,
+      env: cLocaleEnv(),
     }).trim();
     if (!out) return null;
     const parsed = Date.parse(out);
@@ -877,6 +879,7 @@ export function readProcessStartMsBatch(
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 3_000,
+        env: cLocaleEnv(),
       });
       const byPid = new Map<number, number>();
       for (const raw of stdout.split(/\r?\n/)) {

@@ -13,6 +13,8 @@ import { classifyDesktopPicker, readCodexCatalogBinding, readCodexDesktopPickerS
 import type { DesktopAppAdapter, DesktopProcess } from "../../src/codex/desktop-app/types";
 import { windowsDesktopAppAdapter } from "../../src/codex/desktop-app/windows";
 import { handleDesktopAppRestart } from "../../src/cli/restart-scope";
+import { darwinDefaultExec, darwinDesktopAppAdapter } from "../../src/codex/desktop-app/darwin";
+import { withKoreanLocale } from "../helpers/ps-locale";
 import { setTrustedWindowsElevationExecutablesForTests } from "../../src/lib/windows-elevation";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -707,4 +709,11 @@ describe("the cli-update selection gate covers the whole restart ladder", () => 
       removeTreeWithRetry(dir);
     }
   });
+});
+
+test.skipIf(process.platform !== "darwin")("the macOS process list parses ps rows under a non-English locale", () => {
+  const install = { id: "all", root: "/", relaunch: "all" };
+  const listed = withKoreanLocale(() => darwinDesktopAppAdapter.listProcesses(darwinDefaultExec, install));
+  const own = listed?.find(entry => entry.pid === process.pid);
+  expect(own?.createdAt).toMatch(/^[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4}$/);
 });

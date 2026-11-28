@@ -23,6 +23,8 @@ import {
   listCodexAppServerProcesses,
   listWindowsSnapshots,
   parseWindowsSnapshotOutput,
+  readProcessStartMs,
+  readProcessStartMsBatch,
   resetCodexAppServerCatalogStateCache,
   restartCodexAppServers,
   scanCodexSessionProcesses,
@@ -32,6 +34,7 @@ import {
   WINDOWS_CODEX_BASENAME_CANDIDATE_RE,
 } from "../../src/codex/app-server-processes";
 import { repoPath } from "../helpers/repo-root";
+import { withKoreanLocale } from "../helpers/ps-locale";
 
 describe("collectCodexAppServerCatalogState (#857)", () => {
 const APP_SERVER_CMD = "/usr/local/bin/codex app-server";
@@ -1568,5 +1571,13 @@ describe("request-path catalog state serves stale while revalidating (#2499)", (
     expect(await settledWithoutTheProbe(next)).toBe("waited");
     releases[1]([]);
     await expect(next).resolves.toMatchObject({ state: "not_running" });
+  });
+});
+
+// `ps` prints lstart in the user's locale; a Korean-locale Mac must still get a start time.
+test.skipIf(process.platform !== "darwin")("macOS start times are read under a non-English locale", () => {
+  withKoreanLocale(() => {
+    expect(readProcessStartMs(process.pid, "darwin")).toBeGreaterThan(0);
+    expect(readProcessStartMsBatch([process.pid], "darwin").get(process.pid)).toBeGreaterThan(0);
   });
 });

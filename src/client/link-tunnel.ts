@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { atomicWriteFile, isMissingPathError } from "../config/atomic-write";
 import { getConfigPath } from "../config/paths";
 import { readBoundedResponseBytes } from "../lib/bounded-body";
+import { cLocaleEnv } from "../lib/c-locale-env";
 import { linkDir, linkKnownHostsPath } from "../link/paths";
 import { buildTunnelArgv } from "../link/ssh-argv";
 import { defaultSshCaptureOpener, openSshCapture, retainSshCapture, type SshCaptureOpener } from "../link/ssh-capture";
@@ -288,9 +289,6 @@ function linuxProcessStartTime(pid: number): string | null {
   }
 }
 
-/** `ps` prints lstart in the user's locale (for example Korean); the parser reads the C layout only. */
-const DARWIN_PS_ENV = (): NodeJS.ProcessEnv => ({ ...process.env, LC_ALL: "C" });
-
 function parseDarwinProcessInfo(output: string): DarwinProcessInfo | null {
   const match = /^\s*(\d+)\s+(\S+\s+\S+\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/.exec(output.replace(/\r?\n$/, ""));
   return match ? { ppid: Number(match[1]), startTime: match[2]!, args: match[3]! } : null;
@@ -303,7 +301,7 @@ function darwinProcessInfo(pid: number): DarwinProcessInfo | null {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
-      env: DARWIN_PS_ENV(),
+      env: cLocaleEnv(),
     });
     if (result.exitCode !== 0) return null;
     return parseDarwinProcessInfo(result.stdout.toString());
@@ -335,7 +333,7 @@ async function inspectAdoptedIdentity(record: ClientTunnelPidfile, deps: OrphanR
       const info = deps.readProcessInfo
         ? await Promise.resolve().then(() => deps.readProcessInfo!(record.pid))
         : await execFileAsync("/bin/ps", ["-ww", "-o", "ppid=", "-o", "lstart=", "-o", "args=", "-p", String(record.pid)], {
-          encoding: "utf8", timeout: PROCESS_IDENTITY_TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true, env: DARWIN_PS_ENV(),
+          encoding: "utf8", timeout: PROCESS_IDENTITY_TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true, env: cLocaleEnv(),
         }).then(result => parseDarwinProcessInfo(result.stdout));
       if (info === null) return "unknown";
       return info.args === record.argv.join(" ") && info.startTime === record.startTime ? "match" : "mismatch";

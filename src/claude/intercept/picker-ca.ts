@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, posix } from "node:path";
 import { canonicalPickerConfigDir, ensurePersistentPickerCa } from "./picker-ca-persistence";
 import type { PickerCaStore } from "./picker-ca-store";
 import { withClientLifecycle, withClientLifecycleSync } from "../../client/lifecycle-lock";
+import { cLocaleEnv } from "../../lib/c-locale-env";
 import { sameFileIdentity } from "../../lib/file-identity";
 import {
   ALL_IP_ADDRESS_BASES,
@@ -242,7 +243,7 @@ function processStartIdentity(pid: number, utc = false): string | null {
       const result = Bun.spawnSync(["/bin/ps", "-o", "lstart=", "-p", String(pid)], {
         stdin: "ignore", stdout: "pipe", stderr: "ignore",
         // Date.parse reads the C layout, so pin the locale; the identity string stays comparable across runs.
-        env: { ...process.env, LC_ALL: "C", ...(utc ? { TZ: "UTC" } : {}) },
+        env: cLocaleEnv(utc ? { TZ: "UTC" } : {}),
       });
       const value = result.stdout.toString().trim();
       return result.exitCode === 0 && value.length > 0 && value.length <= 128 ? value : null;

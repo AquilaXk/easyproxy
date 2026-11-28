@@ -14,6 +14,7 @@
 import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { cLocaleEnv } from "../../lib/c-locale-env";
 import {
   isUnderRoot,
   type DesktopAppAdapter,
@@ -104,7 +105,7 @@ function parsePsLine(line: string): PsSnapshot | null {
 function readPsSnapshots(exec: DesktopExec): PsSnapshot[] | null {
   let stdout: string;
   try {
-    stdout = exec(PS, ["-Ao", "pid=,ppid=,lstart=,uid=,comm="], { timeout: PROBE_TIMEOUT_MS });
+    stdout = exec(PS, ["-Ao", "pid=,ppid=,lstart=,uid=,comm="], { timeout: PROBE_TIMEOUT_MS, env: cLocaleEnv() });
   } catch {
     // A probe that could not RUN is not evidence of absence.
     return null;
@@ -265,4 +266,5 @@ export const darwinDefaultExec: DesktopExec = (file, args, options) => execFileS
   encoding: "utf-8",
   stdio: ["ignore", "pipe", "ignore"],
   timeout: options?.timeout ?? PROBE_TIMEOUT_MS,
+  ...(options?.env ? { env: options.env } : {}),
 });

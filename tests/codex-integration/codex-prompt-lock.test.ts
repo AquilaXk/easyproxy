@@ -19,6 +19,7 @@ import {
   type LockDeps,
 } from "../../src/codex/prompt-lock";
 import { createOwnerIdentity, ownEvidence, ownerDefaults, ownerState } from "../../src/codex/prompt-lock-owner";
+import { withKoreanLocale } from "../helpers/ps-locale";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { repoPath } from "../helpers/repo-root";
 
@@ -630,4 +631,9 @@ test.skipIf(process.platform !== "win32")("native Windows own evidence has a reg
   const evidence = ownEvidence(ownerDefaults);
   expect(evidence.host?.machine).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   expect(evidence.processStart).toBeUndefined();
+});
+
+test.skipIf(process.platform !== "darwin")("the macOS owner start identity is the C-locale ps layout under a non-English locale", () => {
+  const start = withKoreanLocale(() => createOwnerIdentity({ platform: "darwin" }).processStart(process.pid));
+  expect(start).toMatch(/^[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4}$/);
 });
