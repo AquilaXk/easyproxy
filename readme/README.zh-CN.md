@@ -171,8 +171,8 @@ epx start                         # 代理 + 仪表板：localhost:10100
 
 | 平台 | 文件 | 说明 |
 |---|---|---|
-| macOS 14+（Apple Silicon） | `EasyProxy-<version>-macos-arm64.dmg` | 配置 Apple Developer ID 凭据后将进行签名和公证；在此之前为未签名包（macOS Gatekeeper 可能需 **右键 → 打开**） |
-| macOS 14+（Intel） | `EasyProxy-<version>-macos-x64.dmg` | 独立 Intel x64 构建；未签名时适用相同 Gatekeeper 说明 |
+| macOS 14+（Apple Silicon） | `EasyProxy-<version>-macos-arm64.dmg` | 暂未签名和公证（Apple Developer ID 签名将在之后加入）。如果 macOS 阻止首次启动，请打开 **系统设置 → 隐私与安全性**，点击 **仍要打开**；macOS 15+ 上右键 → 打开已不再有效。替代方式：`xattr -dr com.apple.quarantine /Applications/EasyProxy.app` |
+| macOS 14+（Intel） | `EasyProxy-<version>-macos-x64.dmg` | 独立 Intel x64 构建；签名前首次启动步骤相同 |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | 正在通过 SignPath Foundation 推出代码签名（[代码签名政策](https://easyproxy.me/zh-cn/reference/code-signing/)）；在版本签名之前，SmartScreen 会询问一次，选择 **更多信息 → 仍要运行** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` 或 `-linux-amd64.deb` | 托盘需要支持 AppIndicator 的桌面环境 |
 

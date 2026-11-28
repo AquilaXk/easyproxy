@@ -85,11 +85,12 @@ variables:
 SignPath artifact configurations: `windows-standalone-zip` (one `epx.exe` at the zip root) and
 `windows-msi-zip` (one `.msi` at the zip root, deep-signed).
 
-Signing never blocks a release. What a run does depends on the policy:
+A missing signing account never blocks a release; a half-configured one does. What a run does depends on the setup:
 
 | Policy | Dry run | Real release |
 |---|---|---|
-| No token, or an incomplete configuration | Unsigned | Unsigned, with a notice or warning |
+| No token | Unsigned, with a notice | Unsigned, with a notice |
+| Token with a missing variable or a malformed value | Unsigned, with a warning | The release fails |
 | `test-signing` | Signed with the test certificate, kept only as a workflow artifact | Unsigned, with a notice; a test certificate never ships |
 | `release-signing` | Signed and verified as trusted | Signed and verified as trusted |
 

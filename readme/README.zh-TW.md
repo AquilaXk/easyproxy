@@ -172,8 +172,8 @@ epx start                         # 代理 + 儀表板位於 localhost:10100
 
 | 平台 | 檔案 | 說明 |
 |---|---|---|
-| macOS 14+（Apple Silicon） | `EasyProxy-<version>-macos-arm64.dmg` | 設定 Apple Developer ID 憑證後會進行簽章與公證；在此之前為未簽章版本（macOS Gatekeeper 可能需 **右鍵 → 打開**） |
-| macOS 14+（Intel） | `EasyProxy-<version>-macos-x64.dmg` | 獨立 Intel x64 建置；未簽章時適用相同 Gatekeeper 說明 |
+| macOS 14+（Apple Silicon） | `EasyProxy-<version>-macos-arm64.dmg` | 目前尚未簽章或公證（Apple Developer ID 簽章將於日後加入）。如果 macOS 阻擋首次啟動，請開啟 **系統設定 → 隱私權與安全性**，點選 **強制打開**；macOS 15+ 上右鍵 → 打開已不再有效。替代方式：`xattr -dr com.apple.quarantine /Applications/EasyProxy.app` |
+| macOS 14+（Intel） | `EasyProxy-<version>-macos-x64.dmg` | 獨立 Intel x64 建置；簽章前首次啟動步驟相同 |
 | Windows（x64） | `EasyProxy-<version>-windows-x64.msi` | 正透過 SignPath Foundation 推出程式碼簽章（[程式碼簽章政策](https://easyproxy.me/zh-tw/reference/code-signing/)）；在版本簽章之前，SmartScreen 會詢問一次，選擇 **More info → Run anyway** |
 | Linux（x86_64） | `EasyProxy-<version>-linux-x86_64.AppImage` 或 `-linux-amd64.deb` | 系統匣需要支援 AppIndicator 的桌面環境 |
 

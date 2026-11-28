@@ -188,8 +188,8 @@ platform from the [latest release](https://github.com/AquilaXk/easyproxy/release
 
 | Platform | File | Notes |
 |---|---|---|
-| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Signed and notarized when Apple Developer ID credentials are configured; otherwise unsigned (macOS Gatekeeper may require right-click → **Open**) |
-| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Separate Intel x64 build; same Gatekeeper note when unsigned |
+| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Not signed or notarized yet (Apple Developer ID signing is planned). If macOS blocks the first launch, open **System Settings → Privacy & Security** and click **Open Anyway**; right-click → Open no longer works on macOS 15+. Alternative: `xattr -dr com.apple.quarantine /Applications/EasyProxy.app` |
+| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Separate Intel x64 build; same first-launch steps while unsigned |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Code signing via SignPath Foundation is rolling out ([code signing policy](https://easyproxy.me/reference/code-signing/)); until a release is signed, SmartScreen asks once: choose **More info → Run anyway** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb` | The tray needs an AppIndicator-capable desktop |
 

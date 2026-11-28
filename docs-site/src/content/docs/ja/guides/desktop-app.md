@@ -13,7 +13,7 @@ EasyProxy デスクトップアプリはネイティブのトレイとウェブ�
 
 [最新リリース](https://github.com/AquilaXk/easyproxy/releases)から `EasyProxy-<version>-macos-arm64.dmg`（Apple Silicon）または `EasyProxy-<version>-macos-x64.dmg`（Intel）をダウンロードします。DMG を開き、`EasyProxy.app` を Applications にドラッグします。macOS 13 以降が必要です。
 
-リリース版の `EasyProxy.app` は Developer ID で署名され、Apple による公証を受けています。そのため初回起動時、通常はダウンロードしたアプリの標準的な確認だけが表示されます。それでも macOS がブロックする場合は **System Settings → Privacy & Security → Open Anyway** を使ってください。
+リリース版の `EasyProxy.app` はまだ Developer ID による署名も公証も受けていないため、初回起動は macOS にブロックされます。**System Settings → Privacy & Security** を開いて下へスクロールし、セキュリティの項目にある EasyProxy の **Open Anyway** を選んで確定してください。macOS 15 以降では、右クリック → 開くでは回避できません。代わりに `xattr -dr com.apple.quarantine /Applications/EasyProxy.app` を一度実行する方法もあります。Developer ID での署名と公証は後日追加する予定で、そのときはこの手順が不要になります。
 
 #### Homebrew（デスクトップアプリ）
 

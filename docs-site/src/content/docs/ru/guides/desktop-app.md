@@ -18,9 +18,7 @@ description: Установка и использование настольно
 [последнего выпуска](https://github.com/AquilaXk/easyproxy/releases). Откройте DMG и перетащите
 `EasyProxy.app` в Applications. Для приложения требуется macOS 13 или новее.
 
-Релизные сборки `EasyProxy.app` подписаны Developer ID и нотариально заверены Apple, поэтому при
-первом запуске macOS обычно запрашивает лишь стандартное подтверждение для загруженного приложения.
-Если macOS всё же блокирует его, используйте **System Settings → Privacy & Security → Open Anyway**.
+Релизные сборки `EasyProxy.app` пока не подписаны Developer ID и не нотариально заверены Apple, поэтому macOS блокирует первый запуск. Откройте **System Settings → Privacy & Security**, прокрутите до раздела безопасности, нажмите **Open Anyway** рядом с EasyProxy и подтвердите. В macOS 15 и новее ПКМ → Открыть этот запрет больше не обходит. Можно также один раз выполнить `xattr -dr com.apple.quarantine /Applications/EasyProxy.app`. Подпись Developer ID и нотариальное заверение добавят позже, тогда этот шаг станет не нужен.
 
 #### Homebrew (настольное приложение)
 

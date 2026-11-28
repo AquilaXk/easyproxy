@@ -3,8 +3,8 @@
 One maintainer, one list. Add a line when work is found, delete it when it lands.
 
 ## Release and desktop packaging
-- [ ] Configure Apple Developer ID signing and notarization secrets before publishing signed macOS `.dmg` releases.
-- [ ] Configure Windows code-signing certificate secrets before publishing signed `.msi` installers.
+- [ ] Add the Apple Developer ID account and its six signing secrets later; until then macOS `.dmg` releases ship unsigned and not notarized (all six empty passes the release gate, a partial set fails it).
+- [ ] Add the SignPath account (`SIGNPATH_API_TOKEN` plus three repository variables, policy `release-signing`) later; until then `.msi` and standalone `epx.exe` ship unsigned.
 - [ ] Verify desktop shell and WidgetKit snapshot integration on clean macOS, Windows, and Linux hosts for `v0.1.0`.
 
 ## Test isolation

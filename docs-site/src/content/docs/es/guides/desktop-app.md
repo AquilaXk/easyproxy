@@ -15,7 +15,7 @@ El dashboard se sirve desde la dirección del proxy local encontrado (puerto `10
 
 Descarga `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) o `EasyProxy-<version>-macos-x64.dmg` (Intel) desde la [última versión](https://github.com/AquilaXk/easyproxy/releases). Abre el DMG y arrastra `EasyProxy.app` a Aplicaciones. Se requiere macOS 13 o posterior.
 
-Las versiones publicadas de `EasyProxy.app` tienen firma de Developer ID y certificación de Apple. Al abrirlas por primera vez, macOS normalmente solo pide la confirmación habitual para una aplicación descargada. Si sigue bloqueándola, usa **Configuración del Sistema → Privacidad y seguridad → Abrir de todos modos**.
+Las versiones publicadas de `EasyProxy.app` todavía no tienen firma de Developer ID ni certificación de Apple, así que macOS bloquea el primer arranque. Abre **Configuración del Sistema → Privacidad y seguridad**, baja hasta la sección de seguridad, pulsa **Abrir de todos modos** junto a EasyProxy y confirma. En macOS 15 y posteriores, clic derecho → Abrir ya no evita el bloqueo. Como alternativa, ejecuta una vez `xattr -dr com.apple.quarantine /Applications/EasyProxy.app`. La firma con Developer ID y la certificación se añadirán más adelante; entonces este paso desaparecerá.
 
 #### Homebrew, aplicación de escritorio
 

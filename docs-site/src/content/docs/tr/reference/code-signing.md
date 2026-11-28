@@ -83,11 +83,12 @@ ve üç depo değişkeni okur:
 SignPath çıktı yapılandırmaları: `windows-standalone-zip` (ZIP kökünde tek
 `epx.exe`) ve `windows-msi-zip` (ZIP kökünde tek `.msi`, iç dosyaları da imzalanır).
 
-İmzalama, yayını engellemez. İşleyiş seçilen ilkeye bağlıdır:
+Eksik bir imzalama hesabı yayını engellemez; yarım yapılandırma engeller. İşleyiş yapılandırmaya bağlıdır:
 
 | İlke | Deneme çalıştırması | Gerçek yayın |
 | --- | --- | --- |
-| Token yok veya yapılandırma eksik | İmzasız | Bildirim veya uyarıyla imzasız |
+| Token yok | Bildirimle imzasız | Bildirimle imzasız |
+| Token var, ancak bir değişken eksik veya değer hatalı | Uyarıyla imzasız | Yayın başarısız olur |
 | `test-signing` | Test sertifikasıyla imzalanır, yalnızca iş akışı çıktısı olarak tutulur | Bildirimle imzasız; test sertifikası hiçbir zaman yayımlanmaz |
 | `release-signing` | İmzalanır ve güvenilirliği doğrulanır | İmzalanır ve güvenilirliği doğrulanır |
 

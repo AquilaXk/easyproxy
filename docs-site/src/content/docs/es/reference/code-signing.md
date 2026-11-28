@@ -65,11 +65,12 @@ El flujo de publicación (`.github/workflows/release.yml`) firma mediante la acc
 
 Las configuraciones de artefactos de SignPath son `windows-standalone-zip` (un `epx.exe` en la raíz del ZIP) y `windows-msi-zip` (un `.msi` en la raíz del ZIP, con firma profunda).
 
-La firma nunca bloquea una publicación. El resultado depende de la política:
+Que falte una cuenta de firma nunca bloquea una publicación, pero una configuración a medias sí. El resultado depende de la configuración:
 
 | Política | Simulación | Publicación real |
 |---|---|---|
-| Sin token o con configuración incompleta | Sin firma | Sin firma, con un aviso o advertencia |
+| Sin token | Sin firma, con un aviso | Sin firma, con un aviso |
+| Token con una variable ausente o un valor mal formado | Sin firma, con una advertencia | La publicación falla |
 | `test-signing` | Firmado con el certificado de prueba y conservado solo como artefacto del workflow | Sin firma, con un aviso; nunca se distribuye un certificado de prueba |
 | `release-signing` | Firmado y verificado como confiable | Firmado y verificado como confiable |
 

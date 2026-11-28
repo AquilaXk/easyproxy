@@ -170,8 +170,8 @@ epx start                         # 프록시 + 대시보드: localhost:10100
 
 | 플랫폼 | 파일 | 참고 |
 |---|---|---|
-| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Apple Developer ID 인증서 설정 시 서명·공증해 배포합니다. 미서명 빌드라면 macOS Gatekeeper에서 **우클릭 → 열기**로 여세요 |
-| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | 별도 Intel x64 빌드입니다. 미서명 빌드의 경우 Gatekeeper 안내가 같습니다 |
+| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | 아직 서명·공증되지 않았습니다(Apple Developer ID 서명은 추후 추가 예정). 첫 실행을 macOS가 막으면 **시스템 설정 → 개인정보 보호 및 보안**에서 **그래도 열기**를 누르세요. macOS 15 이상에서는 우클릭 → 열기가 통하지 않습니다. 대안: `xattr -dr com.apple.quarantine /Applications/EasyProxy.app` |
+| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | 별도 Intel x64 빌드입니다. 서명되기 전까지 첫 실행 절차는 같습니다 |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation을 통해 코드 서명을 도입하고 있습니다 ([코드 서명 정책](https://easyproxy.me/ko/reference/code-signing/)). 서명되기 전 릴리스는 SmartScreen이 한 번 물으면 **추가 정보 → 실행**을 선택하세요 |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` 또는 `-linux-amd64.deb` | 트레이는 AppIndicator를 지원하는 데스크톱이 필요합니다 |
 

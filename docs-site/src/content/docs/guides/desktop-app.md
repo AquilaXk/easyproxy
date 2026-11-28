@@ -17,9 +17,7 @@ Download `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) or `EasyProxy-<ve
 [latest release](https://github.com/AquilaXk/easyproxy/releases). Open the DMG and drag
 `EasyProxy.app` to Applications. The app requires macOS 13 or later.
 
-Release builds of `EasyProxy.app` are signed with a Developer ID and notarized by Apple, so on
-first launch macOS normally asks only for the standard confirmation for a downloaded app. If macOS
-still blocks it, use **System Settings → Privacy & Security → Open Anyway**.
+Release builds of `EasyProxy.app` are not signed with an Apple Developer ID or notarized yet, so macOS blocks the first launch. Open **System Settings → Privacy & Security**, scroll to the security section, click **Open Anyway** next to EasyProxy, and confirm. On macOS 15 and later, right-click → Open no longer bypasses this. Alternatively, run `xattr -dr com.apple.quarantine /Applications/EasyProxy.app` once. Developer ID signing and notarization will be added later; this step goes away then.
 
 #### Homebrew (desktop app)
 

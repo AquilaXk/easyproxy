@@ -13,7 +13,7 @@ Le tableau de bord est servi depuis le point de terminaison du proxy local trouv
 
 Téléchargez `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) ou `EasyProxy-<version>-macos-x64.dmg` (Intel) depuis la [dernière version](https://github.com/AquilaXk/easyproxy/releases). Ouvrez le DMG et faites glisser `EasyProxy.app` vers Applications. L’application nécessite macOS 13 ou une version ultérieure.
 
-Les versions publiées de `EasyProxy.app` sont signées avec un Developer ID et notariées par Apple. Au premier lancement, macOS ne demande normalement que la confirmation habituelle pour une application téléchargée. S’il la bloque tout de même, utilisez **System Settings → Privacy & Security → Open Anyway**.
+Les versions publiées de `EasyProxy.app` ne sont pas encore signées avec un Developer ID ni notariées, donc macOS bloque le premier lancement. Ouvrez **System Settings → Privacy & Security**, descendez jusqu’à la section de sécurité, cliquez sur **Open Anyway** à côté d’EasyProxy et confirmez. Sous macOS 15 et versions ultérieures, clic droit → Ouvrir ne contourne plus ce blocage. Vous pouvez aussi exécuter une fois `xattr -dr com.apple.quarantine /Applications/EasyProxy.app`. La signature Developer ID et la notarisation seront ajoutées plus tard ; cette étape disparaîtra alors.
 
 #### Homebrew (application de bureau)
 

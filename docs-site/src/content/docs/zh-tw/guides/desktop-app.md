@@ -13,7 +13,7 @@ EasyProxy 桌面應用程式結合原生系統匣與網頁儀表板。內附的 
 
 從[最新版本](https://github.com/AquilaXk/easyproxy/releases)下載 `EasyProxy-<version>-macos-arm64.dmg`（Apple Silicon）或 `EasyProxy-<version>-macos-x64.dmg`（Intel）。開啟 DMG，將 `EasyProxy.app` 拖到 Applications。應用程式需要 macOS 13 或更新版本。
 
-正式版 `EasyProxy.app` 使用 Developer ID 簽署並經 Apple 公證，因此第一次啟動時，macOS 通常只會要求確認開啟從網路下載的應用程式。如果 macOS 仍封鎖它，請使用 **System Settings → Privacy & Security → Open Anyway**。
+正式版 `EasyProxy.app` 目前尚未使用 Developer ID 簽署，也未經 Apple 公證，因此 macOS 會封鎖第一次啟動。請開啟 **System Settings → Privacy & Security**，捲動到安全性區段，點選 EasyProxy 旁的 **Open Anyway** 並確認。在 macOS 15 及更新版本上，右鍵 → 打開已無法繞過此限制。也可以執行一次 `xattr -dr com.apple.quarantine /Applications/EasyProxy.app`。Developer ID 簽署與公證將於日後加入，屆時就不需要這個步驟。
 
 #### Homebrew（桌面應用程式）
 

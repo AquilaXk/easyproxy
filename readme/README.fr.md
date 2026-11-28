@@ -175,8 +175,8 @@ correspondant à votre plateforme sur la page de la [dernière version publiée]
 
 | Plateforme | Fichier | Remarques |
 |---|---|---|
-| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Signée avec Apple Developer ID et notarisée dès que les identifiants sont configurés ; sinon non signée (Gatekeeper peut exiger **Clic droit → Ouvrir**) |
-| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Build x64 distinct ; même remarque Gatekeeper si non signé |
+| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Pas encore signée ni notarisée (la signature Apple Developer ID viendra plus tard). Si macOS bloque le premier lancement, ouvrez **Réglages Système → Confidentialité et sécurité** et cliquez sur **Ouvrir quand même** ; le clic droit → Ouvrir ne fonctionne plus sous macOS 15+. Alternative : `xattr -dr com.apple.quarantine /Applications/EasyProxy.app` |
+| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Build x64 distinct ; mêmes étapes au premier lancement tant qu’il n’est pas signé |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Signature du code via SignPath Foundation en cours de déploiement ([politique de signature du code](https://easyproxy.me/fr/reference/code-signing/)) ; tant qu’une version n’est pas signée, SmartScreen demande une confirmation : choisissez **Informations complémentaires → Exécuter quand même** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` ou `-linux-amd64.deb` | La barre d'état nécessite un environnement de bureau compatible AppIndicator |
 

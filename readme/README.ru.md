@@ -173,8 +173,8 @@ epx start                         # прокси + панель управлен
 
 | Платформа | Файл | Примечания |
 |---|---|---|
-| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Подписана Developer ID и нотариализована при наличии учётных данных Apple; без них остаётся неподписанной (в Gatekeeper выберите **ПКМ → Открыть**) |
-| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Отдельная сборка для Intel x64; те же требования Gatekeeper при отсутствии подписи |
+| macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Пока не подписана и не нотаризована (подпись Apple Developer ID появится позже). Если macOS блокирует первый запуск, откройте **Системные настройки → Конфиденциальность и безопасность** и нажмите **Всё равно открыть**; ПКМ → Открыть в macOS 15+ больше не работает. Альтернатива: `xattr -dr com.apple.quarantine /Applications/EasyProxy.app` |
+| macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Отдельная сборка для Intel x64; до появления подписи первый запуск выполняется так же |
 | Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Подпись кода через SignPath Foundation внедряется ([политика подписи кода](https://easyproxy.me/ru/reference/code-signing/)); пока релиз не подписан, SmartScreen спросит один раз: выберите **Подробнее → Выполнить в любом случае** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` или `-linux-amd64.deb` | Для трея нужен рабочий стол с поддержкой AppIndicator |
 

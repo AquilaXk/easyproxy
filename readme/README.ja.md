@@ -172,8 +172,8 @@ epx start                         # プロキシとダッシュボードが loca
 
 | プラットフォーム | ファイル | 備考 |
 |---|---|---|
-| macOS 14 以降（Apple Silicon） | `EasyProxy-<version>-macos-arm64.dmg` | Apple Developer ID 証明書が設定されている場合は署名・公証されます。未署名時は macOS Gatekeeper で **右クリック → 開く** が必要な場合があります |
-| macOS 14 以降（Intel） | `EasyProxy-<version>-macos-x64.dmg` | Intel x64 向けビルドです。未署名時の Gatekeeper の扱いは同様です |
+| macOS 14 以降（Apple Silicon） | `EasyProxy-<version>-macos-arm64.dmg` | 現在は署名・公証されていません（Apple Developer ID での署名は今後追加予定）。初回起動を macOS がブロックしたら、**システム設定 → プライバシーとセキュリティ** を開き、**このまま開く** を選択してください。macOS 15 以降では右クリック → 開くは使えません。代替手段: `xattr -dr com.apple.quarantine /Applications/EasyProxy.app` |
+| macOS 14 以降（Intel） | `EasyProxy-<version>-macos-x64.dmg` | Intel x64 向けビルドです。署名されるまで初回起動の手順は同じです |
 | Windows（x64） | `EasyProxy-<version>-windows-x64.msi` | SignPath Foundation によるコード署名を導入中（[コード署名ポリシー](https://easyproxy.me/ja/reference/code-signing/)）。署名前のリリースでは SmartScreen が一度だけ確認するので、**詳細情報 → 実行**を選択 |
 | Linux（x86_64） | `EasyProxy-<version>-linux-x86_64.AppImage` または `-linux-amd64.deb` | トレイには AppIndicator 対応のデスクトップが必要 |
 

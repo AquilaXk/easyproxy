@@ -13,7 +13,7 @@ EasyProxy 데스크톱 앱은 네이티브 트레이와 웹 대시보드를 함�
 
 [최신 릴리스](https://github.com/AquilaXk/easyproxy/releases)에서 Apple Silicon용 `EasyProxy-<version>-macos-arm64.dmg` 또는 Intel용 `EasyProxy-<version>-macos-x64.dmg`를 다운로드하세요. DMG를 열고 `EasyProxy.app`을 Applications로 드래그합니다. macOS 13 이상이 필요합니다.
 
-릴리스 버전의 `EasyProxy.app`은 Developer ID로 서명되고 Apple 공증을 받으므로 첫 실행 시에는 대개 다운로드한 앱에 대한 일반 확인만 요청합니다. macOS가 계속 차단하면 **System Settings → Privacy & Security → Open Anyway**를 선택하세요.
+릴리스 버전의 `EasyProxy.app`은 아직 Developer ID 서명과 Apple 공증을 받지 않아 첫 실행을 macOS가 막습니다. **System Settings → Privacy & Security**를 열고 아래쪽 보안 항목에서 EasyProxy 옆의 **Open Anyway**를 눌러 확인하세요. macOS 15 이상에서는 우클릭 → 열기로 우회할 수 없습니다. 대신 `xattr -dr com.apple.quarantine /Applications/EasyProxy.app`를 한 번 실행해도 됩니다. Developer ID 서명과 공증은 나중에 추가할 예정이며, 그러면 이 절차는 필요 없어집니다.
 
 #### Homebrew (데스크톱 앱)
 

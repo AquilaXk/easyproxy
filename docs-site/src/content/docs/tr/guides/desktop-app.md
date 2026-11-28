@@ -13,7 +13,7 @@ Kontrol paneli çözümlenen yerel proxy uç noktasından sunulur (varsayılan p
 
 [Son sürümden](https://github.com/AquilaXk/easyproxy/releases) Apple Silicon için `EasyProxy-<version>-macos-arm64.dmg` veya Intel için `EasyProxy-<version>-macos-x64.dmg` dosyasını indirin. DMG'yi açın ve `EasyProxy.app` uygulamasını Applications klasörüne sürükleyin. Uygulama macOS 13 veya daha yenisini gerektirir.
 
-`EasyProxy.app` sürüm derlemeleri Developer ID ile imzalanır ve Apple tarafından noterleştirilir. Dolayısıyla ilk açılışta macOS normalde yalnızca indirilen uygulamalar için standart onayı ister. macOS yine de engellerse **System Settings → Privacy & Security → Open Anyway** yolunu kullanın.
+`EasyProxy.app` sürüm derlemeleri henüz Developer ID ile imzalanmadı ve noterleştirilmedi; bu yüzden macOS ilk açılışı engeller. **System Settings → Privacy & Security** bölümünü açın, güvenlik kısmına inin, EasyProxy yanındaki **Open Anyway** düğmesine tıklayıp onaylayın. macOS 15 ve üzerinde Sağ tık → Aç bu engeli artık aşmaz. Alternatif olarak `xattr -dr com.apple.quarantine /Applications/EasyProxy.app` komutunu bir kez çalıştırın. Developer ID imzası ve noterleştirme sonradan eklenecek; o zaman bu adım ortadan kalkar.
 
 #### Homebrew (masaüstü uygulaması)
 
