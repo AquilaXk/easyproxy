@@ -234,12 +234,18 @@ describe("test preload", () => {
     const dir = tempDir("epx-git-probe-");
     const file = join(dir, "git-probe.test.ts");
     writeFileSync(file, source);
-    const result = Bun.spawnSync([process.execPath, "test", "--parallel=1", file], {
+    // The console reporter omits "(pass)" lines in some modes (macOS, bun 1.4.4), so per-case outcomes come from JUnit.
+    const junit = join(dir, "junit.xml");
+    const result = Bun.spawnSync([process.execPath, "test", "--parallel=1", "--reporter=junit", `--reporter-outfile=${junit}`, file], {
       cwd: repoRoot(),
       env: { ...withoutGit(), EPX_TEST_NO_QUEUE: "1", ...env },
       stdout: "pipe", stderr: "pipe", timeout: 60_000,
     });
-    return { exitCode: result.exitCode, output: result.stdout.toString() + result.stderr.toString() };
+    const cases = new Map<string, boolean>();
+    if (existsSync(junit)) {
+      for (const match of readFileSync(junit, "utf8").matchAll(/<testcase name="([^"]*)"[^>]*?(\/>|>\s*<failure)/g)) cases.set(match[1]!, match[2] === "/>");
+    }
+    return { exitCode: result.exitCode, output: result.stdout.toString() + result.stderr.toString(), cases };
   }
 
   test("removes inherited repository variables before any test or child sees them", () => {
@@ -275,8 +281,7 @@ test("writes user.name", () => {
 });
 `, { EPX_GIT_CONFIG_GUARD_CHECKOUT: guarded });
     expect(probe.exitCode, probe.output).toBe(1);
-    expect(probe.output).toContain("(pass) leaves the config alone");
-    expect(probe.output).toContain("(fail) writes user.name");
+    expect(Object.fromEntries(probe.cases)).toEqual({ "leaves the config alone": true, "writes user.name": false });
     const report = probe.output.split("\n").find(line => line.includes("changed in the checkout's common .git/config")) ?? "";
     expect(report).toContain("user.name changed");
     expect(report).not.toContain("probe-private-value");
