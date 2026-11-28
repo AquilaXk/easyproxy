@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer as startRealServer } from "../../src/server";
+import { clearRequestLogsForTests } from "../../src/server/request-log";
 import { flushConfigDirHardeningAndReaps } from "../../src/config/paths";
 import { managementFetch } from "./management-auth";
 import { ownedServiceHomeInspection } from "./owned-service-home-inspection";
@@ -87,6 +88,9 @@ const activeCase = () => {
 export function installEndpointHooks(): void {
 beforeEach(() => {
   currentCase?.assertClosed();
+  // The request log ring is process-wide. A row an earlier file left behind (same model name, no
+  // usage) was picked up by a case that reads /api/logs and takes the first match.
+  clearRequestLogsForTests();
   const previousHome = process.env.EASYPROXY_HOME;
   const previousDesktopConfigDir = process.env.EASYPROXY_CLAUDE_DESKTOP_CONFIG_DIR;
   const codexHome = installIsolatedCodexHome("epx-claude-endpoint-");

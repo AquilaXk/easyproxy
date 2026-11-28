@@ -8,5 +8,5 @@ One maintainer, one list. Add a line when work is found, delete it when it lands
 - [ ] Verify desktop shell and WidgetKit snapshot integration on clean macOS, Windows, and Linux hosts for `v0.1.0`.
 
 ## Test isolation
-- [ ] `bun test tests/clients/ tests/claude-integration/ tests/ci-workflows/` in one run fails ~78 `tests/claude-integration/` cases (503s in messages-request-id-endpoint, claude-bridge-pool-dispatch, claude-messages-endpoint, claude-native-affinity) that pass alone; find the state leaking from the earlier directories.
-- [ ] Full `bun run test` on macOS exceeds its 900s budget; CI only runs a Linux subset, so nothing gates the full suite.
+- [ ] Full `bun run test` on macOS hit its 900s budget (exit 124) in two runs under external CPU load (load 36 to 160, zero idle CPU from other builds); no idle-machine measurement exists yet. On timeout `scripts/test.ts` prints no per-file timings, so the slow files are unidentified. Re-measure on an idle Mac; CI only runs a Linux subset, so nothing gates the full suite.
+- [ ] A bare `bun test` over `tests/adapters/step-cli-process-lifecycle.test.ts` after earlier drain-related files fails 5 StepCode drain cases, and a later set hangs in `tests/storage/storage-mutation-race.test.ts` (both pass alone); find the leaking state the same way as the lifecycle drain latch.

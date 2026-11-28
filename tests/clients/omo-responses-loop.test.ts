@@ -7,7 +7,7 @@ import {
 } from "../../src/clients/config-export";
 import { saveConfig } from "../../src/config";
 import { startServer } from "../../src/server";
-import { drainAndShutdown } from "../../src/server/lifecycle";
+import { drainAndShutdown, resetLifecycleDrainStateForTests } from "../../src/server/lifecycle";
 import type { EpxConfig } from "../../src/types";
 import { installIsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -124,6 +124,7 @@ describe("omo Responses export: stateless reasoning/tool continuity over loopbac
     try {
       if (proxy) await drainAndShutdown(proxy, 5_000);
     } finally {
+      resetLifecycleDrainStateForTests();
       if (upstream) await upstream.stop(true);
       if (codexHome) { codexHome.restoreEnvironment(); codexHome.removeAfterDrain(); }
       if (priorHome === undefined) delete process.env.EASYPROXY_HOME;

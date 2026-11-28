@@ -25,7 +25,7 @@
  * what HOME says. `assertLiveServiceManagerAllowed` in `src/service.ts` is the guard for
  * that, armed by the same flag set below.
  */
-import { afterAll, afterEach } from "bun:test";
+import { afterAll, afterEach, beforeEach } from "bun:test";
 import { isTestHomeGuardArmed, protectedHomeForTests } from "../src/lib/test-home-guard";
 import { createIsolatedTestEnvironment, liveInstallEnvNames, terminalColorOverrideEnvNames } from "../scripts/test";
 import { gitRepositoryEnvNames } from "../scripts/git-repository-env";
@@ -181,6 +181,11 @@ afterEach(async () => {
   const { settled, pending } = await settleBackgroundWork({ timeoutMs: 2_000 });
   if (!settled) console.warn(`[test] background work outlived its case: ${pending.join(", ")}`);
 });
+
+// A drain left latched by an earlier case or file turns every later admission into a 503
+// (tests/helpers/lifecycle-drain-reset.ts). Loaded after home isolation like the cleanup owners above.
+const { clearInheritedLifecycleDrain } = await import("./helpers/lifecycle-drain-reset");
+beforeEach(() => { clearInheritedLifecycleDrain(); });
 
 // Fail the case after which this checkout's shared .git/config changed a guarded key
 // (tests/helpers/git-config-guard.ts). EPX_GIT_CONFIG_GUARD_CHECKOUT exists only so the guard's own
