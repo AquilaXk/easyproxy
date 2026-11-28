@@ -1578,7 +1578,7 @@ export const ru: Record<TKey, string> = {
   "usage.companion.runningInDesktop": "Вы находитесь в настольном приложении EasyProxy {version}",
   "usage.companion.openInBrowser": "Открыть в браузере",
   "usage.companion.installMacStep1": "Скачайте EasyProxy-<version>-macos.dmg из последнего релиза и перетащите EasyProxy.app в Программы.",
-  "usage.companion.installMacStep2": "Первый запуск: нажмите EasyProxy.app правой кнопкой и выберите «Открыть» (до нотариальной заверки Gatekeeper спросит один раз).",
+  "usage.companion.installMacStep2": "Первый запуск: если macOS блокирует EasyProxy.app, откройте «Системные настройки» → «Конфиденциальность и безопасность» и нажмите «Всё равно открыть» (приложение пока не нотариально заверено).",
   "usage.companion.installMacStep3": "Приложение само найдёт этот прокси; после запуска приложение появится в галерее виджетов.",
   "usage.companion.installWinStep1": "Скачайте EasyProxy-<version>-windows-x64.msi из последнего релиза и запустите его.",
   "usage.companion.installWinStep2": "Если SmartScreen предупредит, выберите Подробнее → Всё равно запустить (установщик ещё не подписан).",

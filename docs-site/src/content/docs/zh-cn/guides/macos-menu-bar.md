@@ -11,7 +11,7 @@ macOS 菜单栏项目是 EasyProxy 桌面应用的一部分。它显示来自本
 
 ## 首次启动
 
-发布版 `EasyProxy.app` 使用 Developer ID 签名和加固运行时，经 Apple 公证后，公证票据也会附加到应用上。首次启动时，macOS 通常只会显示从互联网下载应用的标准确认提示。如果仍被阻止，请打开 **System Settings → Privacy & Security**，为 EasyProxy 选择 **Open Anyway**。自行构建的应用使用临时签名；参见[从源码构建](#从源码构建)。
+发布版 `EasyProxy.app` 目前尚未使用 Developer ID 签名，也未经 Apple 公证，因此 macOS 会阻止首次启动。请打开 **System Settings → Privacy & Security**，为 EasyProxy 选择 **Open Anyway**。如果某个版本配置了 Developer ID 签名信息，该版本会使用 Developer ID 签名和加固运行时，并经 Apple 公证、公证票据附加到应用上；此时 macOS 只会显示从互联网下载应用的标准确认提示。自行构建的应用使用临时签名；参见[从源码构建](#从源码构建)。
 
 打开应用时，窗口会显示启动进度。首次启动会自动启用一次 **Start at Login**；你可以从托盘菜单关闭。此后由登录项目启动时，窗口会隐藏，但托盘仍可使用。
 

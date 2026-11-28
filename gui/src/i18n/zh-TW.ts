@@ -1320,7 +1320,7 @@ export const zhTW: Record<TKey, string> = {
   "usage.companion.runningInDesktop": "你正在使用 EasyProxy 桌面 App {version}",
   "usage.companion.openInBrowser": "在瀏覽器中開啟",
   "usage.companion.installMacStep1": "從最新版本下載 EasyProxy-<version>-macos.dmg，並將 EasyProxy.app 拖到應用程式。",
-  "usage.companion.installMacStep2": "首次啟動：在 EasyProxy.app 上按右鍵並選擇「開啟」（App 完成公證前，Gatekeeper 只會詢問一次）。",
+  "usage.companion.installMacStep2": "首次啟動：若 macOS 擋下 EasyProxy.app，請開啟「系統設定」→「隱私權與安全性」並選擇「強制打開」（App 尚未公證）。",
   "usage.companion.installMacStep3": "App 會自動找到此 Proxy；App 執行後，Widget 會出現在 Widget 圖庫中。",
   "usage.companion.installWinStep1": "從最新版本下載 EasyProxy-<version>-windows-x64.msi 並執行。",
   "usage.companion.installWinStep2": "如果 SmartScreen 發出警告，請選擇「更多資訊」→「仍要執行」（安裝程式尚未完成程式碼簽署）。",

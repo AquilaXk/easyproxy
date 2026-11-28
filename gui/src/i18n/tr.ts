@@ -1605,7 +1605,7 @@ export const tr: Record<TKey, string> = {
   "usage.companion.runningInDesktop": "EasyProxy masaüstü uygulaması {version} içindesiniz",
   "usage.companion.openInBrowser": "Tarayıcıda aç",
   "usage.companion.installMacStep1": "En son sürümden EasyProxy-<version>-macos.dmg dosyasını indirin ve EasyProxy.app’i Uygulamalar’a sürükleyin.",
-  "usage.companion.installMacStep2": "İlk çalıştırma: EasyProxy.app’e sağ tıklayıp Aç’ı seçin (uygulama not edilene kadar Gatekeeper bir kez sorar).",
+  "usage.companion.installMacStep2": "İlk çalıştırma: macOS EasyProxy.app’i engellerse Sistem Ayarları → Gizlilik ve Güvenlik bölümünü açıp Yine de Aç’ı seçin (uygulama henüz noterleştirilmedi).",
   "usage.companion.installMacStep3": "Uygulama bu proxy’yi kendisi bulur; uygulama çalıştıktan sonra widget galeride görünür.",
   "usage.companion.installWinStep1": "En son sürümden EasyProxy-<version>-windows-x64.msi dosyasını indirin ve çalıştırın.",
   "usage.companion.installWinStep2": "SmartScreen uyarırsa Daha fazla bilgi → Yine de çalıştır seçeneğini seçin (yükleyici henüz kod imzalı değil).",

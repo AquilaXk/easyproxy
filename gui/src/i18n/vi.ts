@@ -1595,7 +1595,7 @@ export const vi: Record<TKey, string> = {
   "usage.companion.runningInDesktop": "Bạn đang ở trong ứng dụng máy tính EasyProxy {version}",
   "usage.companion.openInBrowser": "Mở trong trình duyệt",
   "usage.companion.installMacStep1": "Tải EasyProxy-<version>-macos.dmg từ bản phát hành mới nhất và kéo EasyProxy.app vào Applications.",
-  "usage.companion.installMacStep2": "Lần đầu mở: nhấp chuột phải vào EasyProxy.app → Mở (Gatekeeper sẽ hỏi một lần cho đến khi ứng dụng được công chứng).",
+  "usage.companion.installMacStep2": "Lần đầu mở: nếu macOS chặn EasyProxy.app, mở Cài đặt hệ thống → Quyền riêng tư & Bảo mật và chọn Vẫn mở (ứng dụng chưa được công chứng).",
   "usage.companion.installMacStep3": "Ứng dụng tự tìm proxy này; widget xuất hiện trong thư viện widget sau khi ứng dụng chạy.",
   "usage.companion.installWinStep1": "Tải EasyProxy-<version>-windows-x64.msi từ bản phát hành mới nhất và chạy trình cài đặt.",
   "usage.companion.installWinStep2": "Nếu SmartScreen cảnh báo, chọn Thông tin thêm → Vẫn chạy (trình cài đặt chưa được ký mã).",

@@ -11,7 +11,7 @@ macOS 選單列項目是 EasyProxy 桌面應用程式的一部分。它顯示本
 
 ## 首次啟動
 
-正式版 `EasyProxy.app` 使用 Developer ID 簽署、啟用 hardened runtime，並經 Apple 公證且將票據附加至應用程式。第一次啟動時，macOS 通常只會顯示網路下載應用程式的標準確認。如果 macOS 仍封鎖，請開啟 **System Settings → Privacy & Security**，並為 EasyProxy 選擇 **Open Anyway**。自行建置的應用程式使用 ad-hoc 簽署；請參閱[從原始碼建置](#從原始碼建置)。
+正式版 `EasyProxy.app` 目前尚未使用 Developer ID 簽署，也未經 Apple 公證，因此 macOS 會封鎖第一次啟動。請開啟 **System Settings → Privacy & Security**，並為 EasyProxy 選擇 **Open Anyway**。若某個版本設定了 Developer ID 簽署資訊，該版本會使用 Developer ID 簽署、啟用 hardened runtime，並經 Apple 公證且將票據附加至應用程式；此時 macOS 只會顯示網路下載應用程式的標準確認。自行建置的應用程式使用 ad-hoc 簽署；請參閱[從原始碼建置](#從原始碼建置)。
 
 開啟時，應用程式會在視窗中顯示啟動進度。首次啟動會啟用一次 **Start at Login**；你可以從系統匣選單將它關閉。日後透過登入項目啟動時，視窗預設隱藏，但系統匣仍可使用。
 

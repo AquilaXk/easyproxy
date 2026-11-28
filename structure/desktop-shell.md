@@ -500,7 +500,7 @@ the pinned public key and emits their digest in `src/update/update-trust-anchor.
 updates or change the Tauri updater's existing trust configuration.
 On macOS, in-app updates download per-arch `EasyProxy-<version>-macos-arm64.app.tar.gz` or `macos-x64.app.tar.gz` (`updater-manifest.ts`); DMGs remain first-install packages. On Windows, `updater.rs` checks OS Authenticode (`Status=Valid`, signer + timestamp) over a bounded private temp `.msi` before draining the runtime.
 
-`desktop/scripts/prepare-sidecar.ts` clears stale resource dirs, bundles `native-bin` alongside `keyring` (`resources/native-bin` in `tauri.conf.json`), ad-hoc signs them + updates `SHA256SUMS` on darwin, and signs Developer ID Mach-Os during release builds. Windows release builds fail closed through SignPath (`windows-signing-plan.sh`) unless `DRY_RUN=true`.
+`desktop/scripts/prepare-sidecar.ts` clears stale resource dirs, bundles `native-bin` alongside `keyring` (`resources/native-bin` in `tauri.conf.json`), ad-hoc signs them + updates `SHA256SUMS` on darwin, and signs Developer ID Mach-Os during release builds when the six Apple signing secrets are set (all empty ships ad-hoc signed and not notarized, a partial set fails a real release). Windows release builds sign through SignPath (`windows-signing-plan.sh`) when `SIGNPATH_API_TOKEN` is set and ship unsigned without it; a token with a missing variable, or a policy other than `release-signing` or `test-signing`, fails a real release.
 
 The app's own version comes from `desktop/src-tauri/tauri.conf.json` and `Cargo.toml` (mirrored
 in `Cargo.lock`), not from `package.json`, and the release workflow injects none. Those files move
@@ -551,7 +551,8 @@ so the vibrant body's rounded clipping cannot trap the footer below a long accou
 
 Transparent Tauri windows on macOS require the `macos-private-api` Cargo feature and
 `app.macOSPrivateApi` in `desktop/src-tauri/tauri.conf.json`. Enabling that API forecloses Mac App
-Store submission; this shell ships as a Developer ID DMG, so its release channel accepts that
+Store submission; this shell ships as a DMG outside the Store (Developer ID signed and notarized when
+Apple signing credentials are configured, unsigned until then), so its release channel accepts that
 tradeoff.
 
 The tray title keeps its existing period. The popup answers the detailed question, so the title

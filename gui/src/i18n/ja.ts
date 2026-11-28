@@ -1502,7 +1502,7 @@ export const ja: Record<TKey, string> = {
   "usage.companion.runningInDesktop": "EasyProxy デスクトップアプリ {version} を使用中です",
   "usage.companion.openInBrowser": "ブラウザで開く",
   "usage.companion.installMacStep1": "最新リリースから EasyProxy-<version>-macos.dmg をダウンロードし、EasyProxy.app をアプリケーションへ移動します。",
-  "usage.companion.installMacStep2": "初回起動：EasyProxy.app を右クリックして「開く」を選択します（公証されるまで Gatekeeper が一度確認します）。",
+  "usage.companion.installMacStep2": "初回起動：macOS が EasyProxy.app をブロックしたら、システム設定 → プライバシーとセキュリティ を開き「このまま開く」を選択します（公証はまだ行われていません）。",
   "usage.companion.installMacStep3": "アプリはこのプロキシを自動検出します。アプリを起動するとウィジェットギャラリーに表示されます。",
   "usage.companion.installWinStep1": "最新リリースから EasyProxy-<version>-windows-x64.msi をダウンロードして実行します。",
   "usage.companion.installWinStep2": "SmartScreen が警告したら「詳細情報」→「実行」を選択します（インストーラーはまだコード署名されていません）。",

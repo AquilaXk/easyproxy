@@ -149,9 +149,12 @@ widget extension is `Contents/PlugIns/EasyProxyWidget.appex`. Removing the app r
 it does not remove `~/.easyproxy`, and it does not stop a service installed by the CLI.
 
 Two beta consequences are worth stating before an install: release builds of the macOS app are
-signed with a Developer ID and notarized, so macOS shows only its standard confirmation for a
-downloaded app (a local build is ad-hoc signed and may need **Open Anyway** in System Settings →
-Privacy & Security), and the Windows installer is not code-signed, so SmartScreen warns on it. Neither is a failure to route around by disabling a security setting on
+not signed with a Developer ID or notarized until Apple signing credentials are configured, so
+macOS blocks the first launch until the user chooses **Open Anyway** in System Settings → Privacy &
+Security (a release signed and notarized with those credentials shows only its standard
+confirmation for a downloaded app, and a local build is ad-hoc signed like an unsigned one), and
+the Windows installer is not code-signed unless SignPath signing is configured, so SmartScreen warns
+on it. Neither is a failure to route around by disabling a security setting on
 the user's behalf — relay it and let the user decide.
 
 ## Why this is a file and not a prompt

@@ -11,7 +11,7 @@ macOS 메뉴 막대 항목은 EasyProxy 데스크톱 앱에 포함됩니다. 로
 
 ## 첫 실행
 
-릴리스 버전의 `EasyProxy.app`은 Developer ID로 서명되고 강화된 런타임을 사용하며 Apple 공증 티켓이 앱에 스테이플되어 있습니다. 첫 실행 시 macOS는 대개 인터넷에서 다운로드한 앱에 대한 일반 확인만 요청합니다. 그래도 차단된다면 **System Settings → Privacy & Security**를 열고 EasyProxy의 **Open Anyway**를 선택하세요. 직접 빌드한 앱은 임시 서명을 사용합니다. [소스에서 빌드](#소스에서-빌드)를 참고하세요.
+릴리스 버전의 `EasyProxy.app`은 아직 Developer ID 서명과 공증을 받지 않아 첫 실행을 macOS가 막습니다. **System Settings → Privacy & Security**를 열고 EasyProxy의 **Open Anyway**를 선택하세요. Developer ID 서명 정보가 설정된 릴리스는 Developer ID로 서명하고 강화된 런타임을 쓰며 Apple 공증 티켓을 앱에 스테이플하므로, macOS는 인터넷에서 다운로드한 앱에 대한 일반 확인만 요청합니다. 직접 빌드한 앱은 임시 서명을 사용합니다. [소스에서 빌드](#소스에서-빌드)를 참고하세요.
 
 앱을 열면 창에 시작 진행 상황이 표시됩니다. 첫 실행에서는 **Start at Login**을 한 번 켜며 트레이 메뉴에서 끌 수 있습니다. 이후 로그인 항목으로 실행될 때는 창을 숨긴 채 시작하지만 트레이는 사용할 수 있습니다.
 

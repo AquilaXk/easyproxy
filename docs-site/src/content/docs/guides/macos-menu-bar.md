@@ -11,7 +11,7 @@ Download `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) or `EasyProxy-<ve
 
 ## First launch
 
-Release builds of `EasyProxy.app` are signed with a Developer ID, use the hardened runtime, and are notarized by Apple with the ticket stapled to the app. On first launch, macOS normally asks only for the standard confirmation for an app downloaded from the internet. If macOS still blocks it, open **System Settings → Privacy & Security** and choose **Open Anyway** for EasyProxy. Apps you build yourself are ad-hoc signed; see [Build from source](#build-from-source).
+Release builds of `EasyProxy.app` are not signed with a Developer ID or notarized yet, so macOS blocks the first launch. Open **System Settings → Privacy & Security** and choose **Open Anyway** for EasyProxy. When Developer ID credentials are configured for a release, that build is signed with a Developer ID, uses the hardened runtime, and is notarized by Apple with the ticket stapled to the app; macOS then asks only for the standard confirmation for an app downloaded from the internet. Apps you build yourself are ad-hoc signed; see [Build from source](#build-from-source).
 
 The app shows its startup progress in a window when you open it. It enables **Start at Login** once on first launch; you can turn that off from the tray menu. The tray item is checked only when this copy of the app is registered and macOS has not disabled the login item; otherwise its label says why (see [Desktop app](/guides/desktop-app/)). Later launches from the login item start with the window hidden while the tray remains available.
 

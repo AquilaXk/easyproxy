@@ -1599,7 +1599,7 @@ export const ko: Record<TKey, string> = {
   "usage.companion.runningInDesktop": "EasyProxy 데스크톱 앱 {version}에서 실행 중입니다",
   "usage.companion.openInBrowser": "브라우저에서 열기",
   "usage.companion.installMacStep1": "최신 릴리스에서 EasyProxy-<version>-macos.dmg를 다운로드하고 EasyProxy.app을 응용 프로그램으로 드래그하세요.",
-  "usage.companion.installMacStep2": "첫 실행: EasyProxy.app을 마우스 오른쪽 버튼으로 클릭하고 열기를 선택하세요(공증될 때까지 Gatekeeper가 한 번 확인합니다).",
+  "usage.companion.installMacStep2": "첫 실행: macOS가 EasyProxy.app을 막으면 시스템 설정 → 개인정보 보호 및 보안을 열고 그래도 열기를 선택하세요(아직 공증되지 않았습니다).",
   "usage.companion.installMacStep3": "앱이 이 프록시를 자동으로 찾으며 앱을 실행하면 위젯 갤러리에 위젯이 표시됩니다.",
   "usage.companion.installWinStep1": "최신 릴리스에서 EasyProxy-<version>-windows-x64.msi를 다운로드하고 실행하세요.",
   "usage.companion.installWinStep2": "SmartScreen 경고가 표시되면 추가 정보 → 실행을 선택하세요(설치 프로그램은 아직 코드 서명되지 않았습니다).",

@@ -15,7 +15,7 @@ Descarga `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) o `EasyProxy-<ver
 
 ## Primer inicio
 
-Las versiones publicadas de `EasyProxy.app` llevan firma de Developer ID, usan el entorno de ejecución reforzado y están notarizadas por Apple, con el comprobante adjunto. En el primer inicio, macOS normalmente solo pide la confirmación habitual para una aplicación descargada. Si sigue bloqueándola, abre **Configuración del Sistema → Privacidad y seguridad → Abrir de todos modos**. Las compilaciones propias llevan firma ad hoc; consulta [Compilar desde el código fuente](#build-from-source).
+Las versiones publicadas de `EasyProxy.app` todavía no tienen firma de Developer ID ni notarización, así que macOS bloquea el primer inicio. Abre **Configuración del Sistema → Privacidad y seguridad** y elige **Abrir de todos modos** para EasyProxy. Cuando hay credenciales de Developer ID configuradas para una versión, esa compilación lleva firma de Developer ID, usa el entorno de ejecución reforzado y está notarizada por Apple, con el comprobante adjunto; entonces macOS solo pide la confirmación habitual para una aplicación descargada. Las compilaciones propias llevan firma ad hoc; consulta [Compilar desde el código fuente](#build-from-source).
 
 Al abrirse, la aplicación muestra el progreso de inicio en una ventana. En el primer inicio activa una vez **Iniciar al iniciar sesión (Start at Login)**; puedes desactivarlo desde la bandeja. Esa opción solo aparece marcada cuando esta copia está registrada y macOS no ha desactivado el elemento de inicio. En otro caso, la etiqueta explica el motivo; consulta [Aplicación de escritorio](/es/guides/desktop-app/). Los inicios posteriores mediante ese elemento ocultan la ventana y mantienen la bandeja disponible.
 

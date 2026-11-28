@@ -1517,7 +1517,7 @@ export const de: Record<TKey, string> = {
   "usage.companion.runningInDesktop": "Du bist in der EasyProxy-Desktop-App {version}",
   "usage.companion.openInBrowser": "Im Browser öffnen",
   "usage.companion.installMacStep1": "Laden Sie EasyProxy-<version>-macos.dmg aus der neuesten Veröffentlichung herunter und ziehen Sie EasyProxy.app in Programme.",
-  "usage.companion.installMacStep2": "Erster Start: Klicken Sie mit der rechten Maustaste auf EasyProxy.app → Öffnen (Gatekeeper fragt einmal, bis die App notariell signiert ist).",
+  "usage.companion.installMacStep2": "Erster Start: Blockiert macOS EasyProxy.app, öffnen Sie Systemeinstellungen → Datenschutz & Sicherheit und wählen Sie „Trotzdem öffnen“ (die App ist noch nicht notariell beglaubigt).",
   "usage.companion.installMacStep3": "Die App findet diesen Proxy selbst; das Widget erscheint in der Widget-Galerie, sobald die App ausgeführt wurde.",
   "usage.companion.installWinStep1": "Laden Sie EasyProxy-<version>-windows-x64.msi aus der neuesten Veröffentlichung herunter und führen Sie es aus.",
   "usage.companion.installWinStep2": "Wenn SmartScreen warnt, wählen Sie Weitere Informationen → Trotzdem ausführen (der Installer ist noch nicht signiert).",

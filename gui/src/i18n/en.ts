@@ -1579,7 +1579,7 @@ export const en = {
   "usage.companion.runningInDesktop": "You’re in the EasyProxy desktop app {version}",
   "usage.companion.openInBrowser": "Open in browser",
   "usage.companion.installMacStep1": "Download EasyProxy-<version>-macos.dmg from the latest release and drag EasyProxy.app to Applications.",
-  "usage.companion.installMacStep2": "First launch: right-click EasyProxy.app → Open (Gatekeeper asks once until the app is notarized).",
+  "usage.companion.installMacStep2": "First launch: if macOS blocks EasyProxy.app, open System Settings → Privacy & Security and choose Open Anyway (the app is not yet notarized).",
   "usage.companion.installMacStep3": "The app finds this proxy on its own; the widget appears in the widget gallery once the app has run.",
   "usage.companion.installWinStep1": "Download EasyProxy-<version>-windows-x64.msi from the latest release and run it.",
   "usage.companion.installWinStep2": "If SmartScreen warns, choose More info → Run anyway (the installer is not yet code-signed).",

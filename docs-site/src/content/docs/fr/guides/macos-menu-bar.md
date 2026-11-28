@@ -11,7 +11,7 @@ Téléchargez `EasyProxy-<version>-macos-arm64.dmg` (Apple Silicon) ou `EasyProx
 
 ## Premier lancement
 
-Les versions publiées de `EasyProxy.app` sont signées avec un Developer ID, utilisent l’environnement d’exécution renforcé et sont notariées par Apple, avec le ticket joint à l’application. Au premier lancement, macOS ne demande normalement que la confirmation habituelle pour une application téléchargée sur Internet. S’il la bloque tout de même, ouvrez **System Settings → Privacy & Security** et choisissez **Open Anyway** pour EasyProxy. Les applications que vous compilez vous-même reçoivent une signature ad hoc ; consultez [Compilation depuis les sources](#compilation-depuis-les-sources).
+Les versions publiées de `EasyProxy.app` ne sont pas encore signées avec un Developer ID ni notariées, donc macOS bloque le premier lancement. Ouvrez **System Settings → Privacy & Security** et choisissez **Open Anyway** pour EasyProxy. Lorsque les identifiants Developer ID sont configurés pour une version, cette version est signée avec un Developer ID, utilise l’environnement d’exécution renforcé et est notariée par Apple, avec le ticket joint à l’application ; macOS ne demande alors que la confirmation habituelle pour une application téléchargée sur Internet. Les applications que vous compilez vous-même reçoivent une signature ad hoc ; consultez [Compilation depuis les sources](#compilation-depuis-les-sources).
 
 À l’ouverture, l’application affiche sa progression de démarrage dans une fenêtre. Elle active **Start at Login** une fois lors du premier lancement ; vous pouvez désactiver ce réglage depuis le menu de la zone de notification. Lors des lancements suivants par l’élément de connexion, la fenêtre reste masquée tandis que l’icône demeure disponible.
 

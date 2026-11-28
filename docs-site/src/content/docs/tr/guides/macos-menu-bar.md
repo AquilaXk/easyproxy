@@ -11,7 +11,7 @@ macOS menü çubuğu öğesi, EasyProxy masaüstü uygulamasının parçasıdır
 
 ## İlk açılış
 
-`EasyProxy.app` sürüm derlemeleri Developer ID ile imzalanır, güçlendirilmiş çalışma zamanını kullanır ve Apple tarafından, bileti uygulamaya eklenerek noterleştirilir. İlk açılışta macOS normalde yalnızca internetten indirilen uygulamalar için standart onayı ister. Yine de engellerse **System Settings → Privacy & Security** bölümünü açıp EasyProxy için **Open Anyway** seçeneğini seçin. Kendiniz derlediğiniz uygulamalar ad hoc olarak imzalanır; [Kaynaktan derleme](#kaynaktan-derleme) bölümüne bakın.
+`EasyProxy.app` sürüm derlemeleri henüz Developer ID ile imzalanmadı ve noterleştirilmedi; bu yüzden macOS ilk açılışı engeller. **System Settings → Privacy & Security** bölümünü açıp EasyProxy için **Open Anyway** seçeneğini seçin. Bir sürüm için Developer ID bilgileri yapılandırıldığında derleme Developer ID ile imzalanır, güçlendirilmiş çalışma zamanını kullanır ve Apple tarafından, bileti uygulamaya eklenerek noterleştirilir; macOS o zaman internetten indirilen uygulamalar için yalnızca standart onayı ister. Kendiniz derlediğiniz uygulamalar ad hoc olarak imzalanır; [Kaynaktan derleme](#kaynaktan-derleme) bölümüne bakın.
 
 Uygulama açıldığında başlangıç ilerlemesini bir pencerede gösterir. İlk açılışta **Start at Login** seçeneğini bir kez etkinleştirir; tepsi menüsünden kapatabilirsiniz. Oturum açma öğesi üzerinden sonraki açılışlarda pencere gizli başlar, tepsi ise kullanılabilir kalır.
 
