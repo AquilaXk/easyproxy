@@ -209,10 +209,19 @@ export function createOptionalListenerSet<T>(linkDeps: LinkListenerDeps = {},
         } } : {}),
         keyFingerprints: apiKeyId => {
           const entry = activeConfig?.apiKeys?.find(candidate => candidate.id === apiKeyId);
-          if (!entry?.key || isApiKeyExpired(entry)) return [];
+          if (!entry || typeof entry.key !== "string" || entry.key.length === 0 || isApiKeyExpired(entry)) return [];
           const fingerprints = [serviceApiTokenFingerprint(entry.key)];
           const pending = entry.pendingRotation;
-          if (pending && parseStrictTimestampMs(pending.expiresAt) > Date.now()) fingerprints.push(serviceApiTokenFingerprint(pending.key));
+          if (
+            pending
+            && typeof pending === "object"
+            && typeof pending.key === "string"
+            && pending.key.length > 0
+            && typeof pending.expiresAt === "string"
+            && parseStrictTimestampMs(pending.expiresAt) > Date.now()
+          ) {
+            fingerprints.push(serviceApiTokenFingerprint(pending.key));
+          }
           return fingerprints;
         },
       });

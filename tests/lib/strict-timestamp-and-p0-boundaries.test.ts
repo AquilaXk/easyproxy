@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, X509Certificate } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, generateKeyPairSync, randomBytes, randomUUID, sign, X509Certificate } from "node:crypto";
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,14 +19,14 @@ import {
   startApiKeyRotation,
 } from "../../src/server/management/api-key-rotation";
 import { resolveTelemetryStatus } from "../../src/telemetry/consent";
-import { resolveNextEligibleTelemetryDay, type TelemetryState } from "../../src/telemetry/scheduler";
+import { resolveNextEligibleTelemetryDay, runTelemetryTick, type TelemetryState } from "../../src/telemetry/scheduler";
 import { readTelemetryStateFile, telemetryStatePath } from "../../src/telemetry/state";
 import { parseRetryAfterMs as parseTelemetryRetryAfterMs } from "../../src/telemetry/sender";
 import { readTelemetryInstallId, telemetryIdPath } from "../../src/telemetry/install-id";
 import { setProfileClientOverridesForTests } from "../../src/telemetry/profile/client";
 import { readTelemetryProfileFile } from "../../src/telemetry/profile/state";
 import { telemetryProfilePath } from "../../src/telemetry/profile/paths";
-import { runProfileTick } from "../../src/telemetry/profile/sync";
+import { isProfileRetryAfterActive, runProfileTick } from "../../src/telemetry/profile/sync";
 import { anthropicRetryAfterMs } from "../../src/oauth/anthropic-rate-limit-policy";
 import { isSameTargetRetryHold, retryAfterDelayMs } from "../../src/lib/upstream-retry";
 import { parseRetryAfterMs as parseCodexRetryAfterMs } from "../../src/codex/routing/cooldown-math";
@@ -297,7 +297,68 @@ describe("desktop-compatibility certificate-store validToDate and validatedAutho
     };
   }
 
-  test("inspectDesktopCompatibilityAuthority and validatedAuthority reject non-finite now, pre-validity, oversized validity, and corrupt X.509 dates", async () => {
+  function mintSignedCaWithValidity(
+    commonName: string,
+    notBefore: { tag: 0x17 | 0x18; text: string },
+    notAfter: { tag: 0x17 | 0x18; text: string },
+  ): { certPem: string; keyPem: string } {
+    const tlv = (tag: number, body: Uint8Array): Buffer => {
+      const len = body.length < 0x80
+        ? [body.length]
+        : body.length < 256
+          ? [0x81, body.length]
+          : [0x82, body.length >> 8, body.length & 0xff];
+      return Buffer.concat([Buffer.from([tag, ...len]), body]);
+    };
+    const seq = (...parts: Uint8Array[]) => tlv(0x30, Buffer.concat(parts));
+    const oid = (bytes: number[]) => tlv(0x06, Buffer.from(bytes));
+    const alg = seq(oid([0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]));
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const spki = new Uint8Array(publicKey.export({ type: "spki", format: "der" }));
+    const dn = seq(tlv(0x31, seq(oid([0x55, 0x04, 0x03]), tlv(0x0c, Buffer.from(commonName)))));
+    const basicConstraintsCa = Buffer.from("300f0603551d130101ff040530030101ff", "hex");
+    const serverAuthEku = Buffer.from("30160603551d250101ff040c300a06082b06010505070301", "hex");
+    const tbs = seq(
+      tlv(0xa0, tlv(0x02, Buffer.from([2]))),
+      tlv(0x02, Buffer.from([1])),
+      alg,
+      dn,
+      seq(tlv(notBefore.tag, Buffer.from(notBefore.text)), tlv(notAfter.tag, Buffer.from(notAfter.text))),
+      dn,
+      spki,
+      tlv(0xa3, seq(basicConstraintsCa, serverAuthEku)),
+    );
+    const sig = sign("sha256", tbs, { key: privateKey, dsaEncoding: "der" });
+    const der = seq(tbs, alg, tlv(0x03, Buffer.concat([Buffer.from([0]), sig])));
+    const certPem = `-----BEGIN CERTIFICATE-----\n${der.toString("base64").replace(/(.{64})/g, "$1\n").trimEnd()}\n-----END CERTIFICATE-----\n`;
+    return { certPem, keyPem: privateKey.export({ type: "pkcs8", format: "pem" }) as string };
+  }
+
+  async function writeProtectedAuthority(
+    dir: string,
+    protection: AuthorityKeyProtection,
+    certPem: string,
+    keyPem: string,
+    commonName: string,
+  ): Promise<void> {
+    const clear = Buffer.from(JSON.stringify({
+      policy: "codex-desktop-chatgpt-only/v1",
+      certSha256: createHash("sha256").update(certPem).digest("hex"),
+      commonName,
+      keyPem,
+    }));
+    const sealed = Buffer.from(await protection.protect(clear)).toString("base64");
+    clear.fill(0);
+    await ensureDesktopCompatibilityAuthority({ directory: dir, protection });
+    writeFileSync(join(dir, "authority.json"), JSON.stringify({
+      version: 1,
+      protection: "windows-current-user-dpapi",
+      certPem,
+      sealed,
+    }));
+  }
+
+  test("inspectDesktopCompatibilityAuthority and validatedAuthority check validFromDate/validToDate, GeneralizedTime, inverted validity, and corrupt X.509 dates", async () => {
     const okAcl = () => ({ success: true, exitCode: 0, timedOut: false, stdout: "" });
     setIcaclsRunnerForTests(okAcl);
     setAsyncIcaclsRunnerForTests(async () => okAcl());
@@ -327,31 +388,50 @@ describe("desktop-compatibility certificate-store validToDate and validatedAutho
     await expect(loadDesktopCompatibilityAuthority({ directory: tempDir, protection, now: () => expectedTo }))
       .rejects.toMatchObject({ code: "expired" });
 
-    // Oversized CA validity (> 31 days) must fail validatedAuthority even when sealed cleanly.
+    // Oversized CA validity (> 31 days) with serverAuth EKU stays "present" in inspect but fails validatedAuthority as unreadable.
     const longDir = join(tempDir, "long-lived");
     const commonName = `EasyProxy Codex Desktop ${randomUUID()}`;
     const basicConstraintsCa = Buffer.from("300f0603551d130101ff040530030101ff", "hex");
-    const longCa = mintAuthorityWithExtensionsForTests(commonName, [basicConstraintsCa]);
-    const clear = Buffer.from(JSON.stringify({
-      policy: "codex-desktop-chatgpt-only/v1",
-      certSha256: createHash("sha256").update(longCa.certPem).digest("hex"),
-      commonName,
-      keyPem: longCa.keyPem,
-    }));
-    const sealed = Buffer.from(await protection.protect(clear)).toString("base64");
-    clear.fill(0);
-    await ensureDesktopCompatibilityAuthority({ directory: longDir, protection });
-    writeFileSync(join(longDir, "authority.json"), JSON.stringify({
-      version: 1,
-      protection: "windows-current-user-dpapi",
-      certPem: longCa.certPem,
-      sealed,
-    }));
-    expect(inspectDesktopCompatibilityAuthority(longDir).status).toBe("renewal-required");
+    const serverAuthEku = Buffer.from("30160603551d250101ff040c300a06082b06010505070301", "hex");
+    const longCa = mintAuthorityWithExtensionsForTests(commonName, [basicConstraintsCa, serverAuthEku]);
+    await writeProtectedAuthority(longDir, protection, longCa.certPem, longCa.keyPem, commonName);
+    expect(inspectDesktopCompatibilityAuthority(longDir).status).toBe("present");
     await expect(loadDesktopCompatibilityAuthority({ directory: longDir, protection }))
       .rejects.toMatchObject({ code: "unreadable" });
 
-    // Corrupt ASN.1 UTCTime calendar overflow ("260230000000Z") in PEM fails closed in both inspect and load.
+    // Valid RFC 5280 GeneralizedTime (year >= 2050) parses identically via validFromDate/validToDate.
+    const genDir = join(tempDir, "generalized-time");
+    const genName = `EasyProxy Codex Desktop ${randomUUID()}`;
+    const genCa = mintSignedCaWithValidity(
+      genName,
+      { tag: 0x18, text: "20500101000000Z" },
+      { tag: 0x18, text: "20500115000000Z" },
+    );
+    await writeProtectedAuthority(genDir, protection, genCa.certPem, genCa.keyPem, genName);
+    expect(inspectDesktopCompatibilityAuthority(genDir, Date.UTC(2050, 0, 2))).toMatchObject({
+      status: "present",
+      expiresAt: Date.UTC(2050, 0, 15),
+    });
+    const loadedGen = await loadDesktopCompatibilityAuthority({ directory: genDir, protection, now: () => Date.UTC(2050, 0, 2) });
+    expect(loadedGen.expiresAt).toBe(Date.UTC(2050, 0, 15));
+
+    // Validly-signed CA with inverted validity (validFrom > validTo) must fail closed even under allowExpiredForRemoval=true.
+    const invDir = join(tempDir, "inverted-validity");
+    const invName = `EasyProxy Codex Desktop ${randomUUID()}`;
+    const invCa = mintSignedCaWithValidity(
+      invName,
+      { tag: 0x17, text: "261101000000Z" },
+      { tag: 0x17, text: "261001000000Z" },
+    );
+    await writeProtectedAuthority(invDir, protection, invCa.certPem, invCa.keyPem, invName);
+    expect(inspectDesktopCompatibilityAuthority(invDir, Date.UTC(2026, 8, 1))).toEqual({ status: "invalid" });
+    expect(inspectDesktopCompatibilityAuthority(invDir, Date.UTC(2026, 10, 2))).toEqual({ status: "invalid" });
+    await expect(loadDesktopCompatibilityAuthority({ directory: invDir, protection, now: () => Date.UTC(2026, 10, 2) }))
+      .rejects.toMatchObject({ code: "unreadable" });
+    await expect(loadDesktopCompatibilityAuthority({ directory: invDir, protection, now: () => Date.UTC(2026, 10, 2) }, true))
+      .rejects.toMatchObject({ code: "unreadable" });
+
+    // Corrupt ASN.1 UTCTime calendar overflow ("260230000000Z") fails closed across X509Certificate DER decode and store checks.
     const saved = JSON.parse(readFileSync(join(tempDir, "authority.json"), "utf8")) as {
       version: number;
       protection: string;
@@ -378,7 +458,7 @@ describe("desktop-compatibility certificate-store validToDate and validatedAutho
 });
 
 describe("mistral-transport retryDelay strict Retry-After guard", () => {
-  test("ignores bad-1, calendar overflow, 24:00:00, and >128B Retry-After in pacer and same-target hold", async () => {
+  test("ignores bad-1, bad-9999, calendar overflow, 24:00:00, and >128B Retry-After in pacer, stateful transport, and same-target hold", async () => {
     const baseNow = Date.UTC(2026, 8, 9, 0, 0, 0);
     let now = baseNow;
     const waits: number[] = [];
@@ -392,8 +472,11 @@ describe("mistral-transport retryDelay strict Retry-After guard", () => {
 
     const invalidHints = [
       "bad-1",
+      "bad-9999",
       "0x10",
       "-5",
+      "+5",
+      "1e2",
       "2099-02-30T00:00:00Z",
       "2099-09-09T24:00:00Z",
       "30 Feb 2099 00:00:00 GMT",
@@ -401,42 +484,71 @@ describe("mistral-transport retryDelay strict Retry-After guard", () => {
       "9".repeat(129),
     ];
 
+    const sharedWaits: number[] = [];
+    const sharedPacer = new MistralBudgetPacer(
+      () => baseNow,
+      async ms => {
+        sharedWaits.push(ms);
+      },
+    );
+
     for (const hint of invalidHints) {
       pacer.observe("id", new Headers({ "retry-after": hint }), 429);
       (await pacer.acquire("id"))(true);
       expect(waits).toEqual([]);
 
+      // Status 200 with remaining=0 also enters retryDelay and must ignore invalid hints.
+      pacer.observe("id-200", new Headers({ "x-ratelimit-remaining-tokens-minute": "0", "retry-after": hint }), 200);
+      (await pacer.acquire("id-200"))(true);
+      expect(waits).toEqual([]);
+
+      let upstreamCalls = 0;
       const transport = resolveMistralTransport(
         {
           adapter: "openai-chat",
           authMode: "key",
           baseUrl: "https://api.mistral.ai/v1",
           apiKey: "synthetic-mistral-key",
-          fetch: (async () => new Response("rate limited", { status: 429, headers: { "retry-after": hint } })) as typeof fetch,
+          fetch: (async () => {
+            upstreamCalls += 1;
+            if (upstreamCalls === 1) return new Response("rate limited", { status: 429, headers: { "retry-after": hint } });
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+          }) as typeof fetch,
         },
-        new MistralBudgetPacer(() => baseNow),
+        sharedPacer,
       );
-      const response = await transport.fetch!("https://api.mistral.ai/v1/chat/completions", {
+      const first = await transport.fetch!("https://api.mistral.ai/v1/chat/completions", {
         method: "POST",
         headers: { authorization: "Bearer synthetic-mistral-key" },
         body: JSON.stringify({ model: "mistral-large-4" }),
       });
-      expect(isSameTargetRetryHold(response)).toBe(false);
+      expect(isSameTargetRetryHold(first)).toBe(false);
+      // Reusing the same pacer must allow the follow-up send immediately with zero wait.
+      const second = await transport.fetch!("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-mistral-key" },
+        body: JSON.stringify({ model: "mistral-large-4" }),
+      });
+      expect(second.status).toBe(200);
+      expect(sharedWaits).toEqual([]);
     }
 
-    // "bad-1" must resolve to undefined (not 0 from negative epoch delta), allowing minute fallback.
-    pacer.observe(
-      "minute",
-      new Headers({
-        "retry-after": "bad-1",
-        "x-ratelimit-limit-tokens-minute": "1000",
-        "x-ratelimit-remaining-tokens-minute": "400",
-        "x-ratelimit-tokens-query-cost": "600",
-      }),
-      429,
-    );
-    (await pacer.acquire("minute"))(true);
-    expect(waits).toEqual([60_000]);
+    // "bad-1" and "bad-9999" must resolve to undefined (not 0 or year 9999), allowing minute fallback.
+    for (const badToken of ["bad-1", "bad-9999"]) {
+      waits.length = 0;
+      pacer.observe(
+        `minute-${badToken}`,
+        new Headers({
+          "retry-after": badToken,
+          "x-ratelimit-limit-tokens-minute": "1000",
+          "x-ratelimit-remaining-tokens-minute": "400",
+          "x-ratelimit-tokens-query-cost": "600",
+        }),
+        429,
+      );
+      (await pacer.acquire(`minute-${badToken}`))(true);
+      expect(waits).toEqual([60_000]);
+    }
 
     // Valid future ISO and legacy HTTP-date remain honored.
     const validTransport = resolveMistralTransport(
@@ -464,7 +576,7 @@ describe("mistral-transport retryDelay strict Retry-After guard", () => {
   });
 });
 
-describe("telemetry state and profile sync reject bad-1, overflow, and >128B timestamps", () => {
+describe("telemetry state and profile sync reject bad-1, bad-9999, overflow, and >128B timestamps", () => {
   let tempDir: string | undefined;
 
   afterEach(() => {
@@ -475,7 +587,7 @@ describe("telemetry state and profile sync reject bad-1, overflow, and >128B tim
     }
   });
 
-  test("readTelemetryStateFile rejects malformed opt-out/decision fields and clears invalid retryAfterUntil", () => {
+  test("readTelemetryStateFile rejects malformed opt-out/decision fields and runTelemetryTick ignores invalid retryAfterUntil", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "epx-telemetry-state-ts-"));
     const statePath = telemetryStatePath(tempDir);
     const base = { version: 1, sentDays: {} };
@@ -484,14 +596,21 @@ describe("telemetry state and profile sync reject bad-1, overflow, and >128B tim
     for (const bad of [
       { ...base, ineligibleThroughDay: "2026-02-30" },
       { ...base, envOptOutActiveSince: "bad-1" },
+      { ...base, envOptOutActiveSince: "bad-9999" },
       { ...base, envOptOutActiveSince: "2026-02-30T00:00:00Z" },
       { ...base, envOptOutActiveSince: "2026-09-09T24:00:00Z" },
       { ...base, envOptOutActiveSince: oversized },
+      { ...base, envOptOutOwners: "not-an-array" },
+      { ...base, envOptOutOwners: [{ pid: 0, since: "2026-09-01T00:00:00Z" }] },
+      { ...base, envOptOutOwners: Array.from({ length: 65 }, (_, i) => ({ pid: i + 1, since: "2026-09-01T00:00:00Z" })) },
       { ...base, envOptOutOwners: [{ pid: 123, since: "bad-1" }] },
+      { ...base, envOptOutOwners: [{ pid: 123, since: "bad-9999" }] },
       { ...base, envOptOutOwners: [{ pid: 123, since: "2026-02-30T00:00:00Z" }] },
       { ...base, envOptOutOwners: [{ pid: 123, since: "2026-09-09T24:00:00Z" }] },
       { ...base, envOptOutOwners: [{ pid: 123, since: oversized }] },
       { ...base, pendingDecision: { decision: "accepted", decidedAt: "bad-1" } },
+      { ...base, pendingDecision: { decision: "accepted", decidedAt: "bad-9999" } },
+      { ...base, pendingDecision: { decision: "accepted", noticeShownAt: "2026-11-01T00:00:00Z" } },
       { ...base, pendingDecision: { decision: "accepted", decidedAt: "2026-02-30T00:00:00Z" } },
       { ...base, pendingDecision: { decision: "accepted", decidedAt: "2026-09-09T24:00:00Z" } },
       { ...base, pendingDecision: { decision: "accepted", decidedAt: oversized } },
@@ -502,12 +621,28 @@ describe("telemetry state and profile sync reject bad-1, overflow, and >128B tim
       expect(read.state.envOptOutOwners).toEqual([]);
     }
 
-    for (const badRetry of ["bad-1", "2099-02-30T00:00:00Z", "2099-09-09T24:00:00Z", `2099-01-01T00:00:00.${"0".repeat(150)}Z`]) {
+    for (const badRetry of ["bad-1", "bad-9999", "2099-02-30T00:00:00Z", "2099-09-09T24:00:00Z", `2099-01-01T00:00:00.${"0".repeat(150)}Z`]) {
       writeFileSync(statePath, JSON.stringify({ ...base, retryAfterUntil: badRetry }), "utf8");
       const read = readTelemetryStateFile(tempDir);
       expect(read.unreadable).toBe(false);
       expect(read.state.retryAfterUntil).toBeNull();
     }
+
+    // runTelemetryTick must not enter retry-after-backoff when retryAfterUntil is bad-9999 or calendar overflow.
+    writeFileSync(statePath, JSON.stringify({ ...base, retryAfterUntil: "2099-02-30T00:00:00Z" }), "utf8");
+    const tick = await runTelemetryTick({
+      configDir: tempDir,
+      env: {},
+      now: Date.parse("2026-11-07T12:00:00.000Z"),
+      readConfig: () => ({
+        telemetry: {
+          decision: "accepted",
+          decidedAt: "2026-11-07T00:00:00.000Z",
+          noticeShownAt: "2026-11-07T00:00:00.000Z",
+        },
+      }),
+    });
+    expect(tick).toEqual({ sent: false, reason: "up-to-date" });
 
     writeFileSync(statePath, JSON.stringify({
       ...base,
@@ -545,7 +680,19 @@ describe("telemetry state and profile sync reject bad-1, overflow, and >128B tim
     });
   });
 
-  test("runProfileTick ignores bad-1, overflow, and >128B retryAfterUntil instead of sticking in backoff", async () => {
+  test("isProfileRetryAfterActive and runProfileTick ignore bad-1, bad-9999, overflow, and >128B retryAfterUntil", async () => {
+    // Directly exercise sync.ts's retryAfterUntil guard (readTelemetryProfileFile pre-strips disk files).
+    const year2000 = Date.UTC(2000, 0, 1);
+    const year2026 = Date.UTC(2026, 10, 7);
+    expect(isProfileRetryAfterActive("bad-1", year2000)).toBe(false);
+    expect(isProfileRetryAfterActive("bad-9999", year2026)).toBe(false);
+    expect(isProfileRetryAfterActive("2099-02-30T00:00:00Z", year2026)).toBe(false);
+    expect(isProfileRetryAfterActive("2099-09-09T24:00:00Z", year2026)).toBe(false);
+    expect(isProfileRetryAfterActive(`2099-01-01T00:00:00.${"0".repeat(150)}Z`, year2026)).toBe(false);
+    expect(isProfileRetryAfterActive("2099-01-01T00:00:00Z", Number.NaN)).toBe(false);
+    expect(isProfileRetryAfterActive("2099-01-01T00:00:00Z", year2026)).toBe(true);
+    expect(isProfileRetryAfterActive("2026-11-07T00:00:00Z", year2026)).toBe(false);
+
     tempDir = mkdtempSync(join(tmpdir(), "epx-profile-sync-ts-"));
     const now = Date.parse("2026-11-07T12:00:00.000Z");
     const secret = `epxp_${"B".repeat(43)}`;
@@ -611,6 +758,7 @@ describe("telemetry state and profile sync reject bad-1, overflow, and >128B tim
 
     for (const badRetry of [
       "bad-1",
+      "bad-9999",
       "2099-02-30T00:00:00Z",
       "2099-09-09T24:00:00Z",
       `2099-01-01T00:00:00.${"0".repeat(150)}Z`,
@@ -619,7 +767,7 @@ describe("telemetry state and profile sync reject bad-1, overflow, and >128B tim
       const tick = await runProfileTick({ configDir: tempDir, env: {}, now, readConfig, aggregateDay });
       expect(tick).toEqual({ sent: true, day: "2026-11-06", reason: "sent" });
     }
-    expect(calls).toBe(4);
+    expect(calls).toBe(5);
 
     // Pending delete with calendar-overflow retryAfterUntil must not stay stuck until 2099.
     writeProfile("2099-02-30T00:00:00Z", true);
@@ -628,6 +776,6 @@ describe("telemetry state and profile sync reject bad-1, overflow, and >128B tim
       deleted: true,
       reason: "deleted",
     });
-    expect(calls).toBe(5);
+    expect(calls).toBe(6);
   });
 });

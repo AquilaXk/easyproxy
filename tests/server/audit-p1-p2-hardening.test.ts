@@ -417,21 +417,42 @@ describe("optional-listeners keyFingerprints fail-closed timestamp guard", () =>
 
       for (const badExpiry of [
         "bad-1",
+        "bad-9999",
         "2099-02-30T00:00:00Z",
         "2099-09-09T24:00:00Z",
         `2099-01-01T00:00:00.${"0".repeat(150)}Z`,
         "2020-01-01T00:00:00Z",
+        undefined as unknown as string,
+        12345 as unknown as string,
       ]) {
         cfg.apiKeys![0]!.pendingRotation!.expiresAt = badExpiry;
         expect({ badExpiry, status: await probeRelayAuth(pendingKey) }).toEqual({ badExpiry, status: 404 });
+        expect({ badExpiry, primaryStatus: await probeRelayAuth(primaryKey) }).toEqual({ badExpiry, primaryStatus: 204 });
       }
 
-      // Primary key must remain valid even when pendingRotation.expiresAt is corrupted.
-      cfg.apiKeys![0]!.pendingRotation!.expiresAt = "2099-02-30T00:00:00Z";
+      // Malformed non-string/empty pendingRotation.key must fail closed without crashing primary key admission.
+      cfg.apiKeys![0]!.pendingRotation = {
+        id: "rot-empty",
+        key: "",
+        createdAt: "2026-09-25T00:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      };
+      expect(await probeRelayAuth(primaryKey)).toBe(204);
+      cfg.apiKeys![0]!.pendingRotation = {
+        id: "rot-missing-key",
+        key: undefined as unknown as string,
+        createdAt: "2026-09-25T00:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      };
       expect(await probeRelayAuth(primaryKey)).toBe(204);
 
       // Corrupted primary key expiresAt fails closed across both primary and pending fingerprints.
-      cfg.apiKeys![0]!.pendingRotation!.expiresAt = "2099-01-01T00:00:00.000Z";
+      cfg.apiKeys![0]!.pendingRotation = {
+        id: "rot-1",
+        key: pendingKey,
+        createdAt: "2026-09-25T00:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      };
       cfg.apiKeys![0]!.expiresAt = "2099-02-30T00:00:00Z";
       expect(await probeRelayAuth(primaryKey)).toBe(404);
       expect(await probeRelayAuth(pendingKey)).toBe(404);

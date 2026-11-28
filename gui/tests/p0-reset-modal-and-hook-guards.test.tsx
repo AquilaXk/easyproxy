@@ -158,7 +158,7 @@ test("redeemResetCredit attaches operationId, marks 5xx/network uncertain, and h
   expect(stale.ok).toBe(true);
   expect(loads).toBe(0);
   expect(typeof bodies[1]?.operationId).toBe("string");
-  expect((bodies[1]?.operationId as string).length).toBeGreaterThan(20);
+  expect(String(bodies[1]?.operationId).length).toBeGreaterThan(20);
 });
 
 test("reset modal locks Use 1 Credit while loading, locks Cancel while redeeming, and reuses operationId across 5xx retry", async () => {
@@ -352,7 +352,7 @@ test("CodexAccountPool aborts in-flight reset-credits detail fetch when target s
   expect(creditSignals[1]!.aborted).toBe(true);
 });
 
-test("ApiKeys validPendingRotation blocks bad-1, calendar overflow, 24:00:00, and >128B timestamps in cache and wire payloads", async () => {
+test("ApiKeys validPendingRotation blocks bad-1, bad-9999, calendar overflow, 24:00:00, and >128B timestamps in cache and wire payloads", async () => {
   const authMatrix = [
     { endpoint: "/v1/models", bearer: "accepted", dedicated: "accepted", xApiKey: "accepted" },
   ];
@@ -411,14 +411,21 @@ test("ApiKeys validPendingRotation blocks bad-1, calendar overflow, 24:00:00, an
     );
   });
   expect(host.textContent).toContain("cached-valid-key");
+  const openBtn = host.querySelector<HTMLButtonElement>("button.awi-keylist-name");
+  expect(openBtn).not.toBeNull();
+  await act(async () => { openBtn!.click(); });
+  expect(host.textContent).toContain("Rotation is pending.");
+  expect(host.textContent).toContain("Overlap expires:");
 
   const poisonedRotations = [
     { id: "r1", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "bad-1" },
-    { id: "r2", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "2026-02-30T00:00:00Z" },
-    { id: "r3", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "2026-09-09T24:00:00Z" },
-    { id: "r4", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: `2026-08-28T00:00:00.${"0".repeat(150)}Z` },
-    { id: "r5", createdAt: "bad-1", expiresAt: "2026-08-28T00:10:00.000Z" },
-    { id: "r6", createdAt: "2026-02-30T00:00:00Z", expiresAt: "2026-08-28T00:10:00.000Z" },
+    { id: "r2", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "bad-9999" },
+    { id: "r3", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "2026-02-30T00:00:00Z" },
+    { id: "r4", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "2026-09-09T24:00:00Z" },
+    { id: "r5", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: `2026-08-28T00:00:00.${"0".repeat(150)}Z` },
+    { id: "r6", createdAt: "bad-1", expiresAt: "2026-08-28T00:10:00.000Z" },
+    { id: "r7", createdAt: "bad-9999", expiresAt: "2026-08-28T00:10:00.000Z" },
+    { id: "r8", createdAt: "2026-02-30T00:00:00Z", expiresAt: "2026-08-28T00:10:00.000Z" },
   ];
 
   for (const [index, pendingRotation] of poisonedRotations.entries()) {
@@ -432,36 +439,36 @@ test("ApiKeys validPendingRotation blocks bad-1, calendar overflow, 24:00:00, an
       );
     });
     expect(host.textContent).not.toContain(`poisoned-cached-key-${index}`);
+    expect(host.textContent).not.toContain("Rotation is pending.");
     expect(host.querySelector('[aria-busy="true"]')).not.toBeNull();
   }
 
-  // Wire /api/keys payload with malformed pendingRotation must also fail closed.
-  Object.defineProperty(globalThis, "fetch", {
-    configurable: true,
-    value: async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/v1/models")) return Response.json({ data: [] });
-      if (url.endsWith("/api/keys")) {
-        return Response.json({
-          authMatrix,
-          keys: [makeKeysEntry("poisoned-wire-key", {
-            id: "r-wire",
-            createdAt: "2026-08-28T00:00:00.000Z",
-            expiresAt: "2026-02-30T00:00:00Z",
-          })],
-        });
-      }
-      return Response.json({});
-    },
-  });
-  await act(async () => {
-    root!.render(
-      <LanguageProvider>
-        <ApiKeys apiBase="http://keys-wire-bad.local" />
-      </LanguageProvider>,
-    );
-  });
-  await act(async () => { await new Promise(r => setTimeout(r, 25)); });
-  expect(host.textContent).not.toContain("poisoned-wire-key");
-  expect(host.textContent).toContain("Could not load API keys.");
+  // Wire /api/keys payload with malformed pendingRotation must also fail closed across all invalid forms.
+  for (const [index, pendingRotation] of poisonedRotations.entries()) {
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/v1/models")) return Response.json({ data: [] });
+        if (url.endsWith("/api/keys")) {
+          return Response.json({
+            authMatrix,
+            keys: [makeKeysEntry(`poisoned-wire-key-${index}`, pendingRotation)],
+          });
+        }
+        return Response.json({});
+      },
+    });
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ApiKeys apiBase={`http://keys-wire-bad-${index}.local`} />
+        </LanguageProvider>,
+      );
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(host.textContent).not.toContain(`poisoned-wire-key-${index}`);
+    expect(host.textContent).not.toContain("Rotation is pending.");
+    expect(host.textContent).toContain("Could not load API keys.");
+  }
 });

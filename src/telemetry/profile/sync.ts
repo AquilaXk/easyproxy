@@ -131,6 +131,13 @@ async function retryPendingDelete(
   return { sent: false, deleted: false, reason: "deletion-pending" };
 }
 
+/** True when a valid strict `retryAfterUntil` timestamp is still in the future at `now`. */
+export function isProfileRetryAfterActive(retryAfterUntil: string | null | undefined, now: number): boolean {
+  if (typeof retryAfterUntil !== "string" || !Number.isFinite(now)) return false;
+  const retryUntil = parseStrictTimestampMs(retryAfterUntil);
+  return Number.isFinite(retryUntil) && now < retryUntil;
+}
+
 export async function runProfileTick(options: ProfileTickOptions = {}): Promise<ProfileTickResult> {
   const now = options.now ?? Date.now();
   const configDir = options.configDir ?? getConfigDir();
@@ -139,8 +146,7 @@ export async function runProfileTick(options: ProfileTickOptions = {}): Promise<
   if (file.unreadable) return { sent: false, reason: "state-unreadable" };
   const profile = file.state;
   if (!profile) return { sent: false, reason: "not-connected" };
-  const retryUntil = profile.retryAfterUntil ? parseStrictTimestampMs(profile.retryAfterUntil) : Number.NaN;
-  const backingOff = !Number.isNaN(retryUntil) && now < retryUntil;
+  const backingOff = isProfileRetryAfterActive(profile.retryAfterUntil, now);
   if (profile.pendingDelete) {
     if (backingOff) return { sent: false, reason: "retry-after-backoff" };
     return retryPendingDelete(profile, configDir, now, options);

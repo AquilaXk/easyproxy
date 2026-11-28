@@ -52,8 +52,8 @@ export function inspectDesktopCompatibilityAuthority(directory: string, now = Da
     const saved = JSON.parse(readFileSync(path, "utf8"));
     if (saved.version !== 1 || saved.protection !== "windows-current-user-dpapi" || typeof saved.certPem !== "string"
       || typeof saved.sealed !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(saved.sealed) || saved.sealed.length > MAX_FILE) return { status: "invalid" };
-    const certificate = new X509Certificate(saved.certPem), expiresAt = certificate.validToDate.getTime();
-    if (!certificate.ca || !Number.isFinite(expiresAt)) return { status: "invalid" };
+    const certificate = new X509Certificate(saved.certPem), expiresAt = certificate.validToDate.getTime(), startsAt = certificate.validFromDate.getTime();
+    if (!certificate.ca || !Number.isFinite(expiresAt) || !Number.isFinite(startsAt) || expiresAt <= startsAt) return { status: "invalid" };
     return { status: expiresAt <= now ? "expired" : isServerAuthOnlyCertificate(certificate) ? "present" : "renewal-required", certPem: saved.certPem,
       fingerprint: certificate.fingerprint256.replaceAll(":", ""), expiresAt, renewalDue: expiresAt - now <= 7 * DAY };
   } catch { return { status: "invalid" }; }
@@ -85,7 +85,7 @@ function validatedAuthority(certPem: string, keyPem: string, commonName: string,
     }
     const expiresAt = certificate.validToDate.getTime(), startsAt = certificate.validFromDate.getTime();
     if (!Number.isFinite(expiresAt) || !Number.isFinite(startsAt) || startsAt > now
-      || expiresAt - startsAt > (VALIDITY_DAYS + 1) * DAY) throw new Error("invalid");
+      || expiresAt <= startsAt || expiresAt - startsAt > (VALIDITY_DAYS + 1) * DAY) throw new Error("invalid");
     if (expiresAt <= now && !allowExpired) throw new DesktopAuthorityError("expired");
     if (!allowExpired && !isServerAuthOnlyCertificate(certificate)) throw new DesktopAuthorityError("renewal_required");
     return { authority: { certPem, keyPem, privateKey, publicKey }, commonName,
