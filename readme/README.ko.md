@@ -29,8 +29,8 @@
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square"></a>
   <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?style=flat-square"></a>
-  <a href="https://www.npmjs.com/package/easyproxy"><img alt="npm" src="https://img.shields.io/npm/v/easyproxy?style=flat-square"></a>
   <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+  <img alt="Node >= 18" src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white">
   <a href="https://github.com/sponsors/AquilaXk"><img alt="GitHub Sponsors" src="https://img.shields.io/github/sponsors/AquilaXk?style=flat-square&logo=githubsponsors&label=Sponsors"></a>
 </p>
 
