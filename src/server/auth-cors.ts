@@ -534,15 +534,19 @@ function getApiKeyMaterial(entries: readonly EpxApiKeyEntry[], entry: EpxApiKeyE
   ) {
     return existing;
   }
+  const validPending = pending
+    && typeof pending.key === "string"
+    && pending.key.length > 0
+    && typeof pending.expiresAt === "string";
   const rebuilt: CachedApiKeyMaterial = {
     id: keyId,
     primary: buildSecretMaterial("configured", keyId, entry.key),
-    ...(pending
+    ...(validPending
       ? {
           pending: {
             ...buildSecretMaterial("configured", keyId, pending.key),
             expiresAtStr: pending.expiresAt,
-            expiresAtMs: typeof pending.expiresAt === "string" ? parseStrictTimestampMs(pending.expiresAt) : Number.NaN,
+            expiresAtMs: parseStrictTimestampMs(pending.expiresAt),
           },
         }
       : {}),

@@ -31,6 +31,12 @@ const FAST_UNSUPPORTED_MESSAGE = /does not support\b[\s\S]*\bspeed\b|\bspeed\b\W
 const FAST_POOL_REMAINING_HEADER = /^anthropic-fast-(?:input|output)-tokens-remaining$/i;
 const TRANSIENT_OVERAGE_REASONS = new Set(["org_level_disabled_until", "out_of_credits"]);
 const DISABLED_OVERAGE_REASONS = new Set(["overage_not_provisioned", "org_level_disabled"]);
+const STANDARD_QUOTA_STATUS_HEADERS = [
+  "anthropic-ratelimit-unified-5h-status",
+  "anthropic-ratelimit-unified-7d-status",
+  "anthropic-ratelimit-unified-7d_oi-status",
+] as const;
+const STANDARD_REPRESENTATIVE_CLAIM_RE = /^(?:five_hour|seven_day(?:_opus|_sonnet|_overage_included)?)$/i;
 
 function anthropicErrorMessage(bodyText: string): string | undefined {
   try {
@@ -53,6 +59,14 @@ function fastPoolExhausted(headers: Headers): boolean {
   return exhausted;
 }
 
+function hasStandardQuotaRejectionHeader(headers: Headers): boolean {
+  for (const name of STANDARD_QUOTA_STATUS_HEADERS) {
+    if (headers.get(name)?.trim().toLowerCase() === "rejected") return true;
+  }
+  const claim = headers.get("anthropic-ratelimit-unified-representative-claim")?.trim();
+  return claim !== undefined && STANDARD_REPRESENTATIVE_CLAIM_RE.test(claim);
+}
+
 /**
  * Classify a fast-lane refusal (`speed: "fast"`) into transient credit/window exhaustion vs
  * org/feature disablement vs unsupported model/parameter, or `null` when it is an ordinary
@@ -70,14 +84,19 @@ export function classifyAnthropicFastRefusal(
     return "disabled";
   }
   if (status !== 429) return null;
+  const fastExhausted = fastPoolExhausted(headers);
+  const message = bodyText === undefined ? undefined : anthropicErrorMessage(bodyText);
+  const messageNamesFast = message !== undefined && FAST_REFUSAL_MESSAGE.test(message);
   const overageReason = headers.get(ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER)?.trim().toLowerCase();
   if (overageReason) {
+    if (hasStandardQuotaRejectionHeader(headers) && !fastExhausted && !messageNamesFast) {
+      return null;
+    }
     if (TRANSIENT_OVERAGE_REASONS.has(overageReason)) return "transient";
     if (DISABLED_OVERAGE_REASONS.has(overageReason)) return "disabled";
   }
-  if (fastPoolExhausted(headers)) return "transient";
-  const message = bodyText === undefined ? undefined : anthropicErrorMessage(bodyText);
-  return message !== undefined && FAST_REFUSAL_MESSAGE.test(message) ? "transient" : null;
+  if (fastExhausted) return "transient";
+  return messageNamesFast ? "transient" : null;
 }
 
 /**

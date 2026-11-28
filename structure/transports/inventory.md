@@ -359,9 +359,7 @@ admission or account-snapshot pairing. The forwarding contract is covered in
 `tests/oauth/oauth-account-quota-rank.test.ts`; the core facade remains orchestration-only.
 
 Generic OAuth pools accept `reset-first` under `pool.kernel` (`activeGenericStrategy` in
-`src/oauth/generic-account-failover.ts`). `rankAccountsByResetFirst` orders non-exhausted
-accounts by the soonest future reset of the requested family's weekly window, falling back to
-the 5-hour window, then by headroom; exhausted accounts go last. A passive provider with
+`src/oauth/generic-account-failover.ts`). `rankAccountsByResetFirst` keeps measured healthy candidates ahead of unmeasured unknown candidates, demotes measured healthy accounts whose short primary window is at or above `PRIMARY_WINDOW_HOT_PERCENT` (`85%`) behind cooler measured siblings, orders remaining non-exhausted accounts by the soonest future reset of the requested family's weekly window, falling back to the 5-hour window, then by headroom; exhausted accounts go last. A passive provider with
 evidence for only part of the ring keeps headroom order. The first-attempt pick uses the same
 eligible set as round-robin, including per-account model listings, and needs headroom evidence.
 Kiro passes account-bound quota evidence through both selection paths, preserving headroom

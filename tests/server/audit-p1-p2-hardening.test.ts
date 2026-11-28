@@ -201,6 +201,39 @@ describe("P2 enhancements from oh-my-pi (MIT) and mixdog (Apache-2.0)", () => {
     expect(classifyAnthropicFastRefusal(400, new Headers(), JSON.stringify({ error: { message: "'sonnet' does not support the `speed` parameter." } }))).toBe("unsupported");
     expect(classifyAnthropicFastRefusal(529, new Headers(), JSON.stringify({ error: { message: "Fast mode is overloaded" } }))).toBeNull();
     expect(isAnthropicFastRefusal(529, new Headers(), JSON.stringify({ error: { message: "Fast mode is overloaded" } }))).toBe(false);
+
+    // Overage disabled reason alongside standard 5h/7d exhaustion headers must NOT hijack OAuth pool failover
+    // unless the body or fast-pool remaining header explicitly points at the fast lane.
+    const std5hWithOverage = new Headers({
+      [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "out_of_credits",
+      "anthropic-ratelimit-unified-5h-status": "rejected",
+    });
+    expect(classifyAnthropicFastRefusal(429, std5hWithOverage, JSON.stringify({ error: { message: "Rate limit exceeded" } }))).toBeNull();
+    expect(isAnthropicFastRefusal(429, std5hWithOverage, "{}")).toBe(false);
+
+    const stdClaimWithOverage = new Headers({
+      [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "org_level_disabled",
+      "anthropic-ratelimit-unified-representative-claim": "seven_day",
+    });
+    expect(classifyAnthropicFastRefusal(429, stdClaimWithOverage, "{}")).toBeNull();
+    expect(
+      classifyAnthropicFastRefusal(
+        429,
+        std5hWithOverage,
+        JSON.stringify({ error: { message: "Usage credits are required for fast mode." } }),
+      ),
+    ).toBe("transient");
+    expect(
+      classifyAnthropicFastRefusal(
+        429,
+        new Headers({
+          [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "out_of_credits",
+          "anthropic-ratelimit-unified-5h-status": "rejected",
+          "anthropic-fast-input-tokens-remaining": "0",
+        }),
+        "{}",
+      ),
+    ).toBe("transient");
   });
 
   test("effort-history uses family minimum floors to admit future Claude 5.x/6.x models while failing closed on out-of-scope", () => {
@@ -303,6 +336,32 @@ describe("P2 enhancements from oh-my-pi (MIT) and mixdog (Apache-2.0)", () => {
       "hot-stale-at-future-now",
       "cool-later",
     ]);
+  });
+
+  test("rankAccountsByResetFirst keeps hot measured healthy accounts ahead of unmeasured RANK_UNKNOWN candidates", () => {
+    const now = Date.now();
+    setCachedProviderAccountQuotaForTests("google-antigravity", "hot-measured", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 90, resetAt: now + 3_600_000 },
+        { label: "Gem (Weekly)", percent: 40, resetAt: now + 86_400_000 },
+      ],
+    });
+    setCachedProviderAccountQuotaForTests("google-antigravity", "cool-measured", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 25, resetAt: now + 2 * 3_600_000 },
+        { label: "Gem (Weekly)", percent: 40, resetAt: now + 4 * 86_400_000 },
+      ],
+    });
+    expect(
+      rankAccountsByResetFirst(
+        "google-antigravity",
+        ["unmeasured", "hot-measured", "cool-measured"],
+        "gemini-3.8-flash",
+        now,
+      ),
+    ).toEqual(["cool-measured", "hot-measured", "unmeasured"]);
   });
 });
 
