@@ -294,6 +294,26 @@ test.skipIf(process.platform !== "darwin")("the macOS process reader identifies 
   }
 });
 
+// `ps` prints lstart in the user's locale; a Korean-locale Mac must still tell a mismatched argv from an unreadable process.
+test.skipIf(process.platform !== "darwin")("the macOS process reader parses ps output under a non-English locale", async () => {
+  const configDir = tempConfigDir();
+  const sleeper = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+  const saved = process.env.LC_ALL;
+  process.env.LC_ALL = "ko_KR.UTF-8";
+  try {
+    mkdirSync(join(configDir, "link"), { recursive: true });
+    writeFileSync(clientTunnelPidfilePath(configDir), JSON.stringify({
+      version: 1, linkId: sidecar().linkId, pid: sleeper.pid, argv: ["sleep", "31"], ownerPid: 999_999,
+    }));
+    expect(await reapOrphanTunnel({ configDir, platform: "darwin", signal: () => { throw new Error("must not signal"); } }))
+      .toEqual({ tunnel: "absent" });
+  } finally {
+    if (saved === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = saved;
+    sleeper.kill();
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
 test("supervisor starts once while connected and ends once after a missing or mismatched sidecar", async () => {
   const configDir = tempConfigDir();
   const fake = fakeRunner();

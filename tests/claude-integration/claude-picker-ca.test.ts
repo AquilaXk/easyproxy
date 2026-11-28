@@ -356,7 +356,7 @@ test("a live foreign owner is never clobbered; a dead one is reclaimed", async (
   }
 });
 
-test("a legacy live PID is reclaimed only when it started after the owner file", () => {
+function legacyLivePidCase(): void {
   if (process.platform !== "darwin") return; // Linux's /proc start ticks are not wall-clock time.
   const dir = tempDir();
   const ours = ensurePickerCa(dir);
@@ -378,6 +378,16 @@ test("a legacy live PID is reclaimed only when it started after the owner file",
   utimesSync(pickerCaOwnerPath(newerDir), future, future);
   expect(() => ensurePickerCa(newerDir, { rotation: "startup" })).toThrow("picker_ca_live_owner");
   expect(readFileSync(pickerCaCertPath(newerDir), "utf8")).toBe(foreign.certPem);
+}
+
+test("a legacy live PID is reclaimed only when it started after the owner file", legacyLivePidCase);
+
+// `ps` prints lstart in the user's locale; a Korean-locale Mac must still read the start time.
+test("a legacy live PID is reclaimed under a non-English ps locale", () => {
+  const saved = process.env.LC_ALL;
+  process.env.LC_ALL = "ko_KR.UTF-8";
+  try { legacyLivePidCase(); }
+  finally { if (saved === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = saved; }
 });
 
 test("a held picker CA lock never permits publication outside the critical section", async () => {

@@ -241,7 +241,8 @@ function processStartIdentity(pid: number, utc = false): string | null {
     try {
       const result = Bun.spawnSync(["/bin/ps", "-o", "lstart=", "-p", String(pid)], {
         stdin: "ignore", stdout: "pipe", stderr: "ignore",
-        ...(utc ? { env: { ...process.env, TZ: "UTC" } } : {}),
+        // Date.parse reads the C layout, so pin the locale; the identity string stays comparable across runs.
+        env: { ...process.env, LC_ALL: "C", ...(utc ? { TZ: "UTC" } : {}) },
       });
       const value = result.stdout.toString().trim();
       return result.exitCode === 0 && value.length > 0 && value.length <= 128 ? value : null;
