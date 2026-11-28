@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repoPath } from "../helpers/repo-root";
+import { collectReleaseCredentialErrors } from "../../scripts/ci/verify-release-credentials";
 import {
   DESKTOP_CONVENIENCE_INSTALLERS,
   expectedReleaseAssets,
@@ -433,6 +434,32 @@ describe("windows signing plan and script fail-closed contracts", () => {
     expect(testPolicy.output).toBe("mode=skip\npolicy=\ntrust=\n");
     expect(testPolicy.stdout).toContain("::notice::");
     expect(testPolicy.stdout).toContain("test-signing");
+  });
+
+  test("a typo policy slug fails a real release and the upfront check agrees with the plan for every policy", () => {
+    for (const typo of ["relase-signing", "release-signing-2", "prod"]) {
+      const plan = runSigningPlan({ DRY_RUN: "false", ...validVars, SIGNPATH_SIGNING_POLICY: typo });
+      expect(plan.status).toBe(1);
+      expect(plan.stdout).toContain("::error::");
+      expect(plan.stdout).toContain(`'${typo}'`);
+      expect(plan.output).toBe("");
+      const dry = runSigningPlan({ DRY_RUN: "true", ...validVars, SIGNPATH_SIGNING_POLICY: typo });
+      expect(dry.status).toBe(0);
+      expect(dry.output).toBe(`mode=sign\npolicy=${typo}\ntrust=test\n`);
+    }
+
+    const upfrontEnv = {
+      DRY_RUN: "false",
+      TAURI_SIGNING_PRIVATE_KEY: "minisign-secret-key",
+      SIGNPATH_API_TOKEN: "sp-token",
+      SIGNPATH_ORGANIZATION_ID: validVars.SIGNPATH_ORGANIZATION_ID,
+      SIGNPATH_PROJECT_SLUG: validVars.SIGNPATH_PROJECT_SLUG,
+    };
+    for (const policy of ["release-signing", "test-signing", "relase-signing", "prod", "Release Signing"]) {
+      const plan = runSigningPlan({ DRY_RUN: "false", ...validVars, SIGNPATH_SIGNING_POLICY: policy });
+      const upfront = collectReleaseCredentialErrors({ ...upfrontEnv, SIGNPATH_SIGNING_POLICY_SLUG: policy });
+      expect(upfront.length === 0).toBe(plan.status === 0);
+    }
   });
 
   test("dry runs skip a misconfigured SignPath setup with a warning and sign with test trust otherwise", () => {

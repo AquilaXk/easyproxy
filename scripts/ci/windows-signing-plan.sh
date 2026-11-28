@@ -17,9 +17,11 @@
 #   - A token with a SignPath variable missing, or a value that is not a plain slug: a real release
 #     fails; a dry run skips with a warning.
 #   - release-signing: sign; the verifier then requires a trusted chain (trust=release).
-#   - Any other well-formed policy (test-signing): sign dry runs only (trust=test). A self-signed
-#     test certificate is never attached to a public release, so a real release skips with a notice
-#     and ships unsigned.
+#   - test-signing: sign dry runs only (trust=test). A self-signed test certificate is never attached
+#     to a public release, so a real release skips with a notice and ships unsigned.
+#   - Any other policy slug (a typo): a real release fails, so a misspelled release-signing never
+#     ships unsigned by accident. A dry run signs it with test trust.
+# scripts/ci/verify-release-credentials.ts applies the same policy allowlist upfront.
 # The release body states the outcome from the records scripts/ci/windows-signing-outcome.sh writes.
 set -euo pipefail
 
@@ -96,6 +98,11 @@ if [ "$dry_run" = "true" ]; then
   exit 0
 fi
 
-echo "::notice::SIGNPATH_SIGNING_POLICY_SLUG is '$policy', not release-signing. A test certificate is never attached to a release, so Windows binaries ship unsigned."
-emit skip "" ""
-exit 0
+if [ "$policy" = "test-signing" ]; then
+  echo "::notice::SIGNPATH_SIGNING_POLICY_SLUG is 'test-signing'. A test certificate is never attached to a release, so Windows binaries ship unsigned."
+  emit skip "" ""
+  exit 0
+fi
+
+echo "::error::SIGNPATH_SIGNING_POLICY_SLUG is '$policy', which is neither release-signing nor test-signing."
+exit 1

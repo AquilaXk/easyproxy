@@ -197,8 +197,16 @@ describe("fail-fast release credential validation", () => {
     ]);
   });
 
-  test("a well-formed test-signing policy passes the upfront check because the plan ships unsigned", () => {
+  test("only release-signing and test-signing pass the upfront policy check; a typo fails a real release", () => {
     expect(collectReleaseCredentialErrors({ ...validEnv, SIGNPATH_SIGNING_POLICY_SLUG: "test-signing" })).toEqual([]);
+    for (const typo of ["relase-signing", "release-signing-2", "signing", "prod"]) {
+      const errors = collectReleaseCredentialErrors({ ...validEnv, SIGNPATH_SIGNING_POLICY_SLUG: typo });
+      expect(errors).toEqual([
+        `SIGNPATH_SIGNING_POLICY_SLUG must be one of release-signing, test-signing (got '${typo}').`,
+      ]);
+      expect(() => validateReleaseCredentials({ ...validEnv, SIGNPATH_SIGNING_POLICY_SLUG: typo })).toThrow("1 issue");
+      expect(collectReleaseCredentialErrors({ ...validEnv, SIGNPATH_SIGNING_POLICY_SLUG: typo, DRY_RUN: "true" })).toEqual([]);
+    }
   });
 });
 

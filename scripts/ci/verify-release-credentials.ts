@@ -10,8 +10,8 @@
  *   - Apple: all six secrets empty ships ad-hoc signed and not notarized; all six set
  *     signs and notarizes; any partial set is a configuration mistake and fails.
  *   - SignPath: no API token ships unsigned Windows binaries; a token needs the three
- *     repository variables and a well-formed policy slug (a policy other than
- *     release-signing ships unsigned, see scripts/ci/windows-signing-plan.sh).
+ *     repository variables and a policy of release-signing (signs) or test-signing
+ *     (ships unsigned); any other slug is a typo and fails (scripts/ci/windows-signing-plan.sh).
  * The updater signing key stays mandatory for a real release.
  */
 const REQUIRED_APPLE_VARS = [
@@ -22,6 +22,12 @@ const REQUIRED_APPLE_VARS = [
   "APPLE_PASSWORD",
   "APPLE_TEAM_ID",
 ] as const;
+
+/**
+ * Policies a real release accepts, matching scripts/ci/windows-signing-plan.sh: release-signing signs,
+ * test-signing ships unsigned. Any other slug is a typo and fails.
+ */
+const ALLOWED_SIGNPATH_POLICIES = ["release-signing", "test-signing"] as const;
 
 /** Required once SIGNPATH_API_TOKEN is set. */
 const REQUIRED_SIGNPATH_VARS = [
@@ -81,6 +87,10 @@ export function collectReleaseCredentialErrors(env: Record<string, string | unde
     const policySlug = (env.SIGNPATH_SIGNING_POLICY_SLUG ?? "").trim();
     if (policySlug && !/^[a-z0-9-]+$/.test(policySlug)) {
       errors.push("SIGNPATH_SIGNING_POLICY_SLUG is not a lowercase slug.");
+    } else if (policySlug && !(ALLOWED_SIGNPATH_POLICIES as readonly string[]).includes(policySlug)) {
+      errors.push(
+        `SIGNPATH_SIGNING_POLICY_SLUG must be one of ${ALLOWED_SIGNPATH_POLICIES.join(", ")} (got '${policySlug}').`,
+      );
     }
   }
   return errors;

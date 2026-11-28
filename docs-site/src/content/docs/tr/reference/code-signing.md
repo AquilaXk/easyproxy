@@ -89,11 +89,15 @@ Eksik bir imzalama hesabı yayını engellemez; yarım yapılandırma engeller. 
 | --- | --- | --- |
 | Token yok | Bildirimle imzasız | Bildirimle imzasız |
 | Token var, ancak bir değişken eksik veya değer hatalı | Uyarıyla imzasız | Yayın başarısız olur |
+| Başka herhangi bir ilke slug'ı (yazım hatası) | Test sertifikasıyla imzalanır, yalnızca iş akışı çıktısı olarak tutulur | Yayın başarısız olur |
 | `test-signing` | Test sertifikasıyla imzalanır, yalnızca iş akışı çıktısı olarak tutulur | Bildirimle imzasız; test sertifikası hiçbir zaman yayımlanmaz |
 | `release-signing` | İmzalanır ve güvenilirliği doğrulanır | İmzalanır ve güvenilirliği doğrulanır |
 
 İstek başarısız olur, zaman aşımına uğrar veya reddedilirse ya da doğrulama
-başarısız olursa iş uyarı kaydeder ve özgün imzasız dosyayı yayımlar. MSI, varsa özgün
+başarısız olursa gerçek yayın başarısız olur; `release-signing` ayarlandıktan sonra
+imzasız hiçbir şey yanlışlıkla yayımlanmaz. Deneme çalıştırması devam eder: test ilkesiyle
+imzalanmış dosya yerine konamazsa uyarı kaydedilir ve özgün imzasız dosya kalır, başarısız bir
+`release-signing` adımı da imzasız dosyayı deneme çıktılarında bırakır. MSI, varsa özgün
 güncelleyici imzasını korur; bağımsız `epx.exe` dosyasının güncelleyici imzası yoktur.
 
 **Üretim sertifikasına geçiş:** SignPath sertifikayı verince depo değişkeni
@@ -102,7 +106,7 @@ güncelleyici imzasını korur; bağımsız `epx.exe` dosyasının güncelleyici
 gerekmez. Bundan sonra deneme çalıştırmaları dahil her yayın iki imzalama isteği
 açar: bağımsız dosya ve yükleyici. Çalıştırma beklerken onaylayan kişi ikisini de
 [app.signpath.io](https://app.signpath.io) üzerinde onaylamalıdır. İş akışı her
-istek için en fazla bir saat bekler, sonra imzasız yayımlar.
+istek için en fazla bir saat bekler, sonra istek başarısız olur ve gerçek yayın da başarısız olur.
 
 **Yayımlamadan test etme:** **Windows signing test** iş akışı
 (`.github/workflows/windows-signing-test.yml`, yalnızca elle başlatılır, girdi

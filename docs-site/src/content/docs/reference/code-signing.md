@@ -91,19 +91,22 @@ A missing signing account never blocks a release; a half-configured one does. Wh
 |---|---|---|
 | No token | Unsigned, with a notice | Unsigned, with a notice |
 | Token with a missing variable or a malformed value | Unsigned, with a warning | The release fails |
+| Any other policy slug (a typo) | Signed with the test certificate, kept only as a workflow artifact | The release fails |
 | `test-signing` | Signed with the test certificate, kept only as a workflow artifact | Unsigned, with a notice; a test certificate never ships |
 | `release-signing` | Signed and verified as trusted | Signed and verified as trusted |
 
-If a signing request fails, times out or is rejected, or if verification fails, the job logs a
-warning and ships the original unsigned file. An MSI retains its original updater signature
-when present; the standalone `epx.exe` has no updater signature.
+If a signing request fails, times out or is rejected, or if verification fails, a real release
+fails; nothing unsigned ships by accident once `release-signing` is set. A dry run keeps going: a
+test-signed file that fails to swap in logs a warning and the original unsigned file stays, and a
+failed `release-signing` step leaves the unsigned file in the dry-run artifacts. An MSI retains its
+original updater signature when present; the standalone `epx.exe` has no updater signature.
 
 **Switching to the production certificate.** Once SignPath issues it, set the repository variable
 `SIGNPATH_SIGNING_POLICY_SLUG` to `release-signing` (Settings → Secrets and variables → Actions →
 Variables). No workflow change is needed. From then on, every release, including a dry run, opens
 two signing requests (the standalone binary and the installer). An approver must approve both in
 [app.signpath.io](https://app.signpath.io) while the run waits. The workflow waits up to an hour
-per request before it gives up and ships unsigned.
+per request before the request fails, which fails a real release.
 
 **Testing without publishing.** The **Windows signing test** workflow
 (`.github/workflows/windows-signing-test.yml`, manual dispatch only, no inputs) builds `epx.exe`
