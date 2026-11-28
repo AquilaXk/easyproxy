@@ -739,8 +739,15 @@ jobs:
           DRY_RUN: ${{ needs.verify.outputs.dry_run }}
         run: |
           set -euo pipefail
+          case "${DESKTOP_SIGNING_CONFIGURED:-}" in
+            true|false) ;;
+            *)
+              echo "::error::The macOS desktop signing state was not decided by the import step."
+              exit 1
+              ;;
+          esac
           cfg="$RUNNER_TEMP/easyproxy-tauri-config.json"
-          if [ -n "${APPLE_TEAM_ID:-}" ] && [ "${DESKTOP_SIGNING_CONFIGURED:-false}" = "true" ]; then
+          if [ -n "${APPLE_TEAM_ID:-}" ] && [ "${DESKTOP_SIGNING_CONFIGURED}" = "true" ]; then
             if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
               echo "::error::APPLE_TEAM_ID must be 10 uppercase alphanumeric characters."
               exit 1
@@ -790,9 +797,16 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          case "${DESKTOP_SIGNING_CONFIGURED:-}" in
+            true|false) ;;
+            *)
+              echo "::error::The macOS desktop signing state was not decided by the import step."
+              exit 1
+              ;;
+          esac
           appex=desktop/src-tauri/widget/EasyProxyWidget.appex
           if [ -z "${APPLE_TEAM_ID:-}" ]; then
-            if [ "${DESKTOP_SIGNING_CONFIGURED:-false}" = "true" ]; then
+            if [ "${DESKTOP_SIGNING_CONFIGURED}" = "true" ]; then
               echo "::error::Signing is configured but APPLE_TEAM_ID is empty; cannot assert the extension signature."
               exit 1
             fi
@@ -813,13 +827,20 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          case "${DESKTOP_SIGNING_CONFIGURED:-}" in
+            true|false) ;;
+            *)
+              echo "::error::The macOS desktop signing state was not decided by the import step."
+              exit 1
+              ;;
+          esac
           shopt -s nullglob
           addons=(desktop/src-tauri/resources/keyring/*.darwin-*.node)
           if [ "${#addons[@]}" -eq 0 ]; then
             echo "::error::No macOS keyring addon was prepared for the bundle."
             exit 1
           fi
-          if [ "${DESKTOP_SIGNING_CONFIGURED:-false}" != "true" ]; then
+          if [ "${DESKTOP_SIGNING_CONFIGURED}" != "true" ]; then
             echo "No signing material; packaged addons and helpers stay as prepared for this unsigned build."
             exit 0
           fi
@@ -913,6 +934,13 @@ jobs:
           DESKTOP_TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
+          case "${DESKTOP_SIGNING_CONFIGURED:-}" in
+            true|false) ;;
+            *)
+              echo "::error::The macOS desktop signing state was not decided by the import step."
+              exit 1
+              ;;
+          esac
           shopt -s nullglob
           apps=("desktop/src-tauri/target/$DESKTOP_TARGET/release/bundle/macos/"*.app)
           if [ "${#apps[@]}" -ne 1 ]; then
@@ -920,7 +948,7 @@ jobs:
             exit 1
           fi
           app="${apps[0]}"
-          if [ -n "${APPLE_TEAM_ID:-}" ] || [ "${DESKTOP_SIGNING_CONFIGURED:-false}" = "true" ]; then
+          if [ -n "${APPLE_TEAM_ID:-}" ] || [ "${DESKTOP_SIGNING_CONFIGURED}" = "true" ]; then
             if [ -z "${APPLE_TEAM_ID:-}" ]; then
               echo "::error::Signing is configured but APPLE_TEAM_ID is empty; cannot verify the bundle signature."
               exit 1

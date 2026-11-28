@@ -136,7 +136,7 @@ describe("macOS Apple credential gate in the release workflow", () => {
 
   test("the desktop extension and addon steps skip when unsigned and keep failing closed once signing is configured", () => {
     const widget = "Verify the extension carries the release signature";
-    const unsigned = runStep("package-desktop", widget, { APPLE_TEAM_ID: "" });
+    const unsigned = runStep("package-desktop", widget, { APPLE_TEAM_ID: "", DESKTOP_SIGNING_CONFIGURED: "false" });
     expect(unsigned.status).toBe(0);
     const configuredWithoutTeam = runStep("package-desktop", widget, { APPLE_TEAM_ID: "", DESKTOP_SIGNING_CONFIGURED: "true" });
     expect(configuredWithoutTeam.status).toBe(1);
@@ -154,9 +154,32 @@ describe("macOS Apple credential gate in the release workflow", () => {
     expect(missingAddon.status).toBe(1);
   });
 
+  test("every desktop step that reads the signing state fails when the import step left it undecided", () => {
+    const cwd = makeTemp("epx-undecided-addons-");
+    mkdirSync(join(cwd, "desktop", "src-tauri", "resources", "keyring"), { recursive: true });
+    writeFileSync(join(cwd, "desktop", "src-tauri", "resources", "keyring", "keyring.darwin-arm64.node"), "x");
+    const steps = [
+      "Prepare macOS Tauri entitlements override",
+      "Verify the extension carries the release signature",
+      "Sign the packaged keyring addons and native-bin helpers",
+      "Verify macOS app runtime and Mach-O signatures",
+    ];
+    for (const name of steps) {
+      expect(step("package-desktop", name).run).not.toContain("DESKTOP_SIGNING_CONFIGURED:-false");
+      for (const state of [undefined, "", "yes", "TRUE"]) {
+        const env: Record<string, string> = { APPLE_TEAM_ID: "ABCD123456", DRY_RUN: "false", DESKTOP_TARGET: "aarch64-apple-darwin" };
+        if (state !== undefined) env.DESKTOP_SIGNING_CONFIGURED = state;
+        const res = runStep("package-desktop", name, env, cwd);
+        expect(res.status).toBe(1);
+        expect(res.out).toContain("::error::The macOS desktop signing state was not decided");
+      }
+    }
+    expect(workflowText).not.toContain("DESKTOP_SIGNING_CONFIGURED:-false");
+  });
+
   test("the packaged app verification asserts the team only when signing is configured or a team is set", () => {
     const verifyApp = step("package-desktop", "Verify macOS app runtime and Mach-O signatures").run!;
-    expect(verifyApp).toContain('[ -n "${APPLE_TEAM_ID:-}" ] || [ "${DESKTOP_SIGNING_CONFIGURED:-false}" = "true" ]');
+    expect(verifyApp).toContain('[ -n "${APPLE_TEAM_ID:-}" ] || [ "${DESKTOP_SIGNING_CONFIGURED}" = "true" ]');
     expect(verifyApp).toContain("TeamIdentifier=$APPLE_TEAM_ID");
     expect(workflowText).not.toContain("A real release");
   });
