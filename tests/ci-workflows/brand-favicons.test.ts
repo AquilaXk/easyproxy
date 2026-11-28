@@ -144,8 +144,8 @@ describe("brand favicons", () => {
 
   /**
    * The regression the generator exists for. The documentation artwork this replaced was white on
-   * transparency, so a light tab strip swallowed it. The favicons are now the near-black brand mark
-   * on transparency with no backdrop tile, so the check composites each one onto a white tab strip
+   * transparency, so a light tab strip swallowed it. The favicons are now the chevron+prism brand
+   * mark on transparency with no backdrop tile, so the check composites each one onto a white tab strip
    * and requires the mark itself to read there.
    */
   test("both favicons show on a light tab instead of vanishing into it", () => {

@@ -5,9 +5,10 @@
  * They used to be hand-made bitmaps with no source, and one of them was wrong in a way the file
  * itself does not show: docs-site/public/favicon.png was the dark variant of the mark, white on
  * transparency, so on a light browser tab strip the documentation site's favicon was white on
- * white. The source is now the brand mark itself (scripts/brand/easyproxy-mark.svg): a near-black
- * cloud with a white prompt, drawn on transparency with no backdrop tile. Dark tab strips get the
- * self-recolouring SVG favicon each site links first; these PNG/ICO files are the fallback.
+ * white. The source is now the brand mark itself (scripts/brand/easyproxy-mark.svg): an ice-blue
+ * to lavender forward routing chevron paired with a violet trailing prism, drawn on transparency
+ * with no backdrop tile so it reads on both light and dark tab strips. Browsers that support SVG
+ * favicons use the vector link each site declares first; these PNG/ICO files are the fallback.
  *
  * Sizes and names here are the ones gui/index.html and docs-site/astro.config.mjs already
  * reference, so nothing on either site has to change to pick these up.

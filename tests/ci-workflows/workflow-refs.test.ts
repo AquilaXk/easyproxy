@@ -552,11 +552,11 @@ describe("GitHub workflow and action reference integrity", () => {
         {
           "readme/README.ko.md": validLocaleReadme.replace(
             "[후원하기](https://github.com/sponsors/AquilaXk)",
-            "[후원하기](https://github.com/sponsors/JYP8877)",
+            "[후원하기](https://github.com/sponsors/OtherSponsor)",
           ),
         },
       ),
-    ).toEqual(["readme/README.ko.md links to mismatched GitHub Sponsors handle: JYP8877"]);
+    ).toEqual(["readme/README.ko.md links to mismatched GitHub Sponsors handle: OtherSponsor"]);
   });
 
   const tempDirs: string[] = [];

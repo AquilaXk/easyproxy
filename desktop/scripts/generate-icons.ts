@@ -6,8 +6,9 @@
  * was a separate artifact that could drift from the others and nothing could detect it. This makes
  * the sizes derived: one curve, rendered at each dimension the platforms ask for.
  *
- * The mark in that file is scripts/brand/easyproxy-mark.svg verbatim, white on a dark plate; the
- * menu bar source (tray/icon.svg) reuses its curves and its prompt mask.
+ * The mark in that file embeds scripts/brand/easyproxy-mark.svg (the chevron+prism mark) verbatim
+ * over a beveled dark squircle plate; the menu bar source (tray/icon.svg) reuses its two contours
+ * and carves a separation gap between the overlapping layers with a mask cutout.
  *
  * `--check` regenerates into a temporary directory and compares, so CI can fail on a hand-edited
  * PNG instead of letting the source and the shipped icons disagree quietly.
@@ -60,7 +61,8 @@ const ICNS_ENTRIES: Array<{ name: string; size: number }> = [
 const ICO_SIZES = [16, 32, 48, 64, 128, 256];
 
 /**
- * The menu bar image, which is the same mark with no backdrop and the prompt cut through.
+ * The menu bar image, which is the monochrome chevron+prism silhouette with no backdrop and a
+ * mask cutout separating the overlapping layers.
  *
  * It needs its own source because a status item is a template image: macOS reads the alpha as
  * coverage and paints it with the menu bar tint, so the backdrop has to be gone rather than
