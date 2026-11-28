@@ -170,7 +170,7 @@ export function CompanionInstall({ response, fetchedAt, installOs, onInstallOs, 
     </ol>
   );
   const installCommand = installOs === "macos"
-    ? <code className="usage-companion-install-command block overflow-x-auto rounded-[8px] bg-bg px-3 py-2 text-xs ring-1 ring-line">xattr -d com.apple.quarantine /Applications/EasyProxy.app</code>
+    ? <code className="usage-companion-install-command block overflow-x-auto rounded-[8px] bg-bg px-3 py-2 text-xs ring-1 ring-line">xattr -dr com.apple.quarantine /Applications/EasyProxy.app</code>
     : installOs === "linux"
       ? <code className="usage-companion-install-command block overflow-x-auto rounded-[8px] bg-bg px-3 py-2 text-xs ring-1 ring-line">chmod +x EasyProxy-*.AppImage</code>
       : null;
