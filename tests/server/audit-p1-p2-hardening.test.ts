@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { Server } from "bun";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,8 +21,18 @@ import {
 import { rankPolicyFallbackCandidates } from "../../src/server/responses/policy-fallback";
 import { cheapestSufficientCandidate, classifyRoleModelCandidates } from "../../src/codex/role-auto-assign";
 import { parseChildObservations, updateChildObservations } from "../../src/link/child-observations";
+import {
+  LINK_RELAY_AUTH_PATH,
+  LINK_RELAY_AUTH_VERSION,
+  LINK_RELAY_PROBE_HEADER,
+  linkRelayChallenge,
+} from "../../src/link/relay-auth";
+import type { LinkStore } from "../../src/link/store";
+import { serviceApiTokenFingerprint } from "../../src/lib/service-secrets";
 import { claimQuotaReset } from "../../src/quota/reset-seen-store";
+import { createOptionalListenerSet } from "../../src/server/index/optional-listeners";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import type { EpxConfig } from "../../src/types";
 import type { RouteDecisionTraceV1 } from "../../src/server/responses/route-decision";
 
 describe("P1 NaN/Infinity comparator and finite filters", () => {
@@ -292,5 +303,140 @@ describe("P2 enhancements from oh-my-pi (MIT) and mixdog (Apache-2.0)", () => {
       "hot-stale-at-future-now",
       "cool-later",
     ]);
+  });
+});
+
+describe("optional-listeners keyFingerprints fail-closed timestamp guard", () => {
+  const originalHome = process.env.EASYPROXY_HOME;
+  const servers: Array<Server<unknown>> = [];
+  let tempHome: string | undefined;
+
+  afterEach(async () => {
+    await Promise.allSettled(servers.splice(0).map(server => server.stop(true)));
+    if (originalHome === undefined) delete process.env.EASYPROXY_HOME;
+    else process.env.EASYPROXY_HOME = originalHome;
+    if (tempHome) {
+      removeTreeWithRetry(tempHome);
+      tempHome = undefined;
+    }
+  });
+
+  test("rejects pendingRotation.expiresAt on bad-1, calendar overflow, 24:00:00, and >128B while keeping active key valid", async () => {
+    tempHome = mkdtempSync(join(tmpdir(), "epx-opt-listeners-ts-"));
+    process.env.EASYPROXY_HOME = tempHome;
+    const linkId = "lnk_0123456789abcdef";
+    const keyId = "link-key";
+    const primaryKey = "epx_data_primary_1111";
+    const pendingKey = "epx_data_pending_2222";
+    const storeState: { value: LinkStore } = {
+      value: {
+        version: 1,
+        listenerPort: null,
+        links: [{
+          id: linkId,
+          alias: "ts-guard",
+          direction: "client-initiated",
+          hostKeyFingerprint: "SHA256:abcdefghijklmnop",
+          tunnelPort: 2222,
+          apiKeyId: keyId,
+          createdAt: "2026-09-25T00:00:00.000Z",
+        }],
+      },
+    };
+    const listeners = createOptionalListenerSet(
+      {
+        storePath: join(tempHome, "links.json"),
+        readStore: () => storeState.value,
+        writeStore: (_path, next) => { storeState.value = next; },
+        warn: () => {},
+        serve: options => {
+          const bound = Bun.serve(options);
+          servers.push(bound);
+          return bound;
+        },
+      },
+      {
+        load: async () => ({
+          startChildOpsHost: () => () => {},
+          catalogRevision: () => ({}) as never,
+        }),
+      },
+    );
+    listeners.linkSupervisor().start = () => {};
+
+    const cfg: EpxConfig = {
+      port: 0,
+      hostname: "127.0.0.1",
+      runtimeRole: "client",
+      defaultProvider: "mock",
+      providers: {
+        mock: { adapter: "openai-chat", baseUrl: "https://example.test/v1", disabled: true, models: ["m1"] },
+      },
+      apiKeys: [{
+        id: keyId,
+        name: keyId,
+        key: primaryKey,
+        createdAt: "2026-09-25T00:00:00.000Z",
+        pendingRotation: {
+          id: "rot-1",
+          key: pendingKey,
+          createdAt: "2026-09-25T00:00:00.000Z",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      }],
+    };
+
+    try {
+      listeners.start({
+        config: cfg,
+        publicPort: 0,
+        requestedPort: 0,
+        maxRequestBodySize: 1024 * 1024,
+        dispatch: async () => new Response("ok"),
+      });
+      const status = listeners.status();
+      expect(status.state).toBe("listening");
+      const base = `http://127.0.0.1:${status.port!}`;
+
+      const probeRelayAuth = async (token: string): Promise<number> => {
+        const { nonce, caller } = linkRelayChallenge(serviceApiTokenFingerprint(token), keyId, linkId);
+        const query = new URLSearchParams({
+          version: LINK_RELAY_AUTH_VERSION,
+          key: keyId,
+          link: linkId,
+          nonce,
+          proof: caller,
+        });
+        const response = await fetch(`${base}${LINK_RELAY_AUTH_PATH}?${query.toString()}`, {
+          headers: { [LINK_RELAY_PROBE_HEADER]: "1" },
+        });
+        return response.status;
+      };
+
+      expect(await probeRelayAuth(pendingKey)).toBe(204);
+
+      for (const badExpiry of [
+        "bad-1",
+        "2099-02-30T00:00:00Z",
+        "2099-09-09T24:00:00Z",
+        `2099-01-01T00:00:00.${"0".repeat(150)}Z`,
+        "2020-01-01T00:00:00Z",
+      ]) {
+        cfg.apiKeys![0]!.pendingRotation!.expiresAt = badExpiry;
+        expect({ badExpiry, status: await probeRelayAuth(pendingKey) }).toEqual({ badExpiry, status: 404 });
+      }
+
+      // Primary key must remain valid even when pendingRotation.expiresAt is corrupted.
+      cfg.apiKeys![0]!.pendingRotation!.expiresAt = "2099-02-30T00:00:00Z";
+      expect(await probeRelayAuth(primaryKey)).toBe(204);
+
+      // Corrupted primary key expiresAt fails closed across both primary and pending fingerprints.
+      cfg.apiKeys![0]!.pendingRotation!.expiresAt = "2099-01-01T00:00:00.000Z";
+      cfg.apiKeys![0]!.expiresAt = "2099-02-30T00:00:00Z";
+      expect(await probeRelayAuth(primaryKey)).toBe(404);
+      expect(await probeRelayAuth(pendingKey)).toBe(404);
+    } finally {
+      await listeners.stop();
+    }
   });
 });

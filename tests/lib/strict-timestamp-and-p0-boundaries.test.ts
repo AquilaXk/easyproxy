@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, X509Certificate } from "node:crypto";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mintAuthorityWithExtensionsForTests } from "../../src/claude/intercept/local-ca";
+import {
+  ensureDesktopCompatibilityAuthority,
+  inspectDesktopCompatibilityAuthority,
+  loadDesktopCompatibilityAuthority,
+} from "../../src/codex/desktop-compatibility/certificate-store";
+import type { AuthorityKeyProtection } from "../../src/codex/desktop-compatibility/windows-key-protection";
 import { parseStrictTimestampMs } from "../../src/lib/strict-timestamp";
+import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
 import {
   commitApiKeyRotation,
   removeExpiredApiKeyRotations,
@@ -12,14 +20,18 @@ import {
 } from "../../src/server/management/api-key-rotation";
 import { resolveTelemetryStatus } from "../../src/telemetry/consent";
 import { resolveNextEligibleTelemetryDay, type TelemetryState } from "../../src/telemetry/scheduler";
+import { readTelemetryStateFile, telemetryStatePath } from "../../src/telemetry/state";
 import { parseRetryAfterMs as parseTelemetryRetryAfterMs } from "../../src/telemetry/sender";
 import { readTelemetryInstallId, telemetryIdPath } from "../../src/telemetry/install-id";
+import { setProfileClientOverridesForTests } from "../../src/telemetry/profile/client";
 import { readTelemetryProfileFile } from "../../src/telemetry/profile/state";
 import { telemetryProfilePath } from "../../src/telemetry/profile/paths";
+import { runProfileTick } from "../../src/telemetry/profile/sync";
 import { anthropicRetryAfterMs } from "../../src/oauth/anthropic-rate-limit-policy";
-import { retryAfterDelayMs } from "../../src/lib/upstream-retry";
+import { isSameTargetRetryHold, retryAfterDelayMs } from "../../src/lib/upstream-retry";
 import { parseRetryAfterMs as parseCodexRetryAfterMs } from "../../src/codex/routing/cooldown-math";
 import { parseQuotaResetAt } from "../../src/providers/key-failover";
+import { MistralBudgetPacer, resolveMistralTransport } from "../../src/providers/mistral-transport";
 import { applyApiKeyBudgetPatch } from "../../src/server/management/api-key-budget-dto";
 import {
   isApiKeyExpired,
@@ -252,5 +264,370 @@ describe("telemetry install-id and profile reject calendar-overflow timestamps",
     expect(validProfile.unreadable).toBe(false);
     expect(validProfile.state?.lastSentAt).toBeNull();
     expect(validProfile.state?.retryAfterUntil).toBeNull();
+  });
+});
+
+describe("desktop-compatibility certificate-store validToDate and validatedAuthority bounds", () => {
+  let tempDir: string | undefined;
+
+  afterEach(() => {
+    setIcaclsRunnerForTests(null);
+    setAsyncIcaclsRunnerForTests(null);
+    if (tempDir) {
+      removeTreeWithRetry(tempDir);
+      tempDir = undefined;
+    }
+  });
+
+  function makeProtector(): AuthorityKeyProtection {
+    const key = randomBytes(32);
+    return {
+      async protect(cleartext) {
+        const iv = randomBytes(12);
+        const cipher = createCipheriv("aes-256-gcm", key, iv);
+        const encrypted = Buffer.concat([cipher.update(cleartext), cipher.final()]);
+        return Buffer.concat([iv, cipher.getAuthTag(), encrypted]);
+      },
+      async unprotect(ciphertext) {
+        const data = Buffer.from(ciphertext);
+        const cipher = createDecipheriv("aes-256-gcm", key, data.subarray(0, 12));
+        cipher.setAuthTag(data.subarray(12, 28));
+        return Buffer.concat([cipher.update(data.subarray(28)), cipher.final()]);
+      },
+    };
+  }
+
+  test("inspectDesktopCompatibilityAuthority and validatedAuthority reject non-finite now, pre-validity, oversized validity, and corrupt X.509 dates", async () => {
+    const okAcl = () => ({ success: true, exitCode: 0, timedOut: false, stdout: "" });
+    setIcaclsRunnerForTests(okAcl);
+    setAsyncIcaclsRunnerForTests(async () => okAcl());
+
+    tempDir = mkdtempSync(join(tmpdir(), "epx-cert-store-ts-"));
+    const protection = makeProtector();
+    const prepared = await ensureDesktopCompatibilityAuthority({ directory: tempDir, protection });
+    const cert = new X509Certificate(prepared.authority.certPem);
+    const expectedFrom = cert.validFromDate.getTime();
+    const expectedTo = cert.validToDate.getTime();
+
+    expect(inspectDesktopCompatibilityAuthority(tempDir, Number.NaN)).toEqual({ status: "invalid" });
+    expect(inspectDesktopCompatibilityAuthority(tempDir, Number.POSITIVE_INFINITY)).toEqual({ status: "invalid" });
+    expect(inspectDesktopCompatibilityAuthority(tempDir, expectedTo - 1)).toMatchObject({
+      status: "present",
+      expiresAt: expectedTo,
+    });
+    expect(inspectDesktopCompatibilityAuthority(tempDir, expectedTo)).toMatchObject({
+      status: "expired",
+      expiresAt: expectedTo,
+    });
+
+    await expect(loadDesktopCompatibilityAuthority({ directory: tempDir, protection, now: () => Number.NaN }))
+      .rejects.toMatchObject({ code: "unreadable" });
+    await expect(loadDesktopCompatibilityAuthority({ directory: tempDir, protection, now: () => expectedFrom - 1 }))
+      .rejects.toMatchObject({ code: "unreadable" });
+    await expect(loadDesktopCompatibilityAuthority({ directory: tempDir, protection, now: () => expectedTo }))
+      .rejects.toMatchObject({ code: "expired" });
+
+    // Oversized CA validity (> 31 days) must fail validatedAuthority even when sealed cleanly.
+    const longDir = join(tempDir, "long-lived");
+    const commonName = `EasyProxy Codex Desktop ${randomUUID()}`;
+    const basicConstraintsCa = Buffer.from("300f0603551d130101ff040530030101ff", "hex");
+    const longCa = mintAuthorityWithExtensionsForTests(commonName, [basicConstraintsCa]);
+    const clear = Buffer.from(JSON.stringify({
+      policy: "codex-desktop-chatgpt-only/v1",
+      certSha256: createHash("sha256").update(longCa.certPem).digest("hex"),
+      commonName,
+      keyPem: longCa.keyPem,
+    }));
+    const sealed = Buffer.from(await protection.protect(clear)).toString("base64");
+    clear.fill(0);
+    await ensureDesktopCompatibilityAuthority({ directory: longDir, protection });
+    writeFileSync(join(longDir, "authority.json"), JSON.stringify({
+      version: 1,
+      protection: "windows-current-user-dpapi",
+      certPem: longCa.certPem,
+      sealed,
+    }));
+    expect(inspectDesktopCompatibilityAuthority(longDir).status).toBe("renewal-required");
+    await expect(loadDesktopCompatibilityAuthority({ directory: longDir, protection }))
+      .rejects.toMatchObject({ code: "unreadable" });
+
+    // Corrupt ASN.1 UTCTime calendar overflow ("260230000000Z") in PEM fails closed in both inspect and load.
+    const saved = JSON.parse(readFileSync(join(tempDir, "authority.json"), "utf8")) as {
+      version: number;
+      protection: string;
+      certPem: string;
+      sealed: string;
+    };
+    const der = Buffer.from(saved.certPem.replace(/-----.*?-----|\s+/g, ""), "base64");
+    let validitySeq = der.indexOf(Buffer.from("301e170d", "hex"));
+    while (validitySeq !== -1) {
+      const notBeforeText = der.subarray(validitySeq + 4, validitySeq + 17).toString("ascii");
+      const hasSecondUtc = der[validitySeq + 17] === 0x17 && der[validitySeq + 18] === 0x0d;
+      const notAfterText = der.subarray(validitySeq + 19, validitySeq + 32).toString("ascii");
+      if (/^\d{12}Z$/.test(notBeforeText) && hasSecondUtc && /^\d{12}Z$/.test(notAfterText)) break;
+      validitySeq = der.indexOf(Buffer.from("301e170d", "hex"), validitySeq + 1);
+    }
+    expect(validitySeq).toBeGreaterThan(-1);
+    der.write("260230000000Z", validitySeq + 19);
+    saved.certPem = `-----BEGIN CERTIFICATE-----\n${der.toString("base64").replace(/(.{64})/g, "$1\n")}\n-----END CERTIFICATE-----\n`;
+    writeFileSync(join(tempDir, "authority.json"), JSON.stringify(saved));
+    expect(inspectDesktopCompatibilityAuthority(tempDir)).toEqual({ status: "invalid" });
+    await expect(loadDesktopCompatibilityAuthority({ directory: tempDir, protection }))
+      .rejects.toMatchObject({ code: "unreadable" });
+  });
+});
+
+describe("mistral-transport retryDelay strict Retry-After guard", () => {
+  test("ignores bad-1, calendar overflow, 24:00:00, and >128B Retry-After in pacer and same-target hold", async () => {
+    const baseNow = Date.UTC(2026, 8, 9, 0, 0, 0);
+    let now = baseNow;
+    const waits: number[] = [];
+    const pacer = new MistralBudgetPacer(
+      () => now,
+      async ms => {
+        waits.push(ms);
+        now += ms;
+      },
+    );
+
+    const invalidHints = [
+      "bad-1",
+      "0x10",
+      "-5",
+      "2099-02-30T00:00:00Z",
+      "2099-09-09T24:00:00Z",
+      "30 Feb 2099 00:00:00 GMT",
+      `2099-01-01T00:00:00.${"0".repeat(150)}Z`,
+      "9".repeat(129),
+    ];
+
+    for (const hint of invalidHints) {
+      pacer.observe("id", new Headers({ "retry-after": hint }), 429);
+      (await pacer.acquire("id"))(true);
+      expect(waits).toEqual([]);
+
+      const transport = resolveMistralTransport(
+        {
+          adapter: "openai-chat",
+          authMode: "key",
+          baseUrl: "https://api.mistral.ai/v1",
+          apiKey: "synthetic-mistral-key",
+          fetch: (async () => new Response("rate limited", { status: 429, headers: { "retry-after": hint } })) as typeof fetch,
+        },
+        new MistralBudgetPacer(() => baseNow),
+      );
+      const response = await transport.fetch!("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-mistral-key" },
+        body: JSON.stringify({ model: "mistral-large-4" }),
+      });
+      expect(isSameTargetRetryHold(response)).toBe(false);
+    }
+
+    // "bad-1" must resolve to undefined (not 0 from negative epoch delta), allowing minute fallback.
+    pacer.observe(
+      "minute",
+      new Headers({
+        "retry-after": "bad-1",
+        "x-ratelimit-limit-tokens-minute": "1000",
+        "x-ratelimit-remaining-tokens-minute": "400",
+        "x-ratelimit-tokens-query-cost": "600",
+      }),
+      429,
+    );
+    (await pacer.acquire("minute"))(true);
+    expect(waits).toEqual([60_000]);
+
+    // Valid future ISO and legacy HTTP-date remain honored.
+    const validTransport = resolveMistralTransport(
+      {
+        adapter: "openai-chat",
+        authMode: "key",
+        baseUrl: "https://api.mistral.ai/v1",
+        apiKey: "synthetic-mistral-key",
+        fetch: (async () => new Response("rate limited", { status: 429, headers: { "retry-after": "2099-02-28T00:00:00Z" } })) as typeof fetch,
+      },
+      new MistralBudgetPacer(() => baseNow),
+    );
+    const validResp = await validTransport.fetch!("https://api.mistral.ai/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: "Bearer synthetic-mistral-key" },
+      body: JSON.stringify({ model: "mistral-large-4" }),
+    });
+    expect(isSameTargetRetryHold(validResp)).toBe(true);
+
+    now = Date.UTC(2027, 9, 21, 7, 27, 50);
+    waits.length = 0;
+    pacer.observe("http-date", new Headers({ "retry-after": "Wed, 21 Oct 2027 07:28:00 GMT" }), 429);
+    (await pacer.acquire("http-date"))(true);
+    expect(waits).toEqual([10_000]);
+  });
+});
+
+describe("telemetry state and profile sync reject bad-1, overflow, and >128B timestamps", () => {
+  let tempDir: string | undefined;
+
+  afterEach(() => {
+    setProfileClientOverridesForTests(null);
+    if (tempDir) {
+      removeTreeWithRetry(tempDir);
+      tempDir = undefined;
+    }
+  });
+
+  test("readTelemetryStateFile rejects malformed opt-out/decision fields and clears invalid retryAfterUntil", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "epx-telemetry-state-ts-"));
+    const statePath = telemetryStatePath(tempDir);
+    const base = { version: 1, sentDays: {} };
+    const oversized = `2026-09-01T00:00:00.${"0".repeat(150)}Z`;
+
+    for (const bad of [
+      { ...base, ineligibleThroughDay: "2026-02-30" },
+      { ...base, envOptOutActiveSince: "bad-1" },
+      { ...base, envOptOutActiveSince: "2026-02-30T00:00:00Z" },
+      { ...base, envOptOutActiveSince: "2026-09-09T24:00:00Z" },
+      { ...base, envOptOutActiveSince: oversized },
+      { ...base, envOptOutOwners: [{ pid: 123, since: "bad-1" }] },
+      { ...base, envOptOutOwners: [{ pid: 123, since: "2026-02-30T00:00:00Z" }] },
+      { ...base, envOptOutOwners: [{ pid: 123, since: "2026-09-09T24:00:00Z" }] },
+      { ...base, envOptOutOwners: [{ pid: 123, since: oversized }] },
+      { ...base, pendingDecision: { decision: "accepted", decidedAt: "bad-1" } },
+      { ...base, pendingDecision: { decision: "accepted", decidedAt: "2026-02-30T00:00:00Z" } },
+      { ...base, pendingDecision: { decision: "accepted", decidedAt: "2026-09-09T24:00:00Z" } },
+      { ...base, pendingDecision: { decision: "accepted", decidedAt: oversized } },
+    ]) {
+      writeFileSync(statePath, JSON.stringify(bad), "utf8");
+      const read = readTelemetryStateFile(tempDir);
+      expect(read.unreadable, JSON.stringify(bad)).toBe(true);
+      expect(read.state.envOptOutOwners).toEqual([]);
+    }
+
+    for (const badRetry of ["bad-1", "2099-02-30T00:00:00Z", "2099-09-09T24:00:00Z", `2099-01-01T00:00:00.${"0".repeat(150)}Z`]) {
+      writeFileSync(statePath, JSON.stringify({ ...base, retryAfterUntil: badRetry }), "utf8");
+      const read = readTelemetryStateFile(tempDir);
+      expect(read.unreadable).toBe(false);
+      expect(read.state.retryAfterUntil).toBeNull();
+    }
+
+    writeFileSync(statePath, JSON.stringify({
+      ...base,
+      retryAfterUntil: "2099-02-28T00:00:00Z",
+      pendingDecision: {
+        decision: "accepted",
+        decidedAt: "2026-11-01T00:00:00Z",
+        noticeShownAt: "2026-02-30T00:00:00Z",
+      },
+    }), "utf8");
+    const acceptedFallback = readTelemetryStateFile(tempDir);
+    expect(acceptedFallback.unreadable).toBe(false);
+    expect(acceptedFallback.state.retryAfterUntil).toBe("2099-02-28T00:00:00Z");
+    expect(acceptedFallback.state.pendingDecision).toEqual({
+      decision: "accepted",
+      decidedAt: "2026-11-01T00:00:00Z",
+      noticeShownAt: "2026-11-01T00:00:00Z",
+    });
+
+    writeFileSync(statePath, JSON.stringify({
+      ...base,
+      pendingDecision: {
+        decision: "declined",
+        decidedAt: "bad-1",
+        noticeShownAt: "2026-02-30T00:00:00Z",
+      },
+    }), "utf8");
+    const mtimeIso = statSync(statePath).mtime.toISOString();
+    const declinedFallback = readTelemetryStateFile(tempDir);
+    expect(declinedFallback.unreadable).toBe(false);
+    expect(declinedFallback.state.pendingDecision).toEqual({
+      decision: "declined",
+      decidedAt: mtimeIso,
+      noticeShownAt: mtimeIso,
+    });
+  });
+
+  test("runProfileTick ignores bad-1, overflow, and >128B retryAfterUntil instead of sticking in backoff", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "epx-profile-sync-ts-"));
+    const now = Date.parse("2026-11-07T12:00:00.000Z");
+    const secret = `epxp_${"B".repeat(43)}`;
+    const readConfig = () => ({
+      telemetry: {
+        decision: "accepted" as const,
+        decidedAt: "2026-10-01T00:00:00.000Z",
+        noticeShownAt: "2026-10-01T00:00:00.000Z",
+      },
+    });
+    const aggregateDay = async (day: string) => ({
+      day,
+      activeMinutes: 5,
+      requests: { completed: 1, failed: 0, incomplete: 0, aborted: 0 },
+      errors: {},
+      models: [{
+        providerKind: "openai" as const,
+        modelFamily: "gpt-5" as const,
+        requests: 1,
+        inputTokens: 10,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 0,
+      }],
+    });
+
+    let calls = 0;
+    setProfileClientOverridesForTests({
+      baseUrl: "https://collector.test",
+      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        calls += 1;
+        if (init?.method === "DELETE") return Response.json({ ok: true, deleted: true });
+        return Response.json({ ok: true, deduplicated: false });
+      }) as typeof fetch,
+    });
+
+    const writeProfile = (retryAfterUntil: string | null, pendingDelete = false) => {
+      writeFileSync(telemetryProfilePath(tempDir!), JSON.stringify({
+        version: 1,
+        handle: "alice-dev",
+        displayName: "Alice",
+        avatar: "blue",
+        secret,
+        connectedAt: "2026-11-05T10:00:00.000Z",
+        connectedDay: "2026-11-05",
+        sentDays: {},
+        lastSentDay: null,
+        lastSentAt: null,
+        retryAfterUntil,
+        pendingDelete,
+        revoked: false,
+      }));
+    };
+
+    // Valid future retryAfterUntil enforces backoff without sending.
+    writeProfile("2099-01-01T00:00:00.000Z");
+    expect(await runProfileTick({ configDir: tempDir, env: {}, now, readConfig, aggregateDay })).toEqual({
+      sent: false,
+      reason: "retry-after-backoff",
+    });
+    expect(calls).toBe(0);
+
+    for (const badRetry of [
+      "bad-1",
+      "2099-02-30T00:00:00Z",
+      "2099-09-09T24:00:00Z",
+      `2099-01-01T00:00:00.${"0".repeat(150)}Z`,
+    ]) {
+      writeProfile(badRetry, false);
+      const tick = await runProfileTick({ configDir: tempDir, env: {}, now, readConfig, aggregateDay });
+      expect(tick).toEqual({ sent: true, day: "2026-11-06", reason: "sent" });
+    }
+    expect(calls).toBe(4);
+
+    // Pending delete with calendar-overflow retryAfterUntil must not stay stuck until 2099.
+    writeProfile("2099-02-30T00:00:00Z", true);
+    expect(await runProfileTick({ configDir: tempDir, env: {}, now, readConfig })).toEqual({
+      sent: false,
+      deleted: true,
+      reason: "deleted",
+    });
+    expect(calls).toBe(5);
   });
 });

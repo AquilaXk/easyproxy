@@ -3,14 +3,16 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
 import type { Root } from "react-dom/client";
+import { clearClientResourceStoresForTests } from "../src/client-resource";
 import CodexAccountPool from "../src/components/CodexAccountPool";
 import { redeemResetCredit } from "../src/components/codex-account-pool-handlers";
 import type { CodexAccountEntry, CodexAccountPoolController } from "../src/hooks/useCodexAccountPool";
 import { useAnthropicResetGrants } from "../src/hooks/useAnthropicResetGrants";
 import { LanguageProvider } from "../src/i18n/provider";
+import ApiKeys from "../src/pages/ApiKeys";
 import type { TFn } from "../src/i18n";
 
-const globals = ["document", "window", "navigator", "localStorage", "HTMLElement",
+const globals = ["document", "window", "navigator", "localStorage", "sessionStorage", "HTMLElement",
   "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previous: Record<(typeof globals)[number], unknown>;
 let win: Window;
@@ -94,6 +96,7 @@ function makeController(overrides: Partial<CodexAccountPoolController> = {}): Co
 }
 
 beforeEach(() => {
+  clearClientResourceStoresForTests();
   previous = Object.fromEntries(globals.map(k => [k, Reflect.get(globalThis, k)])) as typeof previous;
   win = new Window({ url: "http://localhost/" });
   Object.defineProperty(win.navigator, "language", { configurable: true, value: "en-US" });
@@ -102,6 +105,7 @@ beforeEach(() => {
     window: { configurable: true, value: win },
     navigator: { configurable: true, value: win.navigator },
     localStorage: { configurable: true, value: win.localStorage },
+    sessionStorage: { configurable: true, value: win.sessionStorage },
     HTMLElement: { configurable: true, value: win.HTMLElement },
   });
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
@@ -117,6 +121,7 @@ afterEach(async () => {
     root = null;
   }
   await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+  clearClientResourceStoresForTests();
   for (const key of globals) {
     Object.defineProperty(globalThis, key, { configurable: true, value: previous[key] });
   }
@@ -345,4 +350,118 @@ test("CodexAccountPool aborts in-flight reset-credits detail fetch when target s
     );
   });
   expect(creditSignals[1]!.aborted).toBe(true);
+});
+
+test("ApiKeys validPendingRotation blocks bad-1, calendar overflow, 24:00:00, and >128B timestamps in cache and wire payloads", async () => {
+  const authMatrix = [
+    { endpoint: "/v1/models", bearer: "accepted", dedicated: "accepted", xApiKey: "accepted" },
+  ];
+  const makeKeysEntry = (name: string, pendingRotation: unknown) => ({
+    id: "k1",
+    name,
+    prefix: "epx_data_12345678...",
+    createdAt: "2026-01-15T12:00:00.000Z",
+    pendingRotation,
+    usage: { requests7d: 0, totalRequests: 0 },
+  });
+  const seedCache = (apiBase: string, name: string, pendingRotation: unknown) => {
+    win.sessionStorage.setItem(
+      `epx.apikeys.list.v2:${apiBase}`,
+      JSON.stringify({
+        __epxCachedAt: Date.now(),
+        data: {
+          keys: [makeKeysEntry(name, pendingRotation)],
+          endpoints: {
+            baseUrl: `${apiBase}/v1`,
+            responses: `${apiBase}/v1/responses`,
+            chatCompletions: `${apiBase}/v1/chat/completions`,
+            messages: `${apiBase}/v1/messages`,
+            models: `${apiBase}/v1/models`,
+          },
+          claudeCodeEnabled: true,
+          authMatrix,
+        },
+      }),
+    );
+  };
+
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/models")) return Response.json({ data: [] });
+      return new Promise<Response>(() => {});
+    },
+  });
+
+  const { createRoot } = await import("react-dom/client");
+  root = createRoot(host);
+
+  const validBase = "http://keys-valid.local";
+  seedCache(validBase, "cached-valid-key", {
+    id: "rot-valid",
+    createdAt: "2026-08-28T00:00:00.000Z",
+    expiresAt: "2026-08-28T00:10:00.000Z",
+  });
+  await act(async () => {
+    root!.render(
+      <LanguageProvider>
+        <ApiKeys apiBase={validBase} />
+      </LanguageProvider>,
+    );
+  });
+  expect(host.textContent).toContain("cached-valid-key");
+
+  const poisonedRotations = [
+    { id: "r1", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "bad-1" },
+    { id: "r2", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "2026-02-30T00:00:00Z" },
+    { id: "r3", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: "2026-09-09T24:00:00Z" },
+    { id: "r4", createdAt: "2026-08-28T00:00:00.000Z", expiresAt: `2026-08-28T00:00:00.${"0".repeat(150)}Z` },
+    { id: "r5", createdAt: "bad-1", expiresAt: "2026-08-28T00:10:00.000Z" },
+    { id: "r6", createdAt: "2026-02-30T00:00:00Z", expiresAt: "2026-08-28T00:10:00.000Z" },
+  ];
+
+  for (const [index, pendingRotation] of poisonedRotations.entries()) {
+    const base = `http://keys-bad-${index}.local`;
+    seedCache(base, `poisoned-cached-key-${index}`, pendingRotation);
+    await act(async () => {
+      root!.render(
+        <LanguageProvider>
+          <ApiKeys apiBase={base} />
+        </LanguageProvider>,
+      );
+    });
+    expect(host.textContent).not.toContain(`poisoned-cached-key-${index}`);
+    expect(host.querySelector('[aria-busy="true"]')).not.toBeNull();
+  }
+
+  // Wire /api/keys payload with malformed pendingRotation must also fail closed.
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/models")) return Response.json({ data: [] });
+      if (url.endsWith("/api/keys")) {
+        return Response.json({
+          authMatrix,
+          keys: [makeKeysEntry("poisoned-wire-key", {
+            id: "r-wire",
+            createdAt: "2026-08-28T00:00:00.000Z",
+            expiresAt: "2026-02-30T00:00:00Z",
+          })],
+        });
+      }
+      return Response.json({});
+    },
+  });
+  await act(async () => {
+    root!.render(
+      <LanguageProvider>
+        <ApiKeys apiBase="http://keys-wire-bad.local" />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 25)); });
+  expect(host.textContent).not.toContain("poisoned-wire-key");
+  expect(host.textContent).toContain("Could not load API keys.");
 });
