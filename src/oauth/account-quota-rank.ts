@@ -46,7 +46,13 @@ function windowMatchesFamily(label: string, family: QuotaModelFamily): boolean {
   return /^cla(?:ude)?$/i.test(token);
 }
 
-/** Lower sorts earlier. Unknown sits between measured-healthy and measured-empty. */
+/**
+ * Lower sorts earlier. Unknown sits between measured-healthy and measured-empty.
+ * Hot primary-window threshold (`PRIMARY_WINDOW_HOT_PERCENT = 85`, adapted from `can1357/oh-my-pi`
+ * `rank.ts`, MIT) demotes reset-first accounts near immediate short-window exhaustion behind cooler
+ * healthy siblings.
+ */
+export const PRIMARY_WINDOW_HOT_PERCENT = 85;
 const RANK_HEALTHY = 0;
 const RANK_UNKNOWN = 1;
 const RANK_EXHAUSTED = 2;
@@ -98,7 +104,7 @@ function headroomOf(provider: string, accountId: string, requestedModelId?: stri
     const percents = (quota.customWindows ?? [])
       .filter(window => window.modelId === undefined && windowMatchesFamily(window.label, family))
       .map(window => window.percent)
-      .filter((value): value is number => typeof value === "number");
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
     if (percents.length === 0) return null;
     return 100 - Math.max(...percents);
   }
@@ -107,7 +113,7 @@ function headroomOf(provider: string, accountId: string, requestedModelId?: stri
     quota.weeklyPercent,
     quota.monthlyPercent,
     ...(quota.customWindows ?? []).filter(window => window.modelId === undefined).map(window => window.percent),
-  ].filter((value): value is number => typeof value === "number");
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   if (percents.length === 0) return null;
   return 100 - Math.max(...percents);
 }
@@ -170,6 +176,30 @@ export function accountResetTimestamp(
   return ms > now ? ms : null;
 }
 
+function isPrimaryWindowHot(
+  provider: string,
+  accountId: string,
+  requestedModelId?: string | null,
+): boolean {
+  if (provider === "kiro") return false;
+  const quota = getCachedProviderAccountQuota(provider, accountId);
+  if (!quota) return false;
+  if (hasPassiveAccountQuota(provider) && Date.now() - quota.updatedAt > PASSIVE_HEADROOM_MAX_AGE_MS) {
+    return false;
+  }
+  const family = classifyModelFamilyForQuota(provider, requestedModelId);
+  const custom = (quota.customWindows ?? []).filter(w =>
+    w.modelId === undefined
+    && !/week|month/i.test(w.label)
+    && (!family || windowMatchesFamily(w.label, family)));
+  const primaryCustom = family
+    ? custom.map(w => w.percent)
+    : custom.filter(w => /5h|five|session|short/i.test(w.label)).map(w => w.percent);
+  const values = [quota.fiveHourPercent, ...primaryCustom]
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return values.some(value => value >= PRIMARY_WINDOW_HOT_PERCENT);
+}
+
 /**
  * Rank candidates by soonest reset timestamp first among healthy accounts.
  * Accounts whose quota will reset earliest get priority so allowances do not expire unused.
@@ -195,14 +225,24 @@ export function rankAccountsByResetFirst(
     && !ring.every(id => headroomOf(provider, id, requestedModelId, accounts?.get(id)) !== null)
   ) return ranked;
 
-  const withReset = healthy.map((id, index) => ({
-    id,
-    resetAt: accountResetTimestamp(provider, id, requestedModelId, now) ?? Number.POSITIVE_INFINITY,
-    headroom: headroomOf(provider, id, requestedModelId, accounts?.get(id)) ?? 0,
-    index,
-  }));
+  const withReset = healthy.map((id, index) => {
+    const rawReset = accountResetTimestamp(provider, id, requestedModelId, now);
+    const rawHeadroom = headroomOf(provider, id, requestedModelId, accounts?.get(id));
+    return {
+      id,
+      hotPrimary: isPrimaryWindowHot(provider, id, requestedModelId),
+      resetAt: typeof rawReset === "number" && Number.isFinite(rawReset) ? rawReset : Number.POSITIVE_INFINITY,
+      headroom: typeof rawHeadroom === "number" && Number.isFinite(rawHeadroom) ? rawHeadroom : 0,
+      index,
+    };
+  });
 
-  withReset.sort((a, b) => (a.resetAt - b.resetAt) || (b.headroom - a.headroom) || (a.index - b.index));
+  withReset.sort((a, b) => {
+    if (a.hotPrimary !== b.hotPrimary) return a.hotPrimary ? 1 : -1;
+    if (a.resetAt !== b.resetAt) return a.resetAt < b.resetAt ? -1 : 1;
+    if (a.headroom !== b.headroom) return b.headroom > a.headroom ? 1 : -1;
+    return a.index - b.index;
+  });
   const sortedHealthy = withReset.map(r => r.id);
   const exhausted = ranked.filter(id => isAccountQuotaExhausted(provider, id, requestedModelId, accounts?.get(id)));
   return [...sortedHealthy, ...exhausted];
@@ -247,7 +287,13 @@ export function rankAccountsByHeadroom(
   if (!sawEvidence) return [...ring];
 
   return ranked
-    .sort((a, b) => (a.bucket - b.bucket) || (b.headroom - a.headroom) || (a.index - b.index))
+    .sort((a, b) => {
+      if (a.bucket !== b.bucket) return a.bucket < b.bucket ? -1 : 1;
+      const ah = Number.isFinite(a.headroom) ? a.headroom : Number.NEGATIVE_INFINITY;
+      const bh = Number.isFinite(b.headroom) ? b.headroom : Number.NEGATIVE_INFINITY;
+      if (ah !== bh) return bh > ah ? 1 : -1;
+      return a.index - b.index;
+    })
     .map(entry => entry.id);
 }
 

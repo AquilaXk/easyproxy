@@ -37,8 +37,29 @@ const MAX_CAPABILITY = 256;
 /** A pending slot expires this long after admission. */
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 export const SCOPE_PARTS = ["cohort", "provider", "destination", "adapter", "model", "credential", "authMode"] as const;
-// api.anthropic.com only.
-const IN_SCOPE_MODEL = /^(claude-)?(mythos-5-1|opus-5-5|opus-5|sonnet-5-5|haiku-5-5|fable-5-1|fable-5-2)$/;
+// api.anthropic.com only. Family minimum version floors adapted from `tribgames/mixdog`
+// (`claude_floors.rs` / `effort_updates.rs`, Apache-2.0): keeps existing 5.x gates while
+// admitting newer numeric versions (e.g. opus-5-6, sonnet-5-6, opus-6-0) without regex churn.
+const PER_MESSAGE_EFFORT_FLOORS: Readonly<Record<string, { major: number; minor: number; allowBareMajor?: boolean }>> = {
+  mythos: { major: 5, minor: 1 },
+  opus: { major: 5, minor: 0, allowBareMajor: true },
+  sonnet: { major: 5, minor: 5 },
+  haiku: { major: 5, minor: 5 },
+  fable: { major: 5, minor: 1 },
+};
+const CLAUDE_FAMILY_VERSION_RE = /^(?:claude-)?(mythos|opus|sonnet|haiku|fable)-(\d{1,3})(?:-(\d{1,3}))?$/;
+
+export function isInScopePerMessageEffortModel(model: string): boolean {
+  if (typeof model !== "string" || model.length === 0 || model.length > 128) return false;
+  const match = CLAUDE_FAMILY_VERSION_RE.exec(model);
+  if (!match) return false;
+  const floor = PER_MESSAGE_EFFORT_FLOORS[match[1]!];
+  if (!floor) return false;
+  const major = Number(match[2]);
+  if (match[3] === undefined && !floor.allowBareMajor) return false;
+  const minor = match[3] !== undefined ? Number(match[3]) : 0;
+  return major > floor.major || (major === floor.major && minor >= floor.minor);
+}
 const ENDPOINT = "api.anthropic.com";
 // Effort names the serializer can emit (anthropic.ts adaptiveEffort / reasoningBudget).
 const EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
@@ -359,7 +380,7 @@ function decideInner(store: EffortHistoryStore, req: EffortHistoryRequest, opts:
   if (!s || SCOPE_PARTS.some(k => !s[k])) return off("missing-scope");
   if (s.authMode !== "apiKey") return off("oauth-not-in-first-slice");
   if (s.destination !== ENDPOINT) return off("out-of-scope-destination");
-  if (typeof s.model !== "string" || !IN_SCOPE_MODEL.test(s.model)) return off("out-of-scope-model");
+  if (typeof s.model !== "string" || !isInScopePerMessageEffortModel(s.model)) return off("out-of-scope-model");
   // Chat identity: two chats can share a first message, so each chat needs its own lineage value.
   if (!req.chatLineage) return off("no-chat-lineage");
   const scopeKey = hash([s, req.chatLineage]);

@@ -105,9 +105,16 @@ export function claimDueCodexQuotaRecoveryProbes(
       (entry.scope === undefined || entry.scope === "shared")
       && entry.health?.cooldownSource === "reset-derived"
       && canAcquireQuotaProbeLease(entry.health, now))
-      .sort((a, b) =>
-        (a.health.lastProbeAt ?? a.health.cooldownSince ?? 0)
-        - (b.health.lastProbeAt ?? b.health.cooldownSince ?? 0));
+      .sort((a, b) => {
+        const aRaw = a.health.lastProbeAt ?? a.health.cooldownSince ?? 0;
+        const bRaw = b.health.lastProbeAt ?? b.health.cooldownSince ?? 0;
+        const aAt = Number.isFinite(aRaw) ? aRaw : Number.POSITIVE_INFINITY;
+        const bAt = Number.isFinite(bRaw) ? bRaw : Number.POSITIVE_INFINITY;
+        if (aAt !== bAt) return aAt < bAt ? -1 : 1;
+        const aScope = a.scope ?? "";
+        const bScope = b.scope ?? "";
+        return aScope < bScope ? -1 : aScope > bScope ? 1 : 0;
+      });
     const candidate = due[0];
     if (candidate) candidates.push({
       accountId: account.id,
@@ -119,9 +126,12 @@ export function claimDueCodexQuotaRecoveryProbes(
     });
   }
   candidates.sort((a, b) => {
-    const age = (a.health.lastProbeAt ?? a.health.cooldownSince ?? 0)
-      - (b.health.lastProbeAt ?? b.health.cooldownSince ?? 0);
-    return age || a.order - b.order;
+    const aRaw = a.health.lastProbeAt ?? a.health.cooldownSince ?? 0;
+    const bRaw = b.health.lastProbeAt ?? b.health.cooldownSince ?? 0;
+    const aAt = Number.isFinite(aRaw) ? aRaw : Number.POSITIVE_INFINITY;
+    const bAt = Number.isFinite(bRaw) ? bRaw : Number.POSITIVE_INFINITY;
+    if (aAt !== bAt) return aAt < bAt ? -1 : 1;
+    return a.order - b.order;
   });
   return candidates.slice(0, boundedLimit).map(candidate => {
     const leaseId = randomUUID();

@@ -238,6 +238,7 @@ export function AnthropicResetGrantModal({ accountId, accountLabel, entry, contr
   /** Set by an unknown outcome; while it holds, the only post is a same-id retry. */
   const [held, setHeld] = useState<Held | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const mountSeqRef = useRef(0);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -251,8 +252,12 @@ export function AnthropicResetGrantModal({ accountId, accountLabel, entry, contr
   const [opening, setOpening] = useState(true);
   useEffect(() => {
     let live = true;
+    const seq = ++mountSeqRef.current;
     void refresh(accountId, { keepSnapshot: true }).catch(() => undefined).finally(() => { if (live) setOpening(false); });
-    return () => { live = false; };
+    return () => {
+      live = false;
+      if (mountSeqRef.current === seq) mountSeqRef.current += 1;
+    };
   }, [accountId, refresh]);
 
   useEffect(() => {
@@ -348,26 +353,35 @@ export function AnthropicResetGrantModal({ accountId, accountLabel, entry, contr
 
   const post = async (request: Held) => {
     if (busy) return;
+    const seq = mountSeqRef.current;
     const retryingHeld = unresolved !== null && unresolved.operationId === request.operationId;
     setBusy(true);
-    const result = await controller.spend(accountId, request);
-    setBusy(false);
-    setConfirming(null);
-    if (result.kind === "unknown" || (result.kind === "refused" && retryingHeld && !RELEASES_HELD.has(result.code))) {
-      setHeld(request);
-      setOutcome(result.kind === "refused" ? outcomeOf(result) : null);
-      return;
+    try {
+      const result = await controller.spend(accountId, request);
+      if (mountSeqRef.current !== seq) return;
+      setConfirming(null);
+      if (result.kind === "unknown" || (result.kind === "refused" && retryingHeld && !RELEASES_HELD.has(result.code))) {
+        setHeld(request);
+        setOutcome(result.kind === "refused" ? outcomeOf(result) : null);
+        return;
+      }
+      setHeld(null);
+      setOutcome(outcomeOf(result));
+      if (result.kind === "refused") void controller.refresh(accountId);
+    } finally {
+      if (mountSeqRef.current === seq) setBusy(false);
     }
-    setHeld(null);
-    setOutcome(outcomeOf(result));
-    if (result.kind === "refused") void controller.refresh(accountId);
   };
 
   const recheck = async () => {
     if (checking) return;
+    const seq = mountSeqRef.current;
     setChecking(true);
-    await controller.refresh(accountId);
-    setChecking(false);
+    try {
+      await controller.refresh(accountId);
+    } finally {
+      if (mountSeqRef.current === seq) setChecking(false);
+    }
   };
 
   const message = (result: Outcome) => (

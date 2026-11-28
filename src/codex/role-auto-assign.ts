@@ -90,7 +90,10 @@ export function classifyRoleModelCandidates(
     for (const model of mapping[tier] ?? []) if (!mapped.has(model)) mapped.set(model, tier);
   }
   const unmapped = candidates.filter(candidate => !mapped.has(candidate.model));
-  const scored = unmapped.filter(candidate => measured.has(candidate.model));
+  const scored = unmapped.filter(candidate => {
+    const value = measured.get(candidate.model);
+    return typeof value === "number" && Number.isFinite(value);
+  });
   const scoreTiers = tierByRank([...new Set(scored.map(candidate => measured.get(candidate.model)!))].sort((a, b) => a - b));
   const byScore = scored.length >= 2
     ? new Map(scored.map(candidate => [candidate.model, scoreTiers.get(measured.get(candidate.model)!)!] as const))
@@ -99,8 +102,11 @@ export function classifyRoleModelCandidates(
     ? new Map<string, SizingTier>()
     : tierByRank(unmapped
       .map((candidate, order) => ({ candidate, order }))
-      .filter(({ candidate }) => candidate.unitPrice !== null)
-      .sort((a, b) => a.candidate.unitPrice! - b.candidate.unitPrice! || a.order - b.order)
+      .filter(({ candidate }) => typeof candidate.unitPrice === "number" && Number.isFinite(candidate.unitPrice))
+      .sort((a, b) =>
+        a.candidate.unitPrice !== b.candidate.unitPrice
+          ? (a.candidate.unitPrice! < b.candidate.unitPrice! ? -1 : 1)
+          : a.order - b.order)
       .map(({ candidate }) => candidate.model));
   return candidates.map(candidate => {
     const fromMapping = mapped.get(candidate.model);
@@ -120,14 +126,26 @@ export function cheapestSufficientCandidate(
   current: string | null = null,
 ): ClassifiedCandidate | null {
   const need = SIZING_TIERS.indexOf(tier);
+  if (need < 0) return null;
   const ranked = classified
     .map((candidate, order) => ({ candidate, order, rank: candidate.tier ? SIZING_TIERS.indexOf(candidate.tier) : -1 }))
     .filter(entry => entry.rank >= need)
-    .sort((a, b) => a.rank - b.rank
-      || (a.candidate.unitPrice ?? Infinity) - (b.candidate.unitPrice ?? Infinity)
-      || (b.candidate.score ?? -Infinity) - (a.candidate.score ?? -Infinity)
-      || Number(b.candidate.model === current) - Number(a.candidate.model === current)
-      || a.order - b.order);
+    .sort((a, b) => {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      const aPrice = typeof a.candidate.unitPrice === "number" && Number.isFinite(a.candidate.unitPrice)
+        ? a.candidate.unitPrice : Number.POSITIVE_INFINITY;
+      const bPrice = typeof b.candidate.unitPrice === "number" && Number.isFinite(b.candidate.unitPrice)
+        ? b.candidate.unitPrice : Number.POSITIVE_INFINITY;
+      if (aPrice !== bPrice) return aPrice < bPrice ? -1 : 1;
+      const aScore = typeof a.candidate.score === "number" && Number.isFinite(a.candidate.score)
+        ? a.candidate.score : Number.NEGATIVE_INFINITY;
+      const bScore = typeof b.candidate.score === "number" && Number.isFinite(b.candidate.score)
+        ? b.candidate.score : Number.NEGATIVE_INFINITY;
+      if (aScore !== bScore) return bScore > aScore ? 1 : -1;
+      const currentCmp = Number(b.candidate.model === current) - Number(a.candidate.model === current);
+      if (currentCmp !== 0) return currentCmp;
+      return a.order - b.order;
+    });
   return ranked[0]?.candidate ?? null;
 }
 

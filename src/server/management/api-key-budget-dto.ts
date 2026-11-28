@@ -1,4 +1,5 @@
 import type { EpxApiKeyEntry } from "../../types";
+import { parseStrictTimestampMs } from "../../lib/strict-timestamp";
 import { getApiKeyBudgetHoldSnapshot, getApiKeyBudgetSnapshot } from "../api-key-budget";
 import { isApiKeyExpired } from "../auth-cors";
 
@@ -81,7 +82,7 @@ export function applyApiKeyBudgetPatch(
       || rawExpiry.trim().length === 0
       || rawExpiry.length > 64
       || !ISO_OFFSET_INSTANT_RE.test(rawExpiry.trim())
-      || !Number.isFinite(Date.parse(rawExpiry.trim()))
+      || !Number.isFinite(parseStrictTimestampMs(rawExpiry.trim()))
     ) {
       return { ok: false, error: "expiresAt must be null or an ISO-8601 timestamp with timezone offset" };
     } else {

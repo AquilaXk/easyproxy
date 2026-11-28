@@ -165,27 +165,34 @@ export function buildQuotaRows(quota: AccountQuota | null, plan: string | null |
     }
   }
   const identities = new Map<string, number>();
-  return ranked.sort((a, b) => a.rank - b.rank).map(({ row }) => {
-    const identity = row.id ?? row.windowKey ?? row.customLabel!;
-    const ordinal = identities.get(identity) ?? 0;
-    identities.set(identity, ordinal + 1);
-    return { ...row, id: JSON.stringify([identity, ordinal]) };
-  });
+  return ranked
+    .map((entry, order) => ({ ...entry, order }))
+    .sort((a, b) => (a.rank !== b.rank ? (a.rank < b.rank ? -1 : 1) : a.order - b.order))
+    .map(({ row }) => {
+      const identity = row.id ?? row.windowKey ?? row.customLabel!;
+      const ordinal = identities.get(identity) ?? 0;
+      identities.set(identity, ordinal + 1);
+      return { ...row, id: JSON.stringify([identity, ordinal]) };
+    });
 }
 
 /** Max utilisation across known windows (for sorting providers by urgency). */
 export function maxQuotaUtilisation(quota: AccountQuota | null): number {
   if (!quota) return -1;
   const vals = [quota.fiveHourPercent, quota.weeklyPercent, quota.monthlyPercent]
-    .filter((n): n is number => typeof n === "number");
+    .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
   for (const w of quota.customWindows ?? []) {
     if (w.modelId !== undefined) continue;
-    if (typeof w.percent === "number") vals.push(w.percent);
+    if (typeof w.percent === "number" && Number.isFinite(w.percent)) vals.push(w.percent);
   }
   const hasSubscriptionCreditsCustom = quota.customWindows?.some(
     w => w.modelId === undefined && canonicalCustomWindowLabel(w.label) === SUBSCRIPTION_CREDITS_LABEL,
   );
-  if (!hasSubscriptionCreditsCustom && typeof quota.creditsUsd?.percent === "number") {
+  if (
+    !hasSubscriptionCreditsCustom
+    && typeof quota.creditsUsd?.percent === "number"
+    && Number.isFinite(quota.creditsUsd.percent)
+  ) {
     vals.push(quota.creditsUsd.percent);
   }
   return vals.length ? Math.max(...vals) : -1;
@@ -224,11 +231,11 @@ function bcp47(locale: Locale): string {
 
 /** Display-only exhaustion cutoff (adopted with rationale: rounding shows 100%). */
 export function isQuotaExhausted(percent: number): boolean {
-  return percent >= 99.5;
+  return Number.isFinite(percent) && percent >= 99.5;
 }
 
 export function isQuotaWarn(percent: number, threshold: number): boolean {
-  return threshold > 0 && percent >= threshold;
+  return Number.isFinite(percent) && Number.isFinite(threshold) && threshold > 0 && percent >= threshold;
 }
 
 export function quotaBarTone(percent: number, threshold: number): "bar-green" | "bar-warn" {
@@ -237,6 +244,7 @@ export function quotaBarTone(percent: number, threshold: number): "bar-green" | 
 
 /** Tiny usage still shows a visible bar (min ~4%) so 0–2% isn't invisible; 0 stays 0. */
 export function barWidth(percent: number): number {
+  if (!Number.isFinite(percent)) return 0;
   const clamped = Math.max(0, Math.min(100, percent));
   if (clamped <= 0) return 0;
   return Math.max(4, Math.round(clamped));

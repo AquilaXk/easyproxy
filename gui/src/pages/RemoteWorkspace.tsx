@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useKeyedClientResource } from "../client-resource";
 import { readJsonOrThrow } from "../fetch-json";
 import { IconCheck, IconLink, IconMonitor, IconPlus, IconRefresh, IconTerminal, IconTrash } from "../icons";
@@ -48,6 +48,7 @@ export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: strin
     { pollMs: 3_000, deadlineMs: 10_000 },
   );
   const state = resource.data;
+  const [originBase, setOriginBase] = useState(apiBase);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [selectedRootId, setSelectedRootId] = useState("");
   const [selectedProfile, setSelectedProfile] = useState<RuntimeProfile>("codex");
@@ -58,6 +59,30 @@ export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: strin
   const [busy, setBusy] = useState<"pair" | "session" | "revoke" | null>(null);
   const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [copiedCommand, setCopiedCommand] = useState<"posix" | "powershell" | null>(null);
+  if (originBase !== apiBase) {
+    setOriginBase(apiBase);
+    setSelectedDeviceId("");
+    setSelectedRootId("");
+    setSelectedSessionId("");
+    setLocalSession(null);
+    setPairing(null);
+    setBusy(null);
+    setNotice(null);
+    setCopiedCommand(null);
+  }
+  const mountedRef = useRef(true);
+  const epochRef = useRef(0);
+  const mutationAbortRef = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    const seq = ++epochRef.current;
+    return () => {
+      mountedRef.current = false;
+      if (epochRef.current === seq) epochRef.current += 1;
+      mutationAbortRef.current?.abort();
+      mutationAbortRef.current = null;
+    };
+  }, [apiBase]);
 
   const devices = state?.devices ?? [];
   const effectiveDevice = devices.find(device => device.id === selectedDeviceId)
@@ -87,27 +112,42 @@ export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: strin
     return remoteWorkspacePairingCommands(pairing.code, hubOrigin);
   }, [pairing, hubOrigin]);
 
-  const mutate = async <T,>(path: string, init: RequestInit, fallback: string): Promise<T> => {
-    const response = await fetch(`${apiBase}${path}`, init);
+  const mutate = async <T,>(path: string, init: RequestInit, fallback: string, signal: AbortSignal): Promise<T> => {
+    const response = await fetch(`${apiBase}${path}`, { ...init, signal });
     const body = await readJsonOrThrow<T>(response, fallback);
     if (body === undefined) throw new Error(fallback);
     return body;
   };
 
   const createPairing = async () => {
+    const seq = epochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy("pair");
     setNotice(null);
     try {
-      const grant = await mutate<PairingGrant>("/api/remote-workspace/pairing", { method: "POST" }, t("remote.requestFailed"));
+      const grant = await mutate<PairingGrant>("/api/remote-workspace/pairing", { method: "POST" }, t("remote.requestFailed"), controller.signal);
+      if (!alive()) return;
       setPairing(grant);
       setCopiedCommand(null);
     } catch (error) {
+      if (!alive()) return;
       setNotice({ tone: "err", text: error instanceof Error ? error.message : t("remote.requestFailed") });
-    } finally { setBusy(null); }
+    } finally {
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(null);
+    }
   };
 
   const createSession = async () => {
     if (!effectiveDevice || !effectiveRoot) return;
+    const seq = epochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy("session");
     setNotice(null);
     try {
@@ -120,26 +160,42 @@ export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: strin
           rootId: effectiveRoot.id,
           accessMode: selectedAccessMode,
         }),
-      }, t("remote.requestFailed"));
+      }, t("remote.requestFailed"), controller.signal);
+      if (!alive()) return;
       setLocalSession(session);
       setSelectedSessionId(session.id);
       setNotice({ tone: "ok", text: t("remote.sessionStarted") });
       void resource.refresh();
     } catch (error) {
+      if (!alive()) return;
       setNotice({ tone: "err", text: error instanceof Error ? error.message : t("remote.requestFailed") });
-    } finally { setBusy(null); }
+    } finally {
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(null);
+    }
   };
 
   const revokeDevice = async (device: RemoteDevice) => {
+    const seq = epochRef.current;
     if (!(await confirmAction({ message: t("remote.revokeConfirm", { name: device.name }), confirmLabel: t("common.remove"), tone: "danger" }))) return;
+    if (!mountedRef.current || epochRef.current !== seq) return;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy("revoke");
     try {
-      await mutate(`/api/remote-workspace/devices/${device.id}`, { method: "DELETE" }, t("remote.requestFailed"));
+      await mutate(`/api/remote-workspace/devices/${device.id}`, { method: "DELETE" }, t("remote.requestFailed"), controller.signal);
+      if (!alive()) return;
       if (selectedDeviceId === device.id) setSelectedDeviceId("");
       void resource.refresh();
     } catch (error) {
+      if (!alive()) return;
       setNotice({ tone: "err", text: error instanceof Error ? error.message : t("remote.requestFailed") });
-    } finally { setBusy(null); }
+    } finally {
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(null);
+    }
   };
 
   const copyPairingCommand = async (kind: "posix" | "powershell", command: string) => {

@@ -10,8 +10,10 @@
  *
  * Recognition is deliberately narrow. A generic 429 or 529 on a fast request may be an ordinary
  * account rate limit and must keep flowing into the existing wait/rotation handling, so only an
- * error message that names fast mode or the speed parameter, or a fast-pool header reporting
- * zero remaining, counts. Live probe strings (2026-09-23,
+ * error message that names fast mode or the speed parameter, a fast-pool header reporting
+ * zero remaining, or `anthropic-ratelimit-unified-overage-disabled-reason` counts.
+ * Overage-disabled reason classification adapted from `tribgames/mixdog` (`fast_mode.rs`,
+ * Apache-2.0). Live probe strings (2026-09-23,
  * devlog/_fin/260923_anthropic_fast_speed/020_probe-evidence.md):
  *   429 "Usage credits are required for fast mode."
  *   400 "Fast mode is not enabled for your organization. ..."
@@ -19,13 +21,21 @@
  */
 
 export const ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01";
+export const ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER = "anthropic-ratelimit-unified-overage-disabled-reason";
 
+export type AnthropicFastRefusalClass = "transient" | "disabled" | "unsupported";
+
+const MAX_FAST_REFUSAL_BODY_BYTES = 8_192;
 const FAST_REFUSAL_MESSAGE = /\bfast mode\b|\bspeed\b\W{0,2} parameter/i;
+const FAST_UNSUPPORTED_MESSAGE = /does not support\b[\s\S]*\bspeed\b|\bspeed\b\W{0,2} parameter/i;
+const FAST_DISABLED_MESSAGE = /\bfast mode\b.*\b(?:not enabled|disabled)\b/i;
 const FAST_POOL_REMAINING_HEADER = /^anthropic-fast-(?:input|output)-tokens-remaining$/i;
+const TRANSIENT_OVERAGE_REASONS = new Set(["org_level_disabled_until", "out_of_credits"]);
+const DISABLED_OVERAGE_REASONS = new Set(["overage_not_provisioned", "org_level_disabled"]);
 
 function anthropicErrorMessage(bodyText: string): string | undefined {
   try {
-    const parsed: unknown = JSON.parse(bodyText);
+    const parsed: unknown = JSON.parse(bodyText.slice(0, MAX_FAST_REFUSAL_BODY_BYTES));
     if (!parsed || typeof parsed !== "object") return undefined;
     const error = (parsed as { error?: unknown }).error;
     if (!error || typeof error !== "object") return undefined;
@@ -45,6 +55,34 @@ function fastPoolExhausted(headers: Headers): boolean {
 }
 
 /**
+ * Classify a fast-lane refusal (`speed: "fast"`) into transient credit/window exhaustion vs
+ * org/feature disablement vs unsupported model/parameter, or `null` when it is an ordinary
+ * account limit / unrelated error.
+ */
+export function classifyAnthropicFastRefusal(
+  status: number,
+  headers: Headers,
+  bodyText: string | undefined,
+): AnthropicFastRefusalClass | null {
+  if (status === 400) {
+    const message = bodyText === undefined ? undefined : anthropicErrorMessage(bodyText);
+    if (!message || !FAST_REFUSAL_MESSAGE.test(message)) return null;
+    if (FAST_UNSUPPORTED_MESSAGE.test(message)) return "unsupported";
+    if (FAST_DISABLED_MESSAGE.test(message)) return "disabled";
+    return "disabled";
+  }
+  if (status !== 429) return null;
+  const overageReason = headers.get(ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER)?.trim().toLowerCase();
+  if (overageReason) {
+    if (TRANSIENT_OVERAGE_REASONS.has(overageReason)) return "transient";
+    if (DISABLED_OVERAGE_REASONS.has(overageReason)) return "disabled";
+  }
+  if (fastPoolExhausted(headers)) return "transient";
+  const message = bodyText === undefined ? undefined : anthropicErrorMessage(bodyText);
+  return message !== undefined && FAST_REFUSAL_MESSAGE.test(message) ? "transient" : null;
+}
+
+/**
  * Whether a response to a request that actually sent `speed: "fast"` is a fast-lane refusal a
  * standard-speed resend can recover. Pure; the caller supplies a bounded body read.
  */
@@ -53,10 +91,7 @@ export function isAnthropicFastRefusal(
   headers: Headers,
   bodyText: string | undefined,
 ): boolean {
-  if (status !== 400 && status !== 429) return false;
-  if (status === 429 && fastPoolExhausted(headers)) return true;
-  const message = bodyText === undefined ? undefined : anthropicErrorMessage(bodyText);
-  return message !== undefined && FAST_REFUSAL_MESSAGE.test(message);
+  return classifyAnthropicFastRefusal(status, headers, bodyText) !== null;
 }
 
 /**

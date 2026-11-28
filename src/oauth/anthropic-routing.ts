@@ -1,3 +1,4 @@
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import { clearAllAnthropicFamilyQuota, anthropicModelQuotaFor, anthropicModelPercents, anthropicModelRankPercent, anthropicModelWeeklyPercent } from "./anthropic-model-quota";
 import { resetNearWeightOf } from "../routing/machine-weighted-routing";
 import { getAnthropicResetNearQuota } from "../providers/quota/account-cache";
@@ -142,7 +143,7 @@ function parseRetryAfterMs(value: string | null | undefined, now: number): numbe
     if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
     return delayUntil(now + Math.max(Math.ceil(seconds * 1000), 1), now);
   }
-  return delayUntil(Date.parse(text), now);
+  return delayUntil(parseStrictTimestampMs(text, { now, legacyHttpDate: true }), now);
 }
 
 /** Windows whose unified status a refusal reported as rejected, independent of any reset header. */

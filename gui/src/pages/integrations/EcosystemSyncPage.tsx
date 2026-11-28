@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { readJsonOrThrow } from "../../fetch-json";
 import { useI18n } from "../../i18n/shared";
 import { Notice, Select } from "../../ui";
@@ -70,6 +70,7 @@ interface PreviewResponseDto {
 
 export default function EcosystemSyncPage({ apiBase, active }: { apiBase: string; active: boolean }) {
   const { t, locale } = useI18n();
+  const [originBase, setOriginBase] = useState(apiBase);
   const [status, setStatus] = useState<EcosystemStatusResponseDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -84,20 +85,45 @@ export default function EcosystemSyncPage({ apiBase, active }: { apiBase: string
   const [preview, setPreview] = useState<PreviewResponseDto | null>(null);
 
   const [reloadSeq, setReloadSeq] = useState(0);
+  if (originBase !== apiBase) {
+    setOriginBase(apiBase);
+    setStatus(null);
+    setLoading(false);
+    setBusy(false);
+    setError(null);
+    setNotice(null);
+    setPreview(null);
+  }
+  const mountedRef = useRef(true);
+  const epochRef = useRef(0);
+  const mutationAbortRef = useRef<AbortController | null>(null);
+
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    const seq = ++epochRef.current;
+    return () => {
+      mountedRef.current = false;
+      if (epochRef.current === seq) epochRef.current += 1;
+      mutationAbortRef.current?.abort();
+      mutationAbortRef.current = null;
+    };
+  }, [apiBase]);
 
   const loadStatus = useCallback(async (signal?: AbortSignal) => {
+    const seq = epochRef.current;
     try {
       const res = await fetch(`${apiBase}/api/ecosystem/sync`, { signal });
       const data = await readJsonOrThrow<EcosystemStatusResponseDto>(res, t("ecoSync.loadError"));
-      if (data && !signal?.aborted) {
+      if (data && mountedRef.current && !signal?.aborted && epochRef.current === seq) {
         setStatus(data);
         setError(null);
       }
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") return;
+      if (!mountedRef.current || signal?.aborted || epochRef.current !== seq) return;
       setError(err instanceof Error && err.message ? err.message : t("ecoSync.loadError"));
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (mountedRef.current && !signal?.aborted && epochRef.current === seq) setLoading(false);
     }
   }, [apiBase, t]);
 
@@ -134,6 +160,11 @@ export default function EcosystemSyncPage({ apiBase, active }: { apiBase: string
 
   const runPreview = async () => {
     if (targets.length === 0) return;
+    const seq = epochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -142,18 +173,27 @@ export default function EcosystemSyncPage({ apiBase, active }: { apiBase: string
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source, targets, kinds, overwrite }),
+        signal: controller.signal,
       });
+      if (!alive()) return;
       const data = await readJsonOrThrow<PreviewResponseDto>(res);
-      if (data) setPreview(data);
+      if (data && alive()) setPreview(data);
     } catch (err) {
+      if (!alive()) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(false);
     }
   };
 
   const runApply = async () => {
     if (targets.length === 0) return;
+    const seq = epochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -162,13 +202,15 @@ export default function EcosystemSyncPage({ apiBase, active }: { apiBase: string
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source, targets, kinds, overwrite }),
+        signal: controller.signal,
       });
+      if (!alive()) return;
       const data = await readJsonOrThrow<{
         batchId: string;
         appliedMcpCount: number;
         appliedSkillCount: number;
       }>(res);
-      if (data) {
+      if (data && alive()) {
         setNotice(t("ecoSync.appliedSuccess", {
           mcp: data.appliedMcpCount,
           skills: data.appliedSkillCount,
@@ -178,13 +220,20 @@ export default function EcosystemSyncPage({ apiBase, active }: { apiBase: string
         setReloadSeq(n => n + 1);
       }
     } catch (err) {
+      if (!alive()) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(false);
     }
   };
 
   const runRestore = async (batchId: string) => {
+    const seq = epochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -193,16 +242,20 @@ export default function EcosystemSyncPage({ apiBase, active }: { apiBase: string
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ batchId, force: forceRestore }),
+        signal: controller.signal,
       });
+      if (!alive()) return;
       const data = await readJsonOrThrow<{ restoredBatchId: string }>(res);
-      if (data) {
+      if (data && alive()) {
         setNotice(t("ecoSync.restoredSuccess", { batchId: data.restoredBatchId }));
         setReloadSeq(n => n + 1);
       }
     } catch (err) {
+      if (!alive()) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(false);
     }
   };
 

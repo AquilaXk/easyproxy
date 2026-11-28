@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useI18n, type TFn, type Locale } from "../i18n/shared";
 import { EmptyState, Select } from "../ui";
 import { IconRefresh } from "../icons";
@@ -123,6 +123,19 @@ function ArchivedCleanupPanel({
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const mountedRef = useRef(true);
+  const epochRef = useRef(0);
+  const mutationAbortRef = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    const seq = ++epochRef.current;
+    return () => {
+      mountedRef.current = false;
+      if (epochRef.current === seq) epochRef.current += 1;
+      mutationAbortRef.current?.abort();
+      mutationAbortRef.current = null;
+    };
+  }, [apiBase]);
 
   const closeConfirm = useCallback((clearPreview = false) => {
     setConfirmOpen(false);
@@ -154,6 +167,11 @@ function ArchivedCleanupPanel({
     });
 
   const runPreview = async () => {
+    const seq = epochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy(true);
     setError(null);
     setStatus(null);
@@ -162,23 +180,34 @@ function ArchivedCleanupPanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ percent }),
+        signal: controller.signal,
       });
+      if (!alive()) return;
       if (!res.ok) {
         const json = await res.json().catch(() => ({})) as { error?: string };
+        if (!alive()) return;
         throw new Error(mapCleanupError(json.error, t("storage.cleanup.previewFailed")));
       }
       const json = await res.json() as CleanupPreview;
+      if (!alive()) return;
       setPreview(json);
       setConfirmOpen(true);
     } catch (e) {
+      if (!alive()) return;
       setError(localizedCatch(e, t("storage.cleanup.previewFailed")));
     } finally {
-      setBusy(false);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(false);
     }
   };
 
   const runCleanup = async () => {
     if (!preview) return;
+    const seq = epochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy(true);
     setError(null);
     try {
@@ -190,9 +219,12 @@ function ArchivedCleanupPanel({
           mode: permanent ? "permanent" : "quarantine",
           digest: preview.digest,
         }),
+        signal: controller.signal,
       });
+      if (!alive()) return;
       if (!res.ok) {
         const json = await res.json().catch(() => ({})) as CleanupResult;
+        if (!alive()) return;
         if (json.error === "stale_preview") {
           // Digest can never succeed again — send the user back to Preview.
           closeConfirm(true);
@@ -200,6 +232,7 @@ function ArchivedCleanupPanel({
         throw new Error(mapCleanupError(json.error, json.message, json.trashDir));
       }
       const json = await res.json() as CleanupResult;
+      if (!alive()) return;
       if (!json.ok) {
         if (json.error === "stale_preview") {
           closeConfirm(true);
@@ -215,10 +248,12 @@ function ArchivedCleanupPanel({
         : complete);
       onDone();
     } catch (e) {
+      if (!alive()) return;
       // Keep the dialog open (except stale_preview) so the failure is visible.
       setError(localizedCatch(e, t("storage.cleanup.cleanupFailed")));
     } finally {
-      setBusy(false);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(false);
     }
   };
 
@@ -346,6 +381,19 @@ function QuarantineTrashPanel({
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const mountedRef = useRef(true);
+  const epochRef = useRef(0);
+  const restoreAbortRef = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    const seq = ++epochRef.current;
+    return () => {
+      mountedRef.current = false;
+      if (epochRef.current === seq) epochRef.current += 1;
+      restoreAbortRef.current?.abort();
+      restoreAbortRef.current = null;
+    };
+  }, [apiBase]);
 
   const closeConfirm = useCallback(() => setConfirmEntry(null), []);
 
@@ -386,6 +434,11 @@ function QuarantineTrashPanel({
 
   const runRestore = async () => {
     if (!confirmEntry) return;
+    const seq = epochRef.current;
+    restoreAbortRef.current?.abort();
+    const controller = new AbortController();
+    restoreAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setBusy(true);
     setError(null);
     try {
@@ -393,12 +446,16 @@ function QuarantineTrashPanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: confirmEntry.id }),
+        signal: controller.signal,
       });
+      if (!alive()) return;
       if (!res.ok) {
         const json = await res.json().catch(() => ({})) as RestoreResult;
+        if (!alive()) return;
         throw new Error(mapRestoreError(json.error, json.message));
       }
       const json = await res.json() as RestoreResult;
+      if (!alive()) return;
       if (!json.ok) {
         throw new Error(mapRestoreError(json.error, json.message));
       }
@@ -409,9 +466,11 @@ function QuarantineTrashPanel({
       }));
       onDone();
     } catch (e) {
+      if (!alive()) return;
       setError(localizedCatch(e, t("storage.trash.restoreFailed")));
     } finally {
-      setBusy(false);
+      if (restoreAbortRef.current === controller) restoreAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setBusy(false);
     }
   };
 
@@ -600,6 +659,9 @@ function AutoCleanupPolicyPanel({
   /** True while a draft control is focused. */
   const editingRef = useRef(false);
   const loadGenerationRef = useRef(0);
+  const saveAbortRef = useRef<AbortController | null>(null);
+  const panelMountedRef = useRef(true);
+  const panelEpochRef = useRef(0);
 
   const applyPolicy = useCallback((json: CleanupPolicy) => {
     const next = draftsFromPolicyResponse(json);
@@ -657,12 +719,18 @@ function AutoCleanupPolicyPanel({
     };
   }, [loadPolicy]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    panelMountedRef.current = true;
+    const seq = ++panelEpochRef.current;
     return () => {
+      panelMountedRef.current = false;
+      if (panelEpochRef.current === seq) panelEpochRef.current += 1;
       runAbortRef.current?.abort();
       runAbortRef.current = null;
+      saveAbortRef.current?.abort();
+      saveAbortRef.current = null;
     };
-  }, []);
+  }, [apiBase]);
 
   const buildBody = (): CleanupPolicy | null => {
     if (!policy) return null;
@@ -699,6 +767,11 @@ function AutoCleanupPolicyPanel({
       setError(t("storage.policy.invalid"));
       return;
     }
+    const seq = panelEpochRef.current;
+    saveAbortRef.current?.abort();
+    const controller = new AbortController();
+    saveAbortRef.current = controller;
+    const alive = () => panelMountedRef.current && !controller.signal.aborted && panelEpochRef.current === seq;
     const body = { ...base, ...patch };
     setSaving(true);
     setError(null);
@@ -708,12 +781,15 @@ function AutoCleanupPolicyPanel({
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
+      if (!alive()) return;
       if (!res.ok) {
         setError(t("storage.policy.saveFailed"));
         return;
       }
       const json = await res.json() as { ok?: boolean; policy?: CleanupPolicy; error?: string };
+      if (!alive()) return;
       if (!json.policy) {
         setError(t("storage.policy.saveFailed"));
         return;
@@ -721,9 +797,10 @@ function AutoCleanupPolicyPanel({
       applyPolicy(json.policy);
       setStatus(t("storage.policy.saved"));
     } catch {
-      setError(t("storage.policy.saveFailed"));
+      if (alive()) setError(t("storage.policy.saveFailed"));
     } finally {
-      setSaving(false);
+      if (saveAbortRef.current === controller) saveAbortRef.current = null;
+      if (panelMountedRef.current && panelEpochRef.current === seq) setSaving(false);
     }
   };
 
@@ -1302,8 +1379,13 @@ export default function Storage({ apiBase }: { apiBase: string }) {
   const { t, locale } = useI18n();
   const storageCacheKey = `epx.storage.report.v1:${apiBase}`;
   const cachedReport = readSessionListCache<StorageReport>(storageCacheKey);
+  const [originBase, setOriginBase] = useState(apiBase);
   const [scanStatus, setScanStatus] = useState<string | null>(null);
   const [trashReloadToken, setTrashReloadToken] = useState(0);
+  if (originBase !== apiBase) {
+    setOriginBase(apiBase);
+    setScanStatus(null);
+  }
   const manualRefreshRef = useRef(false);
   // Stamp trash awareness with apiBase so a base change invalidates without an effect.
   const [trashInfo, setTrashInfo] = useState({ apiBase, settled: false, hasEntries: false });
@@ -1413,6 +1495,7 @@ export default function Storage({ apiBase }: { apiBase: string }) {
 
       {showBody && (
         <StorageCleanupCard
+          key={apiBase}
           apiBase={apiBase}
           locale={locale}
           t={t}
@@ -1425,6 +1508,7 @@ export default function Storage({ apiBase }: { apiBase: string }) {
       )}
 
       <StorageProfileBackupCard
+        key={apiBase}
         apiBase={apiBase}
         t={t}
         onRestored={() => void refreshAll()}

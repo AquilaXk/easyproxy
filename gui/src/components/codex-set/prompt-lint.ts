@@ -161,6 +161,27 @@ export function lintPromptLayer(body: string): LintFinding[] {
   if (utf8Length(body) > SIZE_ADVISORY_BYTES) {
     findings.push({ level: "info", rule: "size", messageKey: "codexSet.lint.size" });
   }
-  return findings.sort((a, b) => (a.span?.[0] ?? Infinity) - (b.span?.[0] ?? Infinity));
+  return findings
+    .map((finding, index) => ({ finding, index, start: finding.span?.[0] }))
+    .sort((a, b) => {
+      const aHas = typeof a.start === "number" && Number.isFinite(a.start);
+      const bHas = typeof b.start === "number" && Number.isFinite(b.start);
+      if (aHas && bHas) return a.start! !== b.start! ? (a.start! < b.start! ? -1 : 1) : a.index - b.index;
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      return a.index - b.index;
+    })
+    .map(({ finding }) => finding);
+}
+
+export function keyedLintFindings(
+  findings: readonly LintFinding[],
+): Array<{ finding: LintFinding; key: string }> {
+  const seen = new Map<string, number>();
+  return findings.map(finding => {
+    const base = JSON.stringify([finding.rule, finding.span?.[0] ?? null, finding.span?.[1] ?? null]);
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    return { finding, key: count === 1 ? base : `${base}#${count}` };
+  });
 }
 

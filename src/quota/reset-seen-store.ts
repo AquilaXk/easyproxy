@@ -87,10 +87,10 @@ function hydrate(): void {
     if (!parsed || parsed.version !== 1) return;
     if (parsed.claims && typeof parsed.claims === "object") {
       for (const [key, record] of Object.entries(parsed.claims)) {
-        if (!record || typeof record.at !== "number") continue;
+        if (!record || typeof record.at !== "number" || !Number.isFinite(record.at)) continue;
         claims.set(key, {
           at: record.at,
-          ...(typeof record.resetAt === "number" ? { resetAt: record.resetAt } : {}),
+          ...(typeof record.resetAt === "number" && Number.isFinite(record.resetAt) ? { resetAt: record.resetAt } : {}),
         });
       }
     }
@@ -227,8 +227,13 @@ function prune(now = Date.now()): void {
   // Over budget: evict the oldest SETTLED claims only. Evicting a live one would trade a
   // memory bound for a duplicate notification, which is the bug this store prevents.
   const settled = [...claims.entries()]
-    .filter(([, record]) => record.resetAt === undefined || record.resetAt <= now)
-    .sort((left, right) => left[1].at - right[1].at);
+    .filter(([, record]) => !Number.isFinite(record.at) || record.resetAt === undefined || !Number.isFinite(record.resetAt) || record.resetAt <= now)
+    .sort((left, right) => {
+      const la = Number.isFinite(left[1].at) ? left[1].at : Number.NEGATIVE_INFINITY;
+      const ra = Number.isFinite(right[1].at) ? right[1].at : Number.NEGATIVE_INFINITY;
+      if (la !== ra) return la < ra ? -1 : 1;
+      return left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0;
+    });
   for (const [key] of settled) {
     if (claims.size <= MAX_CLAIMS) break;
     claims.delete(key);
@@ -236,9 +241,12 @@ function prune(now = Date.now()): void {
   if (claims.size <= HARD_MAX_CLAIMS) return;
   // Every remaining claim is live. Evict the furthest-future deadlines first: least likely to
   // be re-observed soon, so a duplicate there is least disruptive.
-  const live = [...claims.entries()].sort(
-    (left, right) => (right[1].resetAt ?? 0) - (left[1].resetAt ?? 0),
-  );
+  const live = [...claims.entries()].sort((left, right) => {
+    const lr = typeof left[1].resetAt === "number" && Number.isFinite(left[1].resetAt) ? left[1].resetAt : 0;
+    const rr = typeof right[1].resetAt === "number" && Number.isFinite(right[1].resetAt) ? right[1].resetAt : 0;
+    if (lr !== rr) return rr > lr ? 1 : -1;
+    return left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0;
+  });
   for (const [key] of live) {
     if (claims.size <= HARD_MAX_CLAIMS) break;
     claims.delete(key);
@@ -256,7 +264,9 @@ function prune(now = Date.now()): void {
 export function claimQuotaReset(key: string, at: number, resetAt?: number): boolean {
   hydrate();
   if (claims.has(key)) return false;
-  claims.set(key, { at, ...(resetAt !== undefined ? { resetAt } : {}) });
+  const safeAt = Number.isFinite(at) ? at : Date.now();
+  const safeResetAt = typeof resetAt === "number" && Number.isFinite(resetAt) ? resetAt : undefined;
+  claims.set(key, { at: safeAt, ...(safeResetAt !== undefined ? { resetAt: safeResetAt } : {}) });
   prune();
   // prune() can evict the claim just added — an already-past deadline older than
   // CLAIM_MAX_AGE_MS qualifies — and an evicted claim is not a claim.

@@ -191,10 +191,14 @@ export function useAnthropicResetGrants({ apiBase, provider = "anthropic", accou
     () => ({ namespace, entries: {} }),
   );
   const epoch = useRef(0);
+  const namespaceRef = useRef(namespace);
+  const mountedRef = useRef(true);
   const tokens = useRef(new Map<string, number>());
   const gate = useRef<{ active: number; waiting: Array<() => void> }>({ active: 0, waiting: [] });
   const identity = accountIds.join("\u0000");
   useLayoutEffect(() => {
+    mountedRef.current = true;
+    namespaceRef.current = namespace;
     epoch.current += 1;
     tokens.current.clear();
     // A stalled read from the previous pool must not occupy this pool's read slots. Reads
@@ -203,18 +207,25 @@ export function useAnthropicResetGrants({ apiBase, provider = "anthropic", accou
     const previous = gate.current;
     gate.current = { active: 0, waiting: [] };
     for (const release of previous.waiting.splice(0)) release();
-    return () => { epoch.current += 1; };
+    return () => {
+      mountedRef.current = false;
+      epoch.current += 1;
+    };
   }, [namespace]);
 
   const setEntry = useCallback((accountId: string, entry: AnthropicGrantEntry) => {
-    setStore(current => ({
-      namespace,
-      entries: { ...(current.namespace === namespace ? current.entries : {}), [accountId]: entry },
-    }));
+    if (!mountedRef.current || namespaceRef.current !== namespace) return;
+    setStore(current => {
+      if (!mountedRef.current || namespaceRef.current !== namespace) return current;
+      return {
+        namespace,
+        entries: { ...(current.namespace === namespace ? current.entries : {}), [accountId]: entry },
+      };
+    });
   }, [namespace]);
 
   const read = useCallback(async (accountId: string, rosterEpoch: number) => {
-    if (epoch.current !== rosterEpoch) return;
+    if (!mountedRef.current || namespaceRef.current !== namespace || epoch.current !== rosterEpoch) return;
     const token = (tokens.current.get(accountId) ?? 0) + 1;
     tokens.current.set(accountId, token);
     const queue = gate.current;
@@ -222,7 +233,8 @@ export function useAnthropicResetGrants({ apiBase, provider = "anthropic", accou
       await new Promise<void>(resolve => queue.waiting.push(resolve));
     }
     queue.active += 1;
-    const current = () => epoch.current === rosterEpoch && tokens.current.get(accountId) === token;
+    const current = () =>
+      mountedRef.current && namespaceRef.current === namespace && epoch.current === rosterEpoch && tokens.current.get(accountId) === token;
     const bounded = createBoundedFetch(READ_TIMEOUT_MS);
     try {
       if (!current()) return;
@@ -245,7 +257,7 @@ export function useAnthropicResetGrants({ apiBase, provider = "anthropic", accou
       queue.active -= 1;
       queue.waiting.shift()?.();
     }
-  }, [apiBase, provider, setEntry]);
+  }, [apiBase, namespace, provider, setEntry]);
 
   useEffect(() => {
     if (!enabled || identity === "") return;
@@ -257,15 +269,17 @@ export function useAnthropicResetGrants({ apiBase, provider = "anthropic", accou
   }, [enabled, identity, read]);
 
   const refresh = useCallback(async (accountId: string, options: { keepSnapshot?: boolean } = {}) => {
+    if (!mountedRef.current || namespaceRef.current !== namespace) return;
     if (!options.keepSnapshot) setEntry(accountId, { status: "loading" });
     await read(accountId, epoch.current);
-  }, [read, setEntry]);
+  }, [namespace, read, setEntry]);
 
   const spend = useCallback(async (
     accountId: string,
     request: { grantId: string; operationId: string },
   ): Promise<AnthropicSpendOutcome> => {
     const spendEpoch = epoch.current;
+    const spendNamespace = namespace;
     const bounded = createBoundedFetch(SPEND_TIMEOUT_MS);
     try {
       const response = await fetch(`${apiBase}/api/anthropic/reset-grants/consume`, {
@@ -281,7 +295,9 @@ export function useAnthropicResetGrants({ apiBase, provider = "anthropic", accou
       const data = await response.json().catch(() => null) as unknown;
       if (!isRecord(data) || typeof data.code !== "string"
         || (data.provider !== provider && !(provider === "anthropic" && data.provider === undefined))) return { kind: "unknown", code: "unknown_outcome" };
-      if (spendEpoch === epoch.current) void read(accountId, spendEpoch);
+      if (mountedRef.current && namespaceRef.current === spendNamespace && spendEpoch === epoch.current) {
+        void read(accountId, spendEpoch);
+      }
       return {
         kind: "settled",
         code: data.code,
@@ -294,7 +310,7 @@ export function useAnthropicResetGrants({ apiBase, provider = "anthropic", accou
     } finally {
       bounded.clear();
     }
-  }, [apiBase, provider, read]);
+  }, [apiBase, namespace, provider, read]);
 
   return { entries: store.namespace === namespace ? store.entries : NO_ENTRIES, refresh, spend };
 }

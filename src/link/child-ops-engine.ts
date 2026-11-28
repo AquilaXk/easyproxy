@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { parseStrictSemver } from "../lib/strict-semver";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import type { ChildObservation, ChildOperationSummary } from "./child-observations";
 import { CHILD_JOB_SCHEMA, type ChildJob, type ChildJobItem, type ChildOp, type ChildOpsEnv, type ChildRestart,
   type ChildTrigger, type ItemOutcome, type ItemRunner } from "./child-ops-types";
@@ -89,8 +90,24 @@ export function createChildOpsEngine(options: ChildOpsEngineOptions = {}): Child
   const running = (): boolean => [...jobs.values()].some(({ job }) => job.state !== "done");
   const prune = (): void => {
     const finished = [...jobs.values()].filter(({ job }) => job.state === "done");
-    for (const { job, env } of finished) if (Date.parse(job.finishedAt!) < env.now() - CHILD_JOB_RETENTION_MS) jobs.delete(job.jobId);
-    const kept = finished.filter(({ job }) => jobs.has(job.jobId)).sort((a, b) => Date.parse(a.job.finishedAt!) - Date.parse(b.job.finishedAt!));
+    const finishedMs = (job: ChildJob): number => {
+      if (typeof job.finishedAt !== "string") return Number.NaN;
+      return parseStrictTimestampMs(job.finishedAt);
+    };
+    for (const { job, env } of finished) {
+      const ts = finishedMs(job);
+      if (!Number.isFinite(ts) || ts < env.now() - CHILD_JOB_RETENTION_MS) jobs.delete(job.jobId);
+    }
+    const kept = finished
+      .filter(({ job }) => jobs.has(job.jobId))
+      .sort((a, b) => {
+        const aMs = finishedMs(a.job);
+        const bMs = finishedMs(b.job);
+        const aTime = Number.isFinite(aMs) ? aMs : Number.NEGATIVE_INFINITY;
+        const bTime = Number.isFinite(bMs) ? bMs : Number.NEGATIVE_INFINITY;
+        if (aTime !== bTime) return aTime < bTime ? -1 : 1;
+        return a.job.jobId < b.job.jobId ? -1 : a.job.jobId > b.job.jobId ? 1 : 0;
+      });
     for (const { job } of kept.slice(0, Math.max(0, kept.length - CHILD_JOB_RETENTION_COUNT))) jobs.delete(job.jobId);
   };
   /** ran = false: the item never touched its link (busy, child-initiated), so it writes no lastOperation. */

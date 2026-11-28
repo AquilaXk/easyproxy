@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
-import { lintPromptLayer } from "./prompt-lint";
+import { keyedLintFindings, lintPromptLayer } from "./prompt-lint";
 import {
   findInvalidCharacter,
   MAX_BODY_BYTES,
@@ -577,8 +577,8 @@ export default function BaseVariantDialog({
               // Warnings, never blockers - a variant that deliberately takes over the
               // base prompt is allowed to restate things it genuinely wants.
               <ul className="codex-set-custom-dialog__lint">
-                {findings.map((finding, i) => (
-                  <li key={finding.rule + ":" + i} data-lint-rule={finding.rule} data-lint-level={finding.level}>
+                {keyedLintFindings(findings).map(({ finding, key }) => (
+                  <li key={key} data-lint-rule={finding.rule} data-lint-level={finding.level}>
                     {t(finding.messageKey)}
                     {finding.span && (
                       <code className="codex-set-custom-dialog__span">{normalized.slice(finding.span[0], finding.span[1])}</code>

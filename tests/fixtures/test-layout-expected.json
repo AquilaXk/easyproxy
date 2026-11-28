@@ -870,5 +870,7 @@
   "anthropic-slow-budget-beta-regressions.test.ts": "adapters/anthropic",
   "responses-config-update-and-tool-search.test.ts": "responses",
   "rerank-and-audio-speech.test.ts": "server",
-  "audit-guardrails-scenario-regressions.test.ts": "server"
+  "audit-guardrails-scenario-regressions.test.ts": "server",
+  "strict-timestamp-and-p0-boundaries.test.ts": "lib",
+  "audit-p1-p2-hardening.test.ts": "server"
 }

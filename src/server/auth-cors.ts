@@ -47,6 +47,7 @@ import { selectVertexDiscoveryCredential } from "../providers/google-vertex-mode
 import { providerEgressConfigError } from "../lib/provider-egress";
 import { providerTlsProfileConfigError } from "../lib/provider-tls-profile";
 import { redactSecretString } from "../lib/redact";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import { DECLARABLE_HOSTED_TOOL_TYPES } from "../responses/hosted-tool-policy";
 import { effectiveGoogleMode, getProviderRegistryEntry, providerCodexAccountMode, providerMatchesRegistryTransport, registryEntryForProviderDestination } from "../providers/registry";
 import { providerConfigSeed } from "../providers/derive";
@@ -541,7 +542,7 @@ function getApiKeyMaterial(entries: readonly EpxApiKeyEntry[], entry: EpxApiKeyE
           pending: {
             ...buildSecretMaterial("configured", keyId, pending.key),
             expiresAtStr: pending.expiresAt,
-            expiresAtMs: Date.parse(pending.expiresAt),
+            expiresAtMs: typeof pending.expiresAt === "string" ? parseStrictTimestampMs(pending.expiresAt) : Number.NaN,
           },
         }
       : {}),
@@ -624,7 +625,7 @@ export function isBearerDataPlaneAdmission(admission: DataPlaneAdmission | undef
 export function isApiKeyExpired(entry: Pick<EpxApiKeyEntry, "expiresAt">, now = Date.now()): boolean {
   if (entry.expiresAt === undefined) return false;
   if (typeof entry.expiresAt !== "string") return true;
-  const expiresMs = Date.parse(entry.expiresAt);
+  const expiresMs = parseStrictTimestampMs(entry.expiresAt);
   return !Number.isFinite(expiresMs) || expiresMs <= now;
 }
 

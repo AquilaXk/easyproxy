@@ -100,7 +100,8 @@ export function createWindowsCertificateTrust(authority: StoredDesktopAuthority,
   let pending: Promise<DesktopCertificateTrust> | null = null;
   const change = (operation: "trust" | "remove") => {
     if (pending) return Promise.reject(new Error("desktop_compatibility_trust_busy"));
-    if (operation === "trust" && Date.parse(certificate.validTo) <= Date.now()) return Promise.reject(new Error("desktop_compatibility_authority_expired"));
+    const validToMs = certificate.validToDate.getTime();
+    if (operation === "trust" && (!Number.isFinite(validToMs) || validToMs <= Date.now())) return Promise.reject(new Error("desktop_compatibility_authority_expired"));
     if (operation === "trust" && !isServerAuthOnlyCertificate(certificate)) return Promise.reject(new Error("desktop_compatibility_authority_renewal_required"));
     pending = (async () => {
       const before = await inspect();

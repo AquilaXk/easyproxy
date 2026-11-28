@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
 import type { CustomLayerDto } from "../../pages/codex-set-prompt";
-import { lintPromptLayer } from "./prompt-lint";
+import { keyedLintFindings, lintPromptLayer } from "./prompt-lint";
 import {
   MAX_BODY_BYTES,
   MAX_TITLE_CHARS,
@@ -227,8 +227,8 @@ export default function CustomLayerDialog({
           // Warnings, never blockers. A user who means to override Codex may; the
           // linter only makes it a decision rather than an accident.
           <ul className="codex-set-custom-dialog__lint">
-            {findings.map((finding, index) => (
-              <li key={finding.rule + ":" + index} data-lint-rule={finding.rule} data-lint-level={finding.level}>
+            {keyedLintFindings(findings).map(({ finding, key }) => (
+              <li key={key} data-lint-rule={finding.rule} data-lint-level={finding.level}>
                 {t(finding.messageKey)}
                 {finding.span && (
                   <code className="codex-set-custom-dialog__span">{normalized.slice(finding.span[0], finding.span[1])}</code>

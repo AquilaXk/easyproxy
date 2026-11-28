@@ -1,0 +1,296 @@
+/** @jsxImportSource react */
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { Window } from "happy-dom";
+import { act } from "react";
+import type { Root } from "react-dom/client";
+import CodexAccountPool from "../src/components/CodexAccountPool";
+import { redeemResetCredit } from "../src/components/codex-account-pool-handlers";
+import type { CodexAccountEntry, CodexAccountPoolController } from "../src/hooks/useCodexAccountPool";
+import { useAnthropicResetGrants } from "../src/hooks/useAnthropicResetGrants";
+import { LanguageProvider } from "../src/i18n/provider";
+import type { TFn } from "../src/i18n";
+
+const globals = ["document", "window", "navigator", "localStorage", "HTMLElement",
+  "IS_REACT_ACT_ENVIRONMENT"] as const;
+let previous: Record<(typeof globals)[number], unknown>;
+let win: Window;
+let host: HTMLElement;
+let root: Root | null = null;
+let originalFetch: typeof globalThis.fetch;
+
+const t: TFn = ((key: string, vars?: Record<string, string | number>) => {
+  if (!vars) return key;
+  return `${key}:${Object.entries(vars).map(([k, v]) => `${k}=${v}`).join(",")}`;
+}) as TFn;
+
+const poolAccount: CodexAccountEntry = {
+  id: "pool-1",
+  email: "pool@example.test",
+  isMain: false,
+  paused: false,
+  priority: 0,
+  autoSwitchThresholdOverride: null,
+  hasCredential: true,
+  quota: { resetCredits: 3, updatedAt: 1 },
+  quotaAutoRefresh: {
+    fiveHourAvailable: false,
+    weeklyAvailable: false,
+    fiveHourEnabled: false,
+    weeklyEnabled: false,
+  },
+};
+
+function makeController(overrides: Partial<CodexAccountPoolController> = {}): CodexAccountPoolController {
+  return {
+    accounts: [
+      {
+        id: "main",
+        email: "main@example.test",
+        isMain: true,
+        paused: false,
+        priority: 0,
+        hasCredential: true,
+        quota: null,
+        quotaAutoRefresh: {
+          fiveHourAvailable: false,
+          weeklyAvailable: false,
+          fiveHourEnabled: false,
+          weeklyEnabled: false,
+        },
+      },
+      poolAccount,
+    ],
+    activeId: null,
+    loadState: "ready",
+    switchingId: null,
+    pauseUpdatingId: null,
+    priorityUpdatingId: null,
+    autoSwitchUpdatingId: null,
+    creditsAfterLimitUpdatingId: null,
+    pausingExhausted: false,
+    activeNeedsReauth: false,
+    activePinnedId: null,
+    refreshing: false,
+    refreshFailed: false,
+    initialLoading: false,
+    load: async () => true,
+    switchAccount: async () => ({ ok: true, activeId: null }),
+    setAccountPaused: async () => ({ ok: true }),
+    setAccountPriority: async () => ({ ok: true }),
+    setAccountAutoSwitchThreshold: async () => ({ ok: true }),
+    setAccountCreditsAfterLimit: async () => ({ ok: true }),
+    setAllCreditsAfterLimit: async () => ({ ok: true }),
+    pauseExhaustedAccounts: async () => ({ ok: true, pausedCount: 0 }),
+    saveAlias: async () => ({ ok: true }),
+    removeAccount: async () => ({ ok: false, reason: "request" }),
+    syncAfterAccountAdded: async () => ({ ok: true }),
+    pauseRefresh: () => ({ __brand: "codex-pool-pause" }) as never,
+    resumeRefresh: () => {},
+    subscribeLoadObserver: () => () => {},
+    readLastThreshold: () => undefined,
+    readLastActive: () => undefined,
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  previous = Object.fromEntries(globals.map(k => [k, Reflect.get(globalThis, k)])) as typeof previous;
+  win = new Window({ url: "http://localhost/" });
+  Object.defineProperty(win.navigator, "language", { configurable: true, value: "en-US" });
+  Object.defineProperties(globalThis, {
+    document: { configurable: true, value: win.document },
+    window: { configurable: true, value: win },
+    navigator: { configurable: true, value: win.navigator },
+    localStorage: { configurable: true, value: win.localStorage },
+    HTMLElement: { configurable: true, value: win.HTMLElement },
+  });
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  originalFetch = globalThis.fetch;
+  host = win.document.createElement("div") as unknown as HTMLElement;
+  win.document.body.appendChild(host as never);
+});
+
+afterEach(async () => {
+  if (root) {
+    const current = root;
+    await act(async () => { current.unmount(); });
+    root = null;
+  }
+  await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+  for (const key of globals) {
+    Object.defineProperty(globalThis, key, { configurable: true, value: previous[key] });
+  }
+  Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch });
+  await win.happyDOM?.close?.();
+});
+
+test("redeemResetCredit attaches operationId, marks 5xx/network uncertain, and honors shouldLoad", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  let mode: "ok" | "503" = "503";
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      if (mode === "503") return Response.json({ error: "busy" }, { status: 503 });
+      return Response.json({ code: "reset", remaining: 2 });
+    },
+  });
+
+  let loads = 0;
+  const failed = await redeemResetCredit("", "pool-1", t, async () => {
+    loads += 1;
+    return true;
+  }, { operationId: "11111111-1111-4111-8111-111111111111", shouldLoad: () => false });
+  expect(failed.ok).toBe(false);
+  expect(failed.uncertain).toBe(true);
+  expect(bodies[0]?.operationId).toBe("11111111-1111-4111-8111-111111111111");
+
+  mode = "ok";
+  const stale = await redeemResetCredit("", "pool-1", t, async () => {
+    loads += 1;
+    return true;
+  }, { shouldLoad: () => false });
+  expect(stale.ok).toBe(true);
+  expect(loads).toBe(0);
+  expect(typeof bodies[1]?.operationId).toBe("string");
+  expect((bodies[1]?.operationId as string).length).toBeGreaterThan(20);
+});
+
+test("reset modal locks Use 1 Credit while loading, locks Cancel while redeeming, and reuses operationId across 5xx retry", async () => {
+  let releaseCredits!: (resp: Response) => void;
+  let releaseConsume!: (resp: Response) => void;
+  const postedOpIds: string[] = [];
+  let consumeCalls = 0;
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/codex-auth/reset-credits") {
+        return new Promise<Response>(resolve => { releaseCredits = resolve; });
+      }
+      if (url.pathname === "/api/codex-auth/reset-credits/consume") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { operationId?: string };
+        if (body.operationId) postedOpIds.push(body.operationId);
+        consumeCalls += 1;
+        if (consumeCalls === 1) return Response.json({ error: "transient" }, { status: 502 });
+        return new Promise<Response>(resolve => { releaseConsume = resolve; });
+      }
+      if (url.pathname === "/api/codex-auth/active") return Response.json({ activeCodexAccountId: null, pinnedAccountId: null });
+      if (url.pathname === "/api/settings") return Response.json({ codexQuotaAutoRefresh: {} });
+      return Response.json({});
+    },
+  });
+
+  const controller = makeController();
+  const { createRoot } = await import("react-dom/client");
+  await act(async () => {
+    root = createRoot(host);
+    root.render(
+      <LanguageProvider>
+        <CodexAccountPool apiBase="http://target-a.local" targetKey="target-a" controller={controller} />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+  const openBtn = host.querySelector('button[aria-label="3 reset credit(s)"]') as HTMLButtonElement;
+  await act(async () => { openBtn.click(); });
+
+  const useOneBtnLoading = [...host.querySelectorAll<HTMLButtonElement>(".modal-card button")]
+    .find(b => b.textContent?.includes("Use 1 Credit"));
+  expect(useOneBtnLoading?.disabled).toBe(true);
+
+  await act(async () => {
+    releaseCredits(Response.json({ credits: [] }));
+    await new Promise(r => setTimeout(r, 20));
+  });
+  const useOneBtn = [...host.querySelectorAll<HTMLButtonElement>(".modal-card button")]
+    .find(b => b.textContent?.includes("Use 1 Credit"))!;
+  expect(useOneBtn.disabled).toBe(false);
+
+  await act(async () => { useOneBtn.click(); });
+  // First consume returns 502 uncertain; modal remains on confirm screen so retry keeps the same operationId.
+  const confirmBtn = [...host.querySelectorAll<HTMLButtonElement>(".modal-actions button.btn-primary")][0]!;
+  await act(async () => { confirmBtn.click(); });
+  await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+  expect(postedOpIds).toHaveLength(1);
+
+  // Retry while second POST is held in flight: Cancel and backdrop must be disabled, and same operationId reused.
+  const confirmBtn2 = [...host.querySelectorAll<HTMLButtonElement>(".modal-actions button.btn-primary")][0]!;
+  await act(async () => { confirmBtn2.click(); });
+  const cancelBtn = [...host.querySelectorAll<HTMLButtonElement>(".modal-actions button.btn-ghost")][0]!;
+  const backdropBtn = host.querySelector<HTMLButtonElement>(".modal-backdrop-dismiss")!;
+  expect(cancelBtn.disabled).toBe(true);
+  expect(backdropBtn.disabled).toBe(true);
+  expect(postedOpIds).toHaveLength(2);
+  expect(postedOpIds[1]).toBe(postedOpIds[0]);
+
+  // Switch target while target-a's redeem POST is in flight; stale settlement must not load or toast on target-b.
+  let loadCount = 0;
+  const controllerB = makeController({ load: async () => { loadCount += 1; return true; } });
+  await act(async () => {
+    root!.render(
+      <LanguageProvider>
+        <CodexAccountPool apiBase="http://target-b.local" targetKey="target-b" controller={controllerB} />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => {
+    releaseConsume(Response.json({ code: "reset", remaining: 2 }));
+    await new Promise(r => setTimeout(r, 20));
+  });
+  expect(loadCount).toBe(0);
+  expect(host.textContent).not.toContain("2 left");
+});
+
+test("useAnthropicResetGrants ignores stale refresh settled after apiBase switch", async () => {
+  let releaseTargetA!: (resp: Response) => void;
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("http://a.local/")) {
+        return new Promise<Response>(resolve => { releaseTargetA = resolve; });
+      }
+      return Response.json({
+        eligible: true,
+        ineligibleReason: null,
+        journalAvailable: true,
+        unresolved: null,
+        grants: [],
+      });
+    },
+  });
+
+  const captured: Array<{ apiBase: string; refresh: (id: string) => Promise<void>; entries: Record<string, unknown> }> = [];
+  function Harness({ apiBase }: { apiBase: string }) {
+    const ctrl = useAnthropicResetGrants({ apiBase, accountIds: ["acct-1"], enabled: true });
+    captured.push({ apiBase, refresh: ctrl.refresh, entries: ctrl.entries });
+    return <div data-status={ctrl.entries["acct-1"]?.status ?? "none"} />;
+  }
+
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { createRoot } = await import("react-dom/client");
+    await act(async () => {
+      root = createRoot(host);
+      root.render(<Harness apiBase="http://a.local" />);
+    });
+    const staleRefreshA = captured.at(-1)!.refresh;
+    await act(async () => {
+      root!.render(<Harness apiBase="http://b.local" />);
+    });
+    await act(async () => {
+      await new Promise(r => setTimeout(r, 20));
+      // Fire stale closure bound to a.local; must not overwrite b.local namespace or re-render error.
+      const pending = staleRefreshA("acct-1");
+      releaseTargetA(Response.json({ eligible: true, ineligibleReason: null, journalAvailable: true, unresolved: null, grants: [] }));
+      await pending;
+      await new Promise(r => setTimeout(r, 10));
+    });
+    expect(captured.at(-1)!.apiBase).toBe("http://b.local");
+    expect((host.firstElementChild as HTMLElement | null)?.getAttribute("data-status")).toBe("ready");
+  } finally {
+    errSpy.mockRestore();
+  }
+});

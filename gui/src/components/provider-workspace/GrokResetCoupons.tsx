@@ -151,6 +151,7 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
   /** The controller clears this hold when the original request definitively completes. */
   const unknown = controller.uncertain[accountId];
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const mountSeqRef = useRef(0);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -164,10 +165,14 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
   const [opening, setOpening] = useState(true);
   useEffect(() => {
     let live = true;
+    const seq = ++mountSeqRef.current;
     void refresh(accountId, { keepSnapshot: true })
       .catch(() => undefined)
       .finally(() => { if (live) setOpening(false); });
-    return () => { live = false; };
+    return () => {
+      live = false;
+      if (mountSeqRef.current === seq) mountSeqRef.current += 1;
+    };
   }, [accountId, refresh]);
 
   useEffect(() => {
@@ -222,6 +227,7 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
 
   const redeem = async () => {
     if (redeeming || unknown || !confirmTarget) return;
+    const seq = mountSeqRef.current;
     const { tokenId, operationId } = confirmTarget;
     if (!tokenId) {
       setOutcome({ tone: "warn", key: "grokCoupon.noneAvailable" });
@@ -232,41 +238,49 @@ export function GrokResetCouponModal({ accountId, accountLabel, entry, controlle
       return;
     }
     setRedeeming(true);
-    const result = await controller.redeem(accountId, { tokenId, operationId });
-    setRedeeming(false);
-    if (result.ok) {
-      setConfirmTarget(null);
-      setOutcome({ tone: "ok", key: result.replayed ? "grokCoupon.redeemReplayed" : "grokCoupon.redeemSuccess" });
-      return;
+    try {
+      const result = await controller.redeem(accountId, { tokenId, operationId });
+      if (mountSeqRef.current !== seq) return;
+      if (result.ok) {
+        setConfirmTarget(null);
+        setOutcome({ tone: "ok", key: result.replayed ? "grokCoupon.redeemReplayed" : "grokCoupon.redeemSuccess" });
+        return;
+      }
+      if (result.uncertain || result.code === "aborted") {
+        // Outcome unknown: drop confirmation view and let the user re-read.
+        setConfirmTarget(null);
+        setOutcome(null);
+        void controller.refresh(accountId);
+        return;
+      }
+      if (result.code === "coupon_unavailable" || result.code === "no_coupons_available") {
+        setConfirmTarget(null);
+        setOutcome({
+          tone: "warn",
+          key: FAILURE_KEYS[result.code] ?? "grokCoupon.couponUnavailable",
+        });
+        void controller.refresh(accountId, { keepSnapshot: true });
+        return;
+      }
+      // Any definitive refusal or settled failure already retired the previous operationId
+      // (and cleared its hold in the controller), so rotate to a fresh UUID for retry.
+      const nextOperationId = newOperationId();
+      setConfirmTarget(current => current ? { ...current, operationId: nextOperationId } : null);
+      setOutcome({ tone: "warn", key: FAILURE_KEYS[result.code] ?? "grokCoupon.redeemFailed" });
+    } finally {
+      if (mountSeqRef.current === seq) setRedeeming(false);
     }
-    if (result.uncertain || result.code === "aborted") {
-      // Outcome unknown: drop confirmation view and let the user re-read.
-      setConfirmTarget(null);
-      setOutcome(null);
-      void controller.refresh(accountId);
-      return;
-    }
-    if (result.code === "coupon_unavailable" || result.code === "no_coupons_available") {
-      setConfirmTarget(null);
-      setOutcome({
-        tone: "warn",
-        key: FAILURE_KEYS[result.code] ?? "grokCoupon.couponUnavailable",
-      });
-      void controller.refresh(accountId, { keepSnapshot: true });
-      return;
-    }
-    // Any definitive refusal or settled failure already retired the previous operationId
-    // (and cleared its hold in the controller), so rotate to a fresh UUID for retry.
-    const nextOperationId = newOperationId();
-    setConfirmTarget(current => current ? { ...current, operationId: nextOperationId } : null);
-    setOutcome({ tone: "warn", key: FAILURE_KEYS[result.code] ?? "grokCoupon.redeemFailed" });
   };
 
   const recheck = async () => {
     if (!unknown || checking) return;
+    const seq = mountSeqRef.current;
     setChecking(true);
-    await controller.refresh(accountId);
-    setChecking(false);
+    try {
+      await controller.refresh(accountId);
+    } finally {
+      if (mountSeqRef.current === seq) setChecking(false);
+    }
   };
 
   const unresolvedToken = unknown

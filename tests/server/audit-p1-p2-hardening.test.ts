@@ -1,0 +1,273 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER,
+  classifyAnthropicFastRefusal,
+  isAnthropicFastRefusal,
+} from "../../src/providers/anthropic-fast";
+import { createStore, decide, isInScopePerMessageEffortModel } from "../../src/responses/effort-history";
+import {
+  clearAccountQuotaCache,
+  setCachedProviderAccountQuotaForTests,
+} from "../../src/providers/quota";
+import {
+  PRIMARY_WINDOW_HOT_PERCENT,
+  rankAccountsByHeadroom,
+  rankAccountsByResetFirst,
+} from "../../src/oauth/account-quota-rank";
+import { rankPolicyFallbackCandidates } from "../../src/server/responses/policy-fallback";
+import { cheapestSufficientCandidate, classifyRoleModelCandidates } from "../../src/codex/role-auto-assign";
+import { parseChildObservations, updateChildObservations } from "../../src/link/child-observations";
+import { claimQuotaReset } from "../../src/quota/reset-seen-store";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
+import type { RouteDecisionTraceV1 } from "../../src/server/responses/route-decision";
+
+describe("P1 NaN/Infinity comparator and finite filters", () => {
+  const originalHome = process.env.EASYPROXY_HOME;
+  let tempHome: string | undefined;
+
+  afterEach(() => {
+    clearAccountQuotaCache();
+    if (originalHome === undefined) delete process.env.EASYPROXY_HOME;
+    else process.env.EASYPROXY_HOME = originalHome;
+    if (tempHome) {
+      removeTreeWithRetry(tempHome);
+      tempHome = undefined;
+    }
+  });
+
+  test("account-quota-rank drops non-finite percents instead of poisoning headroom to NaN", () => {
+    const now = Date.now();
+    setCachedProviderAccountQuotaForTests("xai", "a", {
+      fiveHourPercent: Number.NaN,
+      weeklyPercent: 80,
+      updatedAt: now,
+    });
+    setCachedProviderAccountQuotaForTests("xai", "b", {
+      fiveHourPercent: 20,
+      weeklyPercent: Number.POSITIVE_INFINITY,
+      updatedAt: now,
+    });
+    // Account a has finite 80% (20% headroom); account b has finite 20% (80% headroom).
+    expect(rankAccountsByHeadroom("xai", ["a", "b"])).toEqual(["b", "a"]);
+  });
+
+  test("rankPolicyFallbackCandidates handles missing or NaN score totals without NaN sort corruption", () => {
+    const trace = {
+      candidates: [
+        { provider: "p1", model: "m1", eligible: true, exclusions: [], score: undefined },
+        { provider: "p2", model: "m2", eligible: true, exclusions: [], score: { total: Number.NaN } },
+        { provider: "p3", model: "m3", eligible: true, exclusions: [], score: { total: 42 } },
+        { provider: "p4", model: "m4", eligible: true, exclusions: [], score: undefined },
+      ],
+    } as unknown as RouteDecisionTraceV1;
+    const ranked = rankPolicyFallbackCandidates(trace, new Set());
+    expect(ranked.map(c => c.provider)).toEqual(["p3", "p1", "p2", "p4"]);
+  });
+
+  test("role-auto-assign filters non-finite measured scores and prices cleanly", () => {
+    const classified = classifyRoleModelCandidates(
+      [
+        { model: "m-nan", unitPrice: Number.NaN, efforts: [] },
+        { model: "m-inf", unitPrice: Number.POSITIVE_INFINITY, efforts: [] },
+        { model: "m-low", unitPrice: 1, efforts: [] },
+        { model: "m-high", unitPrice: 10, efforts: [] },
+      ],
+      {},
+      new Map([["m-nan", Number.NaN], ["m-low", 10], ["m-high", 20]]),
+    );
+    expect(classified.find(c => c.model === "m-nan")?.tier).toBeNull();
+    const pick = cheapestSufficientCandidate(classified, "fast");
+    expect(pick?.model).toBe("m-low");
+  });
+
+  test("parseChildObservations rejects Date.parse quirks and capEntries tie-breaks deterministically", () => {
+    const parsed = parseChildObservations(JSON.stringify({
+      schema: "epx.link.child-observations/1",
+      homeCatalog: null,
+      children: {
+        lnk_0000000000000001: {
+          observedAt: "bad-1",
+          source: "plan",
+          installedVersion: "1.0.0",
+          installKind: "npm",
+          runtimeOwner: null,
+          updateRoute: "none",
+          updateReason: null,
+          targetVersion: null,
+          catalogPulledAt: null,
+          lastOperation: null,
+          suppressedTarget: null,
+          catalogPulledEtag: null,
+          catalogSyncedEtag: null,
+          autoUpdateAttempts: null,
+          updateInFlight: null,
+          pendingUpdateRecovery: null,
+        },
+        lnk_0000000000000002: {
+          observedAt: "2026-09-09T24:00:00Z",
+          source: "plan",
+          installedVersion: "1.0.0",
+          installKind: "npm",
+          runtimeOwner: null,
+          updateRoute: "none",
+          updateReason: null,
+          targetVersion: null,
+          catalogPulledAt: null,
+          lastOperation: null,
+          suppressedTarget: null,
+          catalogPulledEtag: null,
+          catalogSyncedEtag: null,
+          autoUpdateAttempts: null,
+          updateInFlight: null,
+          pendingUpdateRecovery: null,
+        },
+      },
+    }));
+    expect(Object.keys(parsed.children)).toEqual([]);
+
+    tempHome = mkdtempSync(join(tmpdir(), "epx-child-obs-"));
+    process.env.EASYPROXY_HOME = tempHome;
+    mkdirSync(join(tempHome, "link"), { recursive: true });
+    const obsPath = join(tempHome, "link", "child-observations.json");
+    const storePath = join(tempHome, "link", "links.json");
+    writeFileSync(storePath, "{ damaged");
+    const validEntry = {
+      observedAt: "2026-09-09T10:00:00Z",
+      source: "plan" as const,
+      installedVersion: "1.0.0",
+      installKind: "npm" as const,
+      runtimeOwner: null,
+      updateRoute: "none" as const,
+      updateReason: null,
+      targetVersion: null,
+      catalogPulledAt: null,
+      lastOperation: null,
+      suppressedTarget: null,
+      catalogPulledEtag: null,
+      catalogSyncedEtag: null,
+      autoUpdateAttempts: null,
+      updateInFlight: null,
+      pendingUpdateRecovery: null,
+    };
+    const capped = updateChildObservations(
+      file => {
+        file.children.lnk_000000000000000b = { ...validEntry };
+        file.children.lnk_000000000000000a = { ...validEntry };
+      },
+      { path: obsPath, storePath, maxEntries: 1 },
+    );
+    expect(Object.keys(capped.children)).toEqual(["lnk_000000000000000a"]);
+  });
+
+  test("claimQuotaReset ignores non-finite timestamp inputs fail-safely", () => {
+    tempHome = mkdtempSync(join(tmpdir(), "epx-reset-seen-"));
+    process.env.EASYPROXY_HOME = tempHome;
+    expect(claimQuotaReset("k-nan", Number.NaN, Number.POSITIVE_INFINITY)).toBe(true);
+    expect(claimQuotaReset("k-nan", Date.now())).toBe(false);
+  });
+});
+
+describe("P2 enhancements from oh-my-pi (MIT) and mixdog (Apache-2.0)", () => {
+  afterEach(() => {
+    clearAccountQuotaCache();
+  });
+
+  test("anthropic-fast classifies overage-disabled headers into transient vs disabled while keeping 529 out of fast fallback", () => {
+    const transient = new Headers({ [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "out_of_credits" });
+    expect(classifyAnthropicFastRefusal(429, transient, "{}")).toBe("transient");
+    expect(isAnthropicFastRefusal(429, transient, "{}")).toBe(true);
+
+    const disabledUntil = new Headers({ [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "org_level_disabled_until" });
+    expect(classifyAnthropicFastRefusal(429, disabledUntil, "{}")).toBe("transient");
+
+    const disabled = new Headers({ [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "overage_not_provisioned" });
+    expect(classifyAnthropicFastRefusal(429, disabled, "{}")).toBe("disabled");
+    expect(isAnthropicFastRefusal(429, disabled, "{}")).toBe(true);
+
+    expect(classifyAnthropicFastRefusal(400, new Headers(), JSON.stringify({ error: { message: "'sonnet' does not support the `speed` parameter." } }))).toBe("unsupported");
+    expect(classifyAnthropicFastRefusal(529, new Headers(), JSON.stringify({ error: { message: "Fast mode is overloaded" } }))).toBeNull();
+    expect(isAnthropicFastRefusal(529, new Headers(), JSON.stringify({ error: { message: "Fast mode is overloaded" } }))).toBe(false);
+  });
+
+  test("effort-history uses family minimum floors to admit future Claude 5.x/6.x models while failing closed on out-of-scope", () => {
+    for (const model of [
+      "opus-5",
+      "claude-opus-5",
+      "claude-opus-5-5",
+      "claude-opus-5-6",
+      "claude-opus-6-0",
+      "claude-sonnet-5-5",
+      "claude-sonnet-5-6",
+      "claude-haiku-5-5",
+      "claude-haiku-5-6",
+      "claude-fable-5-1",
+      "claude-fable-5-2",
+      "claude-fable-5-3",
+      "claude-mythos-5-1",
+      "claude-mythos-5-2",
+    ]) {
+      expect(isInScopePerMessageEffortModel(model)).toBe(true);
+    }
+    for (const rejected of [
+      "claude-opus-4-6",
+      "claude-sonnet-4-5",
+      "claude-sonnet-5",
+      "claude-fable-5",
+      "claude-mythos-preview",
+      "gpt-5",
+      "claude-opus-5-5-" + "a".repeat(200),
+    ]) {
+      expect(isInScopePerMessageEffortModel(rejected)).toBe(false);
+    }
+
+    const store = createStore();
+    const d = decide(
+      store,
+      {
+        effort: "low",
+        chatLineage: "chat-future",
+        scope: {
+          cohort: "c1",
+          provider: "anthropic",
+          destination: "api.anthropic.com",
+          adapter: "anthropic",
+          model: "claude-opus-5-6",
+          credential: "acct-1",
+          authMode: "apiKey",
+        },
+        parent: [],
+        suffix: [{ kind: "user", text: "hi" }],
+        cacheControl: true,
+        newTranscriptReceipt: true,
+      },
+      { enabled: true, activated: true, compactionMarkerIdentified: true },
+    );
+    expect(d.action).toBe("send");
+  });
+
+  test("rankAccountsByResetFirst demotes hot primary windows (>= 85%) behind cooler accounts", () => {
+    const now = Date.now();
+    expect(PRIMARY_WINDOW_HOT_PERCENT).toBe(85);
+    setCachedProviderAccountQuotaForTests("google-antigravity", "hot-soon", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 90, resetAt: now + 3_600_000 },
+        { label: "Gem (Weekly)", percent: 40, resetAt: now + 86_400_000 },
+      ],
+    });
+    setCachedProviderAccountQuotaForTests("google-antigravity", "cool-later", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 25, resetAt: now + 2 * 3_600_000 },
+        { label: "Gem (Weekly)", percent: 40, resetAt: now + 4 * 86_400_000 },
+      ],
+    });
+    expect(rankAccountsByResetFirst("google-antigravity", ["hot-soon", "cool-later"], "gemini-3.8-flash", now)).toEqual([
+      "cool-later",
+      "hot-soon",
+    ]);
+  });
+});

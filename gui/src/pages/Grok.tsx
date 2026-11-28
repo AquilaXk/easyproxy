@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EmptyState, Notice, Switch } from "../ui";
 import { IconChevron } from "../icons";
 import { useT, type TKey } from "../i18n/shared";
@@ -67,6 +67,7 @@ export default function Grok({ apiBase, active = true }: { apiBase: string; acti
   const cacheKey = `epx.grok.status.v1:${apiBase}`;
   const cachedEntry = readSessionListCacheEntry<GrokStatus>(cacheKey);
   const cached = cachedEntry?.data ?? null;
+  const [originBase, setOriginBase] = useState(apiBase);
   // Local edits are an OVERLAY on the server's selection rather than a copy of it. Copying meant
   // reconciling in an effect, which both fought the switches mid-interaction and tripped the
   // cascading-render lint; `null` here means "no unsaved edits, follow the server".
@@ -76,6 +77,26 @@ export default function Grok({ apiBase, active = true }: { apiBase: string; acti
   const [pending, setPending] = useState<"save" | "apply" | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  if (originBase !== apiBase) {
+    setOriginBase(apiBase);
+    setDraftExcluded(null);
+    setPending(null);
+    setMessage(null);
+    setAnnouncement("");
+  }
+  const mountedRef = useRef(true);
+  const epochRef = useRef(0);
+  const mutationAbortRef = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    const seq = ++epochRef.current;
+    return () => {
+      mountedRef.current = false;
+      if (epochRef.current === seq) epochRef.current += 1;
+      mutationAbortRef.current?.abort();
+      mutationAbortRef.current = null;
+    };
+  }, [apiBase]);
 
   const fetchStatus = useCallback(async (signal: AbortSignal): Promise<GrokStatus> => {
     const response = await fetch(`${apiBase}/api/grok`, { signal });
@@ -150,6 +171,11 @@ export default function Grok({ apiBase, active = true }: { apiBase: string; acti
 
   const save = async (applyAfter: boolean) => {
     if (pending) return;
+    const seq = epochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && epochRef.current === seq;
     setPending("save");
     setMessage(null);
     try {
@@ -157,8 +183,10 @@ export default function Grok({ apiBase, active = true }: { apiBase: string; acti
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ excluded: [...excluded] }),
+        signal: controller.signal,
       });
       await readJsonOrThrow<{ error?: string }>(response, t("grok.saveFailed"));
+      if (!alive()) return;
       // Publish the acknowledged selection into the resource store BEFORE dropping the draft.
       // Clearing the draft alone would fall back to the previous snapshot, so the switch the user
       // just saved would visibly revert while the page claimed to be up to date.
@@ -168,17 +196,20 @@ export default function Grok({ apiBase, active = true }: { apiBase: string; acti
 
       if (applyAfter) {
         setPending("apply");
-        const applied = await fetch(`${apiBase}/api/grok/apply`, { method: "POST" });
+        const applied = await fetch(`${apiBase}/api/grok/apply`, { method: "POST", signal: controller.signal });
+        if (!alive()) return;
         // Apply errors use `{ message, skippedReason }` (not always `error`); preserve that
         // actionable copy for orphan-marker repair and policy skips.
         if (!applied.ok) {
           const failed = await applied.json().catch(() => ({})) as { message?: string; error?: string };
+          if (!alive()) return;
           throw new Error(failed.message ?? failed.error ?? t("grok.applyFailed"));
         }
         const payload = await applied.json().catch(() => ({})) as {
           message?: string;
           skippedReason?: string;
         };
+        if (!alive()) return;
         // A policy skip is not success theatre: the Grok config did NOT change
         // (non-loopback bind, or no ~/.grok), so say that instead of "applied".
         if (payload.skippedReason) {
@@ -197,11 +228,13 @@ export default function Grok({ apiBase, active = true }: { apiBase: string; acti
         }
       }
     } catch (err) {
+      if (!alive()) return;
       const text = err instanceof Error ? err.message : t("grok.saveFailed");
       setMessage({ tone: "err", text });
       setAnnouncement(text);
     } finally {
-      setPending(null);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && epochRef.current === seq) setPending(null);
     }
   };
 

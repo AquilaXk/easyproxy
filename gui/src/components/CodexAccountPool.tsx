@@ -21,7 +21,7 @@ import { CodexAccountPoolCards, CodexAccountPoolReauthBanner } from "./codex-acc
 import { CodexAccountSwitchModal } from "./codex-account-switch-modal";
 import { CodexAccountResetModal } from "./codex-account-reset-modal";
 import { CodexAccountPoolActions, CodexAccountPoolAddButton, CodexAccountPoolLoadStates, CodexAccountPoolMainCard, CodexAccountPoolPageHead } from "./codex-account-pool-main-card";
-import { redeemResetCredit } from "./codex-account-pool-handlers";
+import { newCodexResetOperationId, redeemResetCredit } from "./codex-account-pool-handlers";
 import type { CodexAccountEntry } from "./codex-account-pool-types";
 import { accountNeedsReauth } from "../oauth-health-display";
 import { useCopyFeedback } from "./use-copy-feedback";
@@ -153,6 +153,15 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
   const [creditDetails, setCreditDetails] = useState<{ granted_at: string; expires_at: string | null }[] | null>(null);
   const [creditDetailsLoading, setCreditDetailsLoading] = useState(false);
   const resetPopupSeqRef = useRef(0);
+  const redeemSeqRef = useRef(0);
+  const pendingResetOpIdsRef = useRef(new Map<string, string>());
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const doctorCopy = useCopyFeedback<string>();
   // A modal, a reauth, a confirmation or a catalog notice belongs to the target that
   // opened it. A relay keeps the same apiBase across a re-pair, so the logical target is
@@ -168,6 +177,7 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
     setUnpinFor(null);
     setResetPopup(null);
     setResetConfirm(false);
+    setRedeeming(false);
     setCreditDetails(null);
     setCreditDetailsLoading(false);
     setActionFeedback(null);
@@ -180,6 +190,7 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
   }
   useLayoutEffect(() => () => {
     resetPopupSeqRef.current += 1;
+    redeemSeqRef.current += 1;
   }, [targetIdentity]);
 
   const showActionFeedback = useCallback((text: string, tone: NoticeTone = "ok") => {
@@ -503,23 +514,39 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
     setResetConfirm(false);
     setCreditDetails(null);
     setCreditDetailsLoading(true);
+    const bounded = createBoundedFetch(10_000);
     try {
-      const resp = await fetch(`${apiBase}/api/codex-auth/reset-credits?accountId=${encodeURIComponent(account.id)}`);
+      const resp = await fetch(`${apiBase}/api/codex-auth/reset-credits?accountId=${encodeURIComponent(account.id)}`, {
+        signal: bounded.signal,
+      });
       const data = await readJsonIfOk<{ credits?: { granted_at: string; expires_at: string | null }[] }>(resp);
-      if (resetPopupSeqRef.current !== seq) return;
+      if (!mountedRef.current || resetPopupSeqRef.current !== seq) return;
       if (data) {
         setCreditDetails(selectActiveCodexResetCreditsForDisplay(data.credits ?? [], Date.now()));
       }
     } catch { /* detail fetch is non-blocking */ }
     finally {
-      if (resetPopupSeqRef.current === seq) setCreditDetailsLoading(false);
+      bounded.clear();
+      if (mountedRef.current && resetPopupSeqRef.current === seq) setCreditDetailsLoading(false);
     }
   };
 
   const handleRedeem = async (accountId: string) => {
+    if (redeeming) return;
+    const seq = ++redeemSeqRef.current;
+    const opKey = `${targetIdentity}\0${accountId}`;
+    const operationId = pendingResetOpIdsRef.current.get(opKey) ?? newCodexResetOperationId();
+    if (operationId) pendingResetOpIdsRef.current.set(opKey, operationId);
     setRedeeming(true);
     try {
-      const result = await redeemResetCredit(apiBase, accountId, t, load);
+      const result = await redeemResetCredit(apiBase, accountId, t, load, {
+        operationId,
+        shouldLoad: () => mountedRef.current && redeemSeqRef.current === seq,
+      });
+      if (!result.uncertain) {
+        pendingResetOpIdsRef.current.delete(opKey);
+      }
+      if (!mountedRef.current || redeemSeqRef.current !== seq) return;
       if (result.close) {
         setResetPopup(null);
         setResetConfirm(false);
@@ -528,7 +555,9 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
         showActionFeedback(result.toast, result.ok ? "ok" : "err");
       }
     } finally {
-      setRedeeming(false);
+      if (mountedRef.current && redeemSeqRef.current === seq) {
+        setRedeeming(false);
+      }
     }
   };
 

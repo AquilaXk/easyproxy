@@ -85,9 +85,14 @@ export function rankPolicyFallbackCandidates(
       && candidate.exclusions.length === 0
       && !tried.has(candidateKey(candidate)))
     .sort((left, right) => {
-      const scoreDelta = (right.candidate.score?.total ?? Number.NEGATIVE_INFINITY)
-        - (left.candidate.score?.total ?? Number.NEGATIVE_INFINITY);
-      return scoreDelta || left.index - right.index;
+      const leftScore = typeof left.candidate.score?.total === "number" && Number.isFinite(left.candidate.score.total)
+        ? left.candidate.score.total
+        : Number.NEGATIVE_INFINITY;
+      const rightScore = typeof right.candidate.score?.total === "number" && Number.isFinite(right.candidate.score.total)
+        ? right.candidate.score.total
+        : Number.NEGATIVE_INFINITY;
+      if (leftScore !== rightScore) return rightScore > leftScore ? 1 : -1;
+      return left.index - right.index;
     })
     .map(({ candidate }) => candidate);
 }

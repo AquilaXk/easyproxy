@@ -2,6 +2,7 @@ import {
   CODEX_EXHAUSTED_USAGE_PERCENT,
   CODEX_UNKNOWN_USAGE_SCORE,
 } from "../quota";
+import { parseStrictTimestampMs } from "../../lib/strict-timestamp";
 import { isThirtyDayOnlyCodexPlan } from "../plan";
 import { hasElapsedShortWindow, hasSpendableCodexCredits, isTerminalShortWindow, type CodexSpendableCredits } from "../quota-types";
 import type { CodexQuotaScope } from "./health-store";
@@ -188,7 +189,7 @@ export function parseRetryAfterMs(value: string | null | undefined, now = Date.n
     const seconds = Number(text);
     if (Number.isFinite(seconds) && seconds > 0) return clampCooldownMs(Math.ceil(seconds * 1000));
   }
-  const timestamp = Date.parse(text);
+  const timestamp = parseStrictTimestampMs(text, { now, legacyHttpDate: true });
   if (!Number.isFinite(timestamp)) return undefined;
   const delay = timestamp - now;
   return delay > 0 ? clampCooldownMs(delay) : undefined;

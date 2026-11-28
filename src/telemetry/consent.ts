@@ -1,3 +1,4 @@
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import type { EpxTelemetryConfig, EpxTelemetryDecision } from "../types/telemetry";
 
 export type TelemetryStatusReason =
@@ -39,7 +40,7 @@ function extractTelemetryConfig(
 function validIsoString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || Number.isNaN(Date.parse(trimmed))) return null;
+  if (!trimmed || !Number.isFinite(parseStrictTimestampMs(trimmed))) return null;
   return trimmed;
 }
 

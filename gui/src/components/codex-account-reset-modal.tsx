@@ -49,8 +49,8 @@ export function CodexAccountResetModal({
 
   const handleCancel = useCallback((e: React.SyntheticEvent) => {
     e.preventDefault();
-    onClose();
-  }, [onClose]);
+    if (!redeeming) onClose();
+  }, [onClose, redeeming]);
 
   return (
     <dialog
@@ -60,7 +60,7 @@ export function CodexAccountResetModal({
       onCancel={handleCancel}
      
     >
-      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={onClose} />
+      <button type="button" className="modal-backdrop-dismiss" aria-label={t("common.close")} tabIndex={-1} onClick={onClose} disabled={redeeming} />
       <div className="modal-card" onClick={e => e.stopPropagation()} role="document">
         {!resetConfirm ? (
           <>
@@ -79,7 +79,7 @@ export function CodexAccountResetModal({
                     </div>
                   )}
                   <button type="button" className="btn btn-primary" style={{ marginTop: 12, width: "100%" }}
-                    onClick={onShowConfirm} disabled={redeeming}>
+                    onClick={onShowConfirm} disabled={redeeming || creditDetailsLoading}>
                     {t("codexAuth.useOneCredit")}
                   </button>
                   <p className="card-sub text-caption" style={{ marginTop: 8, textAlign: "center" }}>{t("codexAuth.fifoNote")}</p>
@@ -106,7 +106,7 @@ export function CodexAccountResetModal({
               <p className="faint text-label">{t("codexAuth.irreversible")}</p>
             </div>
             <div className="modal-actions">
-              <button type="button" className="btn btn-ghost" onClick={onCancelConfirm}>{t("codexAuth.cancel")}</button>
+              <button type="button" className="btn btn-ghost" onClick={onCancelConfirm} disabled={redeeming}>{t("codexAuth.cancel")}</button>
               <button type="button" className="btn btn-primary" onClick={onRedeem} disabled={redeeming}>
                 {redeeming ? t("codexAuth.redeeming") : t("codexAuth.useCredit")}
               </button>

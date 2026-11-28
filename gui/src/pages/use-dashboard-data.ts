@@ -1,5 +1,5 @@
 import { classifyDataSurface } from "../data-surface";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useKeyedClientResource } from "../client-resource";
 import { replaceHash } from "../hash-routing";
 import { useI18n } from "../i18n/shared";
@@ -91,7 +91,8 @@ type DashboardSettingsAction =
   | { type: "save-succeeded"; key: CodexPreference; settings: SettingsData }
   | { type: "save-failed" }
   | { type: "save-finished" }
-  | { type: "applied" };
+  | { type: "applied" }
+  | { type: "reset"; settings: SettingsData | null };
 
 // Own both server snapshots and the local save/apply transaction. A poll has no
 // application receipt and must not overwrite a preference while it is being saved.
@@ -128,6 +129,8 @@ function dashboardSettingsReducer(state: DashboardSettingsState, action: Dashboa
       return { ...state, beforeSave: null };
     case "applied":
       return state.settings ? { ...state, settings: { ...state.settings, catalogRefreshPending: false } } : state;
+    case "reset":
+      return { settings: action.settings, beforeSave: null };
   }
 }
 
@@ -241,6 +244,48 @@ const [maBusy, setMaBusy] = useState(false);
   const [updateJob, setUpdateJob] = useState<UpdateJob | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState(false);
+  const [targetOrigin, setTargetOrigin] = useState(apiBase);
+  if (targetOrigin !== apiBase) {
+    setTargetOrigin(apiBase);
+    dispatchSettings({ type: "reset", settings: cachedControls?.settings ?? null });
+    setSidecar(cachedControls?.sidecar ?? null);
+    setShadowCall(cachedControls?.shadowCall ?? null);
+    setSidecarSaving(false);
+    setShadowCallSaving(false);
+    setShadowCallError(null);
+    setMaBusy(false);
+    setMaError(null);
+    setInjectionSaving(false);
+    setSyncing(false);
+    setSyncResult(null);
+    setSyncError(null);
+    setUpdateLoading(false);
+    setUpdateError(null);
+    setUpdateCheck(null);
+    setUpdateOpen(false);
+  }
+  const mountedRef = useRef(true);
+  const targetEpochRef = useRef(0);
+  const targetAbortRef = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    const seq = ++targetEpochRef.current;
+    const controller = new AbortController();
+    targetAbortRef.current = controller;
+    return () => {
+      mountedRef.current = false;
+      if (targetEpochRef.current === seq) targetEpochRef.current += 1;
+      controller.abort();
+      if (targetAbortRef.current === controller) targetAbortRef.current = null;
+      settingsMutationInFlightRef.current = false;
+      shadowCallMutationInFlightRef.current = false;
+      if (updateRetryTimerRef.current !== null) {
+        window.clearTimeout(updateRetryTimerRef.current);
+        updateRetryTimerRef.current = null;
+      }
+      updateRequestEpochRef.current += 1;
+    };
+  }, [apiBase]);
   const effortCapHelpTriggerRef = useRef<HTMLButtonElement>(null);
   const updateTriggerRef = useRef<HTMLButtonElement>(null);
   const maHelpTriggerRef = useRef<HTMLButtonElement>(null);
@@ -598,6 +643,10 @@ const [maBusy, setMaBusy] = useState(false);
 
   const saveSidecar = async (patch: SidecarPatch) => {
     if (!sidecar || sidecarSaving) return;
+    const targetBase = apiBase;
+    const epoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
+    const alive = () => mountedRef.current && targetEpochRef.current === epoch && !signal?.aborted;
     patch = sidecarPatchForSave(sidecar, patch);
     const previous = sidecar;
     const next = {
@@ -609,12 +658,15 @@ const [maBusy, setMaBusy] = useState(false);
     setSidecarSaving(true);
     setSidecar(next);
     try {
-      const res = await fetch(`${apiBase}/api/sidecar-settings`, {
+      const res = await fetch(`${targetBase}/api/sidecar-settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
+        signal,
       });
+      if (!alive()) return;
       const data = await requireJson<SidecarData>(res, "save failed");
+      if (!alive()) return;
       // The Codex-side write is a separate outcome from the stored switch: it can be refused
       // while the setting is saved, and the card has to say so instead of implying it happened.
       // A save that did not move this switch answers `not_requested` about a file it never
@@ -626,8 +678,8 @@ const [maBusy, setMaBusy] = useState(false);
         ...(data.visionModels ? { visionModels: data.visionModels } : {}),
         ...(data.webSearchModels ? { webSearchModels: data.webSearchModels } : {}),
       });
-      const prev = readSessionListCache<CachedControls>(controlsCacheKey(apiBase)) ?? {};
-      writeSessionListCache(controlsCacheKey(apiBase), {
+      const prev = readSessionListCache<CachedControls>(controlsCacheKey(targetBase)) ?? {};
+      writeSessionListCache(controlsCacheKey(targetBase), {
         ...prev,
         sidecar: {
           webSearch: data.webSearch,
@@ -637,16 +689,20 @@ const [maBusy, setMaBusy] = useState(false);
         },
       });
     } catch {
-      setSidecar(previous);
+      if (alive()) setSidecar(previous);
       // The request failed before any answer existed, so it says nothing about the Codex file:
       // an outstanding report stays until a write that ran or a successful sync settles it.
     } finally {
-      setSidecarSaving(false);
+      if (alive()) setSidecarSaving(false);
     }
   };
 
   async function saveShadowCall(patch: Partial<ShadowCallData>) {
     if (!shadowCall || shadowCallSaving) return;
+    const targetBase = apiBase;
+    const epoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
+    const alive = () => mountedRef.current && targetEpochRef.current === epoch && !signal?.aborted;
     const previous = shadowCall;
     const updated = { ...shadowCall, ...patch };
     setShadowCallSaving(true);
@@ -654,24 +710,30 @@ const [maBusy, setMaBusy] = useState(false);
     shadowCallMutationInFlightRef.current = true;
     setShadowCall(updated);
     try {
-      const res = await fetch(`${apiBase}/api/shadow-call-settings`, {
+      const res = await fetch(`${targetBase}/api/shadow-call-settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
+        signal,
       });
+      if (!alive()) return;
       if (!res.ok) {
         setShadowCall(previous);
         const body = await res.json().catch(() => null) as { code?: unknown } | null;
+        if (!alive()) return;
         setShadowCallError(t(shadowCallSaveErrorKey(body?.code)));
         return;
       }
       shadowCallMutationEpochRef.current += 1;
     } catch {
+      if (!alive()) return;
       setShadowCall(previous);
       setShadowCallError(t("models.networkError"));
     } finally {
-      shadowCallMutationInFlightRef.current = false;
-      setShadowCallSaving(false);
+      if (alive()) {
+        shadowCallMutationInFlightRef.current = false;
+        setShadowCallSaving(false);
+      }
     }
   }
 
@@ -680,6 +742,10 @@ const [maBusy, setMaBusy] = useState(false);
     acknowledgeAdvisory = false,
     acknowledgePlaintext = false,
   ) => {
+    const targetBase = apiBase;
+    const epoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
+    const alive = () => mountedRef.current && targetEpochRef.current === epoch && !signal?.aborted;
     setMaBusy(true);
     setMaError(null);
     try {
@@ -693,11 +759,13 @@ const [maBusy, setMaBusy] = useState(false);
       // 'v2-plaintext' is rejected without the dedicated consent; the checkbox in
       // PlaintextV2ConsentModal is what proved it before this write ran.
       if (acknowledgePlaintext) payload.plaintextAgentMessagesAcknowledged = true;
-      const r = await fetch(`${apiBase}/api/v2`, {
+      const r = await fetch(`${targetBase}/api/v2`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal,
       });
+      if (!alive()) return;
       if (r.ok) {
         if (mode === "v2-plaintext") {
           // Claim the mode only when the receipt proves it landed: the catalog pin is
@@ -705,25 +773,28 @@ const [maBusy, setMaBusy] = useState(false);
           // means an older or replaced proxy answered — keep the stored selection.
           let confirmed = false;
           try { confirmed = confirmsPlaintextV2Mode(await r.json()); } catch { /* unreadable receipt */ }
+          if (!alive()) return;
           if (!confirmed) { setMaError(t("models.saveFailed")); return; }
           // A confirmed write proves this apiBase supports the mode until the next poll.
-          setMaPlaintextSupportState({ supports: true, apiBase });
+          setMaPlaintextSupportState({ supports: true, apiBase: targetBase });
         }
         setMaMode(mode);
-        if (acknowledgeAdvisory) setMaAdvisoryAnsweredFor(apiBase);
-        writeSessionListCache(`${MA_MODE_CACHE_PREFIX}${apiBase}`, mode);
+        if (acknowledgeAdvisory) setMaAdvisoryAnsweredFor(targetBase);
+        writeSessionListCache(`${MA_MODE_CACHE_PREFIX}${targetBase}`, mode);
       } else {
         let message = t("dash.maSwitchFailed", { status: String(r.status) });
         try {
           const body = await r.json() as { error?: string; message?: string };
           message = (typeof body.error === "string" && body.error) || (typeof body.message === "string" && body.message) || message;
         } catch { /* non-JSON error body */ }
+        if (!alive()) return;
         setMaError(message);
       }
     } catch (e) {
-      setMaError(e instanceof Error ? e.message : t("dash.maNetworkError"));
+      if (alive()) setMaError(e instanceof Error ? e.message : t("dash.maNetworkError"));
+    } finally {
+      if (alive()) setMaBusy(false);
     }
-    finally { setMaBusy(false); }
   };
 
   const switchMaMode = async (mode: MaMode) => {
@@ -740,16 +811,22 @@ const [maBusy, setMaBusy] = useState(false);
     // Answered for this page load either way: the operator did answer. If the write did not
     // land the runtime raises the notice again next load, so a failure costs one more prompt
     // rather than a lost setting — but say so instead of swallowing it.
-    setMaAdvisoryAnsweredFor(apiBase);
+    const targetBase = apiBase;
+    const epoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
+    const alive = () => mountedRef.current && targetEpochRef.current === epoch && !signal?.aborted;
+    setMaAdvisoryAnsweredFor(targetBase);
     try {
-      const r = await fetch(`${apiBase}/api/v2`, {
+      const r = await fetch(`${targetBase}/api/v2`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ multiAgentSurfaceAdvisoryAcknowledged: true }),
+        signal,
       });
+      if (!alive()) return;
       if (!r.ok) setMaError(t("dash.maSwitchFailed", { status: String(r.status) }));
     } catch (e) {
-      setMaError(e instanceof Error ? e.message : t("dash.maNetworkError"));
+      if (alive()) setMaError(e instanceof Error ? e.message : t("dash.maNetworkError"));
     }
   };
 
@@ -791,15 +868,22 @@ const [maBusy, setMaBusy] = useState(false);
     effort?: string | null;
   }) => {
     if (injectionSaving) return;
+    const targetBase = apiBase;
+    const epoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
+    const alive = () => mountedRef.current && targetEpochRef.current === epoch && !signal?.aborted;
     setInjectionSaving(true);
     try {
-      const res = await fetch(`${apiBase}/api/injection-model`, {
+      const res = await fetch(`${targetBase}/api/injection-model`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
+        signal,
       });
+      if (!alive()) return;
       if (!res.ok) throw new Error("injection save failed");
-      const getRes = await fetch(`${apiBase}/api/injection-model`);
+      const getRes = await fetch(`${targetBase}/api/injection-model`, { signal });
+      if (!alive()) return;
       const data = await requireJson<{
         multiAgentGuidanceEnabled?: boolean;
         syncCodexSubagentDefaults?: boolean;
@@ -808,6 +892,7 @@ const [maBusy, setMaBusy] = useState(false);
         efforts?: string[];
         available?: Array<{ provider: string; model: string; namespaced: string }>;
       }>(getRes);
+      if (!alive()) return;
       const normalized = normalizeInjectionSelection(data);
       setMultiAgentGuidanceEnabled(normalized.multiAgentGuidanceEnabled);
       setSyncCodexSubagentDefaults(normalized.syncCodexSubagentDefaults);
@@ -816,30 +901,42 @@ const [maBusy, setMaBusy] = useState(false);
       if (Array.isArray(data.efforts)) setInjectionEfforts(data.efforts);
       if (Array.isArray(data.available)) setInjectionAvailable(data.available);
     } catch { /* keep the last committed UI state */ }
-    finally { setInjectionSaving(false); }
+    finally {
+      if (alive()) setInjectionSaving(false);
+    }
   };
 
   const toggleCodexSetting = async (key: CodexPreference) => {
     if (!settings || settingsSaving || syncing) return;
+    const targetBase = apiBase;
+    const epoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
+    const alive = () => mountedRef.current && targetEpochRef.current === epoch && !signal?.aborted;
     const next = !(settings[key] ?? (key === "codexAutoStart"));
     settingsMutationInFlightRef.current = true;
     dispatchSettings({ type: "save-started", key, value: next });
     try {
-      const res = await fetch(`${apiBase}/api/settings`, {
+      const res = await fetch(`${targetBase}/api/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [key]: next }),
+        signal,
       });
+      if (!alive()) return;
       const data = await requireJson<SettingsData>(res, "save failed");
+      if (!alive()) return;
       settingsMutationEpochRef.current += 1;
       dispatchSettings({ type: "save-succeeded", key, settings: data });
       if (key === "codexDesktopAuthless" || key === "codexClientCompaction") await runSync();
     } catch {
+      if (!alive()) return;
       dispatchSettings({ type: "save-failed" });
       setError(true);
     } finally {
-      settingsMutationInFlightRef.current = false;
-      dispatchSettings({ type: "save-finished" });
+      if (alive()) {
+        settingsMutationInFlightRef.current = false;
+        dispatchSettings({ type: "save-finished" });
+      }
     }
   };
 
@@ -858,12 +955,18 @@ const [maBusy, setMaBusy] = useState(false);
 
   const runSync = async () => {
     if (syncing) return;
+    const targetBase = apiBase;
+    const epoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
+    const alive = () => mountedRef.current && targetEpochRef.current === epoch && !signal?.aborted;
     setSyncing(true);
     setSyncResult(null);
     setSyncError(null);
     try {
-      const res = await fetch(`${apiBase}/api/sync`, { method: "POST" });
+      const res = await fetch(`${targetBase}/api/sync`, { method: "POST", signal });
+      if (!alive()) return;
       const data = await requireJson<SyncResult & { projectConfigGrouped?: ProjectCodexConfigGroup[] }>(res, "sync failed");
+      if (!alive()) return;
       setSyncResult(data);
       if (data.ok && data.status === "applied") {
         dispatchSettings({ type: "applied" });
@@ -873,9 +976,10 @@ const [maBusy, setMaBusy] = useState(false);
       }
       if (data.projectConfigGrouped) setProjectConfigWarnings(data.projectConfigGrouped);
     } catch (err) {
+      if (!alive()) return;
       setSyncError(err instanceof Error ? err.message : String(err));
     } finally {
-      setSyncing(false);
+      if (alive()) setSyncing(false);
     }
   };
 
@@ -885,14 +989,23 @@ const [maBusy, setMaBusy] = useState(false);
       window.clearTimeout(updateRetryTimerRef.current);
       updateRetryTimerRef.current = null;
     }
+    const targetBase = apiBase;
+    const targetEpoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
     const requestEpoch = ++updateRequestEpochRef.current;
+    const alive = () =>
+      mountedRef.current
+      && targetEpochRef.current === targetEpoch
+      && !signal?.aborted
+      && requestEpoch === updateRequestEpochRef.current;
     setUpdateLoading(true);
     setUpdateError(null);
     setUpdateCheck(null);
     try {
-      const res = await fetch(`${apiBase}/api/update/check?tag=${channel}`);
+      const res = await fetch(`${targetBase}/api/update/check?tag=${channel}`, { signal });
+      if (!alive()) return;
       const check = await requireJson<UpdateCheckData>(res, "update check failed");
-      if (requestEpoch !== updateRequestEpochRef.current) return;
+      if (!alive()) return;
 
       setUpdateCheck(check);
       if (
@@ -902,7 +1015,7 @@ const [maBusy, setMaBusy] = useState(false);
         const retry = ++updateRetryRef.current;
         // Keep loading through scheduled retries — do not clear here.
         updateRetryTimerRef.current = window.setTimeout(() => {
-          if (requestEpoch !== updateRequestEpochRef.current) return;
+          if (!alive()) return;
           updateRetryTimerRef.current = null;
           void fetchUpdateCheck(channel);
         }, UPDATE_CHECK_RETRY_BASE_MS * retry);
@@ -912,7 +1025,7 @@ const [maBusy, setMaBusy] = useState(false);
       if (check.reason !== "latest_unavailable") updateRetryRef.current = 0;
       setUpdateLoading(false);
     } catch (err) {
-      if (requestEpoch !== updateRequestEpochRef.current) return;
+      if (!alive()) return;
       setUpdateError(err instanceof Error ? err.message : String(err));
       setUpdateLoading(false);
     }
@@ -973,20 +1086,27 @@ const [maBusy, setMaBusy] = useState(false);
 
   const runUpdate = async () => {
     if (!updateCheck?.canUpdate) return;
+    const targetBase = apiBase;
+    const epoch = targetEpochRef.current;
+    const signal = targetAbortRef.current?.signal;
+    const alive = () => mountedRef.current && targetEpochRef.current === epoch && !signal?.aborted;
     setUpdateError(null);
     try {
-      const res = await fetch(`${apiBase}/api/update/run`, {
+      const res = await fetch(`${targetBase}/api/update/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tag: updateChannel, restart: updateRestart }),
+        signal,
       });
+      if (!alive()) return;
       const data = await requireJson<{ job?: UpdateJob }>(res, "update failed to start");
+      if (!alive()) return;
       if (!data.job) throw new Error("update failed to start");
       setUpdateJob(data.job);
       setReconnecting(false);
       closeUpdateDialog();
     } catch (err) {
-      setUpdateError(err instanceof Error ? err.message : String(err));
+      if (alive()) setUpdateError(err instanceof Error ? err.message : String(err));
     }
   };
 

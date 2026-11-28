@@ -14,7 +14,7 @@ leaves the cached prefix intact.
 `src/server/management/provider-overwrite-carry.ts`) turns it on. Unset or `false` leaves every
 request byte-for-byte unchanged and touches no state. With it on, only a streamed Codex Responses
 turn on the `anthropic` adapter, API-key authentication, destination `api.anthropic.com`, and a
-model matching Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5, Fable 5.1, Fable 5.2 or Mythos 5.1 is ever considered. OAuth
+model matching the per-family version floors (Opus `>= 5.0` including `opus-5`, Sonnet `>= 5.5`, Haiku `>= 5.5`, Fable `>= 5.1`, or Mythos `>= 5.1`, excluding bare un-minored `fable-5`/non-numeric tags) is ever considered. OAuth
 accounts, gateways, Claude Messages and Chat Completions ingress, `previous_response_id`, the Advisor
 guard, routed compaction and memory-model phases stay off. A turn that a hosted web-search, image or
 video sidecar loop owns is served on its first model call: `src/server/responses/sidecar-execution.ts`

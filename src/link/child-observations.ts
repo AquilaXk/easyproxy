@@ -4,6 +4,7 @@ import { atomicWriteFile } from "../config/atomic-write";
 import { withConfigMutationLockSync } from "../config/mutation-lock";
 import { assertNotRealHomeUnderTest } from "../lib/test-home-guard";
 import { parseStrictSemver } from "../lib/strict-semver";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import { hardenSecretDir } from "../lib/windows-secret-acl";
 import { PLAN_RUNTIME_OWNERS, type InstallKind, type PlanRuntimeOwner, type UpdateRoute } from "./child-update-contract";
 import { childObservationsPath } from "./paths";
@@ -67,7 +68,8 @@ const drop = (): never => { throw new Drop(); };
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const version = (value: unknown): string => typeof value === "string" && value.length <= 128 && parseStrictSemver(value) ? value : drop();
 const nullable = <T>(value: unknown, read: (value: unknown) => T): T | null => value === null || value === undefined ? null : read(value);
-const time = (value: unknown): string => typeof value === "string" && value.length <= 64 && !Number.isNaN(Date.parse(value)) ? value : drop();
+const time = (value: unknown): string =>
+  typeof value === "string" && value.length <= 64 && Number.isFinite(parseStrictTimestampMs(value)) ? value : drop();
 const epoch = (value: unknown): number => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : drop();
 const token = (pattern: RegExp) => (value: unknown): string => typeof value === "string" && pattern.test(value) ? value : drop();
 const member = <T extends string>(set: ReadonlySet<string>) => (value: unknown): T => typeof value === "string" && set.has(value) ? value as T : drop();
@@ -155,7 +157,17 @@ export function readChildObservations(path: string = childObservationsPath()): C
 function capEntries(file: ChildObservationsFile, maxEntries: number): void {
   const entries = Object.entries(file.children);
   if (entries.length <= maxEntries) return;
-  entries.sort(([, a], [, b]) => Date.parse(b.observedAt) - Date.parse(a.observedAt));
+  const parsedMs = new Map<string, number>();
+  for (const [linkId, entry] of entries) {
+    const ms = parseStrictTimestampMs(entry.observedAt);
+    parsedMs.set(linkId, Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY);
+  }
+  entries.sort(([leftId], [rightId]) => {
+    const leftMs = parsedMs.get(leftId)!;
+    const rightMs = parsedMs.get(rightId)!;
+    if (leftMs !== rightMs) return rightMs > leftMs ? 1 : -1;
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  });
   file.children = Object.fromEntries(entries.slice(0, Math.max(0, maxEntries)));
 }
 

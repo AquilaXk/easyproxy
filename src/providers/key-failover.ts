@@ -28,6 +28,7 @@ import { OPENCODE_GO_SESSION_HEADER } from "./opencode-go-transport";
 import { resolveProviderTransport, XAI_CONV_ID_HEADER, type EpxProviderTransport } from "./xai-transport";
 import { sweepExpiredOnWrite } from "../lib/state-store-sweeper";
 import { cacheAffinityApplies, consultProviderCacheAffinity, releaseProviderCacheAffinity } from "./cache-affinity";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import { ProviderApiKeyPausedError } from "./api-key-pause-state";
 // quota-key-accounts imports only node:crypto, the key store and the quota types -- NOT
 // providers/quota.ts -- so the cached reader reaches the dispatch path without dragging the
@@ -225,26 +226,6 @@ const QUOTA_RESET_SCAN_BYTES = 4_096;
  * back to `DEFAULT_COOLDOWN_MS`. Returns undefined for anything it cannot read
  * as a date, so an unparsable body keeps today's behaviour exactly.
  */
-/**
- * Whether `YYYY-MM-DD…` names a day that exists.
- *
- * `Date.parse` does NOT reject an out-of-range day: measured on Bun,
- * `2026-02-30T00:00:00Z` yields March 2 and `2026-04-31T00:00:00Z` yields
- * May 1, so a malformed upstream body would park a key past the instant it
- * actually named. Only the month is rejected outright (`2026-13-01` is NaN).
- *
- * Checked on the date text alone rather than by round-tripping the parsed
- * instant, because a value carrying an explicit offset (`…T23:00+05:30`)
- * legitimately lands on a different UTC day than the one written.
- */
-function isRealCalendarDate(value: string): boolean {
-  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
-  if (month < 1 || month > 12 || day < 1) return false;
-  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-  const lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  return day <= lengths[month - 1]!;
-}
-
 export function parseQuotaResetAt(body: string | null | undefined, now = Date.now()): number | undefined {
   const text = body?.slice(0, QUOTA_RESET_SCAN_BYTES);
   if (!text) return undefined;
@@ -264,23 +245,8 @@ export function parseQuotaResetAt(body: string | null | undefined, now = Date.no
   // `will reset at 2026-09-09 03:30:06` / `... at 2026-09-09T03:30:06Z` / `resets at <date>`
   const match = /reset[s]?\s+at\s+([0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)?)/i.exec(message);
   if (!match) return undefined;
-  // Pin a bare `YYYY-MM-DD hh:mm:ss` to UTC explicitly.
-  //
-  // ECMA-262 says a date-TIME form with no offset is LOCAL time, and Node follows
-  // that: `Date.parse("2026-09-09 03:30:06")` differs from the UTC reading by the
-  // host offset (7h on a PDT box, measured). Bun currently returns the UTC value
-  // for the same string, so on this runtime the normalisation is a no-op today —
-  // which is exactly why it is written out rather than relied upon. If Bun ever
-  // conforms, an un-normalised parse would silently shift every park-until by the
-  // operator's offset, and the early direction resumes the 429 loop.
-  //
-  // A consequence worth knowing: no Bun test can observe this branch being
-  // removed. The explicit-zone case below is the part the suite can pin.
-  const raw = match[1].includes("T") || /(?:Z|[+-][0-9]{2}:?[0-9]{2})$/.test(match[1])
-    ? match[1]
-    : `${match[1].replace(" ", "T")}Z`;
-  if (!isRealCalendarDate(match[1])) return undefined;
-  const at = Date.parse(raw);
+  // `parseStrictTimestampMs` rejects calendar overflows, 24:00:00, and pins offset-less datetimes to UTC.
+  const at = parseStrictTimestampMs(match[1]);
   if (!Number.isFinite(at)) return undefined;
   // Already past, or beyond the cap: not usable as a park-until instant.
   if (at <= now) return undefined;
@@ -371,7 +337,7 @@ function parseRetryAfterMs(value: string | null | undefined, now = Date.now()): 
       return Math.min(Math.max(Math.ceil(seconds * 1000), 1), MAX_COOLDOWN_MS);
     }
   }
-  const timestamp = Date.parse(text);
+  const timestamp = parseStrictTimestampMs(text, { now, legacyHttpDate: true });
   if (!Number.isFinite(timestamp)) return undefined;
   const delay = timestamp - now;
   // A valid HTTP-date whose retry time has already passed is an immediate retry, exactly like

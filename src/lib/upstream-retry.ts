@@ -16,6 +16,7 @@
  * the shared abort helpers from here).
  */
 import { clearableDeadline } from "./abort";
+import { parseStrictTimestampMs } from "./strict-timestamp";
 import { isDefiniteContextOverflow } from "./context-overflow-verdict";
 import { isFlexUnavailableErrorText } from "./upstream-condition";
 import { errorDestinationLabel, errorDestinationText, type ErrorDestinationLabel } from "./error-destination";
@@ -414,11 +415,14 @@ export function isConnectionResetError(err: unknown): boolean {
 export function retryAfterDelayMs(headers: Headers): number | undefined {
   const raw = headers.get("retry-after")?.trim();
   if (!raw) return undefined;
-  const seconds = Number(raw);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-  const dateMs = Date.parse(raw);
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  }
+  const now = Date.now();
+  const dateMs = parseStrictTimestampMs(raw, { now, legacyHttpDate: true });
   if (!Number.isFinite(dateMs)) return undefined;
-  return Math.max(0, dateMs - Date.now());
+  return Math.max(0, dateMs - now);
 }
 
 export function retryBackoffDelayMs(attempt: number, opts: RetryBackoffOptions): number {

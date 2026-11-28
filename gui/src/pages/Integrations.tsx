@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { navigateHash } from "../hash-routing";
 import { canonicalHashPath } from "../app-routing";
 import { useI18n } from "../i18n/shared";
@@ -93,25 +93,61 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
     () => new Set([readIntegrationTab()]),
   );
   const tabRefs = useRef<Map<IntegrationTab, HTMLButtonElement> | null>(null);
-  const [machineClients, setMachineClients] = useState<string[]>([]);
+  const [machineClientsState, setMachineClientsState] = useState<{ apiBase: string; clients: string[] }>(() => ({
+    apiBase: machineApiBase,
+    clients: [],
+  }));
+  const machineClients = machineClientsState.apiBase === machineApiBase ? machineClientsState.clients : [];
+  const [machineOrigin, setMachineOrigin] = useState(machineApiBase);
   const [machineSyncing, setMachineSyncing] = useState(false);
   const [machineSyncError, setMachineSyncError] = useState<string | null>(null);
+  if (machineOrigin !== machineApiBase) {
+    setMachineOrigin(machineApiBase);
+    setMachineSyncing(false);
+    setMachineSyncError(null);
+  }
+  const machineEpochRef = useRef(0);
+  const machineMountedRef = useRef(true);
+  const machineSyncAbortRef = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
+    machineMountedRef.current = true;
+    return () => {
+      machineMountedRef.current = false;
+      machineEpochRef.current += 1;
+      machineSyncAbortRef.current?.abort();
+      machineSyncAbortRef.current = null;
+    };
+  }, [machineApiBase]);
   if (tabRefs.current === null) tabRefs.current = new Map();
 
   useEffect(() => {
     if (!connected) return;
     const controller = new AbortController();
+    const target = machineApiBase;
+    const epoch = machineEpochRef.current;
     void fetch(`${machineApiBase}/api/machine/clients`, { signal: controller.signal })
       .then(response => response.ok ? response.json() : null)
       .then((value: { selectedClients?: unknown } | null) => {
-        if (!controller.signal.aborted && Array.isArray(value?.selectedClients)) {
-          setMachineClients(value.selectedClients.filter((item): item is string => typeof item === "string"));
+        if (
+          machineMountedRef.current
+          && !controller.signal.aborted
+          && machineEpochRef.current === epoch
+          && Array.isArray(value?.selectedClients)
+        ) {
+          setMachineClientsState({
+            apiBase: target,
+            clients: value.selectedClients.filter((item): item is string => typeof item === "string"),
+          });
         }
       }).catch(() => {});
     return () => controller.abort();
   }, [connected, machineApiBase]);
 
   const syncMachine = async () => {
+    const epoch = machineEpochRef.current;
+    machineSyncAbortRef.current?.abort();
+    const controller = new AbortController();
+    machineSyncAbortRef.current = controller;
     setMachineSyncing(true);
     setMachineSyncError(null);
     try {
@@ -119,12 +155,18 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
+        signal: controller.signal,
       });
       await readJsonOrThrow(response);
     } catch (error) {
+      if (!machineMountedRef.current || controller.signal.aborted || machineEpochRef.current !== epoch) return;
       const detail = error instanceof Error && error.message ? error.message : String(error);
       setMachineSyncError(`${t("connection.machineUnavailable")} (${detail})`);
-    } finally { setMachineSyncing(false); }
+    } finally {
+      if (machineMountedRef.current && machineEpochRef.current === epoch) {
+        setMachineSyncing(false);
+      }
+    }
   };
 
   /*
@@ -289,7 +331,7 @@ export default function Integrations({ apiBase, machineApiBase = apiBase, connec
             const active = tab === definition.id;
             return (
               <div
-                key={definition.id}
+                key={`${apiBase}\0${definition.id}`}
                 role="tabpanel"
                 id={panelDomId(definition.id)}
                 aria-labelledby={tabDomId(definition.id)}

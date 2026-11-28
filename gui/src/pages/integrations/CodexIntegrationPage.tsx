@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { confirmAction } from "../../action-dialogs";
 import { readJsonIfOk } from "../../fetch-json";
 import { navigateHash } from "../../hash-routing";
@@ -88,22 +88,37 @@ async function fetchCodexIntegrationState(
 
 export default function CodexIntegrationPage({ apiBase, active }: { apiBase: string; active: boolean }) {
   const { t, locale } = useI18n();
+  const [originBase, setOriginBase] = useState(apiBase);
   const [state, setState] = useState<CodexIntegrationSettings | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  if (originBase !== apiBase) {
+    setOriginBase(apiBase);
+    setState(null);
+    setLoadError(false);
+    setBusyKey(null);
+    setFeedback(null);
+    setConfirmDisable(false);
+  }
   const mountedRef = useRef(true);
   const requestEpochRef = useRef(0);
+  const mutationEpochRef = useRef(0);
   const fetchAbortRef = useRef<AbortController | null>(null);
+  const mutationAbortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mountedRef.current = true;
+    const seq = ++mutationEpochRef.current;
     return () => {
       mountedRef.current = false;
+      if (mutationEpochRef.current === seq) mutationEpochRef.current += 1;
       fetchAbortRef.current?.abort();
+      mutationAbortRef.current?.abort();
+      mutationAbortRef.current = null;
     };
-  }, []);
+  }, [apiBase]);
 
   const reload = async (): Promise<boolean> => {
     fetchAbortRef.current?.abort();
@@ -154,6 +169,11 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
     nextValue: boolean,
   ) => {
     if (busyKey || !state) return;
+    const seq = mutationEpochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && mutationEpochRef.current === seq;
     setBusyKey(key);
     setFeedback(null);
     try {
@@ -161,36 +181,43 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [key]: nextValue }),
+        signal: controller.signal,
       });
-      if (!mountedRef.current) return;
+      if (!alive()) return;
       if (!res.ok) {
         const err = await res.json().catch(() => null) as { error?: string } | null;
-        if (!mountedRef.current) return;
+        if (!alive()) return;
         setFeedback({ tone: "err", text: err?.error ?? uxT(locale, "codexRoute.saveFailed") });
         return;
       }
       if (key === "codexDesktopAuthless") {
-        await fetch(`${apiBase}/api/sync`, { method: "POST" }).catch(() => undefined);
+        await fetch(`${apiBase}/api/sync`, { method: "POST", signal: controller.signal }).catch(() => undefined);
       }
-      if (!mountedRef.current) return;
+      if (!alive()) return;
       const refreshed = await reload();
-      if (!mountedRef.current) return;
+      if (!alive()) return;
       if (refreshed) {
         setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
       } else {
         setState(prev => (prev ? { ...prev, [key]: nextValue } : prev));
       }
     } catch {
-      if (mountedRef.current) {
+      if (alive()) {
         setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
       }
     } finally {
-      if (mountedRef.current) setBusyKey(null);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && mutationEpochRef.current === seq) setBusyKey(null);
     }
   };
 
   const setAccountMode = async (mode: "pool" | "direct") => {
     if (busyKey || !state || state.accountMode === mode) return;
+    const seq = mutationEpochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && mutationEpochRef.current === seq;
     setBusyKey("accountMode");
     setFeedback(null);
     try {
@@ -198,27 +225,29 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ codexAccountMode: mode }),
+        signal: controller.signal,
       });
-      if (!mountedRef.current) return;
+      if (!alive()) return;
       if (!res.ok) {
         const err = await res.json().catch(() => null) as { error?: string } | null;
-        if (!mountedRef.current) return;
+        if (!alive()) return;
         setFeedback({ tone: "err", text: err?.error ?? uxT(locale, "codexRoute.saveFailed") });
         return;
       }
       const refreshed = await reload();
-      if (!mountedRef.current) return;
+      if (!alive()) return;
       if (refreshed) {
         setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
       } else {
         setState(prev => (prev ? { ...prev, accountMode: mode } : prev));
       }
     } catch {
-      if (mountedRef.current) {
+      if (alive()) {
         setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
       }
     } finally {
-      if (mountedRef.current) setBusyKey(null);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && mutationEpochRef.current === seq) setBusyKey(null);
     }
   };
 
@@ -231,32 +260,40 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
 
   const enableOpenAi = async () => {
     if (busyKey || (state?.accountMode !== "absent" && state?.accountMode !== "disabled")) return;
+    const seq = mutationEpochRef.current;
+    const alive = () => mountedRef.current && mutationEpochRef.current === seq;
     setBusyKey("enableOpenAi");
     setFeedback(null);
     try {
       await ensureOpenAiProvider(apiBase, state.accountMode);
+      if (!alive()) return;
       const refreshed = await reload();
-      if (refreshed) {
+      if (alive() && refreshed) {
         setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
       }
     } catch (error) {
+      if (!alive()) return;
       if (error instanceof OpenAiEnableError) {
         setFeedback({ tone: "err", text: t(error.i18nKey) });
       } else {
         setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
       }
     } finally {
-      setBusyKey(null);
+      if (alive()) setBusyKey(null);
     }
   };
 
   const applyNativeConnection = async (next: boolean) => {
     if (busyKey) return;
+    const seq = mutationEpochRef.current;
+    const alive = () => mountedRef.current && mutationEpochRef.current === seq;
     setBusyKey("nativeConnection");
     setFeedback(null);
     try {
       const result = await toggleNativeIntegration(apiBase, "codex", next);
+      if (!alive()) return;
       await reload();
+      if (!alive()) return;
       if (result.reason === "non_loopback_removed") {
         setFeedback({
           tone: "ok",
@@ -270,32 +307,42 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
         setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.saved") });
       }
     } catch (error) {
+      if (!alive()) return;
       await reload();
+      if (!alive()) return;
       setFeedback({
         tone: "err",
         text: describeRefusal(t, error, undefined, state?.nativeStatus?.configPath),
       });
     } finally {
-      setBusyKey(null);
+      if (alive()) setBusyKey(null);
     }
   };
 
   const syncCodexConfig = async () => {
     if (busyKey) return;
+    const seq = mutationEpochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    const alive = () => mountedRef.current && !controller.signal.aborted && mutationEpochRef.current === seq;
     setBusyKey("sync");
     setFeedback(null);
     try {
-      const res = await fetch(`${apiBase}/api/sync`, { method: "POST" });
+      const res = await fetch(`${apiBase}/api/sync`, { method: "POST", signal: controller.signal });
+      if (!alive()) return;
       if (!res.ok) {
         const err = await res.json().catch(() => null) as { error?: string } | null;
+        if (!alive()) return;
         setFeedback({ tone: "err", text: err?.error ?? uxT(locale, "codexRoute.saveFailed") });
         return;
       }
       setFeedback({ tone: "ok", text: uxT(locale, "codexRoute.synced") });
     } catch {
-      setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
+      if (alive()) setFeedback({ tone: "err", text: uxT(locale, "codexRoute.saveFailed") });
     } finally {
-      setBusyKey(null);
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+      if (mountedRef.current && mutationEpochRef.current === seq) setBusyKey(null);
     }
   };
 

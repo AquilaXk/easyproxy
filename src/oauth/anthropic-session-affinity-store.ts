@@ -80,13 +80,26 @@ export class AnthropicSessionAffinityStore implements Iterable<[string, Entry]> 
   private trim(scope: Scope): void {
     if (scope.rows.size <= MAX_AFFINITY_ENTRIES) return;
     if (scope.rows.size > MAX_AFFINITY_ENTRIES + 1) {
-      const ordered = [...scope.rows].sort((a, b) => b[1].lastUsedAt - a[1].lastUsedAt);
+      const ordered = [...scope.rows].sort((a, b) => {
+        const at = Number.isFinite(a[1].lastUsedAt) ? a[1].lastUsedAt : Number.NEGATIVE_INFINITY;
+        const bt = Number.isFinite(b[1].lastUsedAt) ? b[1].lastUsedAt : Number.NEGATIVE_INFINITY;
+        if (at !== bt) return bt > at ? 1 : -1;
+        return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+      });
       for (const [key] of ordered.slice(MAX_AFFINITY_ENTRIES)) scope.rows.delete(key);
       return;
     }
     let oldest: [string, Entry] | undefined;
     for (const row of scope.rows) {
-      if (!oldest || row[1].lastUsedAt <= oldest[1].lastUsedAt) oldest = row;
+      if (!oldest) {
+        oldest = row;
+        continue;
+      }
+      const rowAt = Number.isFinite(row[1].lastUsedAt) ? row[1].lastUsedAt : Number.NEGATIVE_INFINITY;
+      const oldAt = Number.isFinite(oldest[1].lastUsedAt) ? oldest[1].lastUsedAt : Number.NEGATIVE_INFINITY;
+      if (rowAt < oldAt || (rowAt === oldAt && row[0] > oldest[0])) {
+        oldest = row;
+      }
     }
     if (oldest) scope.rows.delete(oldest[0]);
   }

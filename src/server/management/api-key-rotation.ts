@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { parseStrictTimestampMs } from "../../lib/strict-timestamp";
 import type { EpxConfig } from "../../types";
 
 export const API_KEY_ROTATION_TTL_MS = 10 * 60_000;
@@ -22,7 +23,11 @@ function equalOpaqueId(left: string, right: string): boolean {
 export function removeExpiredApiKeyRotations(config: EpxConfig, now = Date.now()): boolean {
   let changed = false;
   for (const entry of config.apiKeys ?? []) {
-    if (entry.pendingRotation && Date.parse(entry.pendingRotation.expiresAt) <= now) {
+    if (!entry.pendingRotation) continue;
+    const expiresMs = typeof entry.pendingRotation.expiresAt === "string"
+      ? parseStrictTimestampMs(entry.pendingRotation.expiresAt)
+      : Number.NaN;
+    if (!Number.isFinite(expiresMs) || expiresMs <= now) {
       delete entry.pendingRotation;
       changed = true;
     }
@@ -37,7 +42,10 @@ export function startApiKeyRotation(
 ): ApiKeyRotationStart | { error: "not-found" | "already-pending" } {
   const entry = (config.apiKeys ?? []).find(candidate => candidate.id === keyId);
   if (!entry) return { error: "not-found" };
-  if (entry.pendingRotation && Date.parse(entry.pendingRotation.expiresAt) > now) {
+  const pendingExpiresMs = entry.pendingRotation && typeof entry.pendingRotation.expiresAt === "string"
+    ? parseStrictTimestampMs(entry.pendingRotation.expiresAt)
+    : Number.NaN;
+  if (Number.isFinite(pendingExpiresMs) && pendingExpiresMs > now) {
     return { error: "already-pending" };
   }
   const key = `epx_data_${randomBytes(20).toString("hex")}`;
@@ -57,7 +65,8 @@ export function commitApiKeyRotation(
   const entry = (config.apiKeys ?? []).find(candidate => candidate.id === keyId);
   if (!entry?.pendingRotation) return { error: "not-found" };
   const pending = entry.pendingRotation;
-  if (Date.parse(pending.expiresAt) <= now) {
+  const expiresMs = typeof pending.expiresAt === "string" ? parseStrictTimestampMs(pending.expiresAt) : Number.NaN;
+  if (!Number.isFinite(expiresMs) || expiresMs <= now) {
     delete entry.pendingRotation;
     return { error: "expired" };
   }

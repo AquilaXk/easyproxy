@@ -445,8 +445,14 @@ export default function Home({
             <p className="m-0 text-[13px] leading-5 text-fg-muted">{t("shellV2.noErrors")}</p>
           ) : (
             <ul className="m-0 flex list-none flex-col gap-1 p-0">
-              {failures.slice(0, 4).map(row => (
-                <li key={`${row.timestamp}:${row.model}`} className="flex items-baseline gap-2.5 rounded-control px-1 py-1.5 text-[13px]">
+              {(() => {
+                const seen = new Map<string, number>();
+                return failures.slice(0, 4).map(row => {
+                  const base = `${row.timestamp}:${row.provider ?? ""}:${row.model}:${row.status}`;
+                  const ordinal = (seen.get(base) ?? 0) + 1;
+                  seen.set(base, ordinal);
+                  return (
+                <li key={ordinal === 1 ? base : `${base}#${ordinal}`} className="flex items-baseline gap-2.5 rounded-control px-1 py-1.5 text-[13px]">
                   <span className="font-mono text-xs text-fg-subtle tabular-nums">
                     {new Date(row.timestamp).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
                   </span>
@@ -459,7 +465,9 @@ export default function Home({
                     {row.model}
                   </span>
                 </li>
-              ))}
+                  );
+                });
+              })()}
             </ul>
           )}
         </section>

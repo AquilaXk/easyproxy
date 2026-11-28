@@ -1,6 +1,7 @@
 import { readConfigDiagnostics } from "../config/diagnostics";
 import { getConfigDir } from "../config/paths";
 import { registerOptionalShutdownHook } from "../lib/optional-shutdown-hooks";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import type { EpxConfig } from "../types";
 import { aggregateTelemetryForDay, type DailyTelemetryAggregate } from "./aggregate";
 import { isTelemetryEnvOptOut, resolveTelemetryStatus, type TelemetryConsentStatus } from "./consent";
@@ -74,8 +75,8 @@ export function resolveNextEligibleTelemetryDay(
   if (!consentTimestamp) {
     return { day: null, reason: "missing-consent-timestamp" };
   }
-  const consentMs = Date.parse(consentTimestamp);
-  if (Number.isNaN(consentMs)) {
+  const consentMs = parseStrictTimestampMs(consentTimestamp);
+  if (!Number.isFinite(consentMs)) {
     return { day: null, reason: "invalid-consent-timestamp" };
   }
   const consentDay = formatUtcDay(consentMs);
@@ -181,8 +182,8 @@ export async function runTelemetryTick(options: TelemetryTickOptions = {}): Prom
   if (current.unreadable) return { sent: false, reason: "state-unreadable" };
   const state = current.state;
   if (state.retryAfterUntil) {
-    const retryUntilMs = Date.parse(state.retryAfterUntil);
-    if (!Number.isNaN(retryUntilMs) && now < retryUntilMs) {
+    const retryUntilMs = parseStrictTimestampMs(state.retryAfterUntil);
+    if (Number.isFinite(retryUntilMs) && now < retryUntilMs) {
       return { sent: false, reason: "retry-after-backoff" };
     }
   }
