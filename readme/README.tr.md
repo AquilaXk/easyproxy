@@ -1,22 +1,20 @@
 <p align="center">
-  <img src="../assets/banner.png" alt="easyproxy — Codex, Claude Code, Claude Desktop, Grok Build ve diğerleri için tek bir yerel ağ geçidi" width="100%">
+  <img
+    src="https://raw.githubusercontent.com/AquilaXk/easyproxy/main/desktop/src-tauri/icons/icon.png"
+    width="80"
+    alt="EasyProxy"
+  >
 </p>
 
-<h3 align="center">AI kodlama araçlarınız ve modelleriniz için tek bir yerel ağ geçidi.</h3>
-<p align="center"><b>Seçtiğiniz modelleri Codex, Claude Code, Claude Desktop ve Grok Build ile kullanın;<br>OpenCode, Pi, Qoder, WorkBuddy, Kilo, Cline, T3 Code ve diğerlerini yönetilen yapılandırmalarla bağlayın.</b><br>
-<a href="https://easyproxy.me/tr/reference/client-support/">Desteklenen tüm araçları görün →</a></p>
+<h1 align="center">EasyProxy</h1>
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI durumu"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?label=release" alt="son sürüm"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="lisans: MIT"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node 18 ve üzeri">
+  AI kodlama araçlarınız ve modelleriniz için tek bir yerel ağ geçidi.
+  <br>
+  Seçtiğiniz modelleri Codex, Claude Code, Claude Desktop ve Grok Build ile kullanın ya da OpenCode, Pi, Qoder, WorkBuddy, Kilo, Cline, T3 Code ve diğerlerini yönetilen yapılandırmalarla bağlayın.
+  <br>
+  <a href="#quick-start"><b>Kurulum ↓</b></a> · <a href="https://easyproxy.me/tr/reference/client-support/"><b>Desteklenen araçlar →</b></a>
 </p>
-
-```bash
-npm install -g --allow-scripts=bun easyproxy
-epx start
-```
 
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Windows için indir (.msi)" height="48"></a>
@@ -28,17 +26,34 @@ epx start
   <sub>macOS düğmesi Apple Silicon (arm64) içindir. <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">Tüm sürüm dosyaları ve sağlama toplamları</a></sub>
 </p>
 
+<p align="center">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/easyproxy"><img alt="npm" src="https://img.shields.io/npm/v/easyproxy?style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+  <a href="https://github.com/sponsors/AquilaXk"><img alt="GitHub Sponsors" src="https://img.shields.io/github/sponsors/AquilaXk?style=flat-square&logo=githubsponsors&label=Sponsors"></a>
+</p>
+
+<p align="center">
+  <a href="../README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ru.md">Русский</a> · <a href="README.ja.md">日本語</a> · <b>Türkçe</b> · 📖 <a href="https://easyproxy.me/tr/"><b>Tüm dokümantasyon →</b></a>
+</p>
+
+```bash
+npm install -g --allow-scripts=bun easyproxy
+epx start
+```
+
 <table>
 <tr>
 <td width="50%" valign="middle">
 
 ### Claude Code, istediğiniz modelle
 
-Seçici Claude Code'un kendi seçicisi. Arkasındaki beyin değil.
+Seçici Claude Code'un kendi seçicisi olarak kalır, arkasındaki modeli siz seçersiniz.
 
 </td>
 <td width="50%">
-  <img src="../assets/claude-code-models.gif" alt="easyproxy üzerinden yönlendirilen bir modeli çalıştıran Claude Code — durum çubuğunda etkin model olarak gpt-5.6-luna-medium görünüyor" width="100%">
+  <img src="../assets/claude-code-models.gif" alt="easyproxy üzerinden yönlendirilen bir modeli çalıştıran Claude Code (durum çubuğunda etkin model olarak gpt-5.6-luna-medium görünüyor)" width="100%">
 </td>
 </tr>
 <tr>
@@ -46,11 +61,11 @@ Seçici Claude Code'un kendi seçicisi. Arkasındaki beyin değil.
 
 ### Codex, istediğiniz modelle
 
-Bir sağlayıcı seçin ve başlayın — aynı iş akışı, farklı beyin.
+Bir sağlayıcı seçin ve alışkın olduğunuz iş akışını koruyun.
 
 </td>
 <td width="50%">
-  <img src="../assets/demo.gif" alt="easyproxy demosu — Codex uygulamasında OpenAI dışı bir yönlendirilmiş modelle görev çalıştırma" width="100%">
+  <img src="../assets/demo.gif" alt="Codex uygulamasında OpenAI dışı bir yönlendirilmiş modelle görev çalıştıran easyproxy demosu" width="100%">
 </td>
 </tr>
 <tr>
@@ -79,11 +94,45 @@ Sol oturumu yürütüyor ve bir Kimi K3 alt ajanını çağırıyor.
 </tr>
 </table>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ru.md">Русский</a> · <a href="README.ja.md">日本語</a> · <b>Türkçe</b> · 📖 <a href="https://easyproxy.me/tr/"><b>Tüm dokümantasyon →</b></a>
-</p>
-
 easyproxy, kodlama araçlarınızla model sağlayıcılarınız arasında çalışan hafif bir yerel ağ geçididir. Responses, Chat Completions ve Anthropic Messages API isteklerini kabul edip sağlayıcınızın protokolüne çevirir; istemci, model ve sağlayıcı desteklediğinde akış, araç çağrıları, akıl yürütme ve görselleri aktarır. Claude, Gemini, Grok, GLM, DeepSeek, Kimi, Qwen, Ollama ve diğer sağlayıcıları Codex, Claude Code, Claude Desktop, Grok Build ve [istemci desteği sayfasındaki](https://easyproxy.me/tr/reference/client-support/) araçlarla kullanın.
+
+## Öne çıkanlar
+
+- **Codex, Claude Code, Claude Desktop ve Grok Build ile istediğiniz LLM.** Kutudan çıktığı gibi 40'tan fazla sağlayıcı, her biri kendi yerel arayüzünü korur.
+- **Kombolar.** Sağlayıcılar arasında failover ya da ağırlıklı round-robin yapan tek bir sanal model kimliği. [Kombo rehberine](https://easyproxy.me/tr/guides/combos/) bakın.
+- **Her modelde alt ajanlar.** Yönlendirilmiş modelleri Codex'in alt ajan seçicisinde gösterin; v1/v2 yüzey denetimi ve yedek zincirleriyle birlikte çalışır. [Alt ajan rehberine](https://easyproxy.me/tr/guides/sub-agent-surface/) bakın.
+- **Bir kez giriş yapın ya da API anahtarı getirin.** xAI, Anthropic ve Kimi için OAuth; `codex login` yönlendirmesi; anahtar yapıştırma veya `${ENV_VAR}` referansları.
+- **Web araması ve görü yardımcıları.** OpenAI dışı modeller, ChatGPT girişiniz üzerinden çalışan bir yardımcı süreç sayesinde gerçek web araması ve görsel anlama kazanır.
+- **Canlı panel ve günlükler.** Kontrol paneli sağlayıcıları, OAuth durumunu, model seçimini ve önbellek belirteç sayılarını içeren canlı bir istek günlüğünü gösterir.
+- **Temiz çıkış.** `epx stop` Codex'i özgün yapılandırmasına geri döndürür.
+- **Sınırlı bellek sahipliği.** Uzun ömürlü her önbelleğin, halka arabelleğinin ve protokol çevirisi deposunun sonlu bir üst sınırı, bayt bütçesi ya da etkin bir uzlaştırması vardır. Yapılandırma yeniden yüklendiğinde sınırsız hiçbir `Map` ya da `Set` hayatta kalmaz.
+
+<details>
+<summary>Bellek sahipliği ayrıntıları</summary>
+
+EasyProxy, süreçte tutulan durumu aşağıdaki kategorilerde izler. Her birinin belgelenmiş bir sınırı vardır:
+
+- **15 tutulan depo** (istek günlüğü, hata ayıklama halkaları, görsel önbelleği, model önbelleği, görü
+  açıklamaları, imleç blob'ları, responses devamlılığı vb.) bayt olarak hesaplanır ve uygulamanın sahip
+  olduğu bellek bütçesiyle (varsayılan 256 MiB) tahliye edilir; yalnızca native control replay deposu
+  sabitlenmiştir ve hiç tahliye edilmez.
+- **4 gözlenen arabellek** (çevirici biriktiricileri, görsel/OAuth/Grok kuyrukları) tahliye edilmeden,
+  yalnızca uçuştaki bayt baskısı için izlenir.
+- **32 state-store kaydı**, süre dolumu taramalarını (60 sn aralık) ve yapılandırma kuşağı uzlaştırmasını
+  yürüterek eski sağlayıcı/hesap anahtarlarını kaldırır.
+- **Yol ve parmak izi notları** (çalışma alanı meta verileri, sağlamlaştırılmış kimlikler, kurulum
+  tuzları, mod ipucu yetenekleri) ekleme sıralı LRU sınırları kullanır (8–128 girdi).
+- **Model önbelleği kuşak mezar taşları** uzlaştırmadan sonra silinir; genel bir kuşak artışı, uçuştaki
+  eski keşiflerin kaldırılmış sağlayıcıları yeniden doldurmasını engeller.
+- **Lab olay kimliği yinelenme ayıklaması** diskten alınan bir defter kilidi altında çalışır; süreç
+  düzeyinde RAM dizini yoktur.
+
+Canlı tutulan baytları, tahliye sayaçlarını ve gözcü örneklerini incelemek için yönetici belirteciyle
+`GET /api/system/memory` çağrısını yapın.
+
+</details>
+
+<a id="quick-start"></a>
 
 ## Hızlı başlangıç
 
@@ -97,7 +146,7 @@ epx start                         # proxy + kontrol paneli, localhost:10100
 Arka planda çalıştırmak için `epx service` kullanın.
 
 **http://localhost:10100** adresini açın ve her şeyi web kontrol panelinden yapılandırın: sağlayıcı
-ekleyin (40'tan fazla hazır sağlayıcı ya da herhangi bir OpenAI uyumlu uç nokta), model seçin, hesap
+ekleyin (40'tan fazla hazır sağlayıcı ya da herhangi bir OpenAI uyumlu uç nokta), model seçin ve hesap
 yönetin. `epx gui` paneli istediğiniz zaman yeniden açar.
 
 ### Aracınızı bağlayın
@@ -145,7 +194,20 @@ anlatır; [`CLI_CONSENT.md`](../CLI_CONSENT.md#where-things-are-installed) diske
 </details>
 
 <details>
-<summary>Docker Compose</summary>
+<summary><b>Desteklenen platformlar</b></summary>
+
+| İşletim sistemi | Durum | Servis yöneticisi | Masaüstü uygulaması (beta) |
+|---|---|---|---|
+| macOS (arm64 / x64) | Tam destekleniyor | launchd | `arm64` / `x64` `.dmg` |
+| Linux (x64 / arm64) | Tam destekleniyor | systemd (kullanıcı birimi) | x86_64 `.AppImage` / `.deb` |
+| Windows (x64) | Tam destekleniyor | Görev Zamanlayıcı (gizli) / isteğe bağlı yerel servis (`--native`, WinSW) | x64 `.msi` |
+
+CLI kurulumu [Node](https://nodejs.org) 18 veya üzerini gerektirir; masaüstü uygulamasının ne Node'a ne de Bun'a ihtiyacı vardır. Bun çalışma zamanı `npm install` sırasında paketlendiğinden ayrıca Bun kurmanıza ve Windows'ta WSL kullanmanıza gerek yoktur. npm paketlenmiş çalışma zamanının kurulum betiklerini engellediyse [kurulum belgelerine](https://easyproxy.me/tr/getting-started/installation/) bakın.
+
+</details>
+
+<details>
+<summary><b>Docker Compose</b></summary>
 
 Depo, digest ile sabitlenmiş, root olmayan bir Compose derlemesi içerir. Derleme, seçilen Git anlık
 görüntüsünden standart uyumluluk manifestosunu üretip doğrular. Yerel klon için Git ve Docker Compose,
@@ -197,7 +259,7 @@ uzaktan yönetim ve geri alma için
 </details>
 
 <details>
-<summary>Kaynaktan kurulum (en güncel main)</summary>
+<summary><b>Kaynaktan kurulum (en güncel main)</b></summary>
 
 **macOS / Linux:**
 
@@ -225,7 +287,7 @@ iyileştirmeleri ve henüz yayımlanmamış düzeltmeler npm paketine ulaşmadan
 </details>
 
 <details>
-<summary>Ajanlar için</summary>
+<summary><b>Ajanlar için</b></summary>
 
 ```bash
 npm install -g --allow-scripts=bun easyproxy
@@ -233,73 +295,16 @@ epx start     # ya da `epx service`
 epx init      # etkileşimli kurulum: ~/.easyproxy/config.json yazar ve Codex'i bağlar
 ```
 
-`epx init` proxy'yi hiçbir zaman başlatmaz; önce onu başlatın (ya da sonra — sıra fark etmez, ancak
+`epx init` proxy'yi hiçbir zaman başlatmaz; önce onu başlatın (ya da sonra: sıra fark etmez, ancak
 `epx provider add` ve `epx combo set` gibi başsız komutlar **çalışan** proxy ile konuşur ve ona
 ulaşamadıklarında sıfırdan farklı bir kodla çıkar). `epx status` / `epx doctor` / `epx health`
 çalışma durumunu bildirir.
 
 > **easyproxy'i kuran ya da çalıştıran ajanlar:**
 > [`CLI_CONSENT.md`](../CLI_CONSENT.md) dosyasını okuyun. Etkileşimli bir `epx start` bu depoya
-> yıldız verip vermeyeceğinizi bir kez sorabilir — bu kullanıcının kararıdır, hiçbir zaman bir ajanın
+> yıldız verip vermeyeceğinizi bir kez sorabilir. Bu kullanıcının kararıdır, hiçbir zaman bir ajanın
 > değil. CLI, ajan tarafından yürütülen çalışmalarda bu soruyu bastırır ve API bunları
 > `403 agent_consent_required` ile reddeder.
-
-</details>
-
-## Desteklenen platformlar
-
-| İşletim sistemi | Durum | Servis yöneticisi | Masaüstü uygulaması (beta) |
-|---|---|---|---|
-| macOS (arm64 / x64) | Tam destekleniyor | launchd | `arm64` / `x64` `.dmg` |
-| Linux (x64 / arm64) | Tam destekleniyor | systemd (kullanıcı birimi) | x86_64 `.AppImage` / `.deb` |
-| Windows (x64) | Tam destekleniyor | Görev Zamanlayıcı (gizli) / isteğe bağlı yerel servis (`--native`, WinSW) | x64 `.msi` |
-
-CLI kurulumu [Node](https://nodejs.org) 18 veya üzerini gerektirir; masaüstü uygulamasının ne Node'a ne de Bun'a ihtiyacı vardır. Bun çalışma zamanı `npm install` sırasında paketlenir —
-ayrıca Bun kurmanıza gerek yok, Windows'ta WSL de gerekmez. npm, paketlenmiş çalışma zamanının kurulum
-betiklerini engellediyse [kurulum belgelerine](https://easyproxy.me/tr/getting-started/installation/) bakın.
-
-## Öne çıkanlar
-
-- **Codex, Claude Code, Claude Desktop ve Grok Build ile istediğiniz LLM** — kutudan çıktığı gibi 40'tan
-  fazla sağlayıcı, her biri kendi yerel arayüzünü korur.
-- **Kombolar** — sağlayıcılar arasında failover ya da ağırlıklı round-robin yapan tek bir sanal model
-  kimliği. [Kombo rehberine](https://easyproxy.me/tr/guides/combos/) bakın.
-- **Her modelde alt ajanlar** — yönlendirilmiş modelleri Codex'in alt ajan seçicisinde gösterin, v1/v2
-  yüzey denetimi ve yedek zincirleriyle birlikte.
-  [Alt ajan rehberine](https://easyproxy.me/tr/guides/sub-agent-surface/) bakın.
-- **Bir kez giriş yapın, API anahtarını atlayın** — xAI, Anthropic ve Kimi için OAuth; ya da
-  `codex login` oturumunu iletin, bir anahtar yapıştırın veya `${ENV_VAR}` referansları kullanın.
-- **Web araması ve görü yardımcıları** — OpenAI dışı modeller, ChatGPT girişiniz üzerinden çalışan bir
-  yardımcı süreç sayesinde gerçek web araması ve görsel anlama kazanır.
-- **Ne olup bittiğini görün** — kontrol paneli sağlayıcıları, OAuth durumunu, model seçimini ve önbellek
-  belirteç sayılarını içeren canlı bir istek günlüğünü gösterir.
-- **Temiz çıkış, sıfır artık** — `epx stop` Codex'i özgün yapılandırmasına geri döndürür.
-- **Sınırlı bellek sahipliği** — uzun ömürlü her önbelleğin, halka arabelleğinin ve protokol çevirisi
-  deposunun sonlu bir üst sınırı, bayt bütçesi ya da etkin bir uzlaştırması vardır. Yapılandırma yeniden
-  yüklendiğinde sınırsız hiçbir `Map` ya da `Set` hayatta kalmaz.
-
-<details>
-<summary>Bellek sahipliği ayrıntıları</summary>
-
-EasyProxy, süreçte tutulan durumu aşağıdaki kategorilerde izler. Her birinin belgelenmiş bir sınırı vardır:
-
-- **15 tutulan depo** (istek günlüğü, hata ayıklama halkaları, görsel önbelleği, model önbelleği, görü
-  açıklamaları, imleç blob'ları, responses devamlılığı vb.) bayt olarak hesaplanır ve uygulamanın sahip
-  olduğu bellek bütçesiyle (varsayılan 256 MiB) tahliye edilir; yalnızca native control replay deposu
-  sabitlenmiştir ve hiç tahliye edilmez.
-- **4 gözlenen arabellek** (çevirici biriktiricileri, görsel/OAuth/Grok kuyrukları) tahliye edilmeden,
-  yalnızca uçuştaki bayt baskısı için izlenir.
-- **32 state-store kaydı**, süre dolumu taramalarını (60 sn aralık) ve yapılandırma kuşağı uzlaştırmasını
-  yürüterek eski sağlayıcı/hesap anahtarlarını kaldırır.
-- **Yol ve parmak izi notları** (çalışma alanı meta verileri, sağlamlaştırılmış kimlikler, kurulum
-  tuzları, mod ipucu yetenekleri) ekleme sıralı LRU sınırları kullanır (8–128 girdi).
-- **Model önbelleği kuşak mezar taşları** uzlaştırmadan sonra silinir; genel bir kuşak artışı, uçuştaki
-  eski keşiflerin kaldırılmış sağlayıcıları yeniden doldurmasını engeller.
-- **Lab olay kimliği yinelenme ayıklaması** diskten alınan bir defter kilidi altında çalışır; süreç
-  düzeyinde RAM dizini yoktur.
-
-Canlı tutulan baytları, tahliye sayaçlarını ve gözcü örneklerini incelemek için yönetici belirteciyle
-`GET /api/system/memory` çağrısını yapın.
 
 </details>
 
@@ -318,7 +323,8 @@ Varsayılan sağlayıcıyı kullanmak ya da model adı desenine göre otomatik e
 değiştirilmiş biçimde sunulur; eğik çizgili tam biçim de çalışmaya devam eder. Ayrıntılar:
 [model yönlendirme belgeleri](https://easyproxy.me/tr/guides/model-routing/).
 
-### JEV Auto yönlendirme (isteğe bağlı)
+<details>
+<summary><b>JEV Auto yönlendirme (isteğe bağlı)</b></summary>
 
 TypeSafe JEV, açıkça etkinleştirilen bir Combo için ilk modeli ve akıl yürütme düzeyini seçebilir;
 normal model seçici ve tüm doğrudan rotalar değişmez. Kimlik bilgisini `epx login jev` ile,
@@ -337,10 +343,12 @@ modeline de sorabilir: `baseUrl` değeri tam `/v1/systemone` uç noktası olan b
 sağlayıcısı ekleyin ve Combo'nun `decisionProvider` alanına yazın. TypeSafe kimlik bilgileri oraya asla
 gönderilmez. Ayrıntılar: [kendi barındırılan karar modeli](https://easyproxy.me/tr/guides/combos/).
 
+</details>
+
 ## Sağlayıcılar ve adaptörler
 
 OpenAI (ChatGPT girişi ya da API anahtarı), Anthropic, Google Gemini, xAI, Kimi, Azure OpenAI, Ollama
-(yerel + Cloud), Cursor (deneysel) ve her OpenAI uyumlu uç nokta — ayrıca DeepSeek, Groq, OpenRouter, OpenGateway,
+(yerel + Cloud), Cursor (deneysel) ve her OpenAI uyumlu uç nokta; ayrıca DeepSeek, Groq, OpenRouter, OpenGateway,
 Together, Fireworks, Cerebras, Mistral, Hugging Face, NVIDIA NIM, MiniMax, Qwen Cloud, Qoder Global ve CN
 (resmî PAT + CLI), SiliconFlow ve daha fazlası. Tam liste: `epx init` ya da
 [sağlayıcı belgeleri](https://easyproxy.me/tr/guides/providers/).
@@ -369,7 +377,8 @@ noktasını hangi işlemin tuttuğunu bildirir; böylece ilkinin yanında ikinci
 Bağlantı noktasını boşaltın veya `--port` ile farklı bir tane belirtin. Tam başvuru:
 [CLI belgeleri](https://easyproxy.me/tr/reference/cli/).
 
-### Sağlık ve hazırlık
+<details>
+<summary><b>Sağlık ve hazırlık</b></summary>
 
 `GET /healthz` proxy'nin o anki canlılığını bildirir. Kimlik doğrulaması gerektirmeyen `GET /readyz`
 uç noktası, eşitleme sonrası hazırlığı arındırılmış `{service, version, uptime, pid, port, status}` JSON
@@ -390,6 +399,8 @@ sayı kabul eder. CLI `--json` çıktısı `{ready, status, pid, port}` biçimin
 
 `/readyz` içermeyen eski bir proxy `unreachable` olarak fail-closed davranır ve 1 koduyla çıkar;
 `epx health` ise uyumlu kalır.
+
+</details>
 
 ### Otomatik başlatma: servis mi shim mi
 
@@ -413,23 +424,22 @@ Geri döngünün dışına bağlanmak (`"hostname": "0.0.0.0"`) bir bearer belir
 `x-easyproxy-api-key` olarak taşımalıdır. Ayrıntılar:
 [yapılandırma başvurusu](https://easyproxy.me/tr/reference/configuration/).
 
-## Gelişmiş kullanım
+<details>
+<summary><b>ChatGPT hesap havuzu (gelişmiş)</b></summary>
 
 İleri düzey kullanıcılar için kendi barındırdığınız seçenekler. Etkinleştirmeden önce her sağlayıcının koşullarını inceleyin.
-
-### ChatGPT hesap havuzu
 
 easyproxy, Codex kimlik doğrulaması için bir **ChatGPT hesap havuzu** da yönetebilir. Birden fazla
 ChatGPT / Codex hesabı ekleyin, 5 saatlik / haftalık / 30 günlük kotalarını panelden tazeleyin. Kota
 yönlendirmesinde yeni oturumlar en az kullanılan sağlıklı hesabı kullanabilir; round-robin ve
 fill-first kendi politikalarını izler. Mevcut Codex dizileri normalde onları başlatan hesaba bağlı
-kalır, böylece uzun SSH, tmux ya da mobil oturumlar konuşmanın ortasında hesap değiştirmez — ancak
+kalır, böylece uzun SSH, tmux ya da mobil oturumlar konuşmanın ortasında hesap değiştirmez; ancak
 kota yeniden değerlendirmesi, failover, hesabın devre dışı bırakılması, bağlılığın süresinin dolması
 ya da 401/403 ve 429 toparlanması bu bağı yeniden kurabilir. Yalnızca diğerleri tükendiğinde
-kullanılmasını istediğiniz bir hesap varsa — genellikle Codex Desktop girişiniz — hesaplara bir seçim
+kullanılmasını istediğiniz bir hesap varsa (örneğin Codex Desktop girişiniz), hesaplara bir seçim
 sırası verin.
 
-- **ChatGPT hesaplarını havuzlayın** — dizi bağlılığı, kota farkındalıklı otomatik geçiş, bekleme süresi ve
+- **ChatGPT hesaplarını havuzlayın:** dizi bağlılığı, kota farkındalıklı otomatik geçiş, bekleme süresi ve
   fail-closed kimlik doğrulama davranışı.
 
   > **Sağlayıcı politikası notu:** Hesap havuzu yalnızca yönlendirme ve işletimsel dayanıklılık içindir;
@@ -440,20 +450,7 @@ sırası verin.
   > [Codex Auth hesap havuzu rehberi](https://easyproxy.me/tr/guides/web-dashboard/)
   > ve [OpenAI'nin güncel Kullanım Koşulları](https://openai.com/policies/terms-of-use/).
 
-## Belgeler
-
-Herkese açık belgeler — kurulum, sağlayıcılar, yönlendirme, kombolar, alt ajanlar, yardımcı süreçler,
-entegrasyonlar ve CLI/yapılandırma/yönetim API'si başvuruları — [`docs-site/`](../docs-site) içinden
-derlenir ve **[easyproxy.me](https://easyproxy.me/tr/)** adresinde yayımlanır.
-
-Bakımcılar için doğruluk kaynağı notları [`structure/`](../structure) altında, güvenlik bildirimi ise
-[`SECURITY.md`](../SECURITY.md) içindedir. Açıklanmamış güvenlik açıklarını herkese açık bir issue
-yerine [GitHub özel güvenlik açığı bildirimi](https://github.com/AquilaXk/easyproxy/security/advisories/new)
-üzerinden gizlice bildirin.
-Teknik kanal yalnızca bu formdur; ayrı bir güvenlik e-posta adresi yoktur. Sonraki yazışmalar özel
-bildirimin içinde kalır; herkese açık bir issue yalnızca koordinasyon taşıyabilir, güvenlik açığının
-ayrıntılarını asla. Bildirimin alındığını onaylamak onu incelemekle aynı şey değildir ve ilk yanıt
-için bir süre taahhüt edilmez.
+</details>
 
 ## Geliştirme
 
@@ -467,6 +464,42 @@ bun install
 bun run typecheck
 bun run test
 ```
+
+## Belgeler
+
+Herkese açık belgeler [`docs-site/`](../docs-site) içinden derlenir ve **[easyproxy.me](https://easyproxy.me/tr/)** adresinde yayımlanır:
+
+- [Kurulum](https://easyproxy.me/tr/getting-started/installation/)
+- [Sağlayıcılar](https://easyproxy.me/tr/guides/providers/)
+- [Model yönlendirme](https://easyproxy.me/tr/guides/model-routing/)
+- [Kombolar](https://easyproxy.me/tr/guides/combos/)
+- [Alt ajan arayüzü](https://easyproxy.me/tr/guides/sub-agent-surface/)
+- [Web kontrol paneli](https://easyproxy.me/tr/guides/web-dashboard/)
+- [Masaüstü uygulaması](https://easyproxy.me/tr/guides/desktop-app/)
+- [Remote Hub dağıtımı](https://easyproxy.me/tr/guides/remote-hub/)
+- [CLI başvurusu](https://easyproxy.me/tr/reference/cli/)
+- [Yapılandırma başvurusu](https://easyproxy.me/tr/reference/configuration/)
+
+Bakımcılar için doğruluk kaynağı notları [`structure/`](../structure) altında, güvenlik bildirimi ise
+[`SECURITY.md`](../SECURITY.md) içindedir. Açıklanmamış güvenlik açıklarını herkese açık bir issue
+yerine [GitHub özel güvenlik açığı bildirimi](https://github.com/AquilaXk/easyproxy/security/advisories/new)
+üzerinden gizlice bildirin.
+Teknik kanal yalnızca bu formdur; ayrı bir güvenlik e-posta adresi yoktur. Sonraki yazışmalar özel
+bildirimin içinde kalır; herkese açık bir issue yalnızca koordinasyon taşıyabilir, güvenlik açığının
+ayrıntılarını asla. Bildirimin alındığını onaylamak onu incelemekle aynı şey değildir ve ilk yanıt
+için bir süre taahhüt edilmez.
+
+## Geri bildirim
+
+Bir hata mı buldunuz ya da eksik bir özellik mi var? [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) üzerinden bildirin ya da [belgelere](https://easyproxy.me/tr/) göz atın. EasyProxy zaman kazandırıyorsa yıldız vermeniz başkalarının da keşfetmesine yardımcı olur.
+
+## Sponsorluk
+
+EasyProxy ücretsiz ve açık kaynaklıdır. Sponsorluk desteği geliştirme süresini ve testlerde kullanılan model belirteçlerini karşılar: [github.com/sponsors/AquilaXk](https://github.com/sponsors/AquilaXk).
+
+### Destekçiler
+
+Adınız burada yer alabilir: [sponsor olun](https://github.com/sponsors/AquilaXk).
 
 ## Kod imzalama politikası (Code signing policy)
 
@@ -482,12 +515,8 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 easyproxy bağımsız, toplulukça sürdürülen bir projedir ve **OpenAI, Anthropic ya da başka herhangi bir sağlayıcıyla bağlantılı değildir, onlar tarafından onaylanmamıştır**.
 
-Bazı sağlayıcılar — özellikle Anthropic (Claude) — API trafiğini üçüncü taraf bir proxy üzerinden geçiren hesapları askıya alabilir ya da kısıtlayabilir. **Kullanım riski size aittir (UAYOR).** Bir sağlayıcıyı bağlamadan önce, proxy tabanlı erişime izin verildiğini doğrulamak için hizmet koşullarını inceleyin. easyproxy bakımcıları, yukarı akış sağlayıcılarının aldığı hesap kararlarından sorumlu değildir.
-
-## Geri bildirim
-
-İş akışınızda sorun çıkarsa veya bir hata fark ederseniz [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) üzerinden bildirin ya da [belgelere](https://easyproxy.me/tr/) göz atın.
+Bazı sağlayıcılar (özellikle Anthropic Claude), API trafiğini üçüncü taraf bir proxy üzerinden geçiren hesapları askıya alabilir ya da kısıtlayabilir. **Kullanım riski size aittir (UAYOR).** Bir sağlayıcıyı bağlamadan önce, proxy tabanlı erişime izin verildiğini doğrulamak için hizmet koşullarını inceleyin. easyproxy bakımcıları, yukarı akış sağlayıcılarının aldığı hesap kararlarından sorumlu değildir.
 
 ## Lisans
 
-MIT
+EasyProxy, [MIT Lisansı](../LICENSE) kapsamında dağıtılmaktadır. Üçüncü taraf bileşenler kendi lisanslarını korur; bkz. [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).

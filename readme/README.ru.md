@@ -1,22 +1,20 @@
 <p align="center">
-  <img src="../assets/banner.png" alt="easyproxy — один локальный шлюз для Codex, Claude Code, Claude Desktop, Grok Build и других инструментов" width="100%">
+  <img
+    src="https://raw.githubusercontent.com/AquilaXk/easyproxy/main/desktop/src-tauri/icons/icon.png"
+    width="80"
+    alt="EasyProxy"
+  >
 </p>
 
-<h3 align="center">Один локальный шлюз для ваших инструментов программирования с ИИ и моделей.</h3>
-<p align="center"><b>Используйте выбранные модели с Codex, Claude Code, Claude Desktop и Grok Build,<br>а OpenCode, Pi, Qoder, WorkBuddy, Kilo, Cline, T3 Code и другие подключайте через управляемые конфигурации.</b><br>
-<a href="https://easyproxy.me/ru/reference/client-support/">Все поддерживаемые инструменты →</a></p>
+<h1 align="center">EasyProxy</h1>
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="статус CI"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?label=release" alt="последний релиз"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="лицензия: MIT"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node >= 18">
+  Единый локальный шлюз для ваших инструментов программирования с ИИ и моделей.
+  <br>
+  Используйте выбранные модели с Codex, Claude Code, Claude Desktop и Grok Build или подключайте OpenCode, Pi, Qoder, WorkBuddy, Kilo, Cline, T3 Code и другие через управляемые конфигурации.
+  <br>
+  <a href="#quick-start"><b>Установить ↓</b></a> · <a href="https://easyproxy.me/ru/reference/client-support/"><b>Поддерживаемые инструменты →</b></a>
 </p>
-
-```bash
-npm install -g --allow-scripts=bun easyproxy
-epx start
-```
 
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Скачать для Windows (.msi)" height="48"></a>
@@ -28,17 +26,34 @@ epx start
   <sub>Кнопка macOS предназначена для Apple Silicon (arm64). <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">Все файлы и контрольные суммы</a></sub>
 </p>
 
+<p align="center">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/easyproxy"><img alt="npm" src="https://img.shields.io/npm/v/easyproxy?style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+  <a href="https://github.com/sponsors/AquilaXk"><img alt="GitHub Sponsors" src="https://img.shields.io/github/sponsors/AquilaXk?style=flat-square&logo=githubsponsors&label=Sponsors"></a>
+</p>
+
+<p align="center">
+  <a href="../README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <b>Русский</b> · <a href="README.ja.md">日本語</a> · <a href="README.tr.md">Türkçe</a> · 📖 <a href="https://easyproxy.me/ru/"><b>Полная документация →</b></a>
+</p>
+
+```bash
+npm install -g --allow-scripts=bun easyproxy
+epx start
+```
+
 <table>
 <tr>
 <td width="50%" valign="middle">
 
 ### Claude Code на любой модели
 
-Селектор — штатный Claude Code. Мозг за ним — нет.
+Селектор остаётся штатным Claude Code, а модель за ним выбираете вы.
 
 </td>
 <td width="50%">
-  <img src="../assets/claude-code-models.gif" alt="Claude Code работает на маршрутизированной модели через easyproxy — в строке состояния активна gpt-5.6-luna-medium" width="100%">
+  <img src="../assets/claude-code-models.gif" alt="Claude Code работает на маршрутизированной модели через easyproxy (в строке состояния активна gpt-5.6-luna-medium)" width="100%">
 </td>
 </tr>
 <tr>
@@ -46,11 +61,11 @@ epx start
 
 ### Codex на любой модели
 
-Выберите провайдера — и вперёд: тот же рабочий процесс, другой «мозг».
+Выберите провайдера и сохраните привычный рабочий процесс.
 
 </td>
 <td width="50%">
-  <img src="../assets/demo.gif" alt="Демонстрация easyproxy — выполнение задачи в приложении Codex на маршрутизированной модели не от OpenAI" width="100%">
+  <img src="../assets/demo.gif" alt="Демонстрация easyproxy: выполнение задачи в приложении Codex на маршрутизированной модели не от OpenAI" width="100%">
 </td>
 </tr>
 <tr>
@@ -79,11 +94,47 @@ Sol ведёт сессию и вызывает подагента Kimi K3.
 </tr>
 </table>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <b>Русский</b> · <a href="README.ja.md">日本語</a> · <a href="README.tr.md">Türkçe</a> · 📖 <a href="https://easyproxy.me/ru/"><b>Полная документация →</b></a>
-</p>
-
 easyproxy — лёгкий локальный шлюз между вашими инструментами программирования и поставщиками моделей. Он принимает запросы API Responses, Chat Completions и Anthropic Messages и переводит их в протокол провайдера, передавая потоковые ответы, вызовы инструментов, рассуждения и изображения там, где это поддерживают клиент, модель и провайдер. Используйте Claude, Gemini, Grok, GLM, DeepSeek, Kimi, Qwen, Ollama и других провайдеров с Codex, Claude Code, Claude Desktop, Grok Build и инструментами со [страницы поддержки клиентов](https://easyproxy.me/ru/reference/client-support/).
+
+## Основные возможности
+
+- **Любая LLM в Codex, Claude Code, Claude Desktop и Grok Build.** Более 40 встроенных провайдеров, каждый со своим нативным UI.
+- **Combos.** Один виртуальный id модели с failover или взвешенным round-robin между провайдерами. См. [руководство по combos](https://easyproxy.me/ru/guides/combos/).
+- **Подагенты на любой модели.** Выводите маршрутизируемые модели в селектор подагентов Codex с управлением поверхностями v1/v2 и цепочками fallback. См. [руководство по подагентам](https://easyproxy.me/ru/guides/sub-agent-surface/).
+- **Один вход или API-ключ.** OAuth для xAI, Anthropic и Kimi; проброс `codex login`; вставка ключа или ссылки `${ENV_VAR}`.
+- **Сайдкары веб-поиска и зрения.** Модели не от OpenAI получают настоящий веб-поиск и понимание изображений через сайдкар поверх вашего входа ChatGPT.
+- **Живая панель и журнал.** Панель показывает провайдеров, статус OAuth, выбор моделей и живой журнал запросов с количеством токенов кэша.
+- **Чистый выход.** `epx stop` возвращает Codex к исходной конфигурации.
+- **Ограниченное владение памятью.** У каждого долгоживущего кэша, кольцевого буфера и хранилища трансляции протокола есть конечный потолок, байтовый бюджет или активная сверка. Ни один неограниченный `Map` или `Set` не переживает перезагрузку конфигурации.
+
+<details>
+<summary>Подробности владения памятью</summary>
+
+EasyProxy отслеживает состояние, удерживаемое процессом, в категориях ниже. У каждой есть
+документированная граница:
+
+- **15 удерживаемых хранилищ** (журнал запросов, отладочные кольца, кэш изображений, кэш
+  моделей, vision-описания, cursor-блобы, продолжение responses и т. д.) учитываются
+  в байтах и вытесняются бюджетом памяти приложения (по умолчанию 256 MiB), кроме
+  хранилища native control replay: оно закреплено и не вытесняется.
+- **4 наблюдаемых буфера** (аккумуляторы транслятора, хвосты image/OAuth/Grok)
+  мониторятся по байтовому давлению in-flight без вытеснения.
+- **32 регистрации state-store** выполняет sweeps истечения (интервал 60 с) и сверку
+  поколений конфигурации, чтобы удалять устаревшие ключи провайдеров и аккаунтов.
+- **Мемо пути и отпечатков** (метаданные рабочей области, усиленные идентификаторы,
+  соли установки, возможности mode-hint) используют LRU-потолки в порядке вставки
+  (8–128 записей).
+- **Tombstone поколений кэша моделей** удаляются после сверки; глобальный инкремент
+  поколения не даёт устаревшим in-flight discovery снова заполнить удалённых провайдеров.
+- **Дедупликация event-id в Lab** работает под блокировкой журнала с диска, без
+  процессного RAM-индекса.
+
+Выполните `GET /api/system/memory` (с admin-токеном), чтобы посмотреть живые удержанные
+байты, счётчики вытеснения и выборки watchdog.
+
+</details>
+
+<a id="quick-start"></a>
 
 ## Быстрый старт
 
@@ -97,7 +148,7 @@ epx start                         # прокси + панель управлен
 Чтобы запустить его в фоне, используйте `epx service`.
 
 Откройте **http://localhost:10100** и настройте всё в веб-панели: добавьте провайдеров
-(40+ встроенных или любой OpenAI-совместимый endpoint), выберите модели, управляйте
+(40+ встроенных или любой OpenAI-совместимый endpoint), выберите модели и управляйте
 аккаунтами. `epx gui` в любой момент снова откроет панель.
 
 ### Подключите свой инструмент
@@ -118,17 +169,13 @@ epx start                         # прокси + панель управлен
 <details>
 <summary><b>Настольное приложение (бета)</b></summary>
 
-Настольное приложение — это тот же прокси и та же панель управления в нативном окне,
-с иконкой в трее и встроенным `epx`. Оно подключается к уже запущенному прокси либо
-запускает встроенный, а панель остаётся на порту прокси (**http://localhost:10100**,
-если вы не настроили другой). Выберите файл для своей платформы в
-[последнем релизе](https://github.com/AquilaXk/easyproxy/releases/latest):
+Настольное приложение объединяет тот же прокси и панель управления в нативном окне с иконкой в трее и встроенным `epx`. Оно подключается к уже запущенному прокси либо запускает встроенный, а панель остаётся на порту прокси (**http://localhost:10100**, если вы не настроили другой). Выберите файл для своей платформы в [последнем релизе](https://github.com/AquilaXk/easyproxy/releases/latest):
 
 | Платформа | Файл | Примечания |
 |---|---|---|
 | macOS 14+ (Apple Silicon) | `EasyProxy-<version>-macos-arm64.dmg` | Подписана Developer ID и нотариализована при наличии учётных данных Apple; без них остаётся неподписанной (в Gatekeeper выберите **ПКМ → Открыть**) |
 | macOS 14+ (Intel) | `EasyProxy-<version>-macos-x64.dmg` | Отдельная сборка для Intel x64; те же требования Gatekeeper при отсутствии подписи |
-| Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Подпись кода через SignPath Foundation внедряется ([политика подписи кода](https://easyproxy.me/ru/reference/code-signing/)); пока релиз не подписан, SmartScreen спросит один раз — выберите **Подробнее → Выполнить в любом случае** |
+| Windows (x64) | `EasyProxy-<version>-windows-x64.msi` | Подпись кода через SignPath Foundation внедряется ([политика подписи кода](https://easyproxy.me/ru/reference/code-signing/)); пока релиз не подписан, SmartScreen спросит один раз: выберите **Подробнее → Выполнить в любом случае** |
 | Linux (x86_64) | `EasyProxy-<version>-linux-x86_64.AppImage` или `-linux-amd64.deb` | Для трея нужен рабочий стол с поддержкой AppIndicator |
 
 Рядом с каждым файлом на странице релиза есть `.sha256`, а имена установщиков без версии (`EasyProxy-macos-arm64.dmg`, `EasyProxy-macos-x64.dmg`, `EasyProxy-windows-x64.msi`, `EasyProxy-linux-x86_64.AppImage`, `EasyProxy-linux-amd64.deb`) в `/releases/latest` ведут на те же проверенные сборки. На macOS 14+ приложение также
@@ -146,11 +193,24 @@ epx start                         # прокси + панель управлен
 </details>
 
 <details>
-<summary>Docker Compose</summary>
+<summary><b>Поддерживаемые платформы</b></summary>
+
+| ОС | Статус | Менеджер служб | Настольное приложение (бета) |
+|---|---|---|---|
+| macOS (arm64 / x64) | Полная поддержка | launchd | `arm64` / `x64` `.dmg` |
+| Linux (x64 / arm64) | Полная поддержка | systemd (пользовательский unit) | `.AppImage` / `.deb` для x86_64 |
+| Windows (x64) | Полная поддержка | Task Scheduler (скрыто) / опциональная нативная служба (`--native`, WinSW) | `.msi` для x64 |
+
+Для установки CLI требуется [Node](https://nodejs.org) 18+; настольному приложению не нужны ни Node, ни Bun. Рантайм Bun добавляется автоматически при `npm install`, поэтому отдельно устанавливать Bun не нужно, а на Windows не нужен WSL. Если npm заблокировал скрипты установки встроенного рантайма, см. [документацию по установке](https://easyproxy.me/ru/getting-started/installation/).
+
+</details>
+
+<details>
+<summary><b>Docker Compose</b></summary>
 
 Репозиторий поставляет сборку Compose с закреплённым дайджестом и без root. Сборка сама создаёт
 и проверяет канонический манифест совместимости из выбранного снимка Git. Для локального клона
-нужны Git и Docker Compose, для удалённого Git-контекста — Docker Compose. Ни одному варианту
+нужны Git и Docker Compose, для удалённого Git-контекста нужен Docker Compose. Ни одному варианту
 не нужны Bun на хосте или подготовительный шаг. Один раз инициализируйте токен плоскости данных
 через stdin и запустите хаб:
 
@@ -164,12 +224,12 @@ curl --fail --silent http://127.0.0.1:10100/healthz
 curl --fail --silent http://127.0.0.1:10100/readyz
 ```
 
-Привязка по умолчанию — `127.0.0.1:10100`. Удалённый доступ требует явного
+Привязка по умолчанию: `127.0.0.1:10100`. Удалённый доступ требует явного
 `EASYPROXY_BIND_ADDRESS=<LAN-or-Tailscale-IP> docker compose up -d`; `0.0.0.0` открывает
 все интерфейсы хоста. Ограничьте доступ файрволом и аутентифицированным TLS/tailnet-фронтендом.
 Сгенерированный JSON остаётся неотслеживаемым. В контекст сборки допускаются только `.git/index`
-и `.git/HEAD` — инвентарь, который читает `git ls-files`, объёмом около 1 МБ вместо полного хранилища
-объектов. Они видны только этапу манифеста, используемому при сборке, через монтирование только для
+и `.git/HEAD` (инвентарь, который читает `git ls-files`, объёмом около 1 МБ вместо полного хранилища
+объектов). Они видны только этапу манифеста, используемому при сборке, через монтирование только для
 чтения, поэтому ни один `COPY` не включает `.git`. Манифест, ранее созданный на хосте, принимается
 только после проверки; иначе сборка создаёт его сама. Сборка отклоняет устаревшие манифесты,
 отсутствующие или несовпадающие файлы, лишние исходники
@@ -200,7 +260,7 @@ services:
 </details>
 
 <details>
-<summary>Установка из исходников (последний main)</summary>
+<summary><b>Установка из исходников (последний main)</b></summary>
 
 **macOS / Linux:**
 
@@ -229,7 +289,7 @@ bun run src/cli/index.ts start
 </details>
 
 <details>
-<summary>Для агентов</summary>
+<summary><b>Для агентов</b></summary>
 
 ```bash
 npm install -g --allow-scripts=bun easyproxy
@@ -237,74 +297,15 @@ epx start     # или `epx service`
 epx init      # интерактивная настройка: пишет ~/.easyproxy/config.json и подключает Codex
 ```
 
-`epx init` никогда не запускает прокси; запустите его сначала (или после — оба порядка
+`epx init` никогда не запускает прокси; запустите его сначала (или после: оба порядка
 работают, но headless-команды вроде `epx provider add` и `epx combo set` обращаются к
 **живому** прокси и завершаются с ненулевым кодом, если он недоступен). `epx status` /
 `epx doctor` / `epx health` показывают состояние запущенного процесса.
 
 > **Агентам, которые устанавливают или запускают easyproxy:** прочитайте
 > [`CLI_CONSENT.md`](../CLI_CONSENT.md). Интерактивный `epx start` может один раз
-> спросить, ставить ли star этому репозиторию — это решение пользователя, никогда не агента.
+> спросить, ставить ли star этому репозиторию. Это решение пользователя, никогда не агента.
 > CLI подавляет подсказку в агентных запусках, а API отказывает с `403 agent_consent_required`.
-
-</details>
-
-## Поддерживаемые платформы
-
-| ОС | Статус | Менеджер служб | Настольное приложение (бета) |
-|---|---|---|---|
-| macOS (arm64 / x64) | Полная поддержка | launchd | `arm64` / `x64` `.dmg` |
-| Linux (x64 / arm64) | Полная поддержка | systemd (пользовательский unit) | `.AppImage` / `.deb` для x86_64 |
-| Windows (x64) | Полная поддержка | Task Scheduler (скрыто) / опциональная нативная служба (`--native`, WinSW) | `.msi` для x64 |
-
-Для установки CLI требуется [Node](https://nodejs.org) 18+; настольному приложению не нужны ни Node, ни Bun. Рантайм Bun добавляется автоматически при `npm install` —
-отдельно устанавливать Bun не нужно, WSL на Windows тоже не нужен. Если npm заблокировал
-скрипты установки встроенного рантайма, см. [документацию по установке](https://easyproxy.me/ru/getting-started/installation/).
-
-## Основные возможности
-
-- **Любая LLM в Codex, Claude Code, Claude Desktop и Grok Build** — 40+ провайдеров из
-  коробки, каждый со своим нативным UI.
-- **Combos** — один виртуальный id модели с failover или взвешенным round-robin между
-  провайдерами. См. [руководство по combos](https://easyproxy.me/ru/guides/combos/).
-- **Подагенты на любой модели** — выводите маршрутизируемые модели в селектор подагентов Codex,
-  с управлением поверхностями v1/v2 и цепочками fallback. См.
-  [руководство по подагентам](https://easyproxy.me/ru/guides/sub-agent-surface/).
-- **Один вход — без API-ключа** — OAuth для xAI, Anthropic и Kimi; либо пробросьте
-  `codex login`, вставьте ключ или используйте ссылки `${ENV_VAR}`.
-- **Сайдкары веб-поиска и зрения** — модели не от OpenAI получают настоящий веб-поиск и
-  понимание изображений через сайдкар поверх вашего входа ChatGPT.
-- **Видно, что происходит** — панель показывает провайдеров, статус OAuth, выбор моделей и
-  живой журнал запросов с количеством токенов кэша.
-- **Чистый выход без следов** — `epx stop` возвращает Codex к исходной конфигурации.
-- **Ограниченное владение памятью** — у каждого долгоживущего кэша, кольцевого буфера и
-  хранилища трансляции протокола есть конечный потолок, байтовый бюджет или активная
-  сверка. Ни один неограниченный `Map` или `Set` не переживает перезагрузку конфигурации.
-
-<details>
-<summary>Подробности владения памятью</summary>
-
-EasyProxy отслеживает состояние, удерживаемое процессом, в категориях ниже. У каждой есть
-документированная граница:
-
-- **15 удерживаемых хранилищ** (журнал запросов, отладочные кольца, кэш изображений, кэш
-  моделей, vision-описания, cursor-блобы, продолжение responses и т. д.) учитываются
-  в байтах и вытесняются бюджетом памяти приложения (по умолчанию 256 MiB), кроме
-  хранилища native control replay: оно закреплено и не вытесняется.
-- **4 наблюдаемых буфера** (аккумуляторы транслятора, хвосты image/OAuth/Grok)
-  мониторятся по байтовому давлению in-flight без вытеснения.
-- **32 регистрации state-store** выполняет sweeps истечения (интервал 60 с) и сверку
-  поколений конфигурации, чтобы удалять устаревшие ключи провайдеров и аккаунтов.
-- **Мемо пути и отпечатков** (метаданные рабочей области, усиленные идентификаторы,
-  соли установки, возможности mode-hint) используют LRU-потолки в порядке вставки
-  (8–128 записей).
-- **Tombstone поколений кэша моделей** удаляются после сверки; глобальный инкремент
-  поколения не даёт устаревшим in-flight discovery снова заполнить удалённых провайдеров.
-- **Дедупликация event-id в Lab** работает под блокировкой журнала с диска, без
-  процессного RAM-индекса.
-
-Выполните `GET /api/system/memory` (с admin-токеном), чтобы посмотреть живые удержанные
-байты, счётчики вытеснения и выборки watchdog.
 
 </details>
 
@@ -323,7 +324,8 @@ codex -m "ollama/llama3" "Отрефакторьте эту функцию"
 отдаются с внутренними слэшами, заменёнными на `-`; исходная форма со всеми слэшами
 тоже продолжает работать. Подробности: [документация по маршрутизации моделей](https://easyproxy.me/ru/guides/model-routing/).
 
-### Маршрутизация JEV Auto (опционально)
+<details>
+<summary><b>Маршрутизация JEV Auto (опционально)</b></summary>
 
 TypeSafe JEV может выбирать первую модель и уровень рассуждения для явно включённого Combo, не меняя
 обычный выбор модели и прямые маршруты. Добавьте ключ через `epx login jev`, в
@@ -342,10 +344,12 @@ Combo JEV может вместо этого обращаться к самос�
 `/v1/systemone`, и укажите его в `decisionProvider` Combo. Учётные данные TypeSafe туда никогда не
 отправляются. Подробнее: [самостоятельно размещённая модель решений](https://easyproxy.me/ru/guides/combos/).
 
+</details>
+
 ## Провайдеры и адаптеры
 
 OpenAI (вход ChatGPT или API-ключ), Anthropic, Google Gemini, xAI, Kimi, Azure OpenAI, Ollama
-(локально + Cloud), Cursor (экспериментально) и любой OpenAI-совместимый endpoint — плюс DeepSeek,
+(локально + Cloud), Cursor (экспериментально) и любой OpenAI-совместимый endpoint, а также DeepSeek,
 Groq, OpenRouter, OpenGateway, Together, Fireworks, Cerebras, Mistral, Hugging Face, NVIDIA NIM, MiniMax,
 Qwen Cloud, Qoder Global и CN (официальный PAT + CLI), SiliconFlow и другие. Полный список: `epx init` или
 [документация по провайдерам](https://easyproxy.me/ru/guides/providers/).
@@ -373,7 +377,8 @@ epx update [--tag preview]     # обновить easyproxy
 на другой порт, поэтому второй прокси никогда не останется работать рядом с первым. Освободите порт или укажите
 другой с помощью `--port`. Полный справочник: [документация CLI](https://easyproxy.me/ru/reference/cli/).
 
-### Здоровье и готовность
+<details>
+<summary><b>Здоровье и готовность</b></summary>
 
 `GET /healthz` сообщает о немедленной живости прокси. Неаутентифицированный endpoint `GET /readyz`
 сообщает о готовности после синхронизации с очищенной JSON-идентичностью `{service, version, uptime, pid, port, status}`.
@@ -383,7 +388,7 @@ epx update [--tag preview]     # обновить easyproxy
 `epx ready [--json] [--wait [--timeout <seconds>]]` по умолчанию выполняет один зонд. `--wait` опрашивает
 до 45 секунд по умолчанию, но сразу завершается при терминальном `failed`;
 `--timeout <seconds>` задаёт лимит 1–300 секунд, требует `--wait` и принимает только положительные целые. CLI `--json` выводит
-`{ready, status, pid, port}`, где `status` — `ready`, `pending`, `failed` или `unreachable`.
+`{ready, status, pid, port}`, где `status` равен `ready`, `pending`, `failed` или `unreachable`.
 
 | Код | Результат |
 | --- | --- |
@@ -393,6 +398,8 @@ epx update [--tag preview]     # обновить easyproxy
 
 Старый прокси без `/readyz` закрывается как `unreachable` с кодом 1, тогда как `epx health`
 остаётся совместимым.
+
+</details>
 
 ### Автозапуск: служба или shim
 
@@ -410,28 +417,27 @@ npm uninstall -g easyproxy
 ## Удалённый доступ
 
 По умолчанию easyproxy привязывается к `127.0.0.1` и не требует дополнительной аутентификации.
-Привязка за пределами loopback (`"hostname": "0.0.0.0"`) **требует** bearer-токен — прокси
+Привязка за пределами loopback (`"hostname": "0.0.0.0"`) **требует** bearer-токен: прокси
 откажется запускаться без `EASYPROXY_API_AUTH_TOKEN`, и каждый клиентский запрос должен нести его
 как `x-easyproxy-api-key`. Подробности: [справочник по конфигурации](https://easyproxy.me/ru/reference/configuration/).
 
-## Расширенное использование
+<details>
+<summary><b>Пул аккаунтов ChatGPT (расширенный)</b></summary>
 
 Самостоятельно размещаемые опции для опытных пользователей. Перед включением проверьте условия каждого провайдера.
-
-### Пул аккаунтов ChatGPT
 
 easyproxy также умеет управлять **пулом аккаунтов ChatGPT** для аутентификации Codex. Добавьте
 несколько аккаунтов ChatGPT / Codex и обновляйте их квоты за 5 ч / неделю / 30 дней в панели.
 При маршрутизации по квоте новые сессии могут использовать работоспособный аккаунт с наименьшим
 использованием; round-robin и fill-first применяют свои политики. Существующие треды Codex
 обычно сохраняют привязку к аккаунту, с которого начались, поэтому длинные сессии по SSH,
-в tmux или с мобильного устройства не перескакивают между аккаунтами посреди разговора — но
+в tmux или с мобильного устройства не перескакивают между аккаунтами посреди разговора, однако
 повторная оценка квот, failover, исключение аккаунта, истечение привязки или восстановление
 после 401/403 и 429 могут перепривязать их. Задайте аккаунтам порядок выбора, если один из
-них — обычно вход Codex Desktop — должен использоваться только после того, как остальные
+них (например вход Codex Desktop) должен использоваться только после того, как остальные
 исчерпаны.
 
-- **Пул аккаунтов ChatGPT** — привязка тредов, автопереключение с учётом квот, кулдаун и
+- **Пул аккаунтов ChatGPT:** привязка тредов, автопереключение с учётом квот, кулдаун и
   fail-closed обработка аутентификации.
 
   > **Замечание о политике провайдеров:** пул аккаунтов нужен только для маршрутизации и
@@ -442,22 +448,7 @@ easyproxy также умеет управлять **пулом аккаунто
   > [руководство по пулу аккаунтов Codex Auth](https://easyproxy.me/ru/guides/web-dashboard/)
   > и [актуальные Terms of Use OpenAI](https://openai.com/policies/terms-of-use/).
 
-## Документация
-
-Публичная документация — установка, провайдеры, маршрутизация, combos, подагенты, сайдкары,
-интеграции и справочники CLI/конфигурации/management-API — собирается из [`docs-site/`](../docs-site) и
-публикуется на **[easyproxy.me](https://easyproxy.me/ru/)**.
-
-Заметки мейнтейнеров, служащие источником истины, находятся в [`structure/`](../structure),
-сообщения о проблемах
-безопасности — в [`SECURITY.md`](../SECURITY.md).
-Нераскрытые уязвимости сообщайте приватно через
-[GitHub private vulnerability reporting](https://github.com/AquilaXk/easyproxy/security/advisories/new),
-а не публичный issue.
-Эта форма — единственный технический канал, отдельного адреса для безопасности нет. Дальнейшее
-обсуждение остаётся внутри приватного отчёта; в публичном issue допустима только координация, но
-не детали уязвимости. Подтверждение получения отчёта — это ещё не разбор, и срок первого ответа
-не обещан.
+</details>
 
 ## Разработка
 
@@ -472,9 +463,46 @@ bun run typecheck
 bun run test
 ```
 
+## Документация
+
+Публичная документация собирается из [`docs-site/`](../docs-site) и публикуется на **[easyproxy.me](https://easyproxy.me/ru/)**:
+
+- [Установка](https://easyproxy.me/ru/getting-started/installation/)
+- [Провайдеры](https://easyproxy.me/ru/guides/providers/)
+- [Маршрутизация моделей](https://easyproxy.me/ru/guides/model-routing/)
+- [Комбо](https://easyproxy.me/ru/guides/combos/)
+- [Интерфейс подагентов](https://easyproxy.me/ru/guides/sub-agent-surface/)
+- [Веб-дашборд](https://easyproxy.me/ru/guides/web-dashboard/)
+- [Настольное приложение](https://easyproxy.me/ru/guides/desktop-app/)
+- [Развёртывание Remote Hub](https://easyproxy.me/ru/guides/remote-hub/)
+- [Справочник CLI](https://easyproxy.me/ru/reference/cli/)
+- [Справочник по конфигурации](https://easyproxy.me/ru/reference/configuration/)
+
+Заметки мейнтейнеров, служащие источником истины, находятся в [`structure/`](../structure),
+сообщения о проблемах безопасности находятся в [`SECURITY.md`](../SECURITY.md).
+Нераскрытые уязвимости сообщайте приватно через
+[GitHub private vulnerability reporting](https://github.com/AquilaXk/easyproxy/security/advisories/new),
+а не публичный issue.
+Эта форма является единственным техническим каналом, отдельного адреса для безопасности нет. Дальнейшее
+обсуждение остаётся внутри приватного отчёта; в публичном issue допустима только координация, но
+не детали уязвимости. Подтверждение получения отчёта не равно его разбору, и срок первого ответа
+не обещан.
+
+## Обратная связь
+
+Нашли ошибку или не хватает функции? [Откройте задачу](https://github.com/AquilaXk/easyproxy/issues) или загляните в [документацию](https://easyproxy.me/ru/). Если EasyProxy экономит вам время, звезда поможет другим найти проект.
+
+## Спонсорство
+
+EasyProxy бесплатен и распространяется с открытым исходным кодом. Спонсорская поддержка оплачивает время разработки и токены моделей для тестирования: [github.com/sponsors/AquilaXk](https://github.com/sponsors/AquilaXk).
+
+### Поддерживающие
+
+Здесь может быть ваше имя: [стать спонсором](https://github.com/sponsors/AquilaXk).
+
 ## Политика подписи кода (Code signing policy)
 
-Исполняемые файлы для Windows переводятся на подпись Authenticode. Ход внедрения, проверка подписи и полная политика описаны в [руководстве по подписи кода Windows](https://easyproxy.me/ru/reference/code-signing/).
+Исполняемые файлы Windows переходят на подпись Authenticode. В [руководстве по подписи кода Windows](https://easyproxy.me/ru/reference/code-signing/) описаны ход внедрения, проверка подписи и полная политика.
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
@@ -484,14 +512,10 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 ## Отказ от ответственности
 
-easyproxy — независимый проект, поддерживаемый сообществом; он **не аффилирован с OpenAI, Anthropic или каким-либо другим провайдером и не одобрен ими**.
+easyproxy — независимый проект, поддерживаемый сообществом; он **не аффилирован с OpenAI, Anthropic или любым другим провайдером и не одобрен ими**.
 
-Некоторые провайдеры — в частности Anthropic (Claude) — могут приостанавливать или ограничивать аккаунты, которые направляют API-трафик через сторонние прокси. **Используйте на свой страх и риск (UAYOR).** Прежде чем подключать провайдера, изучите его Terms of Service и убедитесь, что доступ через прокси разрешён. Мейнтейнеры easyproxy не несут ответственности за какие-либо действия вышестоящих провайдеров в отношении аккаунтов.
-
-## Обратная связь
-
-Если что-то работает не так или требует доработки, откройте задачу в [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) или загляните в [документацию](https://easyproxy.me/ru/).
+Некоторые провайдеры (в частности Anthropic Claude) могут приостанавливать или ограничивать аккаунты, которые направляют API-трафик через сторонние прокси. **Используйте на свой страх и риск (UAYOR).** Прежде чем подключать провайдера, изучите его Terms of Service и убедитесь, что доступ через прокси разрешён. Мейнтейнеры easyproxy не несут ответственности за какие-либо действия вышестоящих провайдеров в отношении аккаунтов.
 
 ## Лицензия
 
-MIT
+EasyProxy распространяется по [лицензии MIT](../LICENSE). Сторонние компоненты сохраняют собственные лицензии; см. [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).

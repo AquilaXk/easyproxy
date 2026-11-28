@@ -1,22 +1,20 @@
 <p align="center">
-  <img src="../assets/banner.png" alt="easyproxy — Codex、Claude Code、Claude Desktop、Grok Build などのための一つのローカルゲートウェイ" width="100%">
+  <img
+    src="https://raw.githubusercontent.com/AquilaXk/easyproxy/main/desktop/src-tauri/icons/icon.png"
+    width="80"
+    alt="EasyProxy"
+  >
 </p>
 
-<h3 align="center">AI コーディングツールとモデルをつなぐ、一つのローカルゲートウェイ。</h3>
-<p align="center"><b>Codex、Claude Code、Claude Desktop、Grok Build で好きなモデルを使い、<br>管理対象の設定で OpenCode、Pi、Qoder、WorkBuddy、Kilo、Cline、T3 Code などを接続できます。</b><br>
-<a href="https://easyproxy.me/ja/reference/client-support/">対応ツールをすべて見る →</a></p>
+<h1 align="center">EasyProxy</h1>
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI ステータス"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?label=release" alt="最新リリース"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="ライセンス: MIT"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node 18 以上">
+  AI コーディングツールとモデルをつなぐ、一つのローカルゲートウェイ。
+  <br>
+  Codex、Claude Code、Claude Desktop、Grok Build で好きなモデルを使い、管理対象の設定で OpenCode、Pi、Qoder、WorkBuddy、Kilo、Cline、T3 Code などを接続できます。
+  <br>
+  <a href="#quick-start"><b>インストール ↓</b></a> · <a href="https://easyproxy.me/ja/reference/client-support/"><b>対応ツール一覧 →</b></a>
 </p>
-
-```bash
-npm install -g --allow-scripts=bun easyproxy
-epx start
-```
 
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="Windows 版をダウンロード (.msi)" height="48"></a>
@@ -28,17 +26,34 @@ epx start
   <sub>macOS ボタンは Apple Silicon (arm64) 向けです。<a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">すべてのリリースファイルとチェックサム</a></sub>
 </p>
 
+<p align="center">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/easyproxy"><img alt="npm" src="https://img.shields.io/npm/v/easyproxy?style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+  <a href="https://github.com/sponsors/AquilaXk"><img alt="GitHub Sponsors" src="https://img.shields.io/github/sponsors/AquilaXk?style=flat-square&logo=githubsponsors&label=Sponsors"></a>
+</p>
+
+<p align="center">
+  <a href="../README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ru.md">Русский</a> · <b>日本語</b> · <a href="README.tr.md">Türkçe</a> · 📖 <a href="https://easyproxy.me/ja/"><b>完全なドキュメント →</b></a>
+</p>
+
+```bash
+npm install -g --allow-scripts=bun easyproxy
+epx start
+```
+
 <table>
 <tr>
 <td width="50%" valign="middle">
 
 ### Claude Code、どんなモデルでも
 
-ピッカーは Claude Code のままです。その裏で動く頭脳だけが違います。
+ピッカーは Claude Code のまま、裏で動くモデルだけを自由に選べます。
 
 </td>
 <td width="50%">
-  <img src="../assets/claude-code-models.gif" alt="easyproxy でルーティングされたモデルを動かす Claude Code — ステータスバーに gpt-5.6-luna-medium がアクティブモデルとして表示される" width="100%">
+  <img src="../assets/claude-code-models.gif" alt="easyproxy でルーティングされたモデルを動かす Claude Code（ステータスバーに gpt-5.6-luna-medium がアクティブ表示）" width="100%">
 </td>
 </tr>
 <tr>
@@ -46,11 +61,11 @@ epx start
 
 ### Codex、どんなモデルでも
 
-プロバイダーを選ぶだけです — 同じワークフロー、違う頭脳。
+プロバイダーを選ぶだけで、いつものワークフローをそのまま使えます。
 
 </td>
 <td width="50%">
-  <img src="../assets/demo.gif" alt="easyproxy のデモ — Codex アプリで OpenAI 以外のルーティングモデルを使ってタスクを実行" width="100%">
+  <img src="../assets/demo.gif" alt="Codex アプリで OpenAI 以外のルーティングモデルを使ってタスクを実行する easyproxy のデモ" width="100%">
 </td>
 </tr>
 <tr>
@@ -79,11 +94,45 @@ Sol がセッションを進め、Kimi K3 のサブエージェントを呼び�
 </tr>
 </table>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ru.md">Русский</a> · <b>日本語</b> · <a href="README.tr.md">Türkçe</a> · 📖 <a href="https://easyproxy.me/ja/"><b>完全なドキュメント →</b></a>
-</p>
-
 easyproxy は、コーディングツールとモデルプロバイダーをつなぐ軽量なローカルゲートウェイです。Responses、Chat Completions、Anthropic Messages API のリクエストを受け取り、プロバイダーのプロトコルに変換します。クライアント、モデル、プロバイダーが対応する場合は、ストリーミング、ツール呼び出し、推論、画像を中継します。Claude、Gemini、Grok、GLM、DeepSeek、Kimi、Qwen、Ollama などのプロバイダーを、Codex、Claude Code、Claude Desktop、Grok Build や[クライアント対応ページ](https://easyproxy.me/ja/reference/client-support/)に記載のツールで使えます。
+
+## 主な特徴
+
+- **Codex、Claude Code、Claude Desktop、Grok Build でどの LLM でも利用可能。** 40 以上のプロバイダーが最初から使え、それぞれがネイティブの UI を保ちます。
+- **コンボ。** 1 つの仮想モデル ID で、複数プロバイダーにまたがる failover や重み付きラウンドロビンを組みます。[コンボガイド](https://easyproxy.me/ja/guides/combos/)を参照してください。
+- **どのモデルでもサブエージェントに。** ルーティングしたモデルを Codex のサブエージェントピッカーに出し、v1/v2 の表面制御とフォールバックチェーンを設定できます。[サブエージェントガイド](https://easyproxy.me/ja/guides/sub-agent-surface/)を参照してください。
+- **一度のログイン、または API キーで利用。** xAI、Anthropic、Kimi の OAuth、`codex login` の転送、API キーの貼り付け、`${ENV_VAR}` 参照に対応しています。
+- **Web 検索とビジョンのサイドカー。** OpenAI 以外のモデルも、ChatGPT ログインの上で動くサイドカーを通じて本物の Web 検索と画像理解を使えます。
+- **ライブダッシュボードとログ。** ダッシュボードでプロバイダー、OAuth の状態、モデルの選択、キャッシュトークン数付きのリアルタイムリクエストログを確認できます。
+- **後始末の要らない終了。** `epx stop` が Codex を元の設定に戻します。
+- **上限のあるメモリ所有権。** 長く生きるキャッシュ、リングバッファ、プロトコル変換のストアには、必ず有限の上限、バイト予算、あるいは能動的な reconciliation があります。config を再読み込みしたあとに上限のない `Map` や `Set` は残りません。
+
+<details>
+<summary>メモリ所有権の詳細</summary>
+
+EasyProxy はプロセスが保持する状態を以下のカテゴリで追跡し、それぞれに文書化された上限があります:
+
+- **保持ストア 15 個**（リクエストログ、デバッグリング、画像キャッシュ、モデルキャッシュ、ビジョンの
+  説明、カーソル blob、responses の継続など）はバイト単位で集計され、アプリが持つメモリ予算
+  （既定 256 MiB）によって退避されます。ただしネイティブ制御のリプレイ用ストアは固定され、
+  退避されません。
+- **観測バッファ 4 個**（トランスレーターのアキュムレーター、画像・OAuth・Grok の tail）は処理中の
+  バイト圧力を監視するだけで、退避はしません。
+- **state-store の登録 32 個**が期限切れの掃除（60 秒間隔）と config 世代の reconciliation を担い、
+  古いプロバイダー／アカウントのキーを取り除きます。
+- **パスとフィンガープリントのメモ**（ワークスペースのメタデータ、hardened identity、インストール
+  salt、mode-hint の capability）は挿入順の LRU 上限（8〜128 件）を使います。
+- **モデルキャッシュの世代 tombstone** は reconciliation のあとに削除されます。グローバルな世代を
+  進めることで、進行中だった古い discovery が削除済みのプロバイダーを復活させないようにしています。
+- **Lab のイベント ID 重複排除**はディスク上の ledger ロックの下で動き、プロセス側の RAM インデックス
+  は持ちません。
+
+管理トークンを付けて `GET /api/system/memory` を叩けば、現在の保持バイト数、退避カウンター、
+ウォッチドッグのサンプルを確認できます。
+
+</details>
+
+<a id="quick-start"></a>
 
 ## クイックスタート
 
@@ -96,9 +145,7 @@ epx start                         # プロキシとダッシュボードが loca
 
 バックグラウンドで動かすなら `epx service` を使ってください。
 
-**http://localhost:10100** を開き、Web ダッシュボードですべて設定します。プロバイダーの追加（40 以上の
-組み込み、または任意の OpenAI 互換エンドポイント）、モデルの選択、アカウントの管理はここで行います。
-`epx gui` でいつでもダッシュボードを開き直せます。
+**http://localhost:10100** を開き、Web ダッシュボードですべて設定します。プロバイダーの追加（40 以上の組み込み、または任意の OpenAI 互換エンドポイント）、モデルの選択、アカウントの管理はここで行います。`epx gui` でいつでもダッシュボードを開き直せます。
 
 ### ツールを接続する
 
@@ -108,7 +155,7 @@ epx start                         # プロキシとダッシュボードが loca
 |---|---|
 | Codex | ダッシュボードの **Route** ページで Codex スイッチをオンにし、通常どおり `codex` を実行します。ローカルリスナーでは Codex の組み込みプロバイダーがプロキシを指すようになります。ターミナルからは、ダッシュボードでプロバイダーを追加する前に `epx init` を実行し、Codex の確認に同意します。 |
 | Claude Code | `claude` CLI をインストールした状態で `epx claude` を実行します。必要に応じてプロキシを起動し、そこを経由して Claude Code を起動します。 |
-| Claude Desktop | `epx claude desktop` を実行します。新規インストールではアプリ全体にゲートウェイプロファイルを設定します。既存の first-party 設定は維持され、`epx claude desktop apply --gateway` で明示的に切り替えられます。[Claude Code ガイド](https://easyproxy.me/ja/guides/claude-code/)を参照してください。 切り替えた後は Claude Desktop を完全に終了してから開き直してください。 |
+| Claude Desktop | `epx claude desktop` を実行します。新規インストールではアプリ全体にゲートウェイプロファイルを設定します。既存の first-party 設定は維持され、`epx claude desktop apply --gateway` で明示的に切り替えられます。[Claude Code ガイド](https://easyproxy.me/ja/guides/claude-code/)を参照してください。切り替えた後は Claude Desktop を完全に終了してから開き直してください。 |
 | Grok Build | ローカルリスナーで Grok 連携が有効かつ `~/.grok` が存在する場合、`epx start` がモデルを登録します。Grok Build で `epx-*` モデルを選択してください。リモート設定は [Grok Build ガイド](https://easyproxy.me/ja/guides/grok-build/)を参照してください。プロバイダーを追加した後は、プロキシを再起動する（または Codex 自動起動が有効なら `epx ensure` を実行する）と一覧を更新できます。 |
 | 管理対象の統合があるツール | ダッシュボードの **Route** ページか `epx integration client enable --client <id>` を使います。 |
 | その他のツール | カスタムの OpenAI 互換ベース URL に `http://localhost:10100/v1` を、または Anthropic ベース URL に `http://localhost:10100` を設定します。 |
@@ -142,7 +189,20 @@ epx start                         # プロキシとダッシュボードが loca
 </details>
 
 <details>
-<summary>Docker Compose</summary>
+<summary><b>対応プラットフォーム</b></summary>
+
+| OS | 状態 | サービスマネージャー | デスクトップアプリ（ベータ版） |
+|---|---|---|---|
+| macOS (arm64 / x64) | 完全対応 | launchd | `arm64` / `x64` `.dmg` |
+| Linux (x64 / arm64) | 完全対応 | systemd (user unit) | x86_64 `.AppImage` / `.deb` |
+| Windows (x64) | 完全対応 | タスクスケジューラ（非表示）/ 任意のネイティブサービス（`--native`、WinSW） | x64 `.msi` |
+
+CLI インストールには [Node](https://nodejs.org) 18 以上が必要です。デスクトップアプリには Node も Bun も不要です。Bun ランタイムは `npm install` で同梱されるので、Bun を別途入れる必要も、Windows で WSL を使う必要もありません。npm が同梱ランタイムのインストールスクリプトをブロックした場合は[インストールドキュメント](https://easyproxy.me/ja/getting-started/installation/)を参照してください。
+
+</details>
+
+<details>
+<summary><b>Docker Compose</b></summary>
 
 このリポジトリには、digest 固定で非 root の Compose ビルドが入っています。ビルドは、選択した Git
 スナップショットから正式な互換性マニフェストを生成して検証します。ローカルクローンには Git と Docker
@@ -195,7 +255,7 @@ services:
 </details>
 
 <details>
-<summary>ソースからインストール（最新の main）</summary>
+<summary><b>ソースからインストール（最新の main）</b></summary>
 
 **macOS / Linux:**
 
@@ -223,7 +283,7 @@ bun run src/cli/index.ts start
 </details>
 
 <details>
-<summary>エージェント向け</summary>
+<summary><b>エージェント向け</b></summary>
 
 ```bash
 npm install -g --allow-scripts=bun easyproxy
@@ -243,64 +303,6 @@ epx init      # 対話式セットアップ: ~/.easyproxy/config.json を書き�
 
 </details>
 
-## 対応プラットフォーム
-
-| OS | 状態 | サービスマネージャー | デスクトップアプリ（ベータ版） |
-|---|---|---|---|
-| macOS (arm64 / x64) | 完全対応 | launchd | `arm64` / `x64` `.dmg` |
-| Linux (x64 / arm64) | 完全対応 | systemd (user unit) | x86_64 `.AppImage` / `.deb` |
-| Windows (x64) | 完全対応 | タスクスケジューラ（非表示）/ 任意のネイティブサービス（`--native`、WinSW） | x64 `.msi` |
-
-CLI インストールには [Node](https://nodejs.org) 18 以上が必要です。デスクトップアプリには Node も Bun も不要です。Bun ランタイムは `npm install` で同梱されるので、Bun を
-別途入れる必要も、Windows で WSL を使う必要もありません。npm が同梱ランタイムのインストールスクリプト
-をブロックした場合は[インストールドキュメント](https://easyproxy.me/ja/getting-started/installation/)を
-参照してください。
-
-## 主な特徴
-
-- **Codex、Claude Code、Claude Desktop、Grok Build でどの LLM でも** — 40 以上のプロバイダーが最初から
-  使え、それぞれがネイティブの UI を保ちます。
-- **コンボ** — 1 つの仮想モデル ID で、複数プロバイダーにまたがる failover や重み付きラウンドロビンを
-  組みます。[コンボガイド](https://easyproxy.me/ja/guides/combos/)を参照してください。
-- **どのモデルでもサブエージェントに** — ルーティングしたモデルを Codex のサブエージェントピッカーに
-  出し、v1/v2 の表面制御とフォールバックチェーンを設定できます。
-  [サブエージェントガイド](https://easyproxy.me/ja/guides/sub-agent-surface/)を参照してください。
-- **一度ログインすれば API キーは不要** — xAI、Anthropic、Kimi は OAuth に対応します。あるいは
-  `codex login` を転送する、キーを貼り付ける、`${ENV_VAR}` 参照を使う、のいずれでもかまいません。
-- **Web 検索とビジョンのサイドカー** — OpenAI 以外のモデルも、ChatGPT ログインの上で動くサイドカーを
-  通じて本物の Web 検索と画像理解を使えます。
-- **何が起きているか見える** — ダッシュボードがプロバイダー、OAuth の状態、モデルの選択、そしてキャッシュ
-  トークン数まで含むリアルタイムのリクエストログを表示します。
-- **後始末の要らない終了** — `epx stop` が Codex を元の設定に戻します。
-- **上限のあるメモリ所有権** — 長く生きるキャッシュ、リングバッファ、プロトコル変換のストアには、必ず
-  有限の上限、バイト予算、あるいは能動的な reconciliation があります。config を再読み込みしたあとに
-  上限のない `Map` や `Set` は残りません。
-
-<details>
-<summary>メモリ所有権の詳細</summary>
-
-EasyProxy はプロセスが保持する状態を以下のカテゴリで追跡し、それぞれに文書化された上限があります:
-
-- **保持ストア 15 個**（リクエストログ、デバッグリング、画像キャッシュ、モデルキャッシュ、ビジョンの
-  説明、カーソル blob、responses の継続など）はバイト単位で集計され、アプリが持つメモリ予算
-  （既定 256 MiB）によって退避されます。ただしネイティブ制御のリプレイ用ストアは固定され、
-  退避されません。
-- **観測バッファ 4 個**（トランスレーターのアキュムレーター、画像・OAuth・Grok の tail）は処理中の
-  バイト圧力を監視するだけで、退避はしません。
-- **state-store の登録 32 個**が期限切れの掃除（60 秒間隔）と config 世代の reconciliation を担い、
-  古いプロバイダー／アカウントのキーを取り除きます。
-- **パスとフィンガープリントのメモ**（ワークスペースのメタデータ、hardened identity、インストール
-  salt、mode-hint の capability）は挿入順の LRU 上限（8〜128 件）を使います。
-- **モデルキャッシュの世代 tombstone** は reconciliation のあとに削除されます。グローバルな世代を
-  進めることで、進行中だった古い discovery が削除済みのプロバイダーを復活させないようにしています。
-- **Lab のイベント ID 重複排除**はディスク上の ledger ロックの下で動き、プロセス側の RAM インデックス
-  は持ちません。
-
-管理トークンを付けて `GET /api/system/memory` を叩けば、現在の保持バイト数、退避カウンター、
-ウォッチドッグのサンプルを確認できます。
-
-</details>
-
 ## モデルルーティング
 
 `provider/model` の書き方で、設定済みのどのプロバイダーとモデルでも指定できます:
@@ -316,7 +318,8 @@ codex -m "ollama/llama3" "この関数をリファクタリングして"
 のままの完全形も引き続き使えます。詳細は
 [モデルルーティングのドキュメント](https://easyproxy.me/ja/guides/model-routing/)を参照してください。
 
-### JEV Auto ルーティング（任意）
+<details>
+<summary><b>JEV Auto ルーティング（任意）</b></summary>
 
 TypeSafe JEV は、明示的に有効にした Combo の最初のモデルと推論エフォートを選べます。通常のモデル
 ピッカーと直接ルートは変わりません。認証情報は `epx login jev`、**Providers → TypeSafe JEV → Add API key**、
@@ -334,10 +337,12 @@ JEV Combo は、キー不要の Ollama `tev1` のようなセルフホストの�
 `decisionProvider` に指定します。TypeSafe の認証情報がそこへ送られることはありません。詳しくは
 [セルフホストの判断モデル](https://easyproxy.me/ja/guides/combos/)を参照してください。
 
+</details>
+
 ## プロバイダーとアダプター
 
 OpenAI（ChatGPT ログインまたは API キー）、Anthropic、Google Gemini、xAI、Kimi、Azure OpenAI、Ollama
-（ローカル + Cloud）、Cursor（実験的）、そしてあらゆる OpenAI 互換エンドポイント。さらに DeepSeek、
+（ローカル + Cloud）、Cursor（実験的）、そしてあらゆる OpenAI 互換エンドポイントに加え、DeepSeek、
 Groq、OpenRouter、OpenGateway、Together、Fireworks、Cerebras、Mistral、Hugging Face、NVIDIA NIM、MiniMax、
 Qwen Cloud、Qoder Global と CN（公式 PAT + CLI）、SiliconFlow などがあります。全一覧は `epx init` か
 [プロバイダーのドキュメント](https://easyproxy.me/ja/guides/providers/)で確認できます。
@@ -366,7 +371,8 @@ epx update [--tag preview]     # easyproxy の更新
 別のポートを指定してください。全リファレンスは
 [CLI のドキュメント](https://easyproxy.me/ja/reference/cli/)にあります。
 
-### ヘルスと準備状態
+<details>
+<summary><b>ヘルスと準備状態</b></summary>
 
 `GET /healthz` はプロキシが今生きているかをすぐに返します。認証の要らない `GET /readyz` は、同期が
 終わったあとの準備状態を、機微な情報を除いた JSON identity `{service, version, uptime, pid, port, status}`
@@ -386,6 +392,8 @@ epx update [--tag preview]     # easyproxy の更新
 
 `/readyz` を持たない古いプロキシは `unreachable` として fail-closed になり終了コード 1 を返します。
 `epx health` はそのまま互換です。
+
+</details>
 
 ### 自動起動: service と shim
 
@@ -408,11 +416,10 @@ easyproxy は既定で `127.0.0.1` にバインドし、追加の認証を必要
 `x-easyproxy-api-key` としてトークンを乗せる必要があります。詳細は
 [設定リファレンス](https://easyproxy.me/ja/reference/configuration/)にあります。
 
-## 高度な使い方
+<details>
+<summary><b>ChatGPT アカウントプール（高度）</b></summary>
 
 上級ユーザー向けのセルフホスト型オプションです。有効にする前に各プロバイダーの規約を確認してください。
-
-### ChatGPT アカウントプール
 
 easyproxy では、Codex 認証用の **ChatGPT アカウントプール**も管理できます。ChatGPT / Codex のアカウントを
 複数追加し、5 時間 / 週間 / 30 日のクォータをダッシュボードで更新します。クォータルーティングでは、新しい
@@ -420,10 +427,10 @@ easyproxy では、Codex 認証用の **ChatGPT アカウントプール**も管
 従います。既存の Codex スレッドは通常、開始したアカウントとの affinity を保つので、長い SSH・tmux・
 モバイル接続のセッションが会話の途中でアカウントを乗り換えることはありません。ただしクォータの再評価、
 failover、アカウントの除外、affinity の失効、401/403 や 429 からの復帰では再バインドされることがあります。
-ふだんは使わず他が尽きたときだけ回したいアカウント（多くは Codex Desktop のログイン）があるなら、
+ふだんは使わず他が尽きたときだけ回したいアカウント（Codex Desktop のログインなど）があるなら、
 アカウントに選択順を指定してください。
 
-- **ChatGPT アカウントのプール** — スレッド affinity、クォータを見た自動切り替え、クールダウン、
+- **ChatGPT アカウントのプール:** スレッド affinity、クォータを見た自動切り替え、クールダウン、
   fail-closed な認証処理。
 
   > **プロバイダーポリシーに関する注意:** アカウントプールはルーティングと運用の耐障害性のためのもので
@@ -433,19 +440,7 @@ failover、アカウントの除外、affinity の失効、401/403 や 429 か�
   > [Codex Auth とアカウントプールの案内](https://easyproxy.me/ja/guides/web-dashboard/)
   > と [OpenAI の現行利用規約](https://openai.com/policies/terms-of-use/)をご覧ください。
 
-## ドキュメント
-
-公開ドキュメント（インストール、プロバイダー、ルーティング、コンボ、サブエージェント、サイドカー、
-連携、CLI／設定／管理 API のリファレンス）は [`docs-site/`](../docs-site) からビルドされ、
-**[easyproxy.me](https://easyproxy.me/ja/)** に公開されています。
-
-メンテナー向けの source-of-truth なノートは [`structure/`](../structure) に、コントリビューターの
-[`SECURITY.md`](../SECURITY.md) にあります。未公開の脆弱性は公開 issue ではなく
-[GitHub の非公開脆弱性報告](https://github.com/AquilaXk/easyproxy/security/advisories/new)から
-非公開で報告してください。
-技術的な窓口はこのフォームだけで、セキュリティ用のメールアドレスはありません。やり取りは非公開の報告の
-中で続けてください。公開 issue に置いてよいのは調整のための連絡だけで、脆弱性の詳細は置けません。受領の
-連絡はトリアージではなく、初回応答までの期限も約束していません。
+</details>
 
 ## 開発
 
@@ -460,9 +455,44 @@ bun run typecheck
 bun run test
 ```
 
+## ドキュメント
+
+公開ドキュメントは [`docs-site/`](../docs-site) からビルドされ、**[easyproxy.me](https://easyproxy.me/ja/)** に公開されています:
+
+- [インストール](https://easyproxy.me/ja/getting-started/installation/)
+- [プロバイダー](https://easyproxy.me/ja/guides/providers/)
+- [モデルルーティング](https://easyproxy.me/ja/guides/model-routing/)
+- [コンボ](https://easyproxy.me/ja/guides/combos/)
+- [サブエージェントサーフェス](https://easyproxy.me/ja/guides/sub-agent-surface/)
+- [ウェブダッシュボード](https://easyproxy.me/ja/guides/web-dashboard/)
+- [デスクトップアプリ](https://easyproxy.me/ja/guides/desktop-app/)
+- [Remote Hub のデプロイ](https://easyproxy.me/ja/guides/remote-hub/)
+- [CLI リファレンス](https://easyproxy.me/ja/reference/cli/)
+- [設定リファレンス](https://easyproxy.me/ja/reference/configuration/)
+
+メンテナー向けの source-of-truth なノートは [`structure/`](../structure) に、セキュリティ報告は
+[`SECURITY.md`](../SECURITY.md) にあります。未公開の脆弱性は公開 issue ではなく
+[GitHub の非公開脆弱性報告](https://github.com/AquilaXk/easyproxy/security/advisories/new)から
+非公開で報告してください。
+技術的な窓口はこのフォームだけで、セキュリティ用のメールアドレスはありません。やり取りは非公開の報告の
+中で続けてください。公開 issue に置いてよいのは調整のための連絡だけで、脆弱性の詳細は置けません。受領の
+連絡はトリアージではなく、初回応答までの期限も約束していません。
+
+## フィードバック
+
+不具合を見つけた場合や欲しい機能がある場合は、[GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) に起票するか、[ドキュメント](https://easyproxy.me/ja/)を確認してください。EasyProxy が役に立ったら、スターを付けていただけると他の開発者も見つけやすくなります。
+
+## スポンサー
+
+EasyProxy は無料でオープンソースです。スポンサー支援は開発時間とテスト用のモデルトークン費用に充てられます: [github.com/sponsors/AquilaXk](https://github.com/sponsors/AquilaXk)。
+
+### サポーター
+
+お名前をここに掲載できます: [スポンサーになる](https://github.com/sponsors/AquilaXk)。
+
 ## コード署名ポリシー (Code signing policy)
 
-Windows 向けバイナリは Authenticode 署名へ移行中です。移行状況、署名の確認方法、ポリシー全文は [Windows コード署名ガイド](https://easyproxy.me/ja/reference/code-signing/) を参照してください。
+Windows バイナリは Authenticode 署名へ移行しています。移行状況、署名の検証方法、ポリシー全文は [Windows コード署名ガイド](https://easyproxy.me/ja/reference/code-signing/)で案内しています。
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
@@ -472,15 +502,10 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 ## 免責事項
 
-easyproxy はコミュニティが維持する独立したプロジェクトであり、**OpenAI、Anthropic をはじめとするどの
-プロバイダーとも提携しておらず、承認も受けていません。**
+easyproxy はコミュニティが保守する独立したプロジェクトであり、**OpenAI、Anthropic、その他いかなるプロバイダーとも提携しておらず、承認も受けていません。**
 
-一部のプロバイダー、とくに Anthropic (Claude) は、サードパーティのプロキシ経由で API トラフィックを流すアカウントを停止または制限することがあります。**自己責任でご利用ください (UAYOR)。** プロバイダーを接続する前に、その利用規約でプロキシ経由のアクセスが認められているか確認してください。easyproxy のメンテナーは、アップストリームのプロバイダーが取ったアカウント処分について責任を負いません。
-
-## フィードバック
-
-不具合や気づいた点があれば [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) からご報告いただくか、[ドキュメント](https://easyproxy.me/ja/)をご確認ください。
+一部のプロバイダー（特に Anthropic Claude）は、サードパーティのプロキシ経由で API トラフィックを流すアカウントを停止または制限することがあります。**自己責任で使ってください（UAYOR）。** プロバイダーを接続する前に利用規約を確認し、プロキシ経由のアクセスが認められているかを確かめてください。上流プロバイダーによるアカウントへの措置について、easyproxy のメンテナーは責任を負いません。
 
 ## ライセンス
 
-MIT
+EasyProxy は [MIT ライセンス](../LICENSE)の下で配布されています。サードパーティ製コンポーネントはそれぞれのライセンスに従います。[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) を参照してください。

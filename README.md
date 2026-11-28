@@ -1,23 +1,20 @@
 <p align="center">
-  <img src="assets/banner.png" alt="easyproxy — one local gateway for Codex, Claude Code, Claude Desktop, Grok Build and more" width="100%">
+  <img
+    src="https://raw.githubusercontent.com/AquilaXk/easyproxy/main/desktop/src-tauri/icons/icon.png"
+    width="80"
+    alt="EasyProxy"
+  >
 </p>
 
-<h3 align="center">One local gateway for your AI coding tools and models.</h3>
-<p align="center"><b>Use the models you choose with Codex, Claude Code, Claude Desktop and Grok Build,<br>
-and connect OpenCode, Pi, Qoder, WorkBuddy, Kilo, Cline, T3 Code and more through managed configs.</b><br>
-<a href="https://easyproxy.me/reference/client-support/">See every supported tool →</a></p>
+<h1 align="center">EasyProxy</h1>
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?label=release" alt="latest release"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license: MIT"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node >= 18">
+  One local gateway for your AI coding tools and models.
+  <br>
+  Use the models you choose with Codex, Claude Code, Claude Desktop and Grok Build, or connect OpenCode, Pi, Qoder, WorkBuddy, Kilo, Cline, T3 Code and more through managed configs.
+  <br>
+  <a href="#quick-start"><b>Install ↓</b></a> · <a href="https://easyproxy.me/reference/client-support/"><b>Supported tools →</b></a>
 </p>
-
-```bash
-npm install -g --allow-scripts=bun easyproxy
-epx start
-```
 
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="assets/download-windows.svg" alt="Download for Windows (.msi)" height="48"></a>
@@ -29,17 +26,34 @@ epx start
   <sub>macOS button is for Apple Silicon (arm64). <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">All release files &amp; checksums</a></sub>
 </p>
 
+<p align="center">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/easyproxy"><img alt="npm" src="https://img.shields.io/npm/v/easyproxy?style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+  <a href="https://github.com/sponsors/AquilaXk"><img alt="GitHub Sponsors" src="https://img.shields.io/github/sponsors/AquilaXk?style=flat-square&logo=githubsponsors&label=Sponsors"></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="readme/README.fr.md">Français</a> · <a href="readme/README.ko.md">한국어</a> · <a href="readme/README.zh-CN.md">简体中文</a> · <a href="readme/README.zh-TW.md">繁體中文</a> · <a href="readme/README.ru.md">Русский</a> · <a href="readme/README.ja.md">日本語</a> · <a href="readme/README.tr.md">Türkçe</a> · 📖 <a href="https://easyproxy.me/"><b>Full documentation →</b></a>
+</p>
+
+```bash
+npm install -g --allow-scripts=bun easyproxy
+epx start
+```
+
 <table>
 <tr>
 <td width="50%" valign="middle">
 
 ### Claude Code, running any model
 
-The picker is stock Claude Code. The brain behind it isn't.
+The picker is stock Claude Code. The model behind it is yours to choose.
 
 </td>
 <td width="50%">
-  <img src="assets/claude-code-models.gif" alt="Claude Code running a routed model through easyproxy — the status bar shows gpt-5.6-luna-medium as the active model" width="100%">
+  <img src="assets/claude-code-models.gif" alt="Claude Code running a routed model through easyproxy, with gpt-5.6-luna-medium active in the status bar" width="100%">
 </td>
 </tr>
 <tr>
@@ -47,11 +61,11 @@ The picker is stock Claude Code. The brain behind it isn't.
 
 ### Codex, running any model
 
-Pick a provider and go — same workflow, different brain.
+Pick a provider and keep your usual workflow.
 
 </td>
 <td width="50%">
-  <img src="https://raw.githubusercontent.com/AquilaXk/easyproxy/main/assets/demo.gif" alt="easyproxy demo — running a task in the Codex app on a routed non-OpenAI model" width="100%">
+  <img src="https://raw.githubusercontent.com/AquilaXk/easyproxy/main/assets/demo.gif" alt="easyproxy demo running a task in the Codex app on a routed non-OpenAI model" width="100%">
 </td>
 </tr>
 <tr>
@@ -80,16 +94,58 @@ Sol drives the session and calls a Kimi K3 subagent.
 </tr>
 </table>
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="readme/README.fr.md">Français</a> · <a href="readme/README.ko.md">한국어</a> · <a href="readme/README.zh-CN.md">简体中文</a> · <a href="readme/README.zh-TW.md">繁體中文</a> · <a href="readme/README.ru.md">Русский</a> · <a href="readme/README.ja.md">日本語</a> · <a href="readme/README.tr.md">Türkçe</a> · 📖 <a href="https://easyproxy.me/"><b>Full documentation →</b></a>
-</p>
-
 easyproxy is a lightweight local gateway between your coding tools and your model providers. It
 accepts the Responses, Chat Completions and Anthropic Messages APIs and translates each request into
 whatever your provider speaks, carrying streaming, tool calls, reasoning and images where the client,
 model and provider support them. Use Claude, Gemini, Grok, GLM, DeepSeek, Kimi, Qwen, Ollama and other
 providers with Codex, Claude Code, Claude Desktop, Grok Build and the tools listed on the
 [client support page](https://easyproxy.me/reference/client-support/).
+
+## Highlights
+
+- **Use any LLM with Codex, Claude Code, Claude Desktop, and Grok Build.** 40+ built-in providers,
+  each keeping the tool's native UI.
+- **Combos.** Group providers behind one virtual model id with failover or weighted round-robin. See
+  the [combo guide](https://easyproxy.me/guides/combos/).
+- **Sub-agents on any model.** Expose routed models in Codex's sub-agent picker, with v1/v2 surface
+  control and fallback chains. See the
+  [sub-agent guide](https://easyproxy.me/guides/sub-agent-surface/).
+- **Log in once or bring an API key.** OAuth for xAI, Anthropic, and Kimi; forwarded `codex login`;
+  pasted API keys; or `${ENV_VAR}` references.
+- **Web search and vision sidecars.** Non-OpenAI models get real web search and image understanding
+  through a sidecar over your ChatGPT login.
+- **Live dashboard and logs.** Inspect providers, OAuth status, model selection, and a live request
+  log with cache token counts.
+- **Clean exit.** `epx stop` restores Codex to its original configuration.
+- **Bounded memory ownership.** Every long-lived cache, ring buffer, and protocol-translation store
+  has a finite cap, byte budget, or active reconciliation. No unbounded `Map` or `Set` survives a
+  config reload.
+
+<details>
+<summary>Memory ownership details</summary>
+
+EasyProxy tracks process-retained state in the categories below. Each has a documented bound:
+
+- **15 retained stores** (request log, debug rings, image cache, model cache, vision
+  descriptions, cursor blobs, responses continuation, etc.) are byte-accounted and
+  evicted by the app-owned memory budget (default 256 MiB), except the native control replay
+  store, which is pinned and never evicted.
+- **4 observed buffers** (translator accumulators, image/OAuth/Grok tails) are
+  monitored for in-flight byte pressure without eviction.
+- **32 state-store registrations** handle expiry sweeps (60 s interval) and
+  config-generation reconciliation so stale provider/account keys are removed.
+- **Path and fingerprint memos** (workspace metadata, hardened identities, installation
+  salts, mode-hint capabilities) use insertion-order LRU caps (8–128 entries).
+- **Model-cache generation tombstones** are deleted after reconciliation; a global
+  generation increment prevents stale in-flight discoveries from repopulating removed
+  providers.
+- **Lab event-id deduplication** runs under a ledger lock from disk, with no
+  process-level RAM index.
+
+Run `GET /api/system/memory` (with the admin token) to inspect live retained bytes,
+eviction counters, and watchdog samples.
+
+</details>
 
 ## Quick start
 
@@ -102,8 +158,8 @@ epx start                         # proxy + dashboard on localhost:10100
 
 Use `epx service` to run it in the background.
 
-Open **http://localhost:10100** and configure everything in the web dashboard — add providers
-(40+ built-ins, or any OpenAI-compatible endpoint), pick models, manage accounts. `epx gui`
+Open **http://localhost:10100** and configure everything in the web dashboard: add providers
+(40+ built-ins, or any OpenAI-compatible endpoint), pick models, and manage accounts. `epx gui`
 re-opens the dashboard at any time.
 
 ### Connect your tool
@@ -125,7 +181,7 @@ and which protocol it speaks.
 <details>
 <summary><b>Desktop app (beta)</b></summary>
 
-The desktop app is the same proxy and dashboard in a native window, with a tray and bundled `epx`.
+The desktop app runs the same proxy and dashboard in a native window, with a tray and bundled `epx`.
 It attaches to a proxy that is already running, or starts its bundled one, and the dashboard stays
 on the proxy port (**http://localhost:10100** unless you configured another). Pick the file for your
 platform from the [latest release](https://github.com/AquilaXk/easyproxy/releases/latest):
@@ -150,7 +206,20 @@ step needs macOS). The [Desktop App guide](https://easyproxy.me/guides/desktop-a
 </details>
 
 <details>
-<summary>Docker Compose</summary>
+<summary><b>Supported platforms</b></summary>
+
+| OS | Status | Service manager | Desktop app (beta) |
+|---|---|---|---|
+| macOS (arm64 / x64) | Fully supported | launchd | `arm64` / `x64` `.dmg` |
+| Linux (x64 / arm64) | Fully supported | systemd (user unit) | x86_64 `.AppImage` / `.deb` |
+| Windows (x64) | Fully supported | Task Scheduler (hidden) / opt-in native service (`--native`, WinSW) | x64 `.msi` |
+
+The CLI install requires [Node](https://nodejs.org) 18+; the desktop app needs neither Node nor Bun. The Bun runtime is bundled on `npm install`, so no separate Bun install is needed and Windows needs no WSL. If npm blocked the bundled runtime's install scripts, see the [installation docs](https://easyproxy.me/getting-started/installation/).
+
+</details>
+
+<details>
+<summary><b>Docker Compose</b></summary>
 
 The repository ships a digest-pinned, non-root Compose build. The build generates and verifies the
 canonical compatibility manifest from the selected Git snapshot. A local clone needs Git and
@@ -170,8 +239,8 @@ curl --fail --silent http://127.0.0.1:10100/readyz
 The default host binding is `127.0.0.1:10100`. Remote exposure requires explicit
 `EASYPROXY_BIND_ADDRESS=<LAN-or-Tailscale-IP> docker compose up -d`; `0.0.0.0` opts into
 all host interfaces. Restrict access with a firewall and an authenticated TLS/tailnet frontend.
-The generated JSON stays untracked. The build context admits only `.git/index` and `.git/HEAD` — the
-inventory `git ls-files` reads, about 1 MB rather than the full object store — and they are visible
+The generated JSON stays untracked. The build context admits only `.git/index` and `.git/HEAD`, the
+inventory `git ls-files` reads (about 1 MB rather than the full object store), and they are visible
 only to the build-only manifest stage through a read-only mount, so no `COPY` includes `.git`. An existing host-generated manifest
 is still accepted only after validation; otherwise the build generates one itself. The build rejects
 stale manifests, missing or mismatched files, extra source files, and symlinks.
@@ -201,7 +270,7 @@ setup, authenticated acceptance checks, remote management, and rollback.
 </details>
 
 <details>
-<summary>Install from source (latest main)</summary>
+<summary><b>Install from source (latest main)</b></summary>
 
 **macOS / Linux:**
 
@@ -230,7 +299,7 @@ they reach the npm package.
 </details>
 
 <details>
-<summary>For agents</summary>
+<summary><b>For agents</b></summary>
 
 ```bash
 npm install -g --allow-scripts=bun easyproxy
@@ -238,72 +307,14 @@ epx start     # or `epx service`
 epx init      # interactive setup: writes ~/.easyproxy/config.json and wires Codex
 ```
 
-`epx init` never starts the proxy; start it first (or after — either order works, but headless
+`epx init` never starts the proxy; start it first (or after: either order works, though headless
 commands like `epx provider add` and `epx combo set` talk to the **live** proxy and exit nonzero
 when it is unreachable). `epx status` / `epx doctor` / `epx health` report the running state.
 
 > **Agents installing or running easyproxy:** read
 > [`CLI_CONSENT.md`](./CLI_CONSENT.md). An interactive `epx start` may ask once whether to
-> star this repository — that is the user's decision, never an agent's. The CLI suppresses the
+> star this repository. That is the user's decision, never an agent's. The CLI suppresses the
 > prompt for agent-driven runs and the API refuses them with `403 agent_consent_required`.
-
-</details>
-
-## Supported platforms
-
-| OS | Status | Service manager | Desktop app (beta) |
-|---|---|---|---|
-| macOS (arm64 / x64) | Fully supported | launchd | `arm64` / `x64` `.dmg` |
-| Linux (x64 / arm64) | Fully supported | systemd (user unit) | x86_64 `.AppImage` / `.deb` |
-| Windows (x64) | Fully supported | Task Scheduler (hidden) / opt-in native service (`--native`, WinSW) | x64 `.msi` |
-
-The CLI install requires [Node](https://nodejs.org) 18+; the desktop app needs neither Node nor Bun. The Bun runtime is bundled on `npm install` — no separate
-Bun install needed, no WSL needed on Windows. If npm blocked the bundled runtime's install scripts,
-see the [installation docs](https://easyproxy.me/getting-started/installation/).
-
-## Highlights
-
-- **Use any LLM with Codex, Claude Code, Claude Desktop, and Grok Build** — 40+ providers out of
-  the box, each keeping its own native UI.
-- **Combos** — one virtual model id with failover or weighted round-robin across providers. See
-  the [combo guide](https://easyproxy.me/guides/combos/).
-- **Sub-agents on any model** — feature routed models in Codex's sub-agent picker, with v1/v2
-  surface control and fallback chains. See the
-  [sub-agent guide](https://easyproxy.me/guides/sub-agent-surface/).
-- **Log in once, skip the API key** — OAuth for xAI, Anthropic, and Kimi; or forward
-  `codex login`, paste a key, or use `${ENV_VAR}` references.
-- **Web search & vision sidecars** — non-OpenAI models get real web search and image understanding
-  through a sidecar over your ChatGPT login.
-- **See what's happening** — the dashboard shows providers, OAuth status, model selection, and a
-  live request log with cache token counts.
-- **Clean exit, zero residue** — `epx stop` restores Codex to its original configuration.
-- **Bounded memory ownership** — every long-lived cache, ring buffer, and protocol-translation
-  store has a finite cap, byte budget, or active reconciliation. No unbounded `Map` or `Set`
-  survives a config reload.
-
-<details>
-<summary>Memory ownership details</summary>
-
-EasyProxy tracks process-retained state in the categories below. Each has a documented bound:
-
-- **15 retained stores** (request log, debug rings, image cache, model cache, vision
-  descriptions, cursor blobs, responses continuation, etc.) are byte-accounted and
-  evicted by the app-owned memory budget (default 256 MiB), except the native control replay
-  store, which is pinned and never evicted.
-- **4 observed buffers** (translator accumulators, image/OAuth/Grok tails) are
-  monitored for in-flight byte pressure without eviction.
-- **32 state-store registrations** handle expiry sweeps (60 s interval) and
-  config-generation reconciliation so stale provider/account keys are removed.
-- **Path and fingerprint memos** (workspace metadata, hardened identities, installation
-  salts, mode-hint capabilities) use insertion-order LRU caps (8–128 entries).
-- **Model-cache generation tombstones** are deleted after reconciliation; a global
-  generation increment prevents stale in-flight discoveries from repopulating removed
-  providers.
-- **Lab event-id deduplication** runs under a ledger lock from disk, with no
-  process-level RAM index.
-
-Run `GET /api/system/memory` (with the admin token) to inspect live retained bytes,
-eviction counters, and watchdog samples.
 
 </details>
 
@@ -321,7 +332,8 @@ Omit the `provider/` prefix to use the default provider or auto-match by model n
 Provider model ids containing `/` are exposed with inner slashes aliased to `-`; the raw
 full-slash form keeps working too. Details: [model routing docs](https://easyproxy.me/guides/model-routing/).
 
-### JEV Auto routing (optional)
+<details>
+<summary><b>JEV Auto routing (optional)</b></summary>
 
 TypeSafe JEV can choose the first model and reasoning effort for an opt-in Combo while the normal
 model picker and every direct route stay unchanged. Add the credential with `epx login jev`, from
@@ -340,10 +352,12 @@ A JEV Combo can instead ask a self-hosted decision model, such as Ollama's keyle
 `decisionProvider` to it. TypeSafe credentials are never sent there. Details:
 [System One-compatible server](https://easyproxy.me/guides/combos/#system-one-compatible-server).
 
+</details>
+
 ## Providers & adapters
 
 OpenAI (ChatGPT login or API key), Anthropic, Google Gemini, xAI, Kimi, Azure OpenAI, Ollama
-(local + Cloud), Cursor (experimental), and every OpenAI-compatible endpoint — plus DeepSeek,
+(local + Cloud), Cursor (experimental), and every OpenAI-compatible endpoint, plus DeepSeek,
 Groq, OpenRouter, OpenGateway, Together, Fireworks, Cerebras, Mistral, Hugging Face, NVIDIA NIM, MiniMax,
 Qwen Cloud, Qoder Global and CN (official PAT + CLI), SiliconFlow, and more. Full list: `epx init` or the
 [provider docs](https://easyproxy.me/guides/providers/).
@@ -371,7 +385,8 @@ A start whose preferred port is busy stops and names the holder instead of movin
 so it can never leave a second proxy running beside the first. Free the port, or name a different
 one with `--port`. Full reference: [CLI docs](https://easyproxy.me/reference/cli/).
 
-### Health and readiness
+<details>
+<summary><b>Health and readiness</b></summary>
 
 `GET /healthz` reports immediate proxy liveness. The unauthenticated `GET /readyz` endpoint reports
 post-sync readiness with the sanitized JSON identity `{service, version, uptime, pid, port, status}`.
@@ -392,6 +407,8 @@ for up to 45 seconds by default, but exits immediately when it observes terminal
 An older proxy without `/readyz` fails closed as `unreachable` with exit 1, while `epx health`
 remains compatible.
 
+</details>
+
 ### Autostart: service vs shim
 
 Use the **service** (`epx service`) for an always-on proxy that restarts on crash. Use the
@@ -408,26 +425,25 @@ npm uninstall -g easyproxy
 ## Remote access
 
 By default easyproxy binds to `127.0.0.1` and needs no extra authentication. Binding beyond
-loopback (`"hostname": "0.0.0.0"`) **requires** a bearer token — the proxy refuses to start
+loopback (`"hostname": "0.0.0.0"`) **requires** a bearer token: the proxy refuses to start
 without `EASYPROXY_API_AUTH_TOKEN`, and every client request must carry it as
 `x-easyproxy-api-key`. Details: [configuration reference](https://easyproxy.me/reference/configuration/).
 
-## Advanced usage
+<details>
+<summary><b>ChatGPT account pool (advanced)</b></summary>
 
 Self-hosted options for power users. Review each provider's terms before you enable them.
 
-### ChatGPT account pool
-
-easyproxy can also manage a **ChatGPT account pool** for Codex auth. Add multiple ChatGPT / Codex accounts,
+easyproxy can manage a **ChatGPT account pool** for Codex auth. Add multiple ChatGPT / Codex accounts and
 refresh their 5h / weekly / 30d quota in the dashboard. Under quota routing, new sessions can use
 the lowest-usage healthy account; round-robin and fill-first use their own policies. Existing Codex
 threads normally retain affinity to the account that started them, so long SSH, tmux, or
-mobile-connected sessions do not jump accounts mid-conversation — but quota re-evaluation, failover,
+mobile-connected sessions do not jump accounts mid-conversation, though quota re-evaluation, failover,
 account exclusion, affinity expiry, or 401/403 and 429 recovery can rebind them. Give the accounts a
-selection order when one of them — usually your Codex Desktop login — should only be reached for
-once the others are drained.
+selection order when one of them (such as your Codex Desktop login) should only be used once the
+others are drained.
 
-- **Pool ChatGPT accounts** — thread affinity, quota-aware auto-switching, cooldown and
+- **Pool ChatGPT accounts:** thread affinity, quota-aware auto-switching, cooldown, and
   fail-closed auth handling.
 
   > **Provider-policy note:** Account pooling is for routing and operational resilience only; it does
@@ -438,19 +454,7 @@ once the others are drained.
   > [Codex Auth account-pool guidance](https://easyproxy.me/guides/web-dashboard/#codex-auth-and-account-pools)
   > and [OpenAI's current Terms of Use](https://openai.com/policies/terms-of-use/).
 
-## Documentation
-
-The public docs — install, providers, routing, combos, sub-agents, sidecars, integrations, and
-the CLI/config/management-API references — are built from [`docs-site/`](./docs-site) and
-published to **[easyproxy.me](https://easyproxy.me/)**.
-
-Maintainer source-of-truth notes live under [`structure/`](./structure) and security reporting in [`SECURITY.md`](./SECURITY.md).
-Report undisclosed vulnerabilities privately through
-[GitHub private vulnerability reporting](https://github.com/AquilaXk/easyproxy/security/advisories/new),
-not a public issue.
-That form is the only technical channel — there is no security email. Follow-ups stay in the
-private report itself; a public issue may carry coordination only, never vulnerability details.
-Acknowledging a report is not the same as triaging it, and no first-response target is promised.
+</details>
 
 ## Development
 
@@ -464,6 +468,41 @@ bun install
 bun run typecheck
 bun run test
 ```
+
+## Documentation
+
+The public docs are built from [`docs-site/`](./docs-site) and published to **[easyproxy.me](https://easyproxy.me/)**:
+
+- [Installation](https://easyproxy.me/getting-started/installation/)
+- [Providers](https://easyproxy.me/guides/providers/)
+- [Model routing](https://easyproxy.me/guides/model-routing/)
+- [Combos](https://easyproxy.me/guides/combos/)
+- [Sub-agent surface](https://easyproxy.me/guides/sub-agent-surface/)
+- [Web dashboard](https://easyproxy.me/guides/web-dashboard/)
+- [Desktop app](https://easyproxy.me/guides/desktop-app/)
+- [Remote Hub deployment](https://easyproxy.me/guides/remote-hub/)
+- [CLI reference](https://easyproxy.me/reference/cli/)
+- [Configuration reference](https://easyproxy.me/reference/configuration/)
+
+Maintainer source-of-truth notes live under [`structure/`](./structure) and security reporting in [`SECURITY.md`](./SECURITY.md).
+Report undisclosed vulnerabilities privately through
+[GitHub private vulnerability reporting](https://github.com/AquilaXk/easyproxy/security/advisories/new),
+not a public issue.
+That form is the only technical channel; there is no security email. Follow-ups stay in the
+private report itself, and a public issue may carry coordination only, never vulnerability details.
+Acknowledging a report is not the same as triaging it, and no first-response target is promised.
+
+## Feedback
+
+Found a bug or missing a feature? [Open an issue](https://github.com/AquilaXk/easyproxy/issues) or check the [documentation](https://easyproxy.me/). If EasyProxy saves you time, a star helps others find it.
+
+## Sponsor
+
+EasyProxy is free and open source. Sponsorship pays for development time and the model tokens used for testing: [github.com/sponsors/AquilaXk](https://github.com/sponsors/AquilaXk).
+
+### Supporters
+
+Your name here — [become a sponsor](https://github.com/sponsors/AquilaXk).
 
 ## Code signing policy
 
@@ -479,12 +518,8 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 easyproxy is an independent, community-maintained project and is **not affiliated with or endorsed by OpenAI, Anthropic, or any other provider**.
 
-Some providers — notably Anthropic (Claude) — may suspend or restrict accounts that route API traffic through third-party proxies. **Use at your own risk (UAYOR).** Before connecting a provider, review its Terms of Service to confirm that proxy-based access is permitted. The easyproxy maintainers are not responsible for any account actions taken by upstream providers.
-
-## Feedback
-
-If something feels rough or breaks in your workflow, please report it in [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) or check the [documentation](https://easyproxy.me/).
+Some providers, notably Anthropic (Claude), may suspend or restrict accounts that route API traffic through third-party proxies. **Use at your own risk (UAYOR).** Before connecting a provider, review its Terms of Service to confirm that proxy-based access is permitted. The easyproxy maintainers are not responsible for any account actions taken by upstream providers.
 
 ## License
 
-MIT
+EasyProxy is licensed under the [MIT License](./LICENSE). Third-party components retain their respective licenses; see [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).

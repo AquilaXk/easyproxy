@@ -1,22 +1,20 @@
 <p align="center">
-  <img src="../assets/banner.png" alt="easyproxy — 連接 Codex、Claude Code、Claude Desktop、Grok Build 等工具的本機閘道" width="100%">
+  <img
+    src="https://raw.githubusercontent.com/AquilaXk/easyproxy/main/desktop/src-tauri/icons/icon.png"
+    width="80"
+    alt="EasyProxy"
+  >
 </p>
 
-<h3 align="center">一個本機閘道，連接你的 AI 程式開發工具與模型。</h3>
-<p align="center"><b>在 Codex、Claude Code、Claude Desktop 和 Grok Build 中使用你選擇的模型，<br>並透過受管理的設定連接 OpenCode、Pi、Qoder、WorkBuddy、Kilo、Cline、T3 Code 等工具。</b><br>
-<a href="https://easyproxy.me/zh-tw/reference/client-support/">查看所有支援的工具 →</a></p>
+<h1 align="center">EasyProxy</h1>
 
 <p align="center">
-  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI 狀態"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?label=release" alt="最新版本"></a>
-  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="授權: MIT"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="node 18 以上">
+  連接你的 AI 程式開發工具與模型的統一本機閘道。
+  <br>
+  在 Codex、Claude Code、Claude Desktop 和 Grok Build 中使用你選擇的模型，或透過受管理的設定連接 OpenCode、Pi、Qoder、WorkBuddy、Kilo、Cline、T3 Code 等工具。
+  <br>
+  <a href="#quick-start"><b>安裝 ↓</b></a> · <a href="https://easyproxy.me/zh-tw/reference/client-support/"><b>查看支援的工具 →</b></a>
 </p>
-
-```bash
-npm install -g --allow-scripts=bun easyproxy
-epx start
-```
 
 <p align="center">
   <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-windows-x64.msi"><img src="../assets/download-windows.svg" alt="下載 Windows 版 (.msi)" height="48"></a>
@@ -28,17 +26,34 @@ epx start
   <sub>macOS 按鈕適用於 Apple Silicon (arm64)。<a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-macos-x64.dmg">macOS Intel (.dmg)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest/download/EasyProxy-linux-amd64.deb">Linux (.deb)</a> · <a href="https://github.com/AquilaXk/easyproxy/releases/latest">全部發行檔案與校驗和</a></sub>
 </p>
 
+<p align="center">
+  <a href="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AquilaXk/easyproxy/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/AquilaXk/easyproxy?style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/easyproxy"><img alt="npm" src="https://img.shields.io/npm/v/easyproxy?style=flat-square"></a>
+  <a href="https://github.com/AquilaXk/easyproxy/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+  <a href="https://github.com/sponsors/AquilaXk"><img alt="GitHub Sponsors" src="https://img.shields.io/github/sponsors/AquilaXk?style=flat-square&logo=githubsponsors&label=Sponsors"></a>
+</p>
+
+<p align="center">
+  <a href="../README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <b>繁體中文</b> · <a href="README.ru.md">Русский</a> · <a href="README.ja.md">日本語</a> · <a href="README.tr.md">Türkçe</a> · 📖 <a href="https://easyproxy.me/zh-tw/"><b>完整文件 →</b></a>
+</p>
+
+```bash
+npm install -g --allow-scripts=bun easyproxy
+epx start
+```
+
 <table>
 <tr>
 <td width="50%" valign="middle">
 
 ### Claude Code，執行任意模型
 
-選擇器還是 Claude Code 原本的，換掉的只是背後的大腦。
+選擇器維持 Claude Code 原生介面，背後的模型由你自由指定。
 
 </td>
 <td width="50%">
-  <img src="../assets/claude-code-models.gif" alt="透過 easyproxy 執行路由模型的 Claude Code——狀態列顯示 gpt-5.6-luna-medium 為目前模型" width="100%">
+  <img src="../assets/claude-code-models.gif" alt="透過 easyproxy 執行路由模型的 Claude Code（狀態列顯示 gpt-5.6-luna-medium 為目前模型）" width="100%">
 </td>
 </tr>
 <tr>
@@ -46,11 +61,11 @@ epx start
 
 ### Codex，執行任意模型
 
-選好供應商就能開始——同樣的工作流程，換顆大腦。
+選好供應商即可延續熟悉的工作流程。
 
 </td>
 <td width="50%">
-  <img src="../assets/demo.gif" alt="easyproxy 示範——在 Codex 應用中用路由的非 OpenAI 模型執行任務" width="100%">
+  <img src="../assets/demo.gif" alt="easyproxy 示範：在 Codex 應用中用路由的非 OpenAI 模型執行任務" width="100%">
 </td>
 </tr>
 <tr>
@@ -79,11 +94,45 @@ Sol 主導會話，並呼叫 Kimi K3 子代理。
 </tr>
 </table>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <b>繁體中文</b> · <a href="README.ru.md">Русский</a> · <a href="README.ja.md">日本語</a> · <a href="README.tr.md">Türkçe</a> · 📖 <a href="https://easyproxy.me/zh-tw/"><b>完整文件 →</b></a>
-</p>
-
 easyproxy 是連接程式開發工具與模型供應商的輕量級本機閘道。它接收 Responses、Chat Completions 和 Anthropic Messages API 請求，並轉換成供應商使用的協定；在用戶端、模型和供應商支援的情況下，傳遞串流、工具呼叫、推理和影像。你可以在 Codex、Claude Code、Claude Desktop、Grok Build 及[用戶端支援頁面](https://easyproxy.me/zh-tw/reference/client-support/)列出的工具中使用 Claude、Gemini、Grok、GLM、DeepSeek、Kimi、Qwen、Ollama 等供應商。
+
+## 亮點
+
+- **在 Codex、Claude Code、Claude Desktop 與 Grok Build 使用任何 LLM。** 開箱即用 40+ 供應商，各自保留原生 UI。
+- **Combo。** 一個虛擬模型 id，可在供應商之間 failover 或加權 round-robin。詳見 [combo 指南](https://easyproxy.me/zh-tw/guides/combos/)。
+- **任何模型上的子代理。** 讓路由模型出現在 Codex 的子代理選擇器，含 v1/v2 介面控制與 fallback 鏈。詳見[子代理指南](https://easyproxy.me/zh-tw/guides/sub-agent-surface/)。
+- **登入一次，或直接帶入 API 金鑰。** xAI、Anthropic、Kimi 支援 OAuth；也可轉發 `codex login`、貼上金鑰，或使用 `${ENV_VAR}` 引用。
+- **網頁搜尋與視覺 sidecar。** 非 OpenAI 模型可透過掛在 ChatGPT 登入上的 sidecar，獲得真正的網頁搜尋與圖片理解能力。
+- **即時儀表板與日誌。** 儀表板顯示供應商、OAuth 狀態、模型選擇，以及含快取 token 計數的即時請求日誌。
+- **乾淨退出。** `epx stop` 把 Codex 還原成原始設定。
+- **有界記憶體所有權。** 每個長生命週期的快取、環形緩衝區與協議翻譯儲存都有有限上限、位元組預算或主動調和。設定重新載入後，不會留下無界的 `Map` 或 `Set`。
+
+<details>
+<summary>記憶體所有權細節</summary>
+
+EasyProxy 在下列類別中追蹤行程保留狀態。每一類都有文件化的上限：
+
+- **15 個保留儲存**（請求日誌、除錯環形緩衝、圖片快取、模型快取、視覺
+  描述、cursor blob、responses 延續等）以位元組計帳，並由
+  應用程式自己的記憶體預算淘汰（預設 256 MiB）；其中 native control replay
+  儲存為固定，不會被淘汰。
+- **4 個觀測緩衝區**（翻譯累加器、image/OAuth/Grok 尾端）會
+  監控進行中的位元組壓力，但不淘汰。
+- **32 個狀態儲存註冊**負責到期清掃（間隔 60 秒）與
+  設定世代調和，以移除過期的供應商／帳號鍵。
+- **路徑與指紋 memo**（工作區中繼資料、強化身分、安裝
+  salt、mode-hint 能力）使用插入順序 LRU 上限（8–128 筆）。
+- **模型快取世代 tombstone** 在調和後刪除；全域
+  世代遞增可避免過期、進行中的探索把已移除的供應商填回來。
+- **Lab event-id 去重**在磁碟帳本鎖下執行，行程層級沒有
+  RAM 索引。
+
+執行 `GET /api/system/memory`（帶管理權杖）可檢視目前保留的位元組、
+淘汰計數與 watchdog 樣本。
+
+</details>
+
+<a id="quick-start"></a>
 
 ## 快速開始
 
@@ -96,9 +145,7 @@ epx start                         # 代理 + 儀表板位於 localhost:10100
 
 用 `epx service` 在背景執行。
 
-開啟 **http://localhost:10100**，在網頁儀表板完成所有設定——新增供應商
-（40+ 內建，或任何 OpenAI 相容端點）、挑選模型、管理帳號。隨時可用 `epx gui`
-重新開啟儀表板。
+開啟 **http://localhost:10100**，在網頁儀表板完成所有設定：新增供應商（40+ 內建，或任何 OpenAI 相容端點）、挑選模型、管理帳號。隨時可用 `epx gui` 重新開啟儀表板。
 
 ### 連接你的工具
 
@@ -108,7 +155,7 @@ epx start                         # 代理 + 儀表板位於 localhost:10100
 |---|---|
 | Codex | 開啟儀表板 **Route** 頁面的 Codex 開關，然後照常執行 `codex`。在本機監聽時，這會讓 Codex 內建供應商指向代理。使用終端機時，請在儀表板新增供應商之前執行 `epx init` 並接受其 Codex 提示。 |
 | Claude Code | 安裝 `claude` CLI 後執行 `epx claude`。它會在需要時啟動代理，並透過代理啟動 Claude Code。 |
-| Claude Desktop | 執行 `epx claude desktop`。全新安裝時會為整個應用程式設定閘道設定檔；既有的 first-party 設定會保留，可執行 `epx claude desktop apply --gateway` 明確切換。詳見 [Claude Code 指南](https://easyproxy.me/zh-tw/guides/claude-code/)。 切換後請完全結束並重新開啟 Claude Desktop。 |
+| Claude Desktop | 執行 `epx claude desktop`。全新安裝時會為整個應用程式設定閘道設定檔；既有的 first-party 設定會保留，可執行 `epx claude desktop apply --gateway` 明確切換。詳見 [Claude Code 指南](https://easyproxy.me/zh-tw/guides/claude-code/)。切換後請完全結束並重新開啟 Claude Desktop。 |
 | Grok Build | 在本機監聽且啟用 Grok 整合時，若 `~/.grok` 存在，`epx start` 會註冊模型；在 Grok Build 中選擇 `epx-*` 模型。遠端設定請參見 [Grok Build 指南](https://easyproxy.me/zh-tw/guides/grok-build/)。新增供應商後，重新啟動代理（或在啟用 Codex 自動啟動時執行 `epx ensure`）以更新清單。 |
 | 具備受管理整合的工具 | 使用儀表板的 **Route** 頁面，或執行 `epx integration client enable --client <id>`。 |
 | 其他工具 | 將自訂 OpenAI 相容基本 URL 設為 `http://localhost:10100/v1`，或將 Anthropic 基本 URL 設為 `http://localhost:10100`。 |
@@ -142,7 +189,20 @@ WidgetKit 擴充套件，可顯示代理狀態、今日用量與供應商配額�
 </details>
 
 <details>
-<summary>Docker Compose</summary>
+<summary><b>支援平台</b></summary>
+
+| 作業系統 | 狀態 | 服務管理員 | 桌面應用程式（Beta） |
+|---|---|---|---|
+| macOS (arm64 / x64) | 完整支援 | launchd | `arm64` / `x64` `.dmg` |
+| Linux (x64 / arm64) | 完整支援 | systemd（使用者單元） | x86_64 `.AppImage` / `.deb` |
+| Windows (x64) | 完整支援 | Task Scheduler（隱藏）／可選原生服務（`--native`、WinSW） | x64 `.msi` |
+
+CLI 安裝需要 [Node](https://nodejs.org) 18+；桌面應用程式則不需要 Node 或 Bun。Bun 執行環境在 `npm install` 時一併打包，不必另外安裝 Bun，Windows 也不需要 WSL。若 npm 攔截了打包執行環境的安裝腳本，請見[安裝文件](https://easyproxy.me/zh-tw/getting-started/installation/)。
+
+</details>
+
+<details>
+<summary><b>Docker Compose</b></summary>
 
 本儲存庫提供 digest 釘選、非 root 的 Compose 建置。建置會根據選定的 Git 快照自行產生並驗證
 權威相容性清單。本機 clone 需要 Git 與 Docker Compose；遠端 Git context 需要 Docker Compose。
@@ -190,7 +250,7 @@ services:
 </details>
 
 <details>
-<summary>從原始碼安裝（最新 main）</summary>
+<summary><b>從原始碼安裝（最新 main）</b></summary>
 
 **macOS / Linux：**
 
@@ -218,7 +278,7 @@ bun run src/cli/index.ts start
 </details>
 
 <details>
-<summary>給 agent 使用</summary>
+<summary><b>給 agent 使用</b></summary>
 
 ```bash
 npm install -g --allow-scripts=bun easyproxy
@@ -226,67 +286,13 @@ epx start     # 或 `epx service`
 epx init      # 互動式設定：寫入 ~/.easyproxy/config.json 並接上 Codex
 ```
 
-`epx init` 永遠不會啟動代理；請先啟動（或之後再啟動——順序都可以，但像
+`epx init` 永遠不會啟動代理；請先啟動（或之後再啟動，順序都可以，不過像
 `epx provider add` 與 `epx combo set` 這類無介面命令會跟**正在執行**的代理通訊，連不上就以非零結束碼結束）。`epx status` / `epx doctor` / `epx health` 回報執行狀態。
 
 > **正在安裝或執行 easyproxy 的 agent：** 請讀
 > [`CLI_CONSENT.md`](../CLI_CONSENT.md)。互動式 `epx start` 可能會問一次要不要
-> 為此儲存庫按星——那是使用者的決定，絕不是 agent 的。CLI 會在 agent 驅動的執行中隱藏該
+> 為此儲存庫按星。那是使用者的決定，絕不是 agent 的。CLI 會在 agent 驅動的執行中隱藏該
 > 提示，API 則以 `403 agent_consent_required` 拒絕。
-
-</details>
-
-## 支援平台
-
-| 作業系統 | 狀態 | 服務管理員 | 桌面應用程式（Beta） |
-|---|---|---|---|
-| macOS (arm64 / x64) | 完整支援 | launchd | `arm64` / `x64` `.dmg` |
-| Linux (x64 / arm64) | 完整支援 | systemd（使用者單元） | x86_64 `.AppImage` / `.deb` |
-| Windows (x64) | 完整支援 | Task Scheduler（隱藏）／可選原生服務（`--native`、WinSW） | x64 `.msi` |
-
-CLI 安裝需要 [Node](https://nodejs.org) 18+；桌面應用程式則不需要 Node 或 Bun。Bun 執行環境在 `npm install` 時一併打包——不必另外安裝
-Bun，Windows 也不需要 WSL。若 npm 攔截了打包執行環境的安裝腳本，
-見[安裝文件](https://easyproxy.me/zh-tw/getting-started/installation/)。
-
-## 亮點
-
-- **在 Codex、Claude Code、Claude Desktop 與 Grok Build 使用任何 LLM** — 開箱即用 40+ 供應商，
-  各自保留原生 UI。
-- **Combo** — 一個虛擬模型 id，可在供應商之間 failover 或加權 round-robin。見
-  [combo 指南](https://easyproxy.me/zh-tw/guides/combos/)。
-- **任何模型上的子代理** — 讓路由模型出現在 Codex 的子代理選擇器，含 v1/v2
-  介面控制與 fallback 鏈。見
-  [子代理指南](https://easyproxy.me/zh-tw/guides/sub-agent-surface/)。
-- **登入一次，不必填 API key** — xAI、Anthropic、Kimi 支援 OAuth；也可轉發
-  `codex login`、貼上金鑰，或使用 `${ENV_VAR}` 引用。
-- **網頁搜尋與視覺 sidecar** — 非 OpenAI 模型可透過掛在你 ChatGPT 登入上的 sidecar，獲得真正的網頁搜尋與圖片理解。
-- **看清正在發生什麼** — 儀表板顯示供應商、OAuth 狀態、模型選擇，以及含快取 token 計數的即時請求日誌。
-- **乾淨退出，零殘留** — `epx stop` 把 Codex 還原成原始設定。
-- **有界記憶體所有權** — 每個長生命週期的快取、環形緩衝區與協議翻譯
-  儲存都有有限上限、位元組預算或主動調和。設定重新載入後，不會留下無界的 `Map` 或 `Set`。
-
-<details>
-<summary>記憶體所有權細節</summary>
-
-EasyProxy 在下列類別中追蹤行程保留狀態。每一類都有文件化的上限：
-
-- **15 個保留儲存**（請求日誌、除錯環形緩衝、圖片快取、模型快取、視覺
-  描述、cursor blob、responses 延續等）以位元組計帳，並由
-  應用程式自己的記憶體預算淘汰（預設 256 MiB）；其中 native control replay
-  儲存為固定，不會被淘汰。
-- **4 個觀測緩衝區**（翻譯累加器、image/OAuth/Grok 尾端）會
-  監控進行中的位元組壓力，但不淘汰。
-- **32 個狀態儲存註冊**負責到期清掃（間隔 60 秒）與
-  設定世代調和，以移除過期的供應商／帳號鍵。
-- **路徑與指紋 memo**（工作區中繼資料、強化身分、安裝
-  salt、mode-hint 能力）使用插入順序 LRU 上限（8–128 筆）。
-- **模型快取世代 tombstone** 在調和後刪除；全域
-  世代遞增可避免過期、進行中的探索把已移除的供應商填回來。
-- **Lab event-id 去重**在磁碟帳本鎖下執行，行程層級沒有
-  RAM 索引。
-
-執行 `GET /api/system/memory`（帶管理權杖）可檢視目前保留的位元組、
-淘汰計數與 watchdog 樣本。
 
 </details>
 
@@ -304,7 +310,8 @@ codex -m "ollama/llama3" "重構這個 function"
 供應商模型 id 若含 `/`，對外會把內部斜線別名成 `-`；原始
 全斜線形式同樣可用。細節：[模型路由文件](https://easyproxy.me/zh-tw/guides/model-routing/)。
 
-### JEV Auto 路由（選用）
+<details>
+<summary><b>JEV Auto 路由（選用）</b></summary>
 
 TypeSafe JEV 可以為明確啟用的 Combo 選擇第一個模型與推理強度，一般模型選擇器與所有直接路由保持不變。
 透過 `epx login jev`、**Providers → TypeSafe JEV → Add API key** 或 `TYPESAFE_API_KEY`/`JEV_API_KEY`
@@ -319,10 +326,12 @@ JEV Combo 也可以改用自架的決策模型，例如無需金鑰的 Ollama `t
 `/v1/systemone` 端點的 `jev-decision` 供應商，並將其設為 Combo 的 `decisionProvider`。TypeSafe 憑證
 絕不會傳送到該端點。詳見[自架決策模型](https://easyproxy.me/zh-tw/guides/combos/)。
 
+</details>
+
 ## 供應商與 adapter
 
 OpenAI（ChatGPT 登入或 API key）、Anthropic、Google Gemini、xAI、Kimi、Azure OpenAI、Ollama
-（本機 + Cloud）、Cursor（實驗性），以及所有 OpenAI 相容端點——再加上 DeepSeek、
+（本機 + Cloud）、Cursor（實驗性），以及所有 OpenAI 相容端點，還有 DeepSeek、
 Groq、OpenRouter、OpenGateway、Together、Fireworks、Cerebras、Mistral、Hugging Face、NVIDIA NIM、MiniMax、
 Qwen Cloud、Qoder Global 與 CN（官方 PAT + CLI）、SiliconFlow 等等。完整清單：`epx init` 或
 [供應商文件](https://easyproxy.me/zh-tw/guides/providers/)。
@@ -349,7 +358,8 @@ epx update [--tag preview]     # 更新 easyproxy
 偏好的連接埠被占用時，啟動會停止並指出占用者，而不會改用其他連接埠，因此絕不會在第一個代理旁留下另一個
 執行中的代理。請釋放該連接埠，或用 `--port` 指定其他連接埠。完整參考：[CLI 文件](https://easyproxy.me/zh-tw/reference/cli/)。
 
-### 健康狀態與就緒
+<details>
+<summary><b>健康狀態與就緒</b></summary>
 
 `GET /healthz` 回報代理當下是否存活。未認證的 `GET /readyz` 端點回報
 同步後就緒狀態，並附上淨化後的 JSON 身分 `{service, version, uptime, pid, port, status}`。
@@ -370,6 +380,8 @@ epx update [--tag preview]     # 更新 easyproxy
 沒有 `/readyz` 的舊代理會 fail-closed 成 `unreachable`，結束碼為 1；`epx health`
 仍保持相容。
 
+</details>
+
 ### 自動啟動：service 與 shim
 
 用 **service**（`epx service`）做常駐代理，當機後會重啟。用
@@ -385,24 +397,23 @@ npm uninstall -g easyproxy
 ## 遠端存取
 
 預設 easyproxy 綁定 `127.0.0.1`，不必額外認證。綁定超出
-迴環（`"hostname": "0.0.0.0"`）**必須**有 bearer 權杖——沒有
+迴環（`"hostname": "0.0.0.0"`）**必須**有 bearer 權杖：沒有
 `EASYPROXY_API_AUTH_TOKEN` 代理會拒絕啟動，每個用戶端請求都必須以
 `x-easyproxy-api-key` 帶上它。細節：[設定參考](https://easyproxy.me/zh-tw/reference/configuration/)。
 
-## 進階用法
+<details>
+<summary><b>ChatGPT 帳號池（進階）</b></summary>
 
 給進階使用者的自架選項。啟用前請先查看各供應商的條款。
-
-### ChatGPT 帳號池
 
 easyproxy 也能為 Codex 認證管理 **ChatGPT 帳號池**。新增多個 ChatGPT / Codex 帳號，
 在儀表板重新整理 5 小時／每週／30 天配額。在配額路由下，新會話可使用
 使用量最低的健康帳號；round-robin 與 fill-first 則各自套用自己的策略。既有 Codex
 執行緒通常會維持對啟動帳號的親和性，因此長時間的 SSH、tmux 或
-行動裝置連線的會話不會在對話中途跳帳號——但配額重新評估、failover、
-帳號排除、親和性到期，或 401/403 與 429 復原，仍可能重新綁定。當其中一個帳號——通常是你的 Codex Desktop 登入——只應在其他帳號用盡後才被用到時，請為帳號設定選取順序。
+行動裝置連線的會話不會在對話中途跳帳號，不過配額重新評估、failover、
+帳號排除、親和性到期，或 401/403 與 429 復原仍可能重新綁定。當其中一個帳號（如你的 Codex Desktop 登入）只應在其他帳號用盡後才被用到時，請為帳號設定選取順序。
 
-- **池化 ChatGPT 帳號** — 執行緒親和性、依配額自動切換、冷卻與
+- **池化 ChatGPT 帳號：** 執行緒親和性、依配額自動切換、冷卻與
   fail-closed 認證處理。
 
   > **供應商政策說明：** 帳號池只用來做路由與營運韌性；它不保證
@@ -413,18 +424,7 @@ easyproxy 也能為 Codex 認證管理 **ChatGPT 帳號池**。新增多個 Chat
   > [Codex Auth 帳號池指南](https://easyproxy.me/zh-tw/guides/web-dashboard/)
   > 與 [OpenAI 現行使用條款](https://openai.com/policies/terms-of-use/)。
 
-## 文件
-
-公開文件——安裝、供應商、路由、combo、子代理、sidecar、整合，以及
-CLI／設定／管理 API 參考——由 [`docs-site/`](../docs-site) 建置，
-發布於 **[easyproxy.me](https://easyproxy.me/zh-tw/)**。
-
-維護者的權威筆記在 [`structure/`](../structure)，安全性回報在 [`SECURITY.md`](../SECURITY.md)。
-未公開的漏洞請透過
-[GitHub 私人漏洞回報](https://github.com/AquilaXk/easyproxy/security/advisories/new)
-私下回報，不要開公開 issue。
-這份表單是唯一的技術管道，沒有安全信箱。後續往來都留在這份私人回報裡；公開 issue 只能用來協調，不能放
-漏洞細節。確認收到回報不等於已經分診，也不承諾首次回應的時限。
+</details>
 
 ## 開發
 
@@ -438,6 +438,40 @@ bun install
 bun run typecheck
 bun run test
 ```
+
+## 文件
+
+公開文件由 [`docs-site/`](../docs-site) 建置，並發布於 **[easyproxy.me](https://easyproxy.me/zh-tw/)**：
+
+- [安裝](https://easyproxy.me/zh-tw/getting-started/installation/)
+- [供應商](https://easyproxy.me/zh-tw/guides/providers/)
+- [模型路由](https://easyproxy.me/zh-tw/guides/model-routing/)
+- [組合](https://easyproxy.me/zh-tw/guides/combos/)
+- [子代理介面](https://easyproxy.me/zh-tw/guides/sub-agent-surface/)
+- [網頁儀表板](https://easyproxy.me/zh-tw/guides/web-dashboard/)
+- [桌面 App](https://easyproxy.me/zh-tw/guides/desktop-app/)
+- [Remote Hub 部署](https://easyproxy.me/zh-tw/guides/remote-hub/)
+- [CLI 參考](https://easyproxy.me/zh-tw/reference/cli/)
+- [設定參考](https://easyproxy.me/zh-tw/reference/configuration/)
+
+維護者的權威筆記在 [`structure/`](../structure)，安全性回報在 [`SECURITY.md`](../SECURITY.md)。
+未公開的漏洞請透過
+[GitHub 私人漏洞回報](https://github.com/AquilaXk/easyproxy/security/advisories/new)
+私下回報，不要開公開 issue。
+這份表單是唯一的技術管道，沒有安全信箱。後續往來都留在這份私人回報裡；公開 issue 只能用來協調，不能放
+漏洞細節。確認收到回報不等於已經分診，也不承諾首次回應的時限。
+
+## 回饋
+
+發現錯誤或缺少功能？請在 [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) 回報，或參閱[說明文件](https://easyproxy.me/zh-tw/)。如果 EasyProxy 幫你省下時間，按一顆星能讓更多人發現它。
+
+## 贊助
+
+EasyProxy 免費且開源。贊助將用於支持開發時間與測試所需的模型 token 費用：[github.com/sponsors/AquilaXk](https://github.com/sponsors/AquilaXk)。
+
+### 支持者
+
+虛位以待：[成為贊助者](https://github.com/sponsors/AquilaXk)。
 
 ## 程式碼簽章政策 (Code signing policy)
 
@@ -453,12 +487,8 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 easyproxy 是獨立的社群維護專案，**與 OpenAI、Anthropic 或其他任何供應商無關，也未獲其背書。**
 
-部分供應商——尤其是 Anthropic（Claude）——可能會暫停或限制經第三方代理路由 API 流量的帳號。**使用風險自負（UAYOR）。** 連線供應商前，請先查其服務條款，確認是否允許代理式存取。上游供應商對帳號採取的任何處置，easyproxy 維護者概不負責。
-
-## 回饋
-
-使用時若遇到問題或異常，請在 [GitHub Issues](https://github.com/AquilaXk/easyproxy/issues) 回報，或參閱[說明文件](https://easyproxy.me/zh-tw/)。
+部分供應商（尤其是 Anthropic Claude）可能會暫停或限制經第三方代理路由 API 流量的帳號。**使用風險自負（UAYOR）。** 連線供應商前，請先查其服務條款，確認是否允許代理式存取。上游供應商對帳號採取的任何處置，easyproxy 維護者概不負責。
 
 ## 授權
 
-MIT
+EasyProxy 採用 [MIT 授權條款](../LICENSE)發布。第三方元件保留其各自的授權條款，詳見 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
