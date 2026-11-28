@@ -60,6 +60,98 @@ const BUN_RUN_RE =
 
 const EXTERNAL_USES_RE = /^\s*(?:-\s*)?uses:\s*([^\s#]+)/;
 const PINNED_ACTION_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./-]+)?@[0-9a-f]{40}$/;
+const FUNDING_YAML_MAX_BYTES = 4096;
+const GITHUB_FUNDING_MAX_HANDLES = 4;
+const GITHUB_HANDLE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+export function validateRepositoryFundingMetadata(
+  fundingYamlRaw: string,
+  packageJsonRaw: string,
+  readmeMarkdown: string,
+): string[] {
+  const errors: string[] = [];
+  const yamlBytes = Buffer.byteLength(fundingYamlRaw, "utf8");
+  if (yamlBytes === 0 || fundingYamlRaw.trim().length === 0) {
+    return [".github/FUNDING.yml is empty"];
+  }
+  if (yamlBytes > FUNDING_YAML_MAX_BYTES) {
+    return [`.github/FUNDING.yml exceeds ${FUNDING_YAML_MAX_BYTES} bytes`];
+  }
+
+  let parsedYaml: unknown;
+  try {
+    parsedYaml = Bun.YAML.parse(fundingYamlRaw);
+  } catch {
+    return [".github/FUNDING.yml is not valid YAML"];
+  }
+  if (!parsedYaml || typeof parsedYaml !== "object" || Array.isArray(parsedYaml)) {
+    return [".github/FUNDING.yml must parse to a YAML mapping"];
+  }
+
+  const rawGithub = (parsedYaml as Record<string, unknown>).github;
+  const handles = typeof rawGithub === "string"
+    ? [rawGithub]
+    : Array.isArray(rawGithub)
+      ? rawGithub
+      : [];
+  if (handles.length === 0 || handles.length > GITHUB_FUNDING_MAX_HANDLES) {
+    errors.push(`.github/FUNDING.yml github must list 1..${GITHUB_FUNDING_MAX_HANDLES} handles`);
+    return errors;
+  }
+  for (const entry of handles) {
+    if (typeof entry !== "string" || !GITHUB_HANDLE_RE.test(entry)) {
+      errors.push(`invalid GitHub Sponsors handle in .github/FUNDING.yml: ${JSON.stringify(entry)}`);
+      return errors;
+    }
+  }
+
+  const primaryHandle = handles[0] as string;
+  const expectedSponsorsUrl = `https://github.com/sponsors/${primaryHandle}`;
+  const expectedBadgePrefix = `https://img.shields.io/github/sponsors/${primaryHandle}`;
+
+  let pkg: Record<string, unknown>;
+  try {
+    const parsedPkg = JSON.parse(packageJsonRaw) as unknown;
+    if (!parsedPkg || typeof parsedPkg !== "object" || Array.isArray(parsedPkg)) {
+      return ["package.json must be a JSON object"];
+    }
+    pkg = parsedPkg as Record<string, unknown>;
+  } catch {
+    return ["package.json is not valid JSON"];
+  }
+
+  const funding = pkg.funding;
+  if (
+    !funding ||
+    typeof funding !== "object" ||
+    Array.isArray(funding) ||
+    (funding as Record<string, unknown>).type !== "github" ||
+    (funding as Record<string, unknown>).url !== expectedSponsorsUrl
+  ) {
+    errors.push(`package.json funding must be { type: "github", url: "${expectedSponsorsUrl}" }`);
+  }
+
+  if (!readmeMarkdown.includes(expectedBadgePrefix)) {
+    errors.push(`README.md is missing Shields GitHub Sponsors badge for ${primaryHandle}`);
+  }
+  if (!/^## Sponsor$/m.test(readmeMarkdown) || !/^### Supporters$/m.test(readmeMarkdown)) {
+    errors.push("README.md is missing ## Sponsor or ### Supporters heading");
+  }
+  if (readmeMarkdown.includes("http://github.com/sponsors/")) {
+    errors.push("README.md contains non-HTTPS github.com/sponsors URL");
+  }
+  const sponsorUrlMatches = [...readmeMarkdown.matchAll(/https:\/\/github\.com\/sponsors\/([A-Za-z0-9_-]+)/g)];
+  if (sponsorUrlMatches.length < 2) {
+    errors.push(`README.md must link to ${expectedSponsorsUrl} in both badge and Sponsor section`);
+  }
+  for (const match of sponsorUrlMatches) {
+    if (match[1] !== primaryHandle) {
+      errors.push(`README.md links to mismatched GitHub Sponsors handle: ${match[1]}`);
+    }
+  }
+
+  return errors;
+}
 
 export function findMissingPathReferences(
   line: string,
@@ -173,6 +265,68 @@ describe("GitHub workflow and action reference integrity", () => {
     for (const rel of relativeEmbeds) {
       expect(pkgFiles.has(rel) || pkgFiles.has("assets"), `unpacked ${rel}`).toBe(true);
     }
+  });
+
+  test(".github/FUNDING.yml, package.json funding, and README Sponsor links agree", () => {
+    expect(
+      validateRepositoryFundingMetadata(
+        readText(".github/FUNDING.yml"),
+        readText("package.json"),
+        readText("README.md"),
+      ),
+    ).toEqual([]);
+  });
+
+  test("funding metadata validator rejects empty, oversized, malformed, and mismatched inputs", () => {
+    const validPkg = JSON.stringify({
+      funding: { type: "github", url: "https://github.com/sponsors/AquilaXk" },
+    });
+    const validReadme = [
+      "[![Sponsors](https://img.shields.io/github/sponsors/AquilaXk?style=flat-square)](https://github.com/sponsors/AquilaXk)",
+      "## Sponsor",
+      "[github.com/sponsors/AquilaXk](https://github.com/sponsors/AquilaXk)",
+      "### Supporters",
+      "[become a sponsor](https://github.com/sponsors/AquilaXk)",
+    ].join("\n");
+
+    expect(validateRepositoryFundingMetadata("", validPkg, validReadme)).toEqual([
+      ".github/FUNDING.yml is empty",
+    ]);
+    expect(validateRepositoryFundingMetadata("   \n", validPkg, validReadme)).toEqual([
+      ".github/FUNDING.yml is empty",
+    ]);
+    expect(
+      validateRepositoryFundingMetadata(`github: [${"a".repeat(FUNDING_YAML_MAX_BYTES)}]`, validPkg, validReadme),
+    ).toEqual([`.github/FUNDING.yml exceeds ${FUNDING_YAML_MAX_BYTES} bytes`]);
+    expect(validateRepositoryFundingMetadata("github: [-invalid]\n", validPkg, validReadme)).toEqual([
+      'invalid GitHub Sponsors handle in .github/FUNDING.yml: "-invalid"',
+    ]);
+    expect(
+      validateRepositoryFundingMetadata("github: [u1, u2, u3, u4, u5]\n", validPkg, validReadme),
+    ).toEqual([`.github/FUNDING.yml github must list 1..${GITHUB_FUNDING_MAX_HANDLES} handles`]);
+    expect(
+      validateRepositoryFundingMetadata(
+        "github: [AquilaXk]\n",
+        JSON.stringify({ funding: { type: "github", url: "http://github.com/sponsors/AquilaXk" } }),
+        validReadme,
+      ),
+    ).toEqual([
+      'package.json funding must be { type: "github", url: "https://github.com/sponsors/AquilaXk" }',
+    ]);
+    expect(
+      validateRepositoryFundingMetadata(
+        "github: [AquilaXk]\n",
+        validPkg,
+        validReadme.replace("https://github.com/sponsors/AquilaXk", "https://github.com/sponsors/OtherUser"),
+      ),
+    ).toContain("README.md links to mismatched GitHub Sponsors handle: OtherUser");
+    expect(
+      validateRepositoryFundingMetadata(
+        "github: [AquilaXk]\n",
+        validPkg,
+        validReadme.replace("### Supporters\n", ""),
+      ),
+    ).toContain("README.md is missing ## Sponsor or ### Supporters heading");
   });
 
   const tempDirs: string[] = [];

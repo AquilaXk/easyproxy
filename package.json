@@ -139,5 +139,9 @@
   "bugs": {
     "url": "https://github.com/AquilaXk/easyproxy/issues"
   },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/AquilaXk"
+  },
   "license": "MIT"
 }
