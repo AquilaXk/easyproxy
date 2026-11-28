@@ -47,7 +47,7 @@ export default defineConfig({
       head: [
         // Google favicon guidelines: PNG at a multiple of 48px, exposed via rel="icon".
         { tag: "link", attrs: { rel: "icon", type: "image/png", sizes: "192x192", href: "/favicon.png" } },
-        // The vector mark recolours itself for dark browser chrome; browsers that
+        // Full-colour chevron+prism vector mark on transparency; browsers that
         // understand SVG icons prefer it over the generated ICO/PNG (scripts/brand-favicons.ts).
         { tag: "link", attrs: { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" } },
         { tag: "link", attrs: { rel: "apple-touch-icon", href: "/favicon.png" } },

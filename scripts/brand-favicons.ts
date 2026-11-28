@@ -25,10 +25,23 @@ import { buildIco, render } from "./lib/icon-render";
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = join(repoRoot, "scripts", "brand", "easyproxy-mark.svg");
 
+/** Verbatim copies of scripts/brand/easyproxy-mark.svg served directly by the GUI and docs site. */
+const SVG_COPIES = [
+  "gui/public/favicon.svg",
+  "docs-site/public/favicon.svg",
+  "docs-site/src/assets/logo-light.svg",
+] as const;
+
 /** Favicon PNGs the two sites reference, by path relative to the repository root. */
 const FAVICON_SIZES: Record<string, number> = {
   "gui/public/favicon.png": 128,
   "docs-site/public/favicon.png": 192,
+};
+
+/** 512px transparent brand rasters rendered from the same vector for the GUI and tray surfaces. */
+const BRAND_RASTER_SIZES: Record<string, number> = {
+  "gui/public/logo.png": 512,
+  "src/tray/assets/easyproxy-tray.png": 512,
 };
 
 /** The documentation site's .ico, which Starlight names directly, and the sizes it carries. */
@@ -42,8 +55,22 @@ function scratchName(output: string): string {
 
 function generateInto(target: string): string[] {
   const produced: string[] = [];
-  for (const [output, size] of Object.entries(FAVICON_SIZES)) {
-    render(size, join(target, scratchName(output)), source);
+  const markSvg = readFileSync(source);
+  for (const output of SVG_COPIES) {
+    writeFileSync(join(target, scratchName(output)), markSvg);
+    produced.push(output);
+  }
+
+  const renderedBySize = new Map<number, Buffer>();
+  for (const [output, size] of Object.entries({ ...FAVICON_SIZES, ...BRAND_RASTER_SIZES })) {
+    const outPath = join(target, scratchName(output));
+    const cached = renderedBySize.get(size);
+    if (cached) {
+      writeFileSync(outPath, cached);
+    } else {
+      render(size, outPath, source);
+      renderedBySize.set(size, readFileSync(outPath));
+    }
     produced.push(output);
   }
 

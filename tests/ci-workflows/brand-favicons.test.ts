@@ -90,8 +90,14 @@ function luminance(pixels: Buffer, at: number): number {
 
 describe("brand favicons", () => {
   const source = generatorSource();
+  const svgCopies = [...block(source, "const SVG_COPIES = [", "] as const;")
+    .matchAll(/"([^"]+)"/g)].map(m => m[1]!);
   const pngs = new Map<string, number>(
     [...block(source, "const FAVICON_SIZES: Record<string, number> = {", "};")
+      .matchAll(/"([^"]+)":\s*(\d+)/g)].map(m => [m[1]!, Number(m[2])]),
+  );
+  const brandRasters = new Map<string, number>(
+    [...block(source, "const BRAND_RASTER_SIZES: Record<string, number> = {", "};")
       .matchAll(/"([^"]+)":\s*(\d+)/g)].map(m => [m[1]!, Number(m[2])]),
   );
   const icoOutput = /const ICO_OUTPUT = "([^"]+)";/.exec(source)?.[1];
@@ -101,26 +107,70 @@ describe("brand favicons", () => {
     .filter(n => Number.isFinite(n));
 
   test("the generator still declares the favicons the sites reference", () => {
+    expect(svgCopies.length).toBeGreaterThanOrEqual(3);
     expect(pngs.size).toBeGreaterThan(1);
+    expect(brandRasters.size).toBeGreaterThanOrEqual(2);
     expect(icoOutput).toBeTruthy();
     expect(icoSizes.length).toBeGreaterThan(2);
 
     // The sizes are not free choices: these are the numbers the two sites already ask for.
-    expect(readFileSync(repoPath("gui/index.html"), "utf8")).toContain('href="/favicon.png"');
+    const guiHtml = readFileSync(repoPath("gui/index.html"), "utf8");
+    expect(guiHtml).toContain('href="/favicon.svg"');
+    expect(guiHtml).toContain('href="/favicon.png"');
+    expect(guiHtml).not.toMatch(/recolou?rs itself/i);
     const astro = readFileSync(repoPath("docs-site/astro.config.mjs"), "utf8");
     expect(astro).toContain('favicon: "/favicon.ico"');
+    expect(astro).toContain('href: "/favicon.svg"');
     expect(astro).toContain('sizes: "192x192"');
+    expect(astro).not.toMatch(/recolou?rs itself/i);
     expect(pngs.get("docs-site/public/favicon.png")).toBe(192);
   });
 
-  test("every declared favicon is committed at its declared size with alpha intact", () => {
+  test("every declared favicon and 512px brand raster is committed at its declared size with alpha intact", () => {
     const wrong: string[] = [];
-    for (const [output, size] of pngs) {
+    for (const [output, size] of [...pngs, ...brandRasters]) {
       const { width, height, colourType } = ihdr(readFileSync(repoPath(output)));
       if (width !== size || height !== size) wrong.push(`${output}: ${width}x${height} != ${size}`);
       if (colourType !== RGBA) wrong.push(`${output}: colour type ${colourType}`);
     }
     expect(wrong).toEqual([]);
+    expect(
+      readFileSync(repoPath("src/tray/assets/easyproxy-tray.png")).equals(
+        readFileSync(repoPath("gui/public/logo.png")),
+      ),
+      "src/tray/assets/easyproxy-tray.png drifted from gui/public/logo.png",
+    ).toBe(true);
+  });
+
+  test("verbatim SVG copies and shell/docs mark variants carry the canonical chevron+prism curves", () => {
+    const canonical = readFileSync(repoPath("scripts/brand/easyproxy-mark.svg"), "utf8").replaceAll("\r\n", "\n");
+    for (const copy of svgCopies) {
+      const actual = readFileSync(repoPath(copy), "utf8").replaceAll("\r\n", "\n");
+      expect(actual, `${copy} drifted from scripts/brand/easyproxy-mark.svg`).toBe(canonical);
+    }
+
+    const bodyStart = canonical.indexOf("</defs>");
+    expect(bodyStart).toBeGreaterThan(-1);
+    const bodyPaths = [...canonical.slice(bodyStart).matchAll(/ d="([^"]+)"/g)].map(m => m[1]!);
+    expect(bodyPaths.length).toBeGreaterThanOrEqual(8);
+
+    for (const variant of ["docs-site/src/assets/logo-dark.svg", "gui/src/components/ui-v2/brand-mark.tsx"]) {
+      const content = readFileSync(repoPath(variant), "utf8");
+      const defsEnd = content.indexOf("</defs>");
+      expect(defsEnd, `${variant} is missing </defs>`).toBeGreaterThan(-1);
+      const variantPaths = [...content.slice(defsEnd).matchAll(/ d="([^"]+)"/g)].map(m => m[1]!);
+      expect([...variantPaths].sort(), `${variant} paths drifted from easyproxy-mark.svg`).toEqual([...bodyPaths].sort());
+    }
+
+    const prismContour = /<clipPath id="clip-purple">\s*<path d="([^"]+)"/.exec(canonical)?.[1];
+    const chevronContour = /<clipPath id="clip-chevron">\s*<path d="([^"]+)"/.exec(canonical)?.[1];
+    expect(prismContour).toBeTruthy();
+    expect(chevronContour).toBeTruthy();
+    for (const page of ["desktop/ui/index.html", "desktop/ui/cli.html", "desktop/ui/update.html"]) {
+      const html = readFileSync(repoPath(page), "utf8");
+      expect(html, `${page} is missing prism contour`).toContain(`d="${prismContour}"`);
+      expect(html, `${page} is missing chevron contour`).toContain(`d="${chevronContour}"`);
+    }
   });
 
   test("the documentation .ico carries exactly the declared sizes as PNGs", () => {
@@ -148,9 +198,9 @@ describe("brand favicons", () => {
    * mark on transparency with no backdrop tile, so the check composites each one onto a white tab strip
    * and requires the mark itself to read there.
    */
-  test("both favicons show on a light tab instead of vanishing into it", () => {
+  test("both favicons and 512px brand rasters show on a light surface with transparent corners", () => {
     const failures: string[] = [];
-    for (const output of pngs.keys()) {
+    for (const output of [...pngs.keys(), ...brandRasters.keys()]) {
       const { width, height, pixels } = decode(readFileSync(repoPath(output)));
       // No backdrop tile: the corners stay transparent so the tab strip shows through.
       const corners = [0, (width - 1) * 4, (height - 1) * width * 4, (height * width - 1) * 4];

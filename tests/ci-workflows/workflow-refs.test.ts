@@ -98,11 +98,34 @@ function validateReadmeSponsorSurface(
     return [`${label} exceeds ${README_MAX_BYTES} bytes`];
   }
 
+  const expectedSponsorsUrl = `https://github.com/sponsors/${primaryHandle}`;
+  let missingSectionSponsorLink = false;
+
   if (requireEnglishHeadings) {
     const sponsorHeading = /^## Sponsor$/m.exec(markdown);
-    const supportersHeading = /^### Supporters$/m.exec(markdown);
-    if (!sponsorHeading || !supportersHeading || sponsorHeading.index >= supportersHeading.index) {
+    if (!sponsorHeading) {
       errors.push(`${label} is missing ## Sponsor followed by ### Supporters heading`);
+    } else {
+      const afterSponsorHeading = markdown.slice(sponsorHeading.index + sponsorHeading[0].length);
+      const nextH2 = /\n##\s+/m.exec(afterSponsorHeading);
+      const sponsorSection = nextH2 ? afterSponsorHeading.slice(0, nextH2.index) : afterSponsorHeading;
+      const supportersHeading = /^### Supporters$/m.exec(sponsorSection);
+      if (!supportersHeading) {
+        errors.push(`${label} is missing ## Sponsor followed by ### Supporters heading`);
+      } else {
+        const headerBody = markdown.slice(0, sponsorHeading.index);
+        const sponsorBody = sponsorSection.slice(0, supportersHeading.index);
+        const supportersRest = sponsorSection.slice(supportersHeading.index + supportersHeading[0].length);
+        const nextH3 = /\n###\s+/m.exec(supportersRest);
+        const supportersBody = nextH3 ? supportersRest.slice(0, nextH3.index) : supportersRest;
+        if (
+          !headerBody.includes(expectedSponsorsUrl) ||
+          !sponsorBody.includes(expectedSponsorsUrl) ||
+          !supportersBody.includes(expectedSponsorsUrl)
+        ) {
+          missingSectionSponsorLink = true;
+        }
+      }
     }
   }
 
@@ -124,15 +147,32 @@ function validateReadmeSponsorSurface(
   }
 
   const sponsorUrlMatches = [
-    ...markdown.matchAll(/https:\/\/(?:www\.)?github\.com\/sponsors(?:\/([^\s"'<>?&#)]*))?/gi),
+    ...markdown.matchAll(/https:\/\/(?:www\.)?github\.com\/sponsors(?:\/([^\s"'<>?&#)\]]*))?/gi),
   ];
-  const expectedSponsorsUrl = `https://github.com/sponsors/${primaryHandle}`;
-  if (sponsorUrlMatches.length < 3) {
+  if (sponsorUrlMatches.length < 3 || missingSectionSponsorLink) {
     errors.push(`${label} must link to ${expectedSponsorsUrl} in badge, Sponsor, and Supporters sections`);
   }
   for (const match of sponsorUrlMatches) {
     if (!match[0].startsWith("https://github.com/sponsors/")) {
       errors.push(`${label} must use canonical https://github.com/sponsors/${primaryHandle}, got ${JSON.stringify(match[0])}`);
+      continue;
+    }
+    const rawHandle = (match[1] ?? "").replace(/[.,;:。，；：]+$/u, "");
+    if (rawHandle.length === 0) {
+      errors.push(`${label} contains placeholder GitHub Sponsors URL without handle`);
+      continue;
+    }
+    if (rawHandle !== primaryHandle) {
+      errors.push(`${label} links to mismatched GitHub Sponsors handle: ${rawHandle}`);
+    }
+  }
+
+  const bareSponsorMatches = [
+    ...markdown.matchAll(/(?<![:/\w.-])(?:www\.)?github\.com\/sponsors(?:\/([^\s"'<>?&#)\]]*))?/gi),
+  ];
+  for (const match of bareSponsorMatches) {
+    if (!match[0].startsWith("github.com/sponsors/")) {
+      errors.push(`${label} must use canonical github.com/sponsors/${primaryHandle}, got ${JSON.stringify(match[0])}`);
       continue;
     }
     const rawHandle = (match[1] ?? "").replace(/[.,;:。，；：]+$/u, "");
@@ -543,6 +583,43 @@ describe("GitHub workflow and action reference integrity", () => {
         validReadme.replace("### Supporters\n", ""),
       ),
     ).toContain("README.md is missing ## Sponsor followed by ### Supporters heading");
+    // ### Supporters moved under another H2 section instead of ## Sponsor
+    expect(
+      validateRepositoryFundingMetadata(
+        "github: [AquilaXk]\n",
+        validPkg,
+        [
+          "[![Sponsors](https://img.shields.io/github/sponsors/AquilaXk?style=flat-square)](https://github.com/sponsors/AquilaXk)",
+          "## Sponsor",
+          "[github.com/sponsors/AquilaXk](https://github.com/sponsors/AquilaXk).",
+          "## Disclaimer",
+          "### Supporters",
+          "[become a sponsor](https://github.com/sponsors/AquilaXk).",
+        ].join("\n"),
+      ),
+    ).toContain("README.md is missing ## Sponsor followed by ### Supporters heading");
+    // 3 total links, but ### Supporters itself has no sponsor link
+    expect(
+      validateRepositoryFundingMetadata(
+        "github: [AquilaXk]\n",
+        validPkg,
+        [
+          "[![Sponsors](https://img.shields.io/github/sponsors/AquilaXk?style=flat-square)](https://github.com/sponsors/AquilaXk)",
+          "## Sponsor",
+          "[github.com/sponsors/AquilaXk](https://github.com/sponsors/AquilaXk) · [sponsor](https://github.com/sponsors/AquilaXk).",
+          "### Supporters",
+          "Your name here.",
+        ].join("\n"),
+      ),
+    ).toContain("README.md must link to https://github.com/sponsors/AquilaXk in badge, Sponsor, and Supporters sections");
+    // Visible schemeless github.com/sponsors/<handle> text disagrees with href
+    expect(
+      validateRepositoryFundingMetadata(
+        "github: [AquilaXk]\n",
+        validPkg,
+        validReadme.replace("[github.com/sponsors/AquilaXk]", "[github.com/sponsors/OtherSponsor]"),
+      ),
+    ).toEqual(["README.md links to mismatched GitHub Sponsors handle: OtherSponsor"]);
     // Locale README extra/mismatched handle caught even when primary URL is also present
     expect(
       validateRepositoryFundingMetadata(
