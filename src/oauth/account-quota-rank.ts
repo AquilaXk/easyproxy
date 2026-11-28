@@ -180,11 +180,12 @@ function isPrimaryWindowHot(
   provider: string,
   accountId: string,
   requestedModelId?: string | null,
+  now = Date.now(),
 ): boolean {
   if (provider === "kiro") return false;
   const quota = getCachedProviderAccountQuota(provider, accountId);
   if (!quota) return false;
-  if (hasPassiveAccountQuota(provider) && Date.now() - quota.updatedAt > PASSIVE_HEADROOM_MAX_AGE_MS) {
+  if (hasPassiveAccountQuota(provider) && now - quota.updatedAt > PASSIVE_HEADROOM_MAX_AGE_MS) {
     return false;
   }
   const family = classifyModelFamilyForQuota(provider, requestedModelId);
@@ -230,7 +231,7 @@ export function rankAccountsByResetFirst(
     const rawHeadroom = headroomOf(provider, id, requestedModelId, accounts?.get(id));
     return {
       id,
-      hotPrimary: isPrimaryWindowHot(provider, id, requestedModelId),
+      hotPrimary: isPrimaryWindowHot(provider, id, requestedModelId, now),
       resetAt: typeof rawReset === "number" && Number.isFinite(rawReset) ? rawReset : Number.POSITIVE_INFINITY,
       headroom: typeof rawHeadroom === "number" && Number.isFinite(rawHeadroom) ? rawHeadroom : 0,
       index,
@@ -266,7 +267,7 @@ export function rankAccountsByHeadroom(
   // Same rule as hasHeadroomEvidence: a passive provider's partial roster must not rank
   // at all. The failover path calls this directly (selectFailoverAccount), so the guard
   // cannot live only in the pre-dispatch predicate.
-  if (hasPassiveAccountQuota(provider) && !ring.every(id => headroomOf(provider, id, requestedModelId) !== null)) {
+  if (hasPassiveAccountQuota(provider) && !ring.every(id => headroomOf(provider, id, requestedModelId, accounts?.get(id)) !== null)) {
     return [...ring];
   }
   const ranked: Ranked[] = ring.map((id, index) => {
@@ -321,7 +322,7 @@ export function hasHeadroomEvidence(
   // AWAY from an unmeasured account and TOWARD the one account known to be spent, which
   // is the exact inversion of what ranking is for.
   if (hasPassiveAccountQuota(provider)) {
-    return ids.length > 0 && ids.every(id => headroomOf(provider, id, requestedModelId) !== null);
+    return ids.length > 0 && ids.every(id => headroomOf(provider, id, requestedModelId, accounts?.get(id)) !== null);
   }
   return ids.some(id =>
     headroomOf(provider, id, requestedModelId, accounts?.get(id)) !== null

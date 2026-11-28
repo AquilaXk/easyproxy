@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { atomicWriteFileNoFollow } from "../config/atomic-write";
 import { getConfigDir } from "../config/paths";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
+import { isValidStrictTimestamp } from "../lib/strict-timestamp";
 
 export const TELEMETRY_ID_FILE = "telemetry-id.json";
 export const TELEMETRY_PREVIEW_HASH_PLACEHOLDER = "0".repeat(64);
@@ -43,7 +44,7 @@ function parseTelemetryId(text: string): TelemetryInstallIdentity | null {
     if (raw?.version !== 1 || typeof raw.installId !== "string" || typeof raw.createdAt !== "string") {
       return null;
     }
-    if (!UUID_V4_RE.test(raw.installId) || Number.isNaN(Date.parse(raw.createdAt))) {
+    if (!UUID_V4_RE.test(raw.installId) || !isValidStrictTimestamp(raw.createdAt)) {
       return null;
     }
     return {

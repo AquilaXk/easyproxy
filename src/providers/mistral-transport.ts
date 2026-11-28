@@ -3,6 +3,7 @@ import type { EpxProviderConfig } from "../types";
 import { isEgressTransparentExecutor, markEgressTransparentExecutor } from "../lib/provider-egress";
 import { isPassiveKeyTransparent, markPassiveKeyTransparent, markPassiveKeyDeferred, PASSIVE_KEY_SEND } from "../lib/passive-key-fetch-proof";
 import { configuredOutboundFetch } from "../lib/proxy-env";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import { waitOutsideProviderHeaderDeadline } from "../lib/provider-admission-wait";
 import { markSameTargetRetryHold, sleepWithAbort } from "../lib/upstream-retry";
 import { RequestPacingQueueOverloadError } from "./request-pacing";
@@ -44,9 +45,11 @@ function count(headers: Headers, name: string): number | undefined {
 /** Read the server delay as seconds or an HTTP date; ignore invalid hints. */
 function retryDelay(headers: Headers, now: number): number | undefined {
   const raw = headers.get("retry-after")?.trim();
-  if (!raw) return undefined;
-  const value = /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw) - now;
-  return Number.isFinite(value) ? Math.max(0, value) : undefined;
+  if (!raw || raw.length > 128) return undefined;
+  const at = /^\d+(?:\.\d+)?$/.test(raw)
+    ? now + Number(raw) * 1000
+    : parseStrictTimestampMs(raw, { now, legacyHttpDate: true });
+  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
 }
 
 /** Classify measured refusal evidence only; never predict a future cache hit or token charge. */

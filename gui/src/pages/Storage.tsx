@@ -1386,7 +1386,7 @@ export default function Storage({ apiBase }: { apiBase: string }) {
     setOriginBase(apiBase);
     setScanStatus(null);
   }
-  const manualRefreshRef = useRef(false);
+  const manualRefreshTargetRef = useRef<string | null>(null);
   // Stamp trash awareness with apiBase so a base change invalidates without an effect.
   const [trashInfo, setTrashInfo] = useState({ apiBase, settled: false, hasEntries: false });
   const fetchStorage = useCallback(async (signal: AbortSignal): Promise<StorageReport> => {
@@ -1394,18 +1394,19 @@ export default function Storage({ apiBase }: { apiBase: string }) {
       const res = await fetch(`${apiBase}/api/storage`, { signal });
       if (!res.ok) throw new Error(t("storage.error"));
       const report = await res.json() as StorageReport;
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       writeSessionListCache(storageCacheKey, report);
-      if (manualRefreshRef.current) {
-        manualRefreshRef.current = false;
+      if (manualRefreshTargetRef.current === apiBase) {
+        manualRefreshTargetRef.current = null;
         setScanStatus(t("storage.rescanned"));
       }
       return report;
     } catch (error) {
-      if (manualRefreshRef.current) {
-        manualRefreshRef.current = false;
+      if (signal.aborted) throw error;
+      if (manualRefreshTargetRef.current === apiBase) {
+        manualRefreshTargetRef.current = null;
         setScanStatus(t("storage.error"));
       }
-      if (signal.aborted) throw error;
       throw new Error(t("storage.error"), { cause: error });
     }
   }, [apiBase, storageCacheKey, t]);
@@ -1422,10 +1423,10 @@ export default function Storage({ apiBase }: { apiBase: string }) {
 
   const refreshAll = useCallback(() => {
     setScanStatus(null);
-    manualRefreshRef.current = true;
+    manualRefreshTargetRef.current = apiBase;
     refreshReport();
     setTrashReloadToken(n => n + 1);
-  }, [refreshReport]);
+  }, [apiBase, refreshReport]);
 
   const onTrashEntriesChange = useCallback((entries: TrashEntry[]) => {
     setTrashInfo({ apiBase, settled: true, hasEntries: entries.length > 0 });
@@ -1495,7 +1496,7 @@ export default function Storage({ apiBase }: { apiBase: string }) {
 
       {showBody && (
         <StorageCleanupCard
-          key={apiBase}
+          key={`cleanup:${apiBase}`}
           apiBase={apiBase}
           locale={locale}
           t={t}
@@ -1508,7 +1509,7 @@ export default function Storage({ apiBase }: { apiBase: string }) {
       )}
 
       <StorageProfileBackupCard
-        key={apiBase}
+        key={`backup:${apiBase}`}
         apiBase={apiBase}
         t={t}
         onRestored={() => void refreshAll()}

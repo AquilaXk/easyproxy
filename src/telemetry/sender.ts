@@ -1,4 +1,5 @@
 import { signalWithTimeout } from "../lib/abort";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import { validateTelemetryPayloadV1, type TelemetryPayloadV1 } from "./contract";
 
 export const TELEMETRY_COLLECTOR_ENDPOINT = "https://telemetry.easyproxy.me/v1/events";
@@ -28,14 +29,14 @@ export interface TelemetrySendResult {
 export function parseRetryAfterMs(headerValue: string | null | undefined, now = Date.now()): number | null {
   if (typeof headerValue !== "string") return null;
   const trimmed = headerValue.trim();
-  if (!trimmed) return null;
+  if (!trimmed || trimmed.length > 128) return null;
   if (/^\d+$/.test(trimmed)) {
     const seconds = Number(trimmed);
     if (!Number.isFinite(seconds) || seconds <= 0) return null;
     return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
   }
-  const targetMs = Date.parse(trimmed);
-  if (Number.isNaN(targetMs) || targetMs <= now) return null;
+  const targetMs = parseStrictTimestampMs(trimmed, { now, legacyHttpDate: true });
+  if (!Number.isFinite(targetMs) || targetMs <= now) return null;
   return Math.min(targetMs - now, MAX_RETRY_AFTER_MS);
 }
 

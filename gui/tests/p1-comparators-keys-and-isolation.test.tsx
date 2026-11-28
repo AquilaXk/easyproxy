@@ -1,16 +1,20 @@
 /** @jsxImportSource react */
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
-import { act } from "react";
+import { act, useEffect } from "react";
 import type { Root } from "react-dom/client";
 import { barWidth, buildQuotaRows, isQuotaExhausted, isQuotaWarn, maxQuotaUtilisation } from "../src/components/QuotaBars";
 import { keyedLintFindings, lintPromptLayer } from "../src/components/codex-set/prompt-lint";
+import { clearClientResourceStoresForTests } from "../src/client-resource";
 import { useAccountProbe } from "../src/hooks/useAccountProbe";
 import { LanguageProvider } from "../src/i18n/provider";
+import CodexIntegrationPage from "../src/pages/integrations/CodexIntegrationPage";
 import Integrations from "../src/pages/Integrations";
 import Home from "../src/pages/Home";
+import Storage from "../src/pages/Storage";
+import { useDashboardData } from "../src/pages/use-dashboard-data";
 
-const globals = ["document", "window", "navigator", "localStorage", "HTMLElement",
+const globals = ["document", "window", "navigator", "localStorage", "sessionStorage", "HTMLElement",
   "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previous: Record<(typeof globals)[number], unknown>;
 let win: Window;
@@ -19,6 +23,7 @@ let root: Root | null = null;
 let originalFetch: typeof globalThis.fetch;
 
 beforeEach(() => {
+  clearClientResourceStoresForTests();
   previous = Object.fromEntries(globals.map(k => [k, Reflect.get(globalThis, k)])) as typeof previous;
   win = new Window({ url: "http://localhost/" });
   Object.defineProperty(win.navigator, "language", { configurable: true, value: "en-US" });
@@ -27,6 +32,7 @@ beforeEach(() => {
     window: { configurable: true, value: win },
     navigator: { configurable: true, value: win.navigator },
     localStorage: { configurable: true, value: win.localStorage },
+    sessionStorage: { configurable: true, value: win.sessionStorage },
     HTMLElement: { configurable: true, value: win.HTMLElement },
   });
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
@@ -42,6 +48,7 @@ afterEach(async () => {
     root = null;
   }
   await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+  clearClientResourceStoresForTests();
   for (const key of globals) {
     Object.defineProperty(globalThis, key, { configurable: true, value: previous[key] });
   }
@@ -199,4 +206,176 @@ test("Integrations isolates panel state across apiBase switches", async () => {
   expect(secondPanel).not.toBeNull();
   // Re-keyed tabpanel unmounts target A's DOM node and creates a fresh node for target B.
   expect(secondPanel).not.toBe(firstPanel);
+});
+
+test("Storage does not leak scan error or manual-refresh status across apiBase switches", async () => {
+  let targetACount = 0;
+  let abortedTargetARefresh = false;
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "http://a.local/api/storage") {
+        targetACount += 1;
+        if (targetACount >= 2) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              abortedTargetARefresh = true;
+              reject(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+          });
+        }
+        return Response.json({ codexHome: "/tmp/a", generatedAt: 1, total: { bytes: 0, fileCount: 0 }, buckets: [] });
+      }
+      if (url === "http://b.local/api/storage") {
+        return Response.json({ codexHome: "/tmp/b", generatedAt: 2, total: { bytes: 0, fileCount: 0 }, buckets: [] });
+      }
+      if (url.endsWith("/api/storage/trash")) return Response.json({ entries: [] });
+      return Response.json({});
+    },
+  });
+
+  const { createRoot } = await import("react-dom/client");
+  await act(async () => {
+    root = createRoot(host);
+    root.render(
+      <LanguageProvider>
+        <Storage apiBase="http://a.local" />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 25)); });
+
+  const refreshBtn = host.querySelector<HTMLButtonElement>(".storage-page-head-actions button")!;
+  await act(async () => { refreshBtn.click(); });
+  await act(async () => {
+    root!.render(
+      <LanguageProvider>
+        <Storage apiBase="http://b.local" />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+
+  expect(abortedTargetARefresh).toBe(true);
+  const feedback = host.querySelector(".storage-page-head-feedback")?.textContent ?? "";
+  expect(feedback).toBe("");
+});
+
+test("CodexIntegrationPage withdraws pending mode confirmation dialog and blocks stale PATCH on apiBase switch", async () => {
+  const patchUrls: string[] = [];
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/providers?name=openai") && init?.method === "PATCH") {
+        patchUrls.push(url);
+        return Response.json({ success: true });
+      }
+      if (url.endsWith("/api/native-integrations")) {
+        return Response.json({ clients: [{ clientId: "codex", state: "current", installed: true, desiredEnabled: true }] });
+      }
+      if (url.endsWith("/api/settings")) {
+        return Response.json({ codexAutoStart: true, codexDesktopAuthless: false, codexAccountPickerEnabled: false });
+      }
+      if (url.endsWith("/api/config")) {
+        return Response.json({
+          providers: {
+            openai: {
+              adapter: "openai-responses",
+              authMode: "forward",
+              baseUrl: "https://chatgpt.com/backend-api/codex",
+              codexAccountMode: "pool",
+            },
+          },
+        });
+      }
+      return Response.json({});
+    },
+  });
+
+  const { createRoot } = await import("react-dom/client");
+  await act(async () => {
+    root = createRoot(host);
+    root.render(
+      <LanguageProvider>
+        <CodexIntegrationPage apiBase="http://a.local" active />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+
+  const directRadio = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
+    .find(el => el.textContent?.includes("Direct"))!;
+  await act(async () => { directRadio.click(); });
+  await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+  expect(win.document.querySelector("dialog")).not.toBeNull();
+
+  await act(async () => {
+    root!.render(
+      <LanguageProvider>
+        <CodexIntegrationPage apiBase="http://b.local" active />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+  expect(win.document.querySelector("dialog")).toBeNull();
+  expect(patchUrls).toHaveLength(0);
+});
+
+test("useDashboardData resets health, providers, and target state immediately when apiBase switches", async () => {
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("http://b.local")) {
+        return new Promise<Response>(() => {});
+      }
+      if (url === "http://a.local/api/system/health") {
+        return Response.json({ status: "ok", version: "vA", uptime: 42 });
+      }
+      if (url === "http://a.local/api/providers") {
+        return Response.json([{ name: "pA", adapter: "openai-chat", baseUrl: "https://a.example", models: ["m1"], hasApiKey: true }]);
+      }
+      if (url === "http://a.local/api/models") return Response.json([]);
+      return new Response(null, { status: 404 });
+    },
+  });
+
+  let latest: ReturnType<typeof useDashboardData> | undefined;
+  function Probe({ apiBase }: { apiBase: string }) {
+    const snap = useDashboardData(apiBase);
+    useEffect(() => { latest = snap; }, [snap]);
+    return <div data-ver={snap.health?.version ?? "none"} data-providers={String(snap.providers.length)} />;
+  }
+
+  const { createRoot } = await import("react-dom/client");
+  await act(async () => {
+    root = createRoot(host);
+    root.render(
+      <LanguageProvider>
+        <Probe apiBase="http://a.local" />
+      </LanguageProvider>,
+    );
+  });
+  const until = Date.now() + 3000;
+  while (latest?.health?.version !== "vA") {
+    if (Date.now() >= until) throw new Error("useDashboardData target A did not settle");
+    await act(async () => { await new Promise<void>(r => setImmediate(r)); });
+  }
+  expect(latest?.health?.version).toBe("vA");
+  expect(latest?.providers).toHaveLength(1);
+
+  await act(async () => {
+    root!.render(
+      <LanguageProvider>
+        <Probe apiBase="http://b.local" />
+      </LanguageProvider>,
+    );
+  });
+  expect(latest?.health).toBeNull();
+  expect(latest?.providers).toEqual([]);
+  expect(latest?.usage30d).toBeNull();
+  expect(latest?.error).toBe(false);
 });

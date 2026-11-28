@@ -24,7 +24,7 @@ export function parseStrictTimestampMs(
   raw: string,
   options?: { now?: number; legacyHttpDate?: boolean },
 ): number {
-  if (raw === "") return Number.NaN;
+  if (raw.length === 0 || raw.length > 128) return Number.NaN;
   const iso = ISO_TIMESTAMP_RE.exec(raw);
   if (iso) {
     const year = Number(iso[1]);

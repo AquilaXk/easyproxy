@@ -52,7 +52,7 @@ export function inspectDesktopCompatibilityAuthority(directory: string, now = Da
     const saved = JSON.parse(readFileSync(path, "utf8"));
     if (saved.version !== 1 || saved.protection !== "windows-current-user-dpapi" || typeof saved.certPem !== "string"
       || typeof saved.sealed !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(saved.sealed) || saved.sealed.length > MAX_FILE) return { status: "invalid" };
-    const certificate = new X509Certificate(saved.certPem), expiresAt = Date.parse(certificate.validTo);
+    const certificate = new X509Certificate(saved.certPem), expiresAt = certificate.validToDate.getTime();
     if (!certificate.ca || !Number.isFinite(expiresAt)) return { status: "invalid" };
     return { status: expiresAt <= now ? "expired" : isServerAuthOnlyCertificate(certificate) ? "present" : "renewal-required", certPem: saved.certPem,
       fingerprint: certificate.fingerprint256.replaceAll(":", ""), expiresAt, renewalDue: expiresAt - now <= 7 * DAY };
@@ -83,7 +83,7 @@ function validatedAuthority(certPem: string, keyPem: string, commonName: string,
       || !commonName.startsWith("EasyProxy Codex Desktop ") || !certificate.subject.split("\n").includes(`CN=${commonName}`)) {
       throw new Error("invalid");
     }
-    const expiresAt = Date.parse(certificate.validTo), startsAt = Date.parse(certificate.validFrom);
+    const expiresAt = certificate.validToDate.getTime(), startsAt = certificate.validFromDate.getTime();
     if (!Number.isFinite(expiresAt) || !Number.isFinite(startsAt) || startsAt > now
       || expiresAt - startsAt > (VALIDITY_DAYS + 1) * DAY) throw new Error("invalid");
     if (expiresAt <= now && !allowExpired) throw new DesktopAuthorityError("expired");

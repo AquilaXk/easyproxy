@@ -1,6 +1,7 @@
 import { readConfigDiagnostics } from "../../config/diagnostics";
 import { getConfigDir } from "../../config/paths";
 import { registerOptionalShutdownHook } from "../../lib/optional-shutdown-hooks";
+import { parseStrictTimestampMs } from "../../lib/strict-timestamp";
 import type { EpxConfig } from "../../types";
 import { aggregateTelemetryForDay, type DailyTelemetryAggregate } from "../aggregate";
 import { isTelemetryEnvOptOut, resolveTelemetryStatus, type TelemetryConsentStatus } from "../consent";
@@ -138,7 +139,7 @@ export async function runProfileTick(options: ProfileTickOptions = {}): Promise<
   if (file.unreadable) return { sent: false, reason: "state-unreadable" };
   const profile = file.state;
   if (!profile) return { sent: false, reason: "not-connected" };
-  const retryUntil = profile.retryAfterUntil ? Date.parse(profile.retryAfterUntil) : Number.NaN;
+  const retryUntil = profile.retryAfterUntil ? parseStrictTimestampMs(profile.retryAfterUntil) : Number.NaN;
   const backingOff = !Number.isNaN(retryUntil) && now < retryUntil;
   if (profile.pendingDelete) {
     if (backingOff) return { sent: false, reason: "retry-after-backoff" };

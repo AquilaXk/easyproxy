@@ -1,4 +1,5 @@
 import { serviceApiTokenFingerprint } from "../../lib/service-secrets";
+import { parseStrictTimestampMs } from "../../lib/strict-timestamp";
 import type { Server, WebSocketHandler } from "bun";
 import type { EpxConfig } from "../../types";
 import { isApiKeyExpired, type RequestPolicyView } from "../auth-cors";
@@ -211,7 +212,7 @@ export function createOptionalListenerSet<T>(linkDeps: LinkListenerDeps = {},
           if (!entry?.key || isApiKeyExpired(entry)) return [];
           const fingerprints = [serviceApiTokenFingerprint(entry.key)];
           const pending = entry.pendingRotation;
-          if (pending && Date.parse(pending.expiresAt) > Date.now()) fingerprints.push(serviceApiTokenFingerprint(pending.key));
+          if (pending && parseStrictTimestampMs(pending.expiresAt) > Date.now()) fingerprints.push(serviceApiTokenFingerprint(pending.key));
           return fingerprints;
         },
       });

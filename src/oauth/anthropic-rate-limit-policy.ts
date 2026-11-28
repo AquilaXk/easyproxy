@@ -1,6 +1,7 @@
 /** Response-header policy for managed Anthropic sends; no account or request payload data. */
 import type { AnthropicInstanceId } from "../providers/anthropic-instance-id";
 import type { GenerationContext } from "../lib/state-store-sweeper";
+import { parseStrictTimestampMs } from "../lib/strict-timestamp";
 import { credentialGeneration, getAccountCredential } from "./store";
 export type AnthropicRateLimitKind = "shared-quota" | "family-quota" | "transient-rate" | "request-scoped-unknown";
 export type RateLimitHeaders = Pick<Headers, "get">;
@@ -16,8 +17,10 @@ export const ANTHROPIC_DETOUR_GRACE_MS = 5 * 60_000;
 export function anthropicRetryAfterMs(value: string | null | undefined, now: number): number | undefined {
   const text = value?.trim();
   if (!text || text.length > 128) return undefined;
-  const at = /^\d+(?:\.\d+)?$/.test(text) ? now + Number(text) * 1000 : Date.parse(text);
-  return Number.isFinite(new Date(at).getTime()) && at > now ? Math.ceil(at - now) : undefined;
+  const at = /^\d+(?:\.\d+)?$/.test(text)
+    ? now + Number(text) * 1000
+    : parseStrictTimestampMs(text, { now, legacyHttpDate: true });
+  return Number.isFinite(at) && at > now ? Math.ceil(at - now) : undefined;
 }
 
 export function classifyAnthropic429(headers: RateLimitHeaders, now = Date.now(), options?: { sentSlow?: boolean }): AnthropicRateLimitKind {

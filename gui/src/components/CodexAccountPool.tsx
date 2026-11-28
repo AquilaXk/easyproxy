@@ -188,7 +188,11 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
     setQuotaBusyScope(null);
     setQuotaFeedback(null);
   }
+  const resetPopupBoundedRef = useRef<ReturnType<typeof createBoundedFetch> | null>(null);
   useLayoutEffect(() => () => {
+    resetPopupBoundedRef.current?.controller.abort();
+    resetPopupBoundedRef.current?.clear();
+    resetPopupBoundedRef.current = null;
     resetPopupSeqRef.current += 1;
     redeemSeqRef.current += 1;
   }, [targetIdentity]);
@@ -510,11 +514,14 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
 
   const openResetPopup = async (account: CodexAccountEntry) => {
     const seq = ++resetPopupSeqRef.current;
+    resetPopupBoundedRef.current?.controller.abort();
+    resetPopupBoundedRef.current?.clear();
     setResetPopup(account);
     setResetConfirm(false);
     setCreditDetails(null);
     setCreditDetailsLoading(true);
     const bounded = createBoundedFetch(10_000);
+    resetPopupBoundedRef.current = bounded;
     try {
       const resp = await fetch(`${apiBase}/api/codex-auth/reset-credits?accountId=${encodeURIComponent(account.id)}`, {
         signal: bounded.signal,
@@ -526,6 +533,7 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
       }
     } catch { /* detail fetch is non-blocking */ }
     finally {
+      if (resetPopupBoundedRef.current === bounded) resetPopupBoundedRef.current = null;
       bounded.clear();
       if (mountedRef.current && resetPopupSeqRef.current === seq) setCreditDetailsLoading(false);
     }
@@ -543,7 +551,7 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
         operationId,
         shouldLoad: () => mountedRef.current && redeemSeqRef.current === seq,
       });
-      if (!result.uncertain) {
+      if (!result.uncertain && pendingResetOpIdsRef.current.get(opKey) === operationId) {
         pendingResetOpIdsRef.current.delete(opKey);
       }
       if (!mountedRef.current || redeemSeqRef.current !== seq) return;
@@ -804,7 +812,16 @@ export default function CodexAccountPool({ apiBase, targetKey, accountModeState 
           creditDetails={creditDetails}
           creditDetailsLoading={creditDetailsLoading}
           redeeming={redeeming}
-          onClose={() => { resetPopupSeqRef.current += 1; setResetPopup(null); setResetConfirm(false); setCreditDetails(null); setCreditDetailsLoading(false); }}
+          onClose={() => {
+            resetPopupBoundedRef.current?.controller.abort();
+            resetPopupBoundedRef.current?.clear();
+            resetPopupBoundedRef.current = null;
+            resetPopupSeqRef.current += 1;
+            setResetPopup(null);
+            setResetConfirm(false);
+            setCreditDetails(null);
+            setCreditDetailsLoading(false);
+          }}
           onShowConfirm={() => setResetConfirm(true)}
           onCancelConfirm={() => setResetConfirm(false)}
           onRedeem={() => { void handleRedeem(resetPopup.id); }}

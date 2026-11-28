@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { atomicWriteFileNoFollow } from "../config/atomic-write";
 import { getConfigDir } from "../config/paths";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
+import { isValidStrictTimestamp } from "../lib/strict-timestamp";
 import type { EpxConfig, EpxTelemetryConfig } from "../types";
 import { parseCalendarUtcDayMs } from "./contract";
 import { deleteTelemetryInstallId } from "./install-id";
@@ -82,7 +83,7 @@ function parseOwners(raw: unknown): TelemetryEnvOptOutOwner[] {
   for (const entry of raw.slice(0, 64)) {
     if (!entry || typeof entry !== "object") continue;
     const { pid, since } = entry as Record<string, unknown>;
-    if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && typeof since === "string" && !Number.isNaN(Date.parse(since))) {
+    if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && typeof since === "string" && isValidStrictTimestamp(since)) {
       owners.push({ pid, since });
     }
   }
@@ -93,7 +94,7 @@ function ownersAreValid(raw: unknown): boolean {
   return Array.isArray(raw) && raw.length <= 64 && raw.every(entry => {
     if (!entry || typeof entry !== "object") return false;
     const { pid, since } = entry as Record<string, unknown>;
-    return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && typeof since === "string" && !Number.isNaN(Date.parse(since));
+    return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && typeof since === "string" && isValidStrictTimestamp(since);
   });
 }
 
@@ -103,8 +104,10 @@ function parsePendingDecision(raw: unknown, fileTime: Date): EpxTelemetryConfig 
   if (typeof raw !== "object" || Array.isArray(raw)) return "invalid";
   const value = raw as Record<string, unknown>;
   if (value.decision !== "accepted" && value.decision !== "declined") return "invalid";
-  const stamp = (key: string): string | null =>
-    typeof value[key] === "string" && !Number.isNaN(Date.parse(value[key] as string)) ? (value[key] as string) : null;
+  const stamp = (key: string): string | null => {
+    const rawStamp = value[key];
+    return typeof rawStamp === "string" && isValidStrictTimestamp(rawStamp) ? rawStamp : null;
+  };
   const decidedAt = stamp("decidedAt");
   if (!decidedAt) {
     // A decline needs no date to apply; dropping it could let a notice-only config send.
@@ -148,7 +151,7 @@ export function readTelemetryStateFile(configDir = getConfigDir()): { state: Tel
       return { state: emptyState(), unreadable: true };
     }
     if (present(raw.envOptOutActiveSince)
-      && !(typeof raw.envOptOutActiveSince === "string" && !Number.isNaN(Date.parse(raw.envOptOutActiveSince)))) {
+      && !(typeof raw.envOptOutActiveSince === "string" && isValidStrictTimestamp(raw.envOptOutActiveSince))) {
       return { state: emptyState(), unreadable: true };
     }
     if (present(raw.envOptOutOwners) && !ownersAreValid(raw.envOptOutOwners)) {
@@ -158,7 +161,7 @@ export function readTelemetryStateFile(configDir = getConfigDir()): { state: Tel
     if (pendingDecision === "invalid") return { state: emptyState(), unreadable: true };
     const ineligibleThroughDay = typeof raw.ineligibleThroughDay === "string" ? raw.ineligibleThroughDay : null;
     const retryAfterUntil =
-      typeof raw.retryAfterUntil === "string" && !Number.isNaN(Date.parse(raw.retryAfterUntil))
+      typeof raw.retryAfterUntil === "string" && isValidStrictTimestamp(raw.retryAfterUntil)
         ? raw.retryAfterUntil
         : null;
     const envOptOutActiveSince = typeof raw.envOptOutActiveSince === "string" ? raw.envOptOutActiveSince : null;

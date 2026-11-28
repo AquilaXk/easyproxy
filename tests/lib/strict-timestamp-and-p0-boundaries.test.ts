@@ -1,6 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseStrictTimestampMs } from "../../src/lib/strict-timestamp";
 import {
   commitApiKeyRotation,
@@ -9,11 +12,21 @@ import {
 } from "../../src/server/management/api-key-rotation";
 import { resolveTelemetryStatus } from "../../src/telemetry/consent";
 import { resolveNextEligibleTelemetryDay, type TelemetryState } from "../../src/telemetry/scheduler";
+import { parseRetryAfterMs as parseTelemetryRetryAfterMs } from "../../src/telemetry/sender";
+import { readTelemetryInstallId, telemetryIdPath } from "../../src/telemetry/install-id";
+import { readTelemetryProfileFile } from "../../src/telemetry/profile/state";
+import { telemetryProfilePath } from "../../src/telemetry/profile/paths";
+import { anthropicRetryAfterMs } from "../../src/oauth/anthropic-rate-limit-policy";
 import { retryAfterDelayMs } from "../../src/lib/upstream-retry";
 import { parseRetryAfterMs as parseCodexRetryAfterMs } from "../../src/codex/routing/cooldown-math";
 import { parseQuotaResetAt } from "../../src/providers/key-failover";
 import { applyApiKeyBudgetPatch } from "../../src/server/management/api-key-budget-dto";
-import { isApiKeyExpired } from "../../src/server/auth-cors";
+import {
+  isApiKeyExpired,
+  isContextPrincipalCurrent,
+  resolveContextPrincipal,
+} from "../../src/server/auth-cors";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { repoRoot } from "../helpers/repo-root";
 import type { EpxApiKeyEntry, EpxConfig } from "../../src/types";
 
@@ -136,5 +149,108 @@ describe("P0 fail-closed timestamp consumers", () => {
     expect(applyApiKeyBudgetPatch(entry, { expiresAt: "2027-02-28T12:00:00Z" }).ok).toBe(true);
     expect(isApiKeyExpired({ expiresAt: "2026-02-30T00:00:00Z" }, Date.UTC(2026, 0, 1))).toBe(true);
     expect(isApiKeyExpired({ expiresAt: "2026-09-09T24:00:00Z" }, Date.UTC(2026, 0, 1))).toBe(true);
+  });
+
+  test("parseStrictTimestampMs rejects >128 byte inputs, isContextPrincipalCurrent rejects overflow expiry, and Retry-After / telemetry parsers fail closed", () => {
+    expect(Number.isNaN(parseStrictTimestampMs(`2026-01-01T00:00:00.${"0".repeat(200)}Z`))).toBe(true);
+
+    const config: EpxConfig = {
+      port: 0,
+      hostname: "127.0.0.1",
+      defaultProvider: "test",
+      providers: {
+        test: { adapter: "openai-chat", baseUrl: "https://example.test/v1", disabled: true, models: ["gpt-test"] },
+      },
+      apiKeys: [{
+        id: "k1",
+        name: "k1",
+        key: "epx_data_1111",
+        createdAt: "2026-09-01T00:00:00Z",
+        pendingRotation: {
+          id: "rot-1",
+          key: "epx_data_pending",
+          createdAt: "2026-09-01T00:00:00Z",
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      }],
+    };
+    const pendingPrincipal = resolveContextPrincipal(
+      new Request("https://proxy.test/v1/responses", {
+        method: "POST",
+        headers: { "x-easyproxy-api-key": "epx_data_pending" },
+      }),
+      config,
+      { kind: "loopback", source: "loopback" },
+    );
+    expect(isContextPrincipalCurrent(pendingPrincipal, config)).toBe(true);
+    config.apiKeys![0]!.pendingRotation!.expiresAt = "2099-02-30T00:00:00Z";
+    expect(isContextPrincipalCurrent(pendingPrincipal, config)).toBe(false);
+    config.apiKeys![0]!.pendingRotation!.expiresAt = "2099-09-09T24:00:00Z";
+    expect(isContextPrincipalCurrent(pendingPrincipal, config)).toBe(false);
+
+    const now = Date.UTC(2026, 8, 1, 0, 0, 0);
+    for (const invalidRetry of ["bad-1", "2099-02-30T00:00:00Z", "2099-09-09T24:00:00Z", `2026-09-01T00:00:00.${"0".repeat(150)}Z`]) {
+      expect(anthropicRetryAfterMs(invalidRetry, now)).toBeUndefined();
+      expect(parseTelemetryRetryAfterMs(invalidRetry, now)).toBeNull();
+    }
+    expect(anthropicRetryAfterMs("5", now)).toBe(5_000);
+    expect(parseTelemetryRetryAfterMs("Tue, 01 Sep 2026 00:00:10 GMT", now)).toBe(10_000);
+  });
+});
+
+describe("telemetry install-id and profile reject calendar-overflow timestamps", () => {
+  let tempDir: string | undefined;
+  afterEach(() => {
+    if (tempDir) {
+      removeTreeWithRetry(tempDir);
+      tempDir = undefined;
+    }
+  });
+
+  test("readTelemetryInstallId and readTelemetryProfileFile fail closed on overflow/heuristic dates", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "epx-strict-ts-"));
+    writeFileSync(telemetryIdPath(tempDir), JSON.stringify({
+      version: 1,
+      installId: "11111111-1111-4111-8111-111111111111",
+      createdAt: "2026-02-30T00:00:00Z",
+    }));
+    expect(readTelemetryInstallId(tempDir)).toBeNull();
+
+    writeFileSync(telemetryProfilePath(tempDir), JSON.stringify({
+      version: 1,
+      handle: "alice-dev",
+      displayName: "Alice",
+      avatar: "blue",
+      secret: `epxp_${"a".repeat(43)}`,
+      connectedAt: "2026-02-30T00:00:00Z",
+      connectedDay: "2026-02-28",
+      sentDays: {},
+      lastSentDay: null,
+      lastSentAt: null,
+      retryAfterUntil: null,
+      pendingDelete: false,
+      revoked: false,
+    }));
+    expect(readTelemetryProfileFile(tempDir)).toEqual({ state: null, unreadable: true });
+
+    writeFileSync(telemetryProfilePath(tempDir), JSON.stringify({
+      version: 1,
+      handle: "alice-dev",
+      displayName: "Alice",
+      avatar: "blue",
+      secret: `epxp_${"a".repeat(43)}`,
+      connectedAt: "2026-02-28T00:00:00Z",
+      connectedDay: "2026-02-28",
+      sentDays: {},
+      lastSentDay: null,
+      lastSentAt: "bad-1",
+      retryAfterUntil: "2099-02-30T00:00:00Z",
+      pendingDelete: false,
+      revoked: false,
+    }));
+    const validProfile = readTelemetryProfileFile(tempDir);
+    expect(validProfile.unreadable).toBe(false);
+    expect(validProfile.state?.lastSentAt).toBeNull();
+    expect(validProfile.state?.retryAfterUntil).toBeNull();
   });
 });

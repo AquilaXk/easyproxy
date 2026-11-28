@@ -294,3 +294,55 @@ test("useAnthropicResetGrants ignores stale refresh settled after apiBase switch
     errSpy.mockRestore();
   }
 });
+
+test("CodexAccountPool aborts in-flight reset-credits detail fetch when target switches or modal closes", async () => {
+  const creditSignals: AbortSignal[] = [];
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/codex-auth/reset-credits") {
+        if (init?.signal) creditSignals.push(init.signal);
+        return new Promise<Response>(() => {});
+      }
+      if (url.pathname === "/api/codex-auth/active") return Response.json({ activeCodexAccountId: null, pinnedAccountId: null });
+      if (url.pathname === "/api/settings") return Response.json({ codexQuotaAutoRefresh: {} });
+      return Response.json({});
+    },
+  });
+
+  const controller = makeController();
+  const { createRoot } = await import("react-dom/client");
+  await act(async () => {
+    root = createRoot(host);
+    root.render(
+      <LanguageProvider>
+        <CodexAccountPool apiBase="http://target-a.local" targetKey="target-a" controller={controller} />
+      </LanguageProvider>,
+    );
+  });
+  await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+  const openBtn = host.querySelector('button[aria-label="3 reset credit(s)"]') as HTMLButtonElement;
+  await act(async () => { openBtn.click(); });
+  expect(creditSignals).toHaveLength(1);
+  expect(creditSignals[0]!.aborted).toBe(false);
+
+  // Closing the modal must abort the pending detail fetch.
+  const closeBtn = host.querySelector<HTMLButtonElement>(".modal-backdrop-dismiss")!;
+  await act(async () => { closeBtn.click(); });
+  expect(creditSignals[0]!.aborted).toBe(true);
+
+  // Re-open and switch targets while detail fetch is pending: target switch must abort too.
+  await act(async () => { openBtn.click(); });
+  expect(creditSignals).toHaveLength(2);
+  expect(creditSignals[1]!.aborted).toBe(false);
+  await act(async () => {
+    root!.render(
+      <LanguageProvider>
+        <CodexAccountPool apiBase="http://target-b.local" targetKey="target-b" controller={makeController()} />
+      </LanguageProvider>,
+    );
+  });
+  expect(creditSignals[1]!.aborted).toBe(true);
+});

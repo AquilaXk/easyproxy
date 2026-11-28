@@ -270,4 +270,27 @@ describe("P2 enhancements from oh-my-pi (MIT) and mixdog (Apache-2.0)", () => {
       "hot-soon",
     ]);
   });
+
+  test("isPrimaryWindowHot evaluates passive quota freshness against injected now rather than wall clock", () => {
+    const wallNow = Date.now();
+    const simulatedFutureNow = wallNow + 2 * 60 * 60_000;
+    setCachedProviderAccountQuotaForTests("meta-muse", "hot-stale-at-future-now", {
+      updatedAt: wallNow,
+      fiveHourPercent: 95,
+      fiveHourResetAt: simulatedFutureNow + 3_600_000,
+      weeklyPercent: 20,
+      weeklyResetAt: simulatedFutureNow + 24 * 3_600_000,
+    });
+    setCachedProviderAccountQuotaForTests("meta-muse", "cool-later", {
+      updatedAt: wallNow,
+      fiveHourPercent: 20,
+      fiveHourResetAt: simulatedFutureNow + 2 * 3_600_000,
+      weeklyPercent: 20,
+      weeklyResetAt: simulatedFutureNow + 48 * 3_600_000,
+    });
+    expect(rankAccountsByResetFirst("meta-muse", ["hot-stale-at-future-now", "cool-later"], null, simulatedFutureNow)).toEqual([
+      "hot-stale-at-future-now",
+      "cool-later",
+    ]);
+  });
 });

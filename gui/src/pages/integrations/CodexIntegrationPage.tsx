@@ -253,9 +253,21 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
 
   const requestAccountMode = async (mode: "pool" | "direct") => {
     if (busyKey || !state || state.accountMode === mode) return;
-    if (await confirmAction({ message: t("pws.accountModeConfirm") })) {
-      await setAccountMode(mode);
+    const seq = mutationEpochRef.current;
+    mutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    mutationAbortRef.current = controller;
+    let confirmed = false;
+    try {
+      confirmed = await confirmAction({
+        message: t("pws.accountModeConfirm"),
+        signal: controller.signal,
+      });
+    } finally {
+      if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
     }
+    if (!confirmed || !mountedRef.current || controller.signal.aborted || mutationEpochRef.current !== seq) return;
+    await setAccountMode(mode);
   };
 
   const enableOpenAi = async () => {
@@ -434,8 +446,11 @@ export default function CodexIntegrationPage({ apiBase, active }: { apiBase: str
           copy={{ ...CODEX_DISABLE_COPY, vars: { path: state?.nativeStatus?.configPath ?? "" } }}
           onClose={() => setConfirmDisable(false)}
           onConfirm={async () => {
+            const seq = mutationEpochRef.current;
             await applyNativeConnection(false);
-            setConfirmDisable(false);
+            if (mountedRef.current && mutationEpochRef.current === seq) {
+              setConfirmDisable(false);
+            }
           }}
         />
       )}

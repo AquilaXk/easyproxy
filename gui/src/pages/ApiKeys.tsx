@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { isValidStrictTimestamp } from "../../../src/lib/strict-timestamp";
 import { Notice } from "../ui";
 import { readUsageMetadata, type UsageReadMetadata } from "../usage-summary-resource";
 import { useI18n, LOCALES } from "../i18n/shared";
@@ -120,8 +121,8 @@ function validPendingRotation(value: ApiKeyEntry["pendingRotation"] | unknown): 
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const pending = value as Record<string, unknown>;
   return typeof pending.id === "string" && !!pending.id
-    && typeof pending.createdAt === "string" && !Number.isNaN(Date.parse(pending.createdAt))
-    && typeof pending.expiresAt === "string" && !Number.isNaN(Date.parse(pending.expiresAt));
+    && typeof pending.createdAt === "string" && isValidStrictTimestamp(pending.createdAt)
+    && typeof pending.expiresAt === "string" && isValidStrictTimestamp(pending.expiresAt);
 }
 
 /**

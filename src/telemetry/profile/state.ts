@@ -2,6 +2,7 @@ import { lstatSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { atomicWriteFileNoFollow } from "../../config/atomic-write";
 import { getConfigDir } from "../../config/paths";
 import { recordOwnedConfigPath } from "../../lib/config-ownership";
+import { isValidStrictTimestamp } from "../../lib/strict-timestamp";
 import { parseCalendarUtcDayMs } from "../contract";
 import {
   PROFILE_SECRET_RE,
@@ -54,7 +55,7 @@ const DAY_MS = 86_400_000;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function validIso(value: unknown): string | null {
-  return typeof value === "string" && !Number.isNaN(Date.parse(value)) ? value : null;
+  return typeof value === "string" && isValidStrictTimestamp(value) ? value : null;
 }
 
 /**

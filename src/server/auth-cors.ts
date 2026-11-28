@@ -723,7 +723,7 @@ export function isContextPrincipalCurrent(principal: string | undefined, config:
     const keyId = typeof key.id === "string" ? key.id : "";
     if (matches(keyId, key.key)) return true;
     const pending = key.pendingRotation;
-    if (pending && Date.parse(pending.expiresAt) > Date.now() && matches(keyId, pending.key)) return true;
+    if (pending && parseStrictTimestampMs(pending.expiresAt) > Date.now() && matches(keyId, pending.key)) return true;
   }
   return false;
 }

@@ -28,7 +28,6 @@ export type AnthropicFastRefusalClass = "transient" | "disabled" | "unsupported"
 const MAX_FAST_REFUSAL_BODY_BYTES = 8_192;
 const FAST_REFUSAL_MESSAGE = /\bfast mode\b|\bspeed\b\W{0,2} parameter/i;
 const FAST_UNSUPPORTED_MESSAGE = /does not support\b[\s\S]*\bspeed\b|\bspeed\b\W{0,2} parameter/i;
-const FAST_DISABLED_MESSAGE = /\bfast mode\b.*\b(?:not enabled|disabled)\b/i;
 const FAST_POOL_REMAINING_HEADER = /^anthropic-fast-(?:input|output)-tokens-remaining$/i;
 const TRANSIENT_OVERAGE_REASONS = new Set(["org_level_disabled_until", "out_of_credits"]);
 const DISABLED_OVERAGE_REASONS = new Set(["overage_not_provisioned", "org_level_disabled"]);
@@ -68,7 +67,6 @@ export function classifyAnthropicFastRefusal(
     const message = bodyText === undefined ? undefined : anthropicErrorMessage(bodyText);
     if (!message || !FAST_REFUSAL_MESSAGE.test(message)) return null;
     if (FAST_UNSUPPORTED_MESSAGE.test(message)) return "unsupported";
-    if (FAST_DISABLED_MESSAGE.test(message)) return "disabled";
     return "disabled";
   }
   if (status !== 429) return null;
