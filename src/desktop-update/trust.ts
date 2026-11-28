@@ -10,7 +10,7 @@
 
 /** Base64 of the minisign public-key box; byte-identical to `plugins.updater.pubkey`. */
 export const DESKTOP_UPDATER_PUBKEY =
-  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDNzZCMDg0NkVCRUJGODEKUldTQnY3NXVoTEIyckhRUXJMOXJRUDR0aHQ2L3pLVHVweXFSc1lzS24vWDNiSUJ5MXJIZmpyb2sK";
+  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhGNDlEODJBRDAxMzIzMDUKUldRRkl4UFFLdGhKajRvakF6QVRGTmN3WllnOXRLNzIyVG4xZkw0bkFhRWRvdHIyRFFveWY0QXAK";
 
 /** The published channel the GUI updater checks; identical to `plugins.updater.endpoints[0]`. */
 export const DESKTOP_UPDATE_FEED_URL = "https://github.com/AquilaXk/easyproxy/releases/latest/download/latest.json";

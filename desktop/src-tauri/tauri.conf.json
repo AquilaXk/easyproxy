@@ -70,7 +70,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDNzZCMDg0NkVCRUJGODEKUldTQnY3NXVoTEIyckhRUXJMOXJRUDR0aHQ2L3pLVHVweXFSc1lzS24vWDNiSUJ5MXJIZmpyb2sK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhGNDlEODJBRDAxMzIzMDUKUldRRkl4UFFLdGhKajRvakF6QVRGTmN3WllnOXRLNzIyVG4xZkw0bkFhRWRvdHIyRFFveWY0QXAK",
       "endpoints": [
         "https://github.com/AquilaXk/easyproxy/releases/latest/download/latest.json"
       ]

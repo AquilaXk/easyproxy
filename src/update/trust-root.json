@@ -4,17 +4,17 @@
   "expiresAt": "2028-11-07T00:00:00Z",
   "rootKeys": [
     {
-      "keyId": "eae4c0180e8ca39a844b3c0e1ec28842261e85628d6dee77ceff5dd081853799",
+      "keyId": "23e10a394f1ff70b21d867345055763e129cffdeb66c140cb4ecb3918b45d9b8",
       "algorithm": "minisign-ed25519-blake2b512/1",
-      "publicKey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDNzZCMDg0NkVCRUJGODEKUldTQnY3NXVoTEIyckhRUXJMOXJRUDR0aHQ2L3pLVHVweXFSc1lzS24vWDNiSUJ5MXJIZmpyb2sK"
+      "publicKey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhGNDlEODJBRDAxMzIzMDUKUldRRkl4UFFLdGhKajRvakF6QVRGTmN3WllnOXRLNzIyVG4xZkw0bkFhRWRvdHIyRFFveWY0QXAK"
     }
   ],
   "rootThreshold": 1,
   "releaseKeys": [
     {
-      "keyId": "eae4c0180e8ca39a844b3c0e1ec28842261e85628d6dee77ceff5dd081853799",
+      "keyId": "23e10a394f1ff70b21d867345055763e129cffdeb66c140cb4ecb3918b45d9b8",
       "algorithm": "minisign-ed25519-blake2b512/1",
-      "publicKey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDNzZCMDg0NkVCRUJGODEKUldTQnY3NXVoTEIyckhRUXJMOXJRUDR0aHQ2L3pLVHVweXFSc1lzS24vWDNiSUJ5MXJIZmpyb2sK",
+      "publicKey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhGNDlEODJBRDAxMzIzMDUKUldRRkl4UFFLdGhKajRvakF6QVRGTmN3WllnOXRLNzIyVG4xZkw0bkFhRWRvdHIyRFFveWY0QXAK",
       "channels": [
         "latest",
         "preview",
