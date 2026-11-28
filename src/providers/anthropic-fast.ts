@@ -36,7 +36,7 @@ const STANDARD_QUOTA_STATUS_HEADERS = [
   "anthropic-ratelimit-unified-7d-status",
   "anthropic-ratelimit-unified-7d_oi-status",
 ] as const;
-const STANDARD_REPRESENTATIVE_CLAIM_RE = /^(?:five_hour|seven_day(?:_opus|_sonnet|_overage_included)?)$/i;
+const STANDARD_REPRESENTATIVE_CLAIM_RE = /^(?:five_hour|seven_day(?:_oauth_apps|_opus|_sonnet|_overage_included)?)$/i;
 
 function anthropicErrorMessage(bodyText: string): string | undefined {
   try {
@@ -63,8 +63,20 @@ function hasStandardQuotaRejectionHeader(headers: Headers): boolean {
   for (const name of STANDARD_QUOTA_STATUS_HEADERS) {
     if (headers.get(name)?.trim().toLowerCase() === "rejected") return true;
   }
-  const claim = headers.get("anthropic-ratelimit-unified-representative-claim")?.trim();
-  return claim !== undefined && STANDARD_REPRESENTATIVE_CLAIM_RE.test(claim);
+  const claim = headers.get("anthropic-ratelimit-unified-representative-claim")?.trim().toLowerCase();
+  if (claim !== undefined && STANDARD_REPRESENTATIVE_CLAIM_RE.test(claim)) return true;
+  const unifiedStatus = headers.get("anthropic-ratelimit-unified-status")?.trim().toLowerCase();
+  if (unifiedStatus !== "rejected") return false;
+  const overageStatus = headers.get("anthropic-ratelimit-unified-overage-status")?.trim().toLowerCase();
+  const hasAllowedStandardWindow = ["anthropic-ratelimit-unified-5h-status", "anthropic-ratelimit-unified-7d-status"]
+    .some(name => {
+      const value = headers.get(name)?.trim().toLowerCase();
+      return value === "allowed" || value === "allowed_warning";
+    });
+  return overageStatus !== "rejected"
+    && claim !== "overage"
+    && claim !== "slow"
+    && !hasAllowedStandardWindow;
 }
 
 /**

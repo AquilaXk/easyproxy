@@ -13,8 +13,12 @@ import {
   clearAccountQuotaCache,
   setCachedProviderAccountQuotaForTests,
 } from "../../src/providers/quota";
+import { commitKiroAccountUsageState } from "../../src/providers/kiro-usage";
+import { kiroEvidenceIdentity } from "../../src/providers/kiro-account-state-disk";
+import { getAccountSet, saveCredential } from "../../src/oauth/store";
 import {
   PRIMARY_WINDOW_HOT_PERCENT,
+  hasHeadroomEvidence,
   rankAccountsByHeadroom,
   rankAccountsByResetFirst,
 } from "../../src/oauth/account-quota-rank";
@@ -234,6 +238,28 @@ describe("P2 enhancements from oh-my-pi (MIT) and mixdog (Apache-2.0)", () => {
         "{}",
       ),
     ).toBe("transient");
+
+    const oauthAppsClaimWithOverage = new Headers({
+      [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "out_of_credits",
+      "anthropic-ratelimit-unified-representative-claim": "seven_day_oauth_apps",
+    });
+    expect(classifyAnthropicFastRefusal(429, oauthAppsClaimWithOverage, "{}")).toBeNull();
+
+    const unifiedRejectedWithOverage = new Headers({
+      [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "out_of_credits",
+      "anthropic-ratelimit-unified-status": "rejected",
+    });
+    expect(classifyAnthropicFastRefusal(429, unifiedRejectedWithOverage, "{}")).toBeNull();
+    expect(isAnthropicFastRefusal(429, unifiedRejectedWithOverage, "{}")).toBe(false);
+
+    const overageOnlyRejected = new Headers({
+      [ANTHROPIC_OVERAGE_DISABLED_REASON_HEADER]: "out_of_credits",
+      "anthropic-ratelimit-unified-status": "rejected",
+      "anthropic-ratelimit-unified-5h-status": "allowed",
+      "anthropic-ratelimit-unified-overage-status": "rejected",
+      "anthropic-ratelimit-unified-representative-claim": "overage",
+    });
+    expect(classifyAnthropicFastRefusal(429, overageOnlyRejected, "{}")).toBe("transient");
   });
 
   test("effort-history uses family minimum floors to admit future Claude 5.x/6.x models while failing closed on out-of-scope", () => {
@@ -362,6 +388,59 @@ describe("P2 enhancements from oh-my-pi (MIT) and mixdog (Apache-2.0)", () => {
         now,
       ),
     ).toEqual(["cool-measured", "hot-measured", "unmeasured"]);
+  });
+
+  test("rankAccountsByResetFirst demotes Kiro 100%-used unverified account behind unmeasured sibling and forwards injected now", async () => {
+    const previousHome = process.env.EASYPROXY_HOME;
+    const home = mkdtempSync(join(tmpdir(), "epx-kiro-reset-"));
+    process.env.EASYPROXY_HOME = home;
+    try {
+      await saveCredential("kiro", {
+        access: "access-a",
+        refresh: "refresh-a",
+        expires: Date.now() + 3_600_000,
+        accountId: "kiro-a",
+      }, { addAccount: true });
+      await saveCredential("kiro", {
+        access: "access-b",
+        refresh: "refresh-b",
+        expires: Date.now() + 3_600_000,
+        accountId: "kiro-b",
+      }, { addAccount: true });
+      const roster = getAccountSet("kiro")!.accounts;
+      const byName = (name: string) => roster.find(r => r.credential.accountId === name)!;
+      const a = byName("kiro-a");
+      const b = byName("kiro-b");
+      const accountMap = new Map(roster.map(row => [row.id, row]));
+
+      const writeAt = Date.now();
+      setCachedProviderAccountQuotaForTests("kiro", a.id, {
+        monthlyPercent: 100,
+        monthlyResetAt: writeAt + 60_000,
+        updatedAt: writeAt,
+      });
+      const evalNow = Date.now();
+      expect(rankAccountsByHeadroom("kiro", [a.id, b.id], undefined, accountMap, evalNow)).toEqual([b.id, a.id]);
+      expect(rankAccountsByResetFirst("kiro", [a.id, b.id], undefined, evalNow, accountMap)).toEqual([b.id, a.id]);
+
+      commitKiroAccountUsageState(
+        `kiro\0${a.id}`,
+        {
+          exhausted: true,
+          nextResetAt: writeAt + 60_000,
+        },
+        kiroEvidenceIdentity(a),
+      );
+      const afterVerdictNow = Date.now();
+      expect(rankAccountsByResetFirst("kiro", [a.id, b.id], undefined, afterVerdictNow, accountMap)).toEqual([b.id, a.id]);
+      const expiredNow = writeAt + 120_000;
+      expect(hasHeadroomEvidence("kiro", [a.id, b.id], undefined, accountMap, expiredNow)).toBe(false);
+      expect(rankAccountsByResetFirst("kiro", [a.id, b.id], undefined, expiredNow, accountMap)).toEqual([a.id, b.id]);
+    } finally {
+      if (previousHome === undefined) delete process.env.EASYPROXY_HOME;
+      else process.env.EASYPROXY_HOME = previousHome;
+      removeTreeWithRetry(home);
+    }
   });
 });
 
